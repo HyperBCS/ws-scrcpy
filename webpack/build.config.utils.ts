@@ -3,7 +3,12 @@ import * as path from 'path';
 
 type BuildConfig = Record<string, boolean | string>;
 
-const DEFAULT_CONFIG_PATH = path.resolve(path.dirname(__filename), 'default.build.config.json');
+
+
+const localPath = path.resolve(path.dirname(__filename), 'default.build.config.json');
+const fallbackPath = path.resolve(path.dirname(__filename), '../webpack/default.build.config.json');
+
+const DEFAULT_CONFIG_PATH = fs.existsSync(localPath) ? localPath : fallbackPath;
 const configCache: Map<string, BuildConfig> = new Map();
 const mergedCache: Map<string, BuildConfig> = new Map();
 
