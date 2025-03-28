@@ -1,6 +1,6 @@
 {
     "watch": ["src"],
-    "ext": ["ts", "css"],
+    "ext": "ts,css",
     "exec": "npm start",
     "ignore": ["dist", "node_modules"]
   }
