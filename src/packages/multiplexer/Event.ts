@@ -1,78 +1,74 @@
-export class Event2 {
-    static NONE = 0;
-    static CAPTURING_PHASE = 1;
-    static AT_TARGET = 2;
-    static BUBBLING_PHASE = 3;
-
+export class Event2 implements Event {
+    static readonly NONE = 0 as const;
+    static readonly CAPTURING_PHASE = 1 as const;
+    static readonly AT_TARGET = 2 as const;
+    static readonly BUBBLING_PHASE = 3 as const;
+  
+    readonly NONE = 0 as const;
+    readonly CAPTURING_PHASE = 1 as const;
+    readonly AT_TARGET = 2 as const;
+    readonly BUBBLING_PHASE = 3 as const;
+  
+    readonly isTrusted = true;
+    readonly timeStamp = Date.now();
+  
     public cancelable: boolean;
     public bubbles: boolean;
     public composed: boolean;
     public type: string;
-    public defaultPrevented: boolean;
-    public timeStamp: number;
-    public target: any;
-    public readonly isTrusted: boolean = true;
-    readonly AT_TARGET: number = 0;
-    readonly BUBBLING_PHASE: number = 0;
-    readonly CAPTURING_PHASE: number = 0;
-    readonly NONE: number = 0;
-
-    constructor(type: string, options = { cancelable: true, bubbles: true, composed: false }) {
-        const { cancelable, bubbles, composed } = { ...options };
-        this.cancelable = !!cancelable;
-        this.bubbles = !!bubbles;
-        this.composed = !!composed;
-        this.type = `${type}`;
-        this.defaultPrevented = false;
-        this.timeStamp = Date.now();
-        this.target = null;
+    public target: EventTarget | null = null;
+    public defaultPrevented = false;
+  
+    constructor(
+      type: string,
+      options: { cancelable?: boolean; bubbles?: boolean; composed?: boolean } = {}
+    ) {
+      this.type = type;
+      this.cancelable = !!options.cancelable;
+      this.bubbles = !!options.bubbles;
+      this.composed = !!options.composed;
     }
-
-    stopImmediatePropagation() {
-        // this[kStop] = true;
+  
+    stopImmediatePropagation(): void {}
+    preventDefault(): void {
+      this.defaultPrevented = true;
     }
-
-    preventDefault() {
-        this.defaultPrevented = true;
+    stopPropagation(): void {}
+  
+    get currentTarget(): EventTarget | null {
+      return this.target;
     }
-
-    get currentTarget() {
-        return this.target;
+  
+    get srcElement(): EventTarget | null {
+      return this.target;
     }
-    get srcElement() {
-        return this.target;
+  
+    composedPath(): EventTarget[] {
+      return this.target ? [this.target] : [];
     }
-
-    composedPath() {
-        return this.target ? [this.target] : [];
+  
+    get returnValue(): boolean {
+      return !this.defaultPrevented;
     }
-    get returnValue() {
-        return !this.defaultPrevented;
+  
+    get eventPhase(): 0 | 1 | 2 | 3 {
+      return this.target ? Event2.AT_TARGET : Event2.NONE;
     }
-    get eventPhase() {
-        return this.target ? Event.AT_TARGET : Event.NONE;
+  
+    get cancelBubble(): boolean {
+      return false;
     }
-    get cancelBubble() {
-        return false;
-        // return this.propagationStopped;
+  
+    set cancelBubble(_: boolean) {
+      this.stopPropagation();
     }
-    set cancelBubble(value: any) {
-        if (value) {
-            this.stopPropagation();
-        }
-    }
-    stopPropagation() {
-        // this.propagationStopped = true;
-    }
+  
     initEvent(type: string, bubbles?: boolean, cancelable?: boolean): void {
-        this.type = type;
-        if (arguments.length > 1) {
-            this.bubbles = !!bubbles;
-        }
-        if (arguments.length > 2) {
-            this.cancelable = !!cancelable;
-        }
+      this.type = type;
+      if (bubbles !== undefined) this.bubbles = bubbles;
+      if (cancelable !== undefined) this.cancelable = cancelable;
     }
-}
+  }
+  
 
 export const EventClass = typeof Event !== 'undefined' ? Event : Event2;

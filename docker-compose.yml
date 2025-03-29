@@ -12,9 +12,7 @@ services:
       - ./adbkeys:/root/.android
 
   ws-scrcpy-dev:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
+    image: ws-scrcpy-dev:latest
     container_name: ws-scrcpy-dev
     ports:
       - "8000:8000"

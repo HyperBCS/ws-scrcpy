@@ -150,6 +150,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     }
 
     protected onSocketOpen(): void {
+        console.log("OPEN")
         this.emit('connected', void 0);
         let e = this.events.shift();
         while (e) {
