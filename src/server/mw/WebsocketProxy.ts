@@ -2,7 +2,7 @@ import { Mw, RequestParameters } from './Mw';
 import WS from 'ws';
 import { ACTION } from '../../common/Action';
 import { Multiplexer } from '../../packages/multiplexer/Multiplexer';
-import * as net from 'net';
+import { broadcastManager } from '../../common/BroadcastManager';
 
 export class WebsocketProxy extends Mw {
     public static readonly TAG = 'WebsocketProxy';
@@ -67,70 +67,33 @@ export class WebsocketProxy extends Mw {
         };
     }
 
-    public async init(remoteUrl: string): Promise<void> {
-        this.name = `[${WebsocketProxy.TAG}{$${remoteUrl}}]`;
-    
-        // Parse the remote URL to extract the host and port
-        const [host, port] = remoteUrl.split(':');
-        console.log(remoteUrl,host,port)
-        
-        // Create a TCP socket connection to the remote server
-        const remoteSocket = new net.Socket();
-    
-        // Connect to the remote server
-        remoteSocket.connect(Number(port), host, () => {
-            this.flush();
-        });
-    
-        // Handle incoming data from the remote server
-        remoteSocket.on('data', (data: Uint8Array) => {
-            console.log("data",this.ws.readyState)
-            if (this.ws && this.ws.readyState === this.ws.OPEN) {
-                // Send the received data to the WebSocket
-                console.log("inside")
-                if (Array.isArray(data)) {
-                    // Convert each element of Uint8Array to a Buffer or send it directly as a string
-                    data.forEach((item) => {
-                        console.log("sending1")
-                        // Convert each number to a Buffer and send it to the WebSocket
-                        this.ws.send(Buffer.from([item]));
-                    });
-                } else {
-                    console.log("sending2")
-                    // Send the entire Uint8Array directly to the WebSocket
-                    this.ws.send(data);
-                }
-            }
-        });
+    public async init(udid : string): Promise<void> {
+        this.name = `[${WebsocketProxy.TAG}{$${udid}}]`;
 
-        remoteSocket.on('connect', () => {
-            if (this.ws.readyState === this.ws.OPEN) {
-                // do something, e.g., send a message or log
-                console.log('Remote connection established');
-            }
-        });
-    
-        // Handle the end of the connection
-        remoteSocket.on('end', () => {
-            if (this.ws.readyState === this.ws.OPEN) {
-                this.ws.close(1000, 'Remote connection closed');
-            }
-        });
-    
-        // Handle errors in the TCP connection
-        remoteSocket.on('error', (e: Error) => {
-            if (this.ws.readyState === this.ws.OPEN) {
-                this.ws.close(4011, e.message);
-            }
-        });
-    
-        // Handle TCP connection closure
-        remoteSocket.on('close', (hadError: boolean) => {
-            console.log("closed")
-            if (this.ws.readyState === this.ws.OPEN) {
-                this.ws.close(hadError ? 4010 : 1000);
-            }
-        });
+        const broadcast = broadcastManager.getBroadcast(udid);
+        if (broadcast) {
+            const handler = (data: Buffer) => {
+                console.log("data",this.ws.readyState)
+                if (this.ws && this.ws.readyState === this.ws.OPEN) {
+                    // Send the received data to the WebSocket
+                    console.log("inside")
+                    if (Array.isArray(data)) {
+                        // Convert each element of Uint8Array to a Buffer or send it directly as a string
+                        data.forEach((item) => {
+                            console.log("sending1")
+                            // Convert each number to a Buffer and send it to the WebSocket
+                            this.ws.send(Buffer.from([item]));
+                        });
+                    } else {
+                        console.log("sending2")
+                        // Send the entire Uint8Array directly to the WebSocket
+                        this.ws.send(data);
+                    }
+                }
+            };
+        
+            broadcast.addListener(handler);
+        }
     }
 
     private flush(): void {

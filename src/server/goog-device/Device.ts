@@ -1,9 +1,11 @@
 import { AdbExtended } from './adb';
 import AdbKitClient from '@dead50f7/adbkit/lib/adb/client';
+import { AdbUtils } from './AdbUtils';
 import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
 import { spawn } from 'child_process';
 import { NetInterface } from '../../types/NetInterface';
 import { TypedEmitter } from '../../common/TypedEmitter';
+import { broadcastManager } from '../../common/BroadcastManager';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { ScrcpyServer } from './ScrcpyServer';
 import { Properties } from './Properties';
@@ -456,6 +458,17 @@ export class Device extends TypedEmitter<DeviceEvents> {
             if (output) {
                 console.log(this.TAG, `start server: "${output}"`);
             }
+            AdbUtils.forward(this.udid, "localabstract:scrcpy")
+            .then(async (port: number) => {
+                console.log(this.TAG, `Starting broadcast with adb port ${port}`);
+                await broadcastManager.startBroadcast(this.udid, port);
+            })
+            .catch((e: Error) => {
+                const msg = `[${this.TAG}] Failed to start service: ${e.message}`;
+                console.error(msg);
+                console.log(e);
+            });
+            
             return this.getServerPid();
         } catch (error: any) {
             console.error(this.TAG, `Error: ${error.message}`);
