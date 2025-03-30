@@ -71,9 +71,23 @@ export class WebsocketProxy extends Mw {
         this.name = `[${WebsocketProxy.TAG}{$${udid}}]`;
 
         const broadcast = broadcastManager.getBroadcast(udid);
+        
         if (broadcast) {
+            const initialInfoPacket = broadcast.craftInitialInfoPacket(
+                udid,                    // array of DisplayInfo
+                [],
+                1 // clientId
+            );
+
+            // send magic data, keyframe and config
+            const keyFrame = broadcast.getLastKeyframe();
+            const configFrame = broadcast.getLastConfigFrame();
+            if(keyFrame && configFrame){
+                this.ws.send(initialInfoPacket)
+                this.ws.send(configFrame)
+                this.ws.send(keyFrame)
+            }
             const handler = (data: Buffer) => {
-                console.log("data",this.ws.readyState)
                 if (this.ws && this.ws.readyState === this.ws.OPEN) {
                     this.ws.send(data);
                 } else if(this.ws && this.ws.readyState != this.ws.OPEN) {

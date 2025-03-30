@@ -16,6 +16,18 @@ export default class ScreenInfo {
         return new ScreenInfo(new Rect(left, top, right, bottom), new Size(width, height), deviceRotation);
     }
 
+    public toBuffer(): Buffer {
+        const buffer = Buffer.alloc(ScreenInfo.BUFFER_LENGTH);
+        buffer.writeInt32BE(this.contentRect.left, 0);
+        buffer.writeInt32BE(this.contentRect.top, 4);
+        buffer.writeInt32BE(this.contentRect.right, 8);
+        buffer.writeInt32BE(this.contentRect.bottom, 12);
+        buffer.writeInt32BE(this.videoSize.width, 16);
+        buffer.writeInt32BE(this.videoSize.height, 20);
+        buffer.writeUInt8(this.deviceRotation, 24);
+        return buffer;
+    }
+
     public equals(o?: ScreenInfo | null): boolean {
         if (!o) {
             return false;
