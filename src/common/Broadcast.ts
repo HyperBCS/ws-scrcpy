@@ -10,7 +10,6 @@ export class Broadcast {
         this.socket = socket;
 
         this.socket.on('data', (chunk: Buffer) => {
-            console.log('data')
             for (const cb of this.listeners) {
                 try {
                     cb(chunk);

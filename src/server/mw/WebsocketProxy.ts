@@ -75,20 +75,9 @@ export class WebsocketProxy extends Mw {
             const handler = (data: Buffer) => {
                 console.log("data",this.ws.readyState)
                 if (this.ws && this.ws.readyState === this.ws.OPEN) {
-                    // Send the received data to the WebSocket
-                    console.log("inside")
-                    if (Array.isArray(data)) {
-                        // Convert each element of Uint8Array to a Buffer or send it directly as a string
-                        data.forEach((item) => {
-                            console.log("sending1")
-                            // Convert each number to a Buffer and send it to the WebSocket
-                            this.ws.send(Buffer.from([item]));
-                        });
-                    } else {
-                        console.log("sending2")
-                        // Send the entire Uint8Array directly to the WebSocket
-                        this.ws.send(data);
-                    }
+                    this.ws.send(data);
+                } else if(this.ws && this.ws.readyState != this.ws.OPEN) {
+                    broadcast.removeListener(handler)
                 }
             };
         

@@ -8,6 +8,7 @@ class BroadcastManager {
         if (this.broadcasts.has(udid)) return;
 
         const socket = net.connect({ host: '127.0.0.1', port });
+        net.connect({ host: '127.0.0.1', port });
 
         return new Promise((resolve, reject) => {
             socket.once('connect', () => {
