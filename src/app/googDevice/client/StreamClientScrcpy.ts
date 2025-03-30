@@ -215,7 +215,7 @@ export class StreamClientScrcpy
         }
         if (!videoSettings || !screenInfo) {
             this.joinedStream = true;
-            this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(currentSettings));
+            // this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(currentSettings));
             return;
         }
 
@@ -244,7 +244,7 @@ export class StreamClientScrcpy
         }
         if (!min.equals(videoSettings) || !this.joinedStream) {
             this.joinedStream = true;
-            this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(min));
+            // this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(min));
         }
     };
 
@@ -369,7 +369,7 @@ export class StreamClientScrcpy
 
     public sendNewVideoSetting(videoSettings: VideoSettings): void {
         this.requestedVideoSettings = videoSettings;
-        this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(videoSettings));
+        // this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(videoSettings));
     }
 
     public getClientId(): number {

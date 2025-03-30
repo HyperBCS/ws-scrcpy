@@ -3,12 +3,11 @@ import WS from 'ws';
 import { ACTION } from '../../common/Action';
 import { Multiplexer } from '../../packages/multiplexer/Multiplexer';
 import { broadcastManager } from '../../common/BroadcastManager';
+import { Broadcast } from '../../common/Broadcast';
 
 export class WebsocketProxy extends Mw {
     public static readonly TAG = 'WebsocketProxy';
-    private remoteSocket?: WS;
-    private released = false;
-    private storage: WS.MessageEvent[] = [];
+    private broadcast?: Broadcast;
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     public static processRequest(ws: WS, params: RequestParameters): WebsocketProxy | undefined {
@@ -39,38 +38,11 @@ export class WebsocketProxy extends Mw {
         super(ws);
     }
 
-    public async init_ws(remoteUrl: string): Promise<void> {
-        this.name = `[${WebsocketProxy.TAG}{$${remoteUrl}}]`;
-        const remoteSocket = new WS(remoteUrl);
-        remoteSocket.onopen = () => {
-            this.remoteSocket = remoteSocket;
-            this.flush();
-        };
-        remoteSocket.onmessage = (event) => {
-            if (this.ws && this.ws.readyState === this.ws.OPEN) {
-                if (Array.isArray(event.data)) {
-                    event.data.forEach((data) => this.ws.send(data));
-                } else {
-                    this.ws.send(event.data);
-                }
-            }
-        };
-        remoteSocket.onclose = (e) => {
-            if (this.ws.readyState === this.ws.OPEN) {
-                this.ws.close(e.wasClean ? 1000 : 4010);
-            }
-        };
-        remoteSocket.onerror = (e) => {
-            if (this.ws.readyState === this.ws.OPEN) {
-                this.ws.close(4011, e.message);
-            }
-        };
-    }
-
     public async init(udid : string): Promise<void> {
         this.name = `[${WebsocketProxy.TAG}{$${udid}}]`;
 
         const broadcast = broadcastManager.getBroadcast(udid);
+        this.broadcast = broadcast
         
         if (broadcast) {
             const initialInfoPacket = broadcast.craftInitialInfoPacket(
@@ -99,35 +71,11 @@ export class WebsocketProxy extends Mw {
         }
     }
 
-    private flush(): void {
-        if (this.remoteSocket) {
-            while (this.storage.length) {
-                const event = this.storage.shift();
-                if (event && event.data) {
-                    this.remoteSocket.send(event.data);
-                }
-            }
-            if (this.released) {
-                this.remoteSocket.close();
-            }
-        }
-        this.storage.length = 0;
-    }
-
     protected onSocketMessage(event: WS.MessageEvent): void {
-        if (this.remoteSocket) {
-            this.remoteSocket.send(event.data);
-        } else {
-            this.storage.push(event);
+        const controlSocket = this.broadcast?.getControlSocket()
+        if (controlSocket && controlSocket.readyState === "open") {
+            controlSocket.write(Buffer.from(event.data));
         }
-    }
 
-    public release(): void {
-        if (this.released) {
-            return;
-        }
-        super.release();
-        this.released = true;
-        this.flush();
     }
 }

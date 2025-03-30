@@ -11,6 +11,7 @@ type DataCallback = (data: Buffer) => void;
 
 export class Broadcast {
     private socket: Socket;
+    private control: Socket;
     private listeners: Set<DataCallback> = new Set();
     private lastKeyframe: Buffer | null = null;
     private lastConfigframe: Buffer | null = null;
@@ -20,8 +21,9 @@ export class Broadcast {
     private videoWidth: number = 0;
     private videoHeight: number = 0;
 
-    constructor(socket: Socket) {
+    constructor(socket: Socket, control: Socket) {
         this.socket = socket;
+        this.control = control;
     
         this.socket.once('data', (chunk: Buffer) => {
             if (chunk.length < 12) {
@@ -117,6 +119,10 @@ export class Broadcast {
 
     getLastConfigFrame(): Buffer | null {
         return this.lastConfigframe;
+    }
+
+    getControlSocket(): Socket {
+        return this.control;
     }
 
     craftInitialInfoPacket(

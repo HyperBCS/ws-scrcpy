@@ -131,7 +131,6 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
 
     protected onSocketMessage(event: MessageEvent): void {
         if (event.data instanceof ArrayBuffer) {
-            console.log("are we aarraybuggewr")
             // works only because MAGIC_BYTES_INITIAL and MAGIC_BYTES_MESSAGE have same length
             if (event.data.byteLength > MAGIC_BYTES_INITIAL.length) {
                 const magicBytes = new Uint8Array(event.data, 0, MAGIC_BYTES_INITIAL.length);

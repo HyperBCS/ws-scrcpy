@@ -11,7 +11,7 @@ export interface TouchControlMessageInterface extends ControlMessageInterface {
 }
 
 export class TouchControlMessage extends ControlMessage {
-    public static PAYLOAD_LENGTH = 28;
+    public static PAYLOAD_LENGTH = 32;
     /**
      * - For a touch screen or touch pad, reports the approximate pressure
      * applied to the surface by a finger or other tool.  The value is
@@ -43,7 +43,7 @@ export class TouchControlMessage extends ControlMessage {
      * @override
      */
     public toBuffer(): Buffer {
-        const buffer: Buffer = Buffer.alloc(TouchControlMessage.PAYLOAD_LENGTH + 1);
+        const buffer: Buffer = Buffer.alloc(TouchControlMessage.PAYLOAD_LENGTH);
         let offset = 0;
         offset = buffer.writeUInt8(this.type, offset);
         offset = buffer.writeUInt8(this.action, offset);
@@ -54,6 +54,7 @@ export class TouchControlMessage extends ControlMessage {
         offset = buffer.writeUInt16BE(this.position.screenSize.width, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.height, offset);
         offset = buffer.writeUInt16BE(this.pressure * TouchControlMessage.MAX_PRESSURE_VALUE, offset);
+        offset = buffer.writeUInt32BE(this.buttons, offset);
         buffer.writeUInt32BE(this.buttons, offset);
         return buffer;
     }

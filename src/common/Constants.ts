@@ -28,4 +28,4 @@ export const ARGUMENTS = [
 
 export const SERVER_PROCESS_NAME = 'app_process';
 
-export const ARGS_STRING = `/ ${SERVER_PACKAGE} ${ARGUMENTS.join(' ')} 2>&1 > /dev/null`;
+export const ARGS_STRING = `/ ${SERVER_PACKAGE} ${ARGUMENTS.join(' ')}`;
