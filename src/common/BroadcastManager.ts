@@ -4,11 +4,15 @@ import { Broadcast } from './Broadcast';
 class BroadcastManager {
     private broadcasts: Map<string, Broadcast> = new Map();
 
-    async startBroadcast(udid: string, port: number): Promise<void> {
+    async startBroadcast(udid: string, socketPath: string): Promise<void> {
         if (this.broadcasts.has(udid)) return;
 
-        const socket = net.connect({ host: '127.0.0.1', port });
-        const control = net.connect({ host: '127.0.0.1', port });
+        const socket = net.connect({ path: socketPath });
+        const control = net.connect({ path: socketPath });
+
+        control.once('connect', () => {
+            console.log(`Connected to control server at ${socketPath}`)
+        });
 
         return new Promise((resolve, reject) => {
             socket.once('connect', () => {

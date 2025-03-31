@@ -13,6 +13,7 @@ import { FileStats } from '../../types/FileStats';
 import Protocol from '@dead50f7/adbkit/lib/adb/protocol';
 import { Multiplexer } from '../../packages/multiplexer/Multiplexer';
 import { ReadStream } from 'fs';
+import { spawn } from 'child_process';
 import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
 
 type IncomingMessage = {
@@ -151,6 +152,40 @@ export class AdbUtils {
         const local = `tcp:${port}`;
         await client.forward(serial, local, remote);
         return port;
+    }
+
+    public static async forwardFileSocket(serial: string, remote: string, pid: number): Promise<string> {
+        const client = AdbExtended.createClient();
+        const socketPath = `/tmp/scrcpy-${pid}`;
+        await client.forward(serial, `localfilesystem:${socketPath}`, remote);
+        return socketPath;
+    }
+
+    public static async removeFileSocketForwards(serial: string): Promise<void> {
+        const client = AdbExtended.createClient();
+        const forwards = await client.listForwards(serial);
+    
+        const removals = forwards
+            .filter(forward =>
+                forward.serial === serial &&
+                forward.local.includes('localfilesystem:')
+            )
+            .map(forward => {
+                return new Promise<void>((resolve, reject) => {
+                    const adb = spawn('adb', ['-s', serial, 'forward', '--remove', forward.local]);
+                    adb.on('close', code => {
+                        if (code === 0) {
+                            resolve();
+                        } else {
+                            reject(new Error(`Failed to remove forward: ${forward.local}`));
+                        }
+                    });
+    
+                    adb.on('error', reject);
+                });
+            });
+    
+        await Promise.all(removals);
     }
 
     public static async getDevtoolsRemoteList(serial: string): Promise<string[]> {

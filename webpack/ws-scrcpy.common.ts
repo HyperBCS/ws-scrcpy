@@ -6,6 +6,7 @@ import MiniCssExtractPlugin from 'mini-css-extract-plugin';
 import HtmlWebpackPlugin from 'html-webpack-plugin';
 import GeneratePackageJsonPlugin from '@dead50f7/generate-package-json-webpack-plugin';
 import { mergeWithDefaultConfig } from './build.config.utils';
+import CopyWebpackPlugin from 'copy-webpack-plugin';
 
 export const PROJECT_ROOT = path.resolve(__dirname, '..');
 export const SERVER_DIST_PATH = path.join(PROJECT_ROOT, 'dist');
@@ -106,6 +107,14 @@ const front: webpack.Configuration = {
         new webpack.ProvidePlugin({
             Buffer: ['buffer', 'Buffer'],
         }),
+        new CopyWebpackPlugin({
+            patterns: [
+              {
+                from: path.resolve(PROJECT_ROOT, 'src/public/manifest.json'),
+                to: path.resolve(CLIENT_DIST_PATH, 'manifest.json'),
+              },
+            ],
+          }),
     ],
     resolve: {
         fallback: {

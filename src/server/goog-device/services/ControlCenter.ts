@@ -85,7 +85,9 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     private handleConnected(udid: string, state: string): void {
         let device = this.deviceMap.get(udid);
         if (device) {
-            device.setState(state);
+            if (device.descriptor.state != state) {
+                device.setState(state);
+            }
         } else {
             device = new Device(udid, state);
             device.on('update', this.onDeviceUpdate);

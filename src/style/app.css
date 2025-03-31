@@ -68,9 +68,11 @@ body {
     background-color: var(--main-bg-color);
     position: absolute;
     margin: 0;
+    padding: 0;
     height: 100%;
     width: 100%;
     overflow: hidden;
+    position: fixed; /* important for iOS full-screen behavior */
 }
 
 
@@ -102,33 +104,69 @@ body.stream {
 }
 
 .device-view {
-    z-index: 1;
-    float: right;
-    display: inline-block;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    width: 100vw;
+    box-sizing: border-box;
 }
 
-.video-layer {
-    position: absolute;
-    z-index: 0;
+.video {
+    position: relative;
+    display: inline-block;
+    background-color: #000000;
+    line-height: 0;
+}
+
+.video > canvas,
+.video > video {
+    display: block;
+    max-width: calc(100vw - 3.715rem);
+}
+
+/* Portrait override */
+@media screen and (orientation: portrait) {
+    .video {
+        align-self: flex-start; /* push video to top */
+    }
+
+    .video > video {
+        height: auto;
+        width: calc(100vw - 3.715rem);
+    }
+}
+
+/* Landscape */
+@media screen and (orientation: landscape) {
+    .video > video {
+        height: 100vh;
+        width: auto;
+    }
 }
 
 .touch-layer {
     position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 100%;
+    z-index: 2;
+    pointer-events: auto;
+}
+
+.video-layer {
     z-index: 1;
 }
 
-.video {
-    float: right;
-    max-height: 100%;
-    max-width: 100%;
-    background-color: #000000;
-}
-
-
 .control-buttons-list {
-    float: right;
-    width: 3.715rem;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
     background-color: var(--control-buttons-bg-color);
+    flex-shrink: 0;
+    width: 3.715rem;
 }
 
 .control-button {

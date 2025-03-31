@@ -21,4 +21,5 @@ services:
       - /dev/bus/usb:/dev/bus/usb
     volumes:
       - ./src:/app/src
+      - /app/node_modules
       - ./adbkeys:/root/.android

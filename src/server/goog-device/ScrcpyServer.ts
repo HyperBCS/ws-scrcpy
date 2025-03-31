@@ -10,7 +10,7 @@ import { ServerVersion } from './ServerVersion';
 const TEMP_PATH = '/data/local/tmp/';
 const FILE_DIR = path.join(__dirname, 'vendor/Genymobile/scrcpy');
 const FILE_NAME = 'scrcpy-server.jar';
-const RUN_COMMAND = `CLASSPATH=${TEMP_PATH}${FILE_NAME} nohup app_process ${ARGS_STRING}`;
+const RUN_COMMAND = `CLASSPATH=${TEMP_PATH}${FILE_NAME} app_process ${ARGS_STRING}`;
 
 type WaitForPidParams = { tryCounter: number; processExited: boolean; lookPidFile: boolean };
 
@@ -119,8 +119,7 @@ export class ScrcpyServer {
         await this.copyServer(device);
 
         const params: WaitForPidParams = { tryCounter: 0, processExited: false, lookPidFile: true };
-        const runPromise = device.runShellCommandAdb(RUN_COMMAND);
-        console.log(RUN_COMMAND)
+        const runPromise = device.runShellCommandAdbSpecial(RUN_COMMAND, device.udid);
         runPromise
             .then((out) => {
                 if (device.isConnected()) {
@@ -134,6 +133,7 @@ export class ScrcpyServer {
                 params.processExited = true;
             });
         list = await Promise.race([runPromise, this.waitForServerPid(device, params)]);
+        console.log("return done")
         if (Array.isArray(list) && list.length) {
             return list;
         }

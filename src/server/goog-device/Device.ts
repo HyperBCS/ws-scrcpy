@@ -23,6 +23,10 @@ export interface DeviceEvents {
     update: Device;
 }
 
+function sleep(ms : number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
 export class Device extends TypedEmitter<DeviceEvents> {
     private static readonly INITIAL_UPDATE_TIMEOUT = 1500;
     private static readonly MAX_UPDATES_COUNT = 7;
@@ -113,6 +117,59 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
             adb.stderr.on('data', (data) => {
                 console.error(this.TAG, `stderr: ${data}`);
+            });
+
+            adb.on('error', (error: Error) => {
+                console.error(this.TAG, `failed to spawn adb process.\n${error.stack}`);
+                reject(error);
+            });
+
+            adb.on('close', (code) => {
+                console.log(this.TAG, `adb process (${args.join(' ')}) exited with code ${code}`);
+                resolve(output);
+            });
+        });
+    }
+
+    public async runShellCommandAdbSpecial(command: string, udid: string): Promise<string> {
+        return new Promise<string>((resolve, reject) => {
+            const cmd = 'adb';
+            const args = ['-s', `${this.udid}`, 'shell', command];
+            const adb = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            let output = '';
+            let adb_pid = adb.pid
+
+
+
+            adb.stdout.once('data', () => {
+                AdbUtils.forwardFileSocket(udid, "localabstract:scrcpy", adb_pid)
+                    .then(async (socketPath: string) => {
+                        console.log(`[${udid}] Starting broadcast with socket path ${socketPath}`);
+                        try {
+                            await sleep(1000); // 1s delay
+                            await broadcastManager.startBroadcast(udid, socketPath);
+                            resolve();
+                        } catch (err) {
+                            console.log("HUH???",err)
+                            reject(err);
+                        }
+                    })
+                    .catch((e: Error) => {
+                        const msg = `[${udid}] Failed to start service: ${e.message}`;
+                        console.error(msg);
+                        console.log(e);
+                        reject(e);
+                    });
+            });
+
+            adb.stdout.on('data', (data) => {
+                output += data.toString();
+                console.log(this.TAG, `stdout: ${data.toString().replace(/\n$/, '')}`);
+            });
+
+            adb.stderr.on('data', (data) => {
+                console.error(this.TAG, `stderr: ${data}`);
+                broadcastManager.stopBroadcast(udid)
             });
 
             adb.on('error', (error: Error) => {
@@ -439,6 +496,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
             if (output) {
                 console.log(this.TAG, `kill server: "${output}"`);
             }
+            AdbUtils.removeFileSocketForwards(this.udid)
             this.descriptor.pid = -1;
             this.emitUpdate();
         } catch (error: any) {
@@ -458,17 +516,6 @@ export class Device extends TypedEmitter<DeviceEvents> {
             if (output) {
                 console.log(this.TAG, `start server: "${output}"`);
             }
-            AdbUtils.forward(this.udid, "localabstract:scrcpy")
-            .then(async (port: number) => {
-                console.log(this.TAG, `Starting broadcast with adb port ${port}`);
-                await broadcastManager.startBroadcast(this.udid, port);
-            })
-            .catch((e: Error) => {
-                const msg = `[${this.TAG}] Failed to start service: ${e.message}`;
-                console.error(msg);
-                console.log(e);
-            });
-            
             return this.getServerPid();
         } catch (error: any) {
             console.error(this.TAG, `Error: ${error.message}`);

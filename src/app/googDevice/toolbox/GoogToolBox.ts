@@ -7,6 +7,7 @@ import { ToolBoxElement } from '../../toolbox/ToolBoxElement';
 import { ToolBoxCheckbox } from '../../toolbox/ToolBoxCheckbox';
 import { StreamClientScrcpy } from '../client/StreamClientScrcpy';
 import { BasePlayer } from '../../player/BasePlayer';
+import { TextControlMessage } from '../../controlMessage/TextControlMessage';
 
 const BUTTONS = [
     {
@@ -91,8 +92,21 @@ export class GoogToolBox extends ToolBox {
             const element = el.getElement();
             client.setHandleKeyboardEvents(element.checked);
         });
-        elements.push(keyboard);
 
+        if (!/Mobi|Android/i.test(navigator.userAgent)) {
+            elements.push(keyboard);
+        }
+
+        const liveText = new ToolBoxButton('Live Text', SvgImage.Icon.KEYBOARD);
+        liveText.addEventListener('click', () => {
+            const text = prompt("Enter message to send:");
+            if (text !== null && text.trim() !== "") {
+                client.sendMessage(new TextControlMessage(text));
+            }
+        });
+        elements.push(liveText);
+
+        if (!/Mobi|Android/i.test(navigator.userAgent)) {
         if (moreBox) {
             const displayId = player.getVideoSettings().displayId;
             const id = `show_more_${udid}_${playerName}_${displayId}`;
@@ -103,6 +117,7 @@ export class GoogToolBox extends ToolBox {
             });
             elements.unshift(more);
         }
+    }
         return new GoogToolBox(elements);
     }
 }
