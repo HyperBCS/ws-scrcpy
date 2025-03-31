@@ -21,10 +21,6 @@ type DescriptionColumn = { title: string; field: Field };
 
 const DESC_COLUMNS: DescriptionColumn[] = [
     {
-        title: 'Net Interface',
-        field: 'interfaces',
-    },
-    {
         title: 'Server PID',
         field: 'pid',
     },
@@ -208,8 +204,9 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             }
         });
 
-        const streamEntry = StreamClientScrcpy.createEntryForDeviceList(device, blockClass, fullName, this.params);
-        streamEntry && services.appendChild(streamEntry);
+        // remove configure stream button
+        // const streamEntry = StreamClientScrcpy.createEntryForDeviceList(device, blockClass, fullName, this.params);
+        // streamEntry && services.appendChild(streamEntry);
 
         DESC_COLUMNS.forEach((item) => {
             const { title } = item;
@@ -332,9 +329,10 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 services.appendChild(playerTd);
             });
         }
-
+        const proxyInterfaceUrl = DeviceTracker.createUrl(this.params, device.udid).toString();
+        selectedInterfaceUrl = proxyInterfaceUrl;
         tbody.appendChild(row);
-        if (DeviceTracker.CREATE_DIRECT_LINKS && hasPid && selectedInterfaceUrl) {
+        if (DeviceTracker.CREATE_DIRECT_LINKS && hasPid && selectedInterfaceUrl && isActive) {
             this.updateLink({
                 url: selectedInterfaceUrl,
                 name: selectedInterfaceName,

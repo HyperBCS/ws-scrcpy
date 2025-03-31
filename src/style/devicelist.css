@@ -195,6 +195,7 @@ body.list #device_list_menu {
 }
 
 #devices .device-list .device.not-active {
+    pointer-events: none;
     color: var(--text-color-light);
 }
 
