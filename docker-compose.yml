@@ -6,9 +6,8 @@ services:
       - "8000:8000"
     restart: unless-stopped
     privileged: true
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
     volumes:
+      - /dev/bus/usb:/dev/bus/usb
       - ./adbkeys:/root/.android
 
   ws-scrcpy-dev:
@@ -17,9 +16,8 @@ services:
     ports:
       - "8000:8000"
     privileged: true
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
     volumes:
+      - /dev/bus/usb:/dev/bus/usb
       - ./src:/app/src
       - /app/node_modules
       - ./adbkeys:/root/.android

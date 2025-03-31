@@ -169,16 +169,18 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
             adb.stderr.on('data', (data) => {
                 console.error(this.TAG, `stderr: ${data}`);
-                broadcastManager.stopBroadcast(udid)
+                
             });
 
             adb.on('error', (error: Error) => {
                 console.error(this.TAG, `failed to spawn adb process.\n${error.stack}`);
+                broadcastManager.stopBroadcast(udid)
                 reject(error);
             });
 
             adb.on('close', (code) => {
                 console.log(this.TAG, `adb process (${args.join(' ')}) exited with code ${code}`);
+                broadcastManager.stopBroadcast(udid)
                 resolve(output);
             });
         });
