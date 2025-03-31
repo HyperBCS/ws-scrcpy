@@ -120,6 +120,7 @@ export class ScrcpyServer {
 
         const params: WaitForPidParams = { tryCounter: 0, processExited: false, lookPidFile: true };
         const runPromise = device.runShellCommandAdb(RUN_COMMAND);
+        console.log(RUN_COMMAND)
         runPromise
             .then((out) => {
                 if (device.isConnected()) {

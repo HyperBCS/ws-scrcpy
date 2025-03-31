@@ -9,8 +9,6 @@ import { ACTION } from '../../../common/Action';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import { ChannelCode } from '../../../common/ChannelCode';
 
-const OS_WINDOWS = os.platform() === 'win32';
-const USE_BINARY = !OS_WINDOWS;
 const EVENT_TYPE_SHELL = 'shell';
 
 export class RemoteShell extends Mw {
@@ -47,7 +45,7 @@ export class RemoteShell extends Mw {
         env['COLORTERM'] = 'truecolor';
         const { cols = 80, rows = 24 } = params;
         const cwd = env.PWD || '/';
-        const file = OS_WINDOWS ? 'adb.exe' : 'adb';
+        const file = 'adb'
         const term = pty.spawn(file, ['-s', params.udid, 'shell'], {
             name: 'xterm-256color',
             cols,
@@ -56,17 +54,19 @@ export class RemoteShell extends Mw {
             env,
             encoding: null,
         });
-        const send = USE_BINARY ? this.bufferUtf8(5) : this.buffer(5);
+        const send = this.bufferUtf8(5);
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore Documentation is incorrect for `encoding: null`
-        term.on('data', send);
-        term.on('exit', (code: number) => {
-            if (code === 0) {
+        term.onData((data) => {
+            send(Buffer.from(data));
+          });
+          term.onExit(({ exitCode }) => {
+            if (exitCode === 0) {
                 this.closeCode = 1000;
             } else {
                 this.closeCode = 4500;
             }
-            this.closeReason = `[${[RemoteShell.TAG]}] terminal process exited with code: ${code}`;
+            this.closeReason = `[${[RemoteShell.TAG]}] terminal process exited with code: ${exitCode}`;
             if (this.timeoutString || this.timeoutBuffer) {
                 this.terminated = true;
             } else {
