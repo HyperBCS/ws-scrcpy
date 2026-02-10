@@ -54,7 +54,7 @@ export class WebsocketProxy extends Mw {
             // send magic data, keyframe and config
             const keyFrame = broadcast.getLastKeyframe();
             const configFrame = broadcast.getLastConfigFrame();
-            if(keyFrame && configFrame){
+            if(keyFrame && configFrame && this.ws && this.ws.readyState === this.ws.OPEN){
                 this.ws.send(initialInfoPacket)
                 this.ws.send(configFrame)
                 this.ws.send(keyFrame)

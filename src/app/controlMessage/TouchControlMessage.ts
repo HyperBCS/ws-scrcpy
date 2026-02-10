@@ -53,7 +53,7 @@ export class TouchControlMessage extends ControlMessage {
         offset = buffer.writeUInt32BE(this.position.point.y, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.width, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.height, offset);
-        offset = buffer.writeUInt16BE(this.pressure * TouchControlMessage.MAX_PRESSURE_VALUE, offset);
+        offset = buffer.writeUInt16BE(this.pressure > 0 ? 1 : 0, offset);
         offset = buffer.writeUInt32BE(this.buttons, offset);
         buffer.writeUInt32BE(this.buttons, offset);
         return buffer;
