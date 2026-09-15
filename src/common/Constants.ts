@@ -11,6 +11,7 @@ export const VIDEO_BIT_RATE = 'video_bit_rate=3500000';
 export const MAX_FPS = 'max_fps=60';
 export const MAX_SIZE = 'max_size=1280';
 export const AUDIO = 'audio=false';
+export const VIDEO_ENCODER = 'video_encoder=OMX.google.h264.encoder';
 
 // Define the arguments array
 export const ARGUMENTS = [
@@ -21,6 +22,7 @@ export const ARGUMENTS = [
   TUNNEL_FORWARD,
   CONTROL,
   VIDEO_BIT_RATE,
+  VIDEO_ENCODER,
   MAX_FPS,
   MAX_SIZE,
   AUDIO,
