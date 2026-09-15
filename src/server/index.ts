@@ -30,6 +30,13 @@ async function loadGoogModules() {
 
     if (config.runLocalGoogTracker) {
         mw2List.push(DeviceTracker);
+        // Also expose the tracker as a plain-JSON WebSocket
+        // (?action=goog-device-list) on the top-level server, in addition to the
+        // binary multiplexer channel. This lets lightweight external clients read
+        // the device list without implementing the multiplexer (GTRC) protocol.
+        // DeviceTracker.processRequest only claims ACTION.GOOG_DEVICE_LIST, so
+        // this is inert for any other action.
+        mwList.push(DeviceTracker);
     }
 
     if (config.announceLocalGoogTracker) {
@@ -63,15 +70,21 @@ async function loadApplModules() {
     const { ControlCenter } = await import('./appl-device/services/ControlCenter');
     const { DeviceTracker } = await import('./appl-device/mw/DeviceTracker');
     const { WebDriverAgentProxy } = await import('./appl-device/mw/WebDriverAgentProxy');
+    const { AppiumRunner } = await import('./appl-device/services/AppiumRunner');
 
-    // Hack to reduce log-level of appium libs
-    const { default: npmlog } = await import('npmlog');
-    npmlog.level = 'warn';
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (global as any)._global_npmlog = npmlog;
+    // (Removed) the old `npmlog` log-level hack: it muted the in-process appium libs,
+    // which no longer run in-process. Appium now runs as a child process with its own
+    // `--log-level warn` (see AppiumRunner), and npmlog is no longer a dependency.
 
     if (config.runLocalApplTracker) {
         mw2List.push(DeviceTracker);
+        // Also expose the tracker as a plain-JSON WebSocket
+        // (?action=appl-device-list) on the top-level server, in addition to the
+        // binary multiplexer channel. This lets lightweight external clients read
+        // the device list without implementing the multiplexer (GTRC) protocol.
+        // DeviceTracker.processRequest only claims ACTION.APPL_DEVICE_LIST, so
+        // this is inert for any other action.
+        mwList.push(DeviceTracker);
     }
 
     if (config.announceLocalApplTracker) {
@@ -79,6 +92,12 @@ async function loadApplModules() {
     }
 
     servicesToStart.push(ControlCenter);
+
+    // Start one shared Appium server (eager) as a managed child process. It hosts the
+    // per-device WebDriverAgent sessions created by WdaRunner. Registering it here also
+    // wires it into the central exit() cleanup so it (and its xcodebuild subtree) is
+    // killed on shutdown. Startup is non-fatal: video keeps working if Appium is absent.
+    servicesToStart.push(AppiumRunner);
 
     /// #if USE_QVH_SERVER
     const { QVHStreamProxy } = await import('./appl-device/mw/QVHStreamProxy');

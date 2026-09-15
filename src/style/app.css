@@ -21,6 +21,7 @@
     --progress-background-color: hsla(225, 100%, 50%, 0.2);
     --progress-background-error-color: hsla(0, 100%, 50%, 0.2);
     --font-size: 14px;
+    --panel-width: 3.715rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -158,6 +159,9 @@ body.stream {
 
 .video-layer {
     z-index: 1;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
 }
 
 .control-buttons-list {

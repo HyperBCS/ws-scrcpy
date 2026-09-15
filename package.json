@@ -9,6 +9,7 @@
     "dist": "npm run dist:prod",
     "start": "npm run dist && cd dist && npm start",
     "script:dist:start": "node ./index.js",
+    "postinstall": "node scripts/setup-appium.js",
     "lint": "eslint src/ --ext .ts",
     "format": "eslint src/ --fix --ext .ts",
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -16,11 +17,15 @@
   },
   "author": "Sergey Volkov <drauggres@gmail.com>",
   "license": "MIT",
+  "config": {
+    "_comment_xcuitest": "Appium drivers are NOT npm deps; this version is installed into APPIUM_HOME by scripts/setup-appium.js (postinstall). Keep it compatible with the pinned `appium` (peer dep: appium ^3.x).",
+    "xcuitestDriverVersion": "10.14.6"
+  },
   "dependencies": {
     "@dead50f7/adbkit": "^2.11.4",
     "buffer": "^6.0.3",
     "depcheck": "^1.4.7",
-    "express": "^4.21.2",
+    "express": "^4.22.2",
     "ios-device-lib": "^0.9.2",
     "node-mjpeg-proxy": "^0.3.2",
     "node-pty": "^1.0.0",
@@ -60,7 +65,7 @@
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.2",
-    "webpack": "^5.98.0",
+    "webpack": "^5.109.2",
     "webpack-cli": "^6.0.1",
     "webpack-node-externals": "^2.5.2",
     "worker-loader": "^3.0.8",
@@ -69,6 +74,6 @@
     "xterm-addon-fit": "^0.5.0"
   },
   "optionalDependencies": {
-    "appium-xcuitest-driver": "^3.62.0"
+    "appium": "~3.6.0"
   }
 }

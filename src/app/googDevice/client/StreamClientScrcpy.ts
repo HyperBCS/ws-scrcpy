@@ -142,6 +142,12 @@ export class StreamClientScrcpy
         }
 
         const { udid, player: playerName } = this.params;
+        // Allow the stream deep link to start already fit to screen
+        // (?fitToScreen=1), so an embedded/auto-started stream can request it
+        // without going through the Configure screen.
+        if (typeof fitToScreen !== 'boolean') {
+            fitToScreen = this.params.fitToScreen;
+        }
         this.startStream({ udid, player, playerName, fitToScreen, videoSettings });
         this.setBodyClass('stream');
     }
@@ -158,6 +164,8 @@ export class StreamClientScrcpy
             player: Util.parseString(params, 'player', true),
             udid: Util.parseString(params, 'udid', true),
             ws: Util.parseString(params, 'ws', true),
+            captureKeyboard: Util.parseBoolean(params, 'captureKeyboard', false),
+            fitToScreen: params.has('fitToScreen') ? Util.parseBoolean(params, 'fitToScreen') : undefined,
         };
     }
 
@@ -259,6 +267,11 @@ export class StreamClientScrcpy
         this.filePushHandler = undefined;
         this.touchHandler?.release();
         this.touchHandler = undefined;
+        window.removeEventListener('resize', this.onWindowResize);
+        if (this.resizeTimeoutId !== undefined) {
+            clearTimeout(this.resizeTimeoutId);
+            this.resizeTimeoutId = undefined;
+        }
     };
 
     public startStream({ udid, player, playerName, videoSettings, fitToScreen }: StartParams): void {
@@ -315,7 +328,9 @@ export class StreamClientScrcpy
         const googMoreBox = (this.moreBox = new GoogMoreBox(udid, player, this));
         const moreBox = googMoreBox.getHolderElement();
         googMoreBox.setOnStop(stop);
-        const googToolBox = GoogToolBox.createToolBox(udid, player, this, moreBox);
+        const googToolBox = GoogToolBox.createToolBox(udid, player, this, moreBox, {
+            captureKeyboard: this.params.captureKeyboard,
+        });
         this.controlButtons = googToolBox.getHolderElement();
         
         const video = document.createElement('div');
@@ -346,7 +361,40 @@ export class StreamClientScrcpy
         streamReceiver.on('displayInfo', this.onDisplayInfo);
         streamReceiver.on('disconnected', this.onDisconnected);
         console.log(TAG, player.getName(), udid);
+
+        // When the player is in fit-to-screen mode, re-encode the stream at the
+        // new container size on window resize (debounced) so it stays crisp
+        // instead of being CSS-scaled. Inert when the user picked a fixed
+        // resolution.
+        window.addEventListener('resize', this.onWindowResize);
     }
+
+    private resizeTimeoutId?: ReturnType<typeof setTimeout>;
+
+    private onWindowResize = (): void => {
+        if (this.resizeTimeoutId !== undefined) {
+            clearTimeout(this.resizeTimeoutId);
+        }
+        this.resizeTimeoutId = setTimeout(this.applyFitToScreenBounds, 300);
+    };
+
+    private applyFitToScreenBounds = (): void => {
+        this.resizeTimeoutId = undefined;
+        if (!this.player || !this.player.getFitToScreenStatus()) {
+            return;
+        }
+        const newBounds = this.getMaxSize();
+        if (!newBounds) {
+            return;
+        }
+        const current = this.player.getVideoSettings();
+        if (current.bounds && current.bounds.equals(newBounds)) {
+            return;
+        }
+        const updated = StreamClientScrcpy.createVideoSettingsWithBounds(current, newBounds);
+        this.player.setVideoSettings(updated, true, false);
+        this.sendNewVideoSetting(updated);
+    };
 
     public sendMessage(message: ControlMessage): void {
         this.streamReceiver.sendEvent(message);

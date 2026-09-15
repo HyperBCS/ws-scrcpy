@@ -42,6 +42,12 @@ const BUTTONS = [
     },
 ];
 
+export interface GoogToolBoxOptions {
+    // Start with keyboard capture enabled instead of requiring the user to tick
+    // the "Capture keyboard" checkbox first.
+    captureKeyboard?: boolean;
+}
+
 export class GoogToolBox extends ToolBox {
     protected constructor(list: ToolBoxElement<any>[]) {
         super(list);
@@ -52,6 +58,7 @@ export class GoogToolBox extends ToolBox {
         player: BasePlayer,
         client: StreamClientScrcpy,
         moreBox?: HTMLElement,
+        options: GoogToolBoxOptions = {},
     ): GoogToolBox {
         const playerName = player.getName();
         const list = BUTTONS.slice();
@@ -92,6 +99,10 @@ export class GoogToolBox extends ToolBox {
             const element = el.getElement();
             client.setHandleKeyboardEvents(element.checked);
         });
+        if (options.captureKeyboard) {
+            keyboard.getElement().checked = true;
+            client.setHandleKeyboardEvents(true);
+        }
 
         if (!/Mobi|Android/i.test(navigator.userAgent)) {
             elements.push(keyboard);
