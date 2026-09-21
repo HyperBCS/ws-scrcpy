@@ -1,2 +1,6 @@
 dist
 node_modules
+.git
+# The host venv's shebangs are absolute (/home/brandon/ws-scrcpy/python/venv/bin/python3)
+# and break at /app. The image builds its own with `npm run setup:ios`.
+python/venv

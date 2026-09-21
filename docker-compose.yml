@@ -1,23 +1,44 @@
+# Both platforms from one container. The host keeps ownership of the USB devices:
+# usbmuxd claims the Apple ones, the adb server claims the Android ones, and
+# ws-scrcpy talks to both over their sockets. Nothing here is privileged.
+#
+# Host networking is deliberate, not laziness:
+#   * adbkit defaults to 127.0.0.1:5037 (src/server/goog-device/adb/index.ts), and
+#     AdbUtils.ts:180 spawns `adb ... forward --remove` with no -H flag, so it too
+#     goes to 127.0.0.1:5037. Under bridge networking that spawned client would fork
+#     its own server inside the container, blind to USB, while adbkit used the host's.
+#   * CoreDeviceRunner binds each device's serve-web to loopback (it has no auth);
+#     sharing the host netns is what lets the server reach it.
+#   * The HTTP server binds 8000 (and 8443 when configured) directly on the host.
+#
+# Verified on hardware 2026-09-21: the iOS path (tunnel, screenshot, serve-web, HEVC
+# stream, clean teardown) works with only the usbmuxd socket mounted.
 services:
   ws-scrcpy:
     image: ws-scrcpy:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: ws-scrcpy
-    ports:
-      - "8000:8000"
     restart: unless-stopped
-    privileged: true
+    network_mode: host
     volumes:
-      - /dev/bus/usb:/dev/bus/usb
-      - ./adbkeys:/root/.android
+      # iOS: the host's usbmuxd. It also serves the pairing records over this
+      # socket, so /var/lib/lockdown does NOT need mounting.
+      - /run/usbmuxd:/var/run/usbmuxd
+      # Android: nothing to mount. The host adb server holds the adb identity and
+      # has already authorised the device; the container only speaks to it on 5037.
 
   ws-scrcpy-dev:
     image: ws-scrcpy-dev:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     container_name: ws-scrcpy-dev
-    ports:
-      - "8000:8000"
-    privileged: true
+    network_mode: host
     volumes:
-      - /dev/bus/usb:/dev/bus/usb
+      - /run/usbmuxd:/var/run/usbmuxd
+      # Live sources; node_modules and the venv stay baked in the image.
       - ./src:/app/src
       - /app/node_modules
-      - ./adbkeys:/root/.android
+      - /app/python/venv
