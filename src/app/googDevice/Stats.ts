@@ -36,7 +36,11 @@ export class Stats {
 
     public readonly mtime: Date;
 
-    constructor(public readonly mode: number, public readonly size: number, mtime: number) {
+    constructor(
+        public readonly mode: number,
+        public readonly size: number,
+        mtime: number,
+    ) {
         this.mtime = new Date(mtime * 1000);
     }
 

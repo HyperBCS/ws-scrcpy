@@ -1,108 +1,1070 @@
-body.file-listing {
-    display: block;
-    position: absolute;
-    width: 100%;
-    height: 100%;
+/* Device file explorer. Compact by default on a mouse, and every control grows to a 44px touch
+   target on coarse pointers -- the phone browser is the primary client, so the layout follows the
+   input device rather than the viewport width. */
+
+body.file-listing-page {
     overflow: auto;
+    position: absolute;
 }
 
-.file-listing h1 {
-    border-bottom: 1px solid var(--button-border-color);
-    margin-bottom: 10px;
-    padding-bottom: 10px;
-    white-space: nowrap;
-}
-
-.file-listing tr:hover {
-    background-color: var(--controls-bg-color);
-}
-
-.file-listing .quick-link-box {
-    display: inline-block;
-    margin-bottom: 10px;
-    padding-bottom: 10px;
-}
-
-.file-listing .quick-link-box.hidden {
-    display: none;
-}
-
-.file-listing a.icon {
-    -webkit-padding-start: 1.5em;
-    -moz-padding-start: 1.5em;
-    text-decoration: none;
-    user-select: auto;
-}
-
-.file-listing a.icon:hover {
-    text-decoration: underline;
-}
-
-.file-listing a.link {
-    background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAAsTAAALEwEAmpwYAAACAElEQVQ4y4WSzUsVYRjFf897RwUz+wK7LiSIyKCoyEUXDFzcqYhq0R+R4J/gMqilf0VC7VwUuBUxobJumyLTvjDIG0TcO96J7sw8T4t3Rp0kfDYH3o/DOc85Qj4LCwvGPpOmKfPz88zMzEhxFux+cGV8HARE/H2BqopzjpWVV4RhSPNH02YfzkqJwMwwDDHxKIKZR+ccAEmSMDExQZZldLY6Njc3J64gUNVtEswTFsTFdDodFhcXCYKAqakp9ijAjOK5AJbbKJSEYZ3N75t0u10+rK2VCVSVX+0elpfe8mxpHTCvCgM1btw8S71+hupwFYD3q6sAlCw4gXp4jno4ShA4nJNclf43mW0FWZbhHLTbHVZefgUxkiQlTf+QqZKmqd9NvuAsy/ZaqFSMx4+W2fjW5HccY5bgKg7BSNNunpLfjarutfCm8ZEXz9+xFbVRSxg8dIDr1y7m3Sii9lgQBLtb1ni9TqUiiBh9vT1MT9/hePUw/f29iI/KJ4N4S//GqKpUnJd4dzJkaGgQy5Rbt8fY2Pi50wnZ6ce2hVarxfkLJzDg6JEBxi6dBDNEfD9GRo5hlqswo9VqlQmiKKJWO83l2ilU1W9ZduIy9R+LwkVRVLYQxzFOYHLyKp8/NWk0vjA6OszAwT7MBFXfiaKjcRyXCaIo4v6De6WSPHnKvvMXLQgqHcJs3fIAAAAASUVORK5CYII=") left top no-repeat;
-}
-.file-listing a.file {
-    background : url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAABnRSTlMAAAAAAABupgeRAAABHUlEQVR42o2RMW7DIBiF3498iHRJD5JKHurL+CRVBp+i2T16tTynF2gO0KSb5ZrBBl4HHDBuK/WXACH4eO9/CAAAbdvijzLGNE1TVZXfZuHg6XCAQESAZXbOKaXO57eiKG6ft9PrKQIkCQqFoIiQFBGlFIB5nvM8t9aOX2Nd18oDzjnPgCDpn/BH4zh2XZdlWVmWiUK4IgCBoFMUz9eP6zRN75cLgEQhcmTQIbl72O0f9865qLAAsURAAgKBJKEtgLXWvyjLuFsThCSstb8rBCaAQhDYWgIZ7myM+TUBjDHrHlZcbMYYk34cN0YSLcgS+wL0fe9TXDMbY33fR2AYBvyQ8L0Gk8MwREBrTfKe4TpTzwhArXWi8HI84h/1DfwI5mhxJamFAAAAAElFTkSuQmCC ") left top no-repeat;
-}
-
-.file-listing a.dir {
-    background : url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAd5JREFUeNqMU79rFUEQ/vbuodFEEkzAImBpkUabFP4ldpaJhZXYm/RiZWsv/hkWFglBUyTIgyAIIfgIRjHv3r39MePM7N3LcbxAFvZ2b2bn22/mm3XMjF+HL3YW7q28YSIw8mBKoBihhhgCsoORot9d3/ywg3YowMXwNde/PzGnk2vn6PitrT+/PGeNaecg4+qNY3D43vy16A5wDDd4Aqg/ngmrjl/GoN0U5V1QquHQG3q+TPDVhVwyBffcmQGJmSVfyZk7R3SngI4JKfwDJ2+05zIg8gbiereTZRHhJ5KCMOwDFLjhoBTn2g0ghagfKeIYJDPFyibJVBtTREwq60SpYvh5++PpwatHsxSm9QRLSQpEVSd7/TYJUb49TX7gztpjjEffnoVw66+Ytovs14Yp7HaKmUXeX9rKUoMoLNW3srqI5fWn8JejrVkK0QcrkFLOgS39yoKUQe292WJ1guUHG8K2o8K00oO1BTvXoW4yasclUTgZYJY9aFNfAThX5CZRmczAV52oAPoupHhWRIUUAOoyUIlYVaAa/VbLbyiZUiyFbjQFNwiZQSGl4IDy9sO5Wrty0QLKhdZPxmgGcDo8ejn+c/6eiK9poz15Kw7Dr/vN/z6W7q++091/AQYA5mZ8GYJ9K0AAAAAASUVORK5CYII= ") left top no-repeat;
-}
-
-.file-listing a.up {
-    background : url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAmlJREFUeNpsU0toU0EUPfPysx/tTxuDH9SCWhUDooIbd7oRUUTMouqi2iIoCO6lceHWhegy4EJFinWjrlQUpVm0IIoFpVDEIthm0dpikpf3ZuZ6Z94nrXhhMjM3c8895977BBHB2PznK8WPtDgyWH5q77cPH8PpdXuhpQT4ifR9u5sfJb1bmw6VivahATDrxcRZ2njfoaMv+2j7mLDn93MPiNRMvGbL18L9IpF8h9/TN+EYkMffSiOXJ5+hkD+PdqcLpICWHOHc2CC+LEyA/K+cKQMnlQHJX8wqYG3MAJy88Wa4OLDvEqAEOpJd0LxHIMdHBziowSwVlF8D6QaicK01krw/JynwcKoEwZczewroTvZirlKJs5CqQ5CG8pb57FnJUA0LYCXMX5fibd+p8LWDDemcPZbzQyjvH+Ki1TlIciElA7ghwLKV4kRZstt2sANWRjYTAGzuP2hXZFpJ/GsxgGJ0ox1aoFWsDXyyxqCs26+ydmagFN/rRjymJ1898bzGzmQE0HCZpmk5A0RFIv8Pn0WYPsiu6t/Rsj6PauVTwffTSzGAGZhUG2F06hEc9ibS7OPMNp6ErYFlKavo7MkhmTqCxZ/jwzGA9Hx82H2BZSw1NTN9Gx8ycHkajU/7M+jInsDC7DiaEmo1bNl1AMr9ASFgqVu9MCTIzoGUimXVAnnaN0PdBBDCCYbEtMk6wkpQwIG0sn0PQIUF4GsTwLSIFKNqF6DVrQq+IWVrQDxAYQC/1SsYOI4pOxKZrfifiUSbDUisif7XlpGIPufXd/uvdvZm760M0no1FZcnrzUdjw7au3vu/BVgAFLXeuTxhTXVAAAAAElFTkSuQmCC ") left top no-repeat;
-}
-
-.file-listing a.push {
+.file-explorer {
+    --fx-gap: 6px;
+    --fx-control: 30px;
+    --fx-row: 30px;
+    --fx-radius: 7px;
+    --fx-accent: var(--accent-solid, #2868e8);
+    --fx-selected: color-mix(in srgb, var(--fx-accent) 16%, transparent);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    box-sizing: border-box;
+    font-size: 12.5px;
+    line-height: 1.35;
     color: var(--text-color);
 }
 
-.file-listing .listing {
-    margin: 8px;
+@media (hover: none) and (pointer: coarse) {
+    .file-explorer {
+        --fx-control: 44px;
+        --fx-row: 44px;
+        --fx-gap: 5px;
+        font-size: 13.5px;
+    }
 }
 
-.file-listing .foreground {
+/* The crumbs and the path field swap with the `hidden` attribute, which the `display: flex`
+   rules below would otherwise override -- the editor then appeared next to the crumbs instead
+   of in their place. */
+.file-explorer [hidden] {
+    display: none !important;
+}
+
+.fx-sr-only {
     position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    display: flex;
-    z-index: 1000;
-    background-color: var(--controls-bg-color);
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
 }
 
-.file-listing .foreground-message {
-    flex: auto;
-    font-size: 30px;
-    color: #999;
+/* ------------------------------------------------------------------ chrome */
+
+/* One wrapping flex row. A desktop gets history + address on the first line and the command
+   bar on the second; a phone reorders the same children (see the narrow layout) so the address
+   bar owns a whole line and the commands collapse into the Actions menu. */
+.fx-chrome {
+    flex: 0 0 auto;
     display: flex;
-    justify-content: center;
+    flex-wrap: wrap;
     align-items: center;
-    margin: 20px;
+    gap: var(--fx-gap);
+    padding: var(--fx-gap);
+    border-bottom: 1px solid var(--device-border-color);
+    background: var(--header-bg-color);
+}
+
+.fx-history {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 2px;
+}
+
+.fx-mobile-tools {
+    display: none;
+    flex: 0 0 auto;
+    gap: 2px;
+}
+
+.fx-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    min-height: var(--fx-control);
+    padding: 0 9px;
+    border: 1px solid var(--button-border-color);
+    border-radius: var(--fx-radius);
+    background: var(--main-bg-color);
+    color: var(--text-color);
+    font: inherit;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.fx-icon-button {
+    width: var(--fx-control);
+    min-width: var(--fx-control);
+    padding: 0;
+}
+
+.fx-button.fx-primary {
+    background: var(--fx-accent);
+    border-color: var(--fx-accent);
+    color: #fff;
+}
+
+.fx-button.fx-danger {
+    color: var(--status-unauthorized-color);
+}
+
+.fx-button.fx-danger-solid {
+    background: var(--status-unauthorized-color);
+    border-color: var(--status-unauthorized-color);
+    color: #fff;
+}
+
+.fx-button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.fx-select-toggle[aria-pressed='true'] {
+    border-color: var(--fx-accent);
+    background: var(--fx-selected);
+}
+
+/* Address bar -------------------------------------------------------- */
+
+.fx-address {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    min-width: 0;
+    box-sizing: border-box;
+    min-height: var(--fx-control);
+    padding-left: 4px;
+    border: 1px solid var(--button-border-color);
+    border-radius: var(--fx-radius);
+    background: var(--main-bg-color);
+}
+
+.fx-breadcrumb {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 1px;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    white-space: nowrap;
+}
+
+.fx-breadcrumb::-webkit-scrollbar {
+    display: none;
+}
+
+.fx-breadcrumb {
+    mask-image: linear-gradient(to right, transparent 0, #000 16px);
+}
+
+.fx-crumb {
+    flex: 0 0 auto;
+    min-height: calc(var(--fx-control) - 6px);
+    padding: 0 6px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-color);
+    font: inherit;
+    font-family: var(--font-stack-mono);
+    cursor: pointer;
+}
+
+.fx-crumb[aria-current='page'] {
+    font-weight: 700;
+    color: var(--button-text-color);
+}
+
+.fx-crumb-part {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+}
+
+.fx-crumb-separator {
+    flex: 0 0 auto;
+    padding: 0 1px;
+    color: var(--text-color-light);
+    /* Same face as the folder names, so every slash in the bar is the same glyph. */
+    font-family: var(--font-stack-mono);
+}
+
+.fx-crumb-root {
+    padding: 0 5px;
+}
+
+.fx-address[data-command] {
+    cursor: text;
+}
+
+/* Rows from the previous folder linger, dimmed and inert, while the next one loads. */
+.file-explorer.fx-loading tbody {
+    opacity: 0.45;
     pointer-events: none;
+    transition: opacity 120ms;
 }
 
-.file-listing .foreground-message.drop-target-message {
-    border: 4px dashed #ddd;
+.fx-address-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: calc(var(--fx-control) - 4px);
+    padding: 0 4px;
+    border: 0;
+    background: transparent;
+    color: var(--text-color);
+    font: inherit;
+    font-family: var(--font-stack-mono);
+    /* 16px stops iOS Safari zooming the page when the field takes focus. */
+    font-size: 16px;
+    outline: none;
 }
 
-.file-listing .entry-name {
+.fx-address-toggle {
+    border: 0;
+    background: transparent;
+}
+
+/* Command bar -------------------------------------------------------- */
+
+.fx-commands {
+    display: flex;
+    flex: 1 1 100%;
+    align-items: center;
+    gap: var(--fx-gap);
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+}
+
+.fx-commands::-webkit-scrollbar {
+    display: none;
+}
+
+.fx-bar-spacer {
+    flex: 1 1 auto;
+}
+
+.fx-filter {
+    display: flex;
+    flex: 0 1 180px;
+    align-items: center;
+    min-width: 90px;
+    box-sizing: border-box;
+    border: 1px solid var(--button-border-color);
+    border-radius: var(--fx-radius);
+    background: var(--main-bg-color);
+}
+
+.fx-filter-input {
+    width: 100%;
+    min-width: 0;
+    height: var(--fx-control);
+    padding: 0 8px;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    color: var(--text-color);
+    font: inherit;
+    font-size: 16px;
+    outline: none;
+}
+
+.fx-filter:focus-within {
+    border-color: var(--fx-accent);
+}
+
+/* ------------------------------------------------------------------ body */
+
+.fx-body {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+}
+
+.fx-places {
+    display: none;
+    flex: 0 0 auto;
+    gap: 3px;
+    padding: var(--fx-gap);
+    border-bottom: 1px solid var(--device-border-color);
+}
+
+.fx-place {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 5px;
+    min-height: var(--fx-control);
+    padding: 0 9px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: var(--main-bg-color);
+    color: var(--text-color);
+    font: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.fx-place[aria-current='page'] {
+    border-color: var(--fx-accent);
+    background: var(--fx-selected);
+    font-weight: 650;
+}
+
+.fx-place .fx-icon {
+    width: 15px;
+    height: 15px;
+    color: var(--button-text-color);
+}
+
+.fx-main {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+}
+
+.fx-transfers {
+    flex: 0 0 auto;
+    max-height: 22%;
+    overflow-y: auto;
+    padding: 4px var(--fx-gap);
+    border-bottom: 1px solid var(--device-border-color);
+}
+
+.file-listing-upload-progress {
+    padding: 3px 0;
+    color: var(--text-color-light);
+    overflow-wrap: anywhere;
+}
+
+.fx-items {
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.fx-items:focus-visible {
+    outline-offset: -3px;
+}
+
+/* ------------------------------------------------------------------ table */
+
+.fx-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.fx-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 0;
+    text-align: left;
+    font-weight: 600;
+    background: var(--header-bg-color);
+    border-bottom: 1px solid var(--device-border-color);
+}
+
+.fx-sort {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    min-height: 26px;
+    padding: 0 8px;
+    border: 0;
+    background: transparent;
+    color: var(--text-color-light);
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+}
+
+/* The arrow lives in an aria-hidden span: generated content on the button itself would become
+   part of its accessible name ("Name▲"), which breaks both screen readers and the fixtures. */
+.fx-sort-arrow {
+    font-size: 8px;
+}
+
+.fx-table th[aria-sort='ascending'] .fx-sort-arrow::after {
+    content: '▲';
+}
+
+.fx-table th[aria-sort='descending'] .fx-sort-arrow::after {
+    content: '▼';
+}
+
+.fx-table th[aria-sort='ascending'] .fx-sort,
+.fx-table th[aria-sort='descending'] .fx-sort {
+    color: var(--text-color);
+}
+
+.fx-col-size,
+.fx-col-time {
+    width: 12%;
+}
+
+.fx-col-type {
+    width: 14%;
+}
+
+.fx-cell-select,
+.fx-cell-menu {
+    width: var(--fx-control);
+}
+
+.fx-table td {
+    padding: 0 8px;
+    vertical-align: middle;
+    border-bottom: 1px solid color-mix(in srgb, var(--device-border-color) 55%, transparent);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fx-row.selected {
+    background: var(--fx-selected);
+}
+
+.fx-row.fx-cut {
+    opacity: 0.55;
+}
+
+.entry-name {
+    position: relative;
+    padding: 0 !important;
+}
+
+.file-explorer .entry-name a {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: var(--fx-row);
+    padding: 0 8px;
+    color: var(--text-color);
+    text-decoration: none;
+    overflow: hidden;
+}
+
+.file-explorer .entry-name .fx-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-explorer .fx-icon {
+    flex: 0 0 auto;
+    width: 17px;
+    height: 17px;
+    color: var(--text-color-light);
+}
+
+.file-explorer .fx-icon-folder {
+    color: var(--status-starting-color);
+}
+
+.file-explorer .fx-icon-apk {
+    color: var(--status-ready-color);
+}
+
+.file-explorer .fx-icon-image,
+.file-explorer .fx-icon-video {
+    color: var(--status-streaming-color);
+}
+
+.entry-size,
+.entry-type,
+.entry-time {
+    color: var(--text-color-light);
+    font-variant-numeric: tabular-nums;
+}
+
+.fx-check {
+    width: 15px;
+    height: 15px;
+    margin: 0 auto;
+    display: block;
+    accent-color: var(--fx-accent);
+}
+
+/* The checkbox column only takes space once selecting is under way -- Explorer reveals it the
+   same way, and on a phone it would otherwise eat a quarter of the name column. */
+.fx-cell-select {
+    padding: 0 !important;
+}
+
+.file-explorer:not(.fx-selecting) .fx-table .fx-cell-select {
+    width: 0;
+    overflow: hidden;
+}
+
+.file-explorer:not(.fx-selecting) .fx-cell-select > * {
+    display: none;
+}
+
+.fx-row-menu {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    min-height: var(--fx-row);
+    border: 0;
+    border-radius: var(--fx-radius);
+    background: transparent;
+    color: var(--text-color-light);
+    cursor: pointer;
+}
+
+.fx-cell-menu {
+    padding: 0 !important;
+    text-align: center;
+}
+
+.fx-empty {
+    padding: 18px 10px !important;
+    color: var(--text-color-light);
+    text-align: center;
+    white-space: normal !important;
+}
+
+.file-listing-progress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    max-width: 100%;
+    background: var(--fx-accent);
+}
+
+/* ------------------------------------------------------------------ list and tile views */
+
+.file-explorer[data-view='list'] .fx-table,
+.file-explorer[data-view='tiles'] .fx-table {
+    display: block;
+}
+
+.file-explorer[data-view='list'] thead,
+.file-explorer[data-view='tiles'] thead {
+    display: none;
+}
+
+.file-explorer[data-view='list'] tbody,
+.file-explorer[data-view='tiles'] tbody {
+    display: grid;
+    gap: 2px;
+    padding: var(--fx-gap);
+}
+
+.file-explorer[data-view='list'] tbody {
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.file-explorer[data-view='tiles'] tbody {
+    grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+    gap: 5px;
+}
+
+.file-explorer[data-view='list'] tr,
+.file-explorer[data-view='tiles'] tr {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    border: 1px solid transparent;
+    border-radius: var(--fx-radius);
+}
+
+.file-explorer[data-view='list'] td,
+.file-explorer[data-view='tiles'] td {
+    border: 0;
+}
+
+.file-explorer[data-view='list'] .entry-size,
+.file-explorer[data-view='list'] .entry-type,
+.file-explorer[data-view='list'] .entry-time,
+.file-explorer[data-view='tiles'] .entry-type,
+.file-explorer[data-view='tiles'] .entry-time {
+    display: none;
+}
+
+.file-explorer[data-view='list'] .entry-name,
+.file-explorer[data-view='tiles'] .entry-name {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.file-explorer[data-view='tiles'] tr {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 5px 2px;
+    text-align: center;
+}
+
+.file-explorer[data-view='tiles'] .entry-name a {
+    flex-direction: column;
+    gap: 3px;
+    padding: 2px 4px;
+}
+
+.file-explorer[data-view='tiles'] .fx-icon {
+    width: 30px;
+    height: 30px;
+}
+
+.file-explorer[data-view='tiles'] .entry-name .fx-name {
+    white-space: normal;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    /* Two lines with an ellipsis, so a long name is visibly truncated rather than cut. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.file-explorer[data-view='tiles'] tr {
     position: relative;
 }
 
-.file-listing .background-progress {
+/* The checkbox belongs in the tile's corner; in the column layout it would otherwise sit on its
+   own line above the icon. */
+.file-explorer[data-view='tiles'] .fx-cell-select {
     position: absolute;
-    left: 0;
-    top: 0;
-    background-color: var(--progress-background-color);
-    height: 100%;
-    width: 100%;
-    margin: 0;
-    padding: 0;
-    border-spacing: 0;
+    top: 3px;
+    left: 3px;
+    z-index: 1;
 }
 
-.file-listing .background-progress.error {
-    background-color: var(--progress-background-error-color);
+.file-explorer[data-view='tiles'] .entry-size {
+    display: block;
+    text-align: center;
+    font-size: 0.85em;
+}
+
+.file-explorer[data-view='tiles'] .fx-row[data-kind='folder'] .entry-size {
+    display: none;
+}
+
+.file-explorer[data-view='tiles'] .fx-cell-menu,
+.file-explorer[data-view='list'] .fx-cell-menu {
+    display: none;
+}
+
+.file-explorer[data-view='list'] .fx-empty-row,
+.file-explorer[data-view='tiles'] .fx-empty-row {
+    grid-column: 1 / -1;
+}
+
+.file-explorer[data-view='list'] .fx-row.selected,
+.file-explorer[data-view='tiles'] .fx-row.selected {
+    border-color: var(--fx-accent);
+}
+
+/* ------------------------------------------------------------------ menu */
+
+.fx-menu {
+    position: absolute;
+    z-index: 20;
+    min-width: 156px;
+    max-width: min(240px, 90%);
+    padding: 4px;
+    border: 1px solid var(--button-border-color);
+    border-radius: 9px;
+    background: var(--main-bg-color);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.fx-menu[hidden] {
+    display: none;
+}
+
+.fx-menu button {
+    display: block;
+    width: 100%;
+    min-height: var(--fx-control);
+    padding: 0 8px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-color);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.fx-menu button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.fx-menu button.fx-menu-danger {
+    color: var(--status-unauthorized-color);
+}
+
+/* The check is a masked shape, not a '✓' character: generated text joins the item's accessible
+   name ("✓ Select items"), which breaks screen readers and role queries alike. */
+.fx-menu [role='menuitemradio']::before,
+.fx-menu [role='menuitemcheckbox']::before {
+    content: '';
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    margin-right: 0.35em;
+    vertical-align: -0.15em;
+}
+
+.fx-menu [role='menuitemradio'][aria-checked='true']::before,
+.fx-menu [role='menuitemcheckbox'][aria-checked='true']::before {
+    background-color: var(--button-text-color);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+}
+
+.fx-menu-separator {
+    height: 1px;
+    margin: 4px 2px;
+    background: var(--device-border-color);
+}
+
+.fx-menu-title {
+    padding: 4px 8px 2px;
+    color: var(--text-color-light);
+    font-size: 0.9em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* ------------------------------------------------------------------ status bar */
+
+.fx-statusbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 3px var(--fx-gap);
+    border-top: 1px solid var(--device-border-color);
+    background: var(--header-bg-color);
+    color: var(--text-color-light);
+    font-size: 0.92em;
+}
+
+.fx-counts {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.fx-status {
+    min-width: 0;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-explorer .error {
+    color: var(--status-unauthorized-color);
+}
+
+/* ------------------------------------------------------------------ dialogs */
+
+.fx-dialog {
+    width: min(360px, calc(100vw - 32px));
+    padding: 0;
+    border: 1px solid var(--button-border-color);
+    border-radius: 12px;
+    background: var(--main-bg-color);
+    color: var(--text-color);
+}
+
+.fx-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.fx-dialog-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    font: inherit;
+    font-size: 13px;
+}
+
+.fx-dialog h2 {
+    margin: 0;
+    font-size: 15px;
+}
+
+.fx-dialog-message {
+    margin: 0;
+    line-height: 1.45;
+    color: var(--text-color-light);
+    overflow-wrap: anywhere;
+}
+
+.fx-dialog-field {
+    display: grid;
+    gap: 5px;
+}
+
+.fx-dialog-field span {
+    color: var(--text-color-light);
+}
+
+.fx-dialog-field input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 44px;
+    padding: 0 9px;
+    border: 1px solid var(--button-border-color);
+    border-radius: var(--fx-radius);
+    background: var(--main-bg-color);
+    color: var(--text-color);
+    font: inherit;
+    font-size: 16px;
+}
+
+.fx-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.fx-dialog-actions .fx-button {
+    min-height: 44px;
+    padding: 0 14px;
+}
+
+.fx-properties {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 5px 12px;
+    margin: 0;
+    max-height: 50vh;
+    overflow-y: auto;
+}
+
+.fx-properties dt {
+    color: var(--text-color-light);
+}
+
+.fx-properties dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-family: var(--font-stack-mono);
+}
+
+/* ------------------------------------------------------------------ drop target */
+
+.file-listing-drop::after {
+    content: 'Drop files to upload to this folder';
+    position: absolute;
+    inset: 6px;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    text-align: center;
+    border: 2px dashed var(--fx-accent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--main-bg-color) 92%, transparent);
+    color: var(--text-color);
+    font-size: 15px;
+    font-weight: 600;
+    z-index: 30;
+    pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ wide layout */
+
+@media (min-width: 900px) {
+    .fx-body {
+        flex-direction: row;
+    }
+    .fx-places {
+        display: flex;
+        flex: 0 0 168px;
+        flex-direction: column;
+        overflow-y: auto;
+        border-right: 1px solid var(--device-border-color);
+        border-bottom: 0;
+    }
+    .fx-place {
+        justify-content: flex-start;
+        border-radius: var(--fx-radius);
+    }
+    .fx-places-toggle {
+        display: none;
+    }
+}
+
+/* A short landscape phone has width to spare and no height: put the whole chrome on one row.
+   The address bar keeps a floor wide enough for its own controls; the command bar takes what is
+   left and scrolls. */
+@media (min-width: 700px) and (max-height: 560px) {
+    .fx-chrome {
+        flex-wrap: nowrap;
+    }
+    .fx-address {
+        flex: 1 1 auto;
+        min-width: 140px;
+        max-width: 42%;
+    }
+    .fx-commands {
+        flex: 1 1 0;
+    }
+    .fx-bar-spacer {
+        display: none;
+    }
+    .fx-filter {
+        flex: 0 1 120px;
+    }
+}
+
+/* ------------------------------------------------------------------ narrow layout */
+
+@media (max-width: 700px) {
+    /* Line 1: the address bar alone. Line 2: history on the left, filter/actions on the right.
+       Line 3 exists only while filtering. Every toolbar command lives in the Actions menu. */
+    .fx-address {
+        order: 1;
+        flex: 1 1 100%;
+    }
+    .fx-history {
+        order: 2;
+    }
+    .fx-history .fx-refresh {
+        display: none;
+    }
+    @media (max-width: 360px) {
+        .fx-history .fx-home {
+            display: none;
+        }
+    }
+    .fx-mobile-tools {
+        display: flex;
+        order: 3;
+        margin-left: auto;
+    }
+    .fx-commands {
+        display: none;
+        order: 4;
+    }
+    .file-explorer.fx-filtering .fx-commands {
+        display: flex;
+    }
+    .fx-commands > :not(.fx-filter) {
+        display: none;
+    }
+    .fx-filter {
+        flex: 1 1 100%;
+    }
+    /* Rows: the whole row is the tap target, so the name and its caption pack tightly. */
+    .file-explorer[data-view='details'] .fx-row {
+        min-height: var(--fx-row);
+    }
+    .file-explorer[data-view='details'] .entry-name a {
+        min-height: 0;
+        padding: 6px 8px 0;
+        line-height: 1.25;
+    }
+    .fx-cell-menu .fx-row-menu {
+        min-height: 40px;
+    }
+    .file-explorer[data-view='details'] .fx-table {
+        display: block;
+    }
+    .file-explorer[data-view='details'] thead {
+        display: none;
+    }
+    .file-explorer[data-view='details'] tbody {
+        display: block;
+    }
+    .file-explorer[data-view='details'] .fx-row {
+        display: grid;
+        grid-template-columns: auto auto minmax(0, 1fr) auto;
+        grid-template-areas:
+            'select name name menu'
+            'select size time menu';
+        align-items: center;
+        border-bottom: 1px solid color-mix(in srgb, var(--device-border-color) 55%, transparent);
+    }
+    .file-explorer[data-view='details'] .fx-row > td {
+        border: 0;
+    }
+    .file-explorer[data-view='details'] .fx-cell-select {
+        grid-area: select;
+    }
+    .file-explorer[data-view='details'] .entry-name {
+        grid-area: name;
+    }
+    /* The second line reads as one caption under the name, indented past the icon. */
+    .file-explorer[data-view='details'] .entry-size {
+        grid-area: size;
+        padding-left: 32px;
+    }
+    .file-explorer[data-view='details'] .fx-row[data-kind='folder'] .entry-size {
+        display: none;
+    }
+    .file-explorer[data-view='details'] .entry-time {
+        grid-area: time;
+        padding-left: 8px;
+    }
+    .file-explorer[data-view='details'] .fx-row[data-kind='folder'] .entry-time {
+        padding-left: 32px;
+    }
+    .file-explorer[data-view='details'] .fx-cell-menu {
+        grid-area: menu;
+    }
+    .file-explorer[data-view='details'] .entry-type {
+        display: none;
+    }
+    .file-explorer[data-view='details'] .entry-size,
+    .file-explorer[data-view='details'] .entry-time {
+        padding-top: 1px;
+        padding-bottom: 6px;
+        font-size: 0.86em;
+        line-height: 1.2;
+    }
+    .file-explorer[data-view='details'] .fx-empty-row {
+        display: block;
+    }
+}
+
+@media (hover: hover) {
+    .fx-table tbody tr:hover {
+        background: var(--device-list-hover-color);
+    }
+    .fx-row.selected:hover {
+        background: var(--fx-selected);
+    }
+    .fx-menu button:hover:not(:disabled),
+    .fx-crumb:hover,
+    .fx-place:hover {
+        background: var(--device-list-hover-color);
+    }
+    .fx-button:hover:not(:disabled) {
+        border-color: var(--button-text-color);
+    }
+    .fx-button.fx-primary:hover,
+    .fx-button.fx-danger-solid:hover {
+        filter: brightness(1.08);
+    }
 }

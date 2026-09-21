@@ -29,13 +29,16 @@ export class MsePlayer extends BasePlayer {
     });
     private static DEFAULT_FRAMES_PER_FRAGMENT = 1;
     private static DEFAULT_FRAMES_PER_SECOND = 60;
+    private static readonly ACCESS_UNIT_DELIMITER = new Uint8Array([0, 0, 0, 1, 9, 0xf0]);
 
     public static createElement(id?: string): HTMLVideoElement {
         const tag = document.createElement('video') as HTMLVideoElement;
         tag.muted = true;
         tag.autoplay = true;
+        tag.playsInline = true;
         tag.setAttribute('muted', 'muted');
         tag.setAttribute('autoplay', 'autoplay');
+        tag.setAttribute('playsinline', '');
         if (typeof id === 'string') {
             tag.id = id;
         }
@@ -84,7 +87,7 @@ export class MsePlayer extends BasePlayer {
         };
         tag.addEventListener('error', this.onVideoError);
         tag.addEventListener('canplay', this.onVideoCanPlay);
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
+
         setLogger(() => {}, console.error);
     }
 
@@ -271,7 +274,7 @@ export class MsePlayer extends BasePlayer {
                 }
                 frame = this.frames.shift();
             }
-        } catch (error: any) {
+        } catch {
             console.error(`[${this.name}]`, 'Failed to clean source buffer');
         }
     };
@@ -416,7 +419,7 @@ export class MsePlayer extends BasePlayer {
                     this.waitUntilSegmentRemoved = true;
 
                     this.sourceBuffer.addEventListener('updateend', this.cleanSourceBuffer);
-                    this.converter.appendRawData(frame);
+                    this.appendCompleteFrame(frame);
                     return true;
                 }
             }
@@ -428,16 +431,37 @@ export class MsePlayer extends BasePlayer {
             return false;
         }
 
-        this.converter.appendRawData(frame);
+        this.appendCompleteFrame(frame);
         return true;
+    }
+
+    private appendCompleteFrame(frame: Uint8Array): void {
+        if (!frame.length || !this.converter) {
+            return;
+        }
+        this.converter.appendRawData(frame);
+        // scrcpy packets contain complete Annex-B access units. h264-converter buffers the last
+        // NAL until it sees another start code, leaving an idle screen's only IDR undecoded.
+        // A valid, non-picture AUD flushes that NAL immediately without inventing another frame.
+        // This boundary belongs here, never on arbitrary TCP chunks which may split a NAL.
+        this.converter.appendRawData(MsePlayer.ACCESS_UNIT_DELIMITER);
     }
 
     private stopConverter(): void {
         if (this.converter) {
-            this.converter.appendRawData(new Uint8Array([]));
             this.converter.pause();
             delete this.converter;
         }
+        if (this.sourceBuffer) {
+            this.sourceBuffer.removeEventListener('updateend', this.cleanSourceBuffer);
+            this.sourceBuffer.removeEventListener('updateend', this.jumpToEnd);
+            this.sourceBuffer.onupdateend = null;
+            this.sourceBuffer = undefined;
+        }
+        // A new MediaSource must not inherit a removal wait or queued pictures from the old one.
+        this.waitUntilSegmentRemoved = false;
+        this.frames = [];
+        this.blocks = [];
     }
 
     public getFitToScreenStatus(): boolean {

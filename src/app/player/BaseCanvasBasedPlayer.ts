@@ -9,33 +9,11 @@ type DecodedFrame = {
     frame: any;
 };
 
-interface CanvasDecoder {
-    decode(buffer: Uint8Array, width: number, height: number): void;
-}
-
 export abstract class BaseCanvasBasedPlayer extends BasePlayer {
     protected framesList: Uint8Array[] = [];
     protected decodedFrames: DecodedFrame[] = [];
     protected videoStats: PlaybackQuality[] = [];
     protected animationFrameId?: number;
-    protected canvas?: CanvasDecoder;
-
-    public static hasWebGLSupport(): boolean {
-        // For some reason if I use here `this.tag` image on canvas will be flattened
-        const testCanvas: HTMLCanvasElement = document.createElement('canvas');
-        const validContextNames = ['webgl', 'experimental-webgl', 'moz-webgl', 'webkit-3d'];
-        let index = 0;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let gl: any = null;
-        while (!gl && index++ < validContextNames.length) {
-            try {
-                gl = testCanvas.getContext(validContextNames[index]);
-            } catch (error: any) {
-                gl = null;
-            }
-        }
-        return !!gl;
-    }
 
     public static createElement(id?: string): HTMLCanvasElement {
         const tag = document.createElement('canvas') as HTMLCanvasElement;
@@ -58,24 +36,8 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
 
     protected abstract decode(data: Uint8Array): void;
     public abstract getPreferredVideoSetting(): VideoSettings;
-
-    protected drawDecoded = (): void => {
-        if (!this.canvas) {
-            return;
-        }
-        if (this.receivedFirstFrame) {
-            const data = this.decodedFrames.shift();
-            if (data) {
-                const { frame, width, height } = data;
-                this.canvas.decode(frame, width, height);
-            }
-        }
-        if (this.decodedFrames.length) {
-            this.animationFrameId = requestAnimationFrame(this.drawDecoded);
-        } else {
-            this.animationFrameId = undefined;
-        }
-    };
+    /** Drains `decodedFrames` onto the canvas; scheduled via requestAnimationFrame. */
+    protected abstract drawDecoded: () => void;
 
     protected onFrameDecoded(width: number, height: number, frame: any): void {
         if (!this.receivedFirstFrame) {
@@ -158,16 +120,6 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
     }
 
     protected initCanvas(width: number, height: number): void {
-        if (this.canvas) {
-            const parent = this.tag.parentNode;
-            if (parent) {
-                const tag = BaseCanvasBasedPlayer.createElement(this.tag.id);
-                tag.className = this.tag.className;
-                parent.replaceChild(tag, this.tag);
-                parent.appendChild(this.touchableCanvas);
-                this.tag = tag;
-            }
-        }
         this.tag.onerror = (event: Event | string): void => {
             console.error(`[${this.name}]`, event);
         };
@@ -183,11 +135,9 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         if (this.getState() !== BasePlayer.STATE.PLAYING || !this.screenInfo) {
             return;
         }
-        if (!this.canvas) {
-            const { width, height } = this.screenInfo.videoSize;
-            this.initCanvas(width, height);
-            this.resetStats();
-        }
+        const { width, height } = this.screenInfo.videoSize;
+        this.initCanvas(width, height);
+        this.resetStats();
         this.shiftFrame();
     }
 

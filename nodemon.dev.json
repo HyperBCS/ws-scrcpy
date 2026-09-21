@@ -1,0 +1,7 @@
+{
+    "//": "Config for `npm run dev`, which watches the BUILT server. The repo-root nodemon.json is a different workflow (watch src, exec npm start) and pins `ext` to ts,css -- the dev script overrode watch/ignore/exec on the command line but not ext, so a rebuilt dist/index.js (.js) matched no watched extension and the server silently kept running old code across edits. Passing --config replaces nodemon.json outright (lib/config/load.js: options.configFile wins over the local file), so dev runs are isolated from it.",
+    "watch": ["dist"],
+    "ext": "js,json",
+    "ignore": ["dist/*.map", "dist/public/**"],
+    "delay": 300
+}

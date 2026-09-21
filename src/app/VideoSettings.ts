@@ -28,7 +28,10 @@ export default class VideoSettings {
     public readonly codecOptions?: string;
     public readonly encoderName?: string;
 
-    constructor(data?: Settings, public readonly bytesLength: number = VideoSettings.BASE_BUFFER_LENGTH) {
+    constructor(
+        data?: Settings,
+        public readonly bytesLength: number = VideoSettings.BASE_BUFFER_LENGTH,
+    ) {
         if (data) {
             this.crop = data.crop;
             this.bitrate = data.bitrate;
@@ -189,7 +192,6 @@ export default class VideoSettings {
         if (encoderNameBytes) {
             offset = buffer.writeInt32BE(encoderNameBytes.length, offset);
             buffer.fill(encoderNameBytes, offset);
-            offset += encoderNameBytes.length;
         } else {
             buffer.writeInt32BE(0, offset);
         }

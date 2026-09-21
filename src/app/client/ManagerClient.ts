@@ -11,7 +11,7 @@ export abstract class ManagerClient<P extends ParamsBase, TE extends EventMap> e
     public static sockets: Map<string, Multiplexer> = new Map();
     protected destroyed = false;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     public static start(..._rest: any[]): void {
         throw Error('Not implemented');
     }
@@ -72,7 +72,7 @@ export abstract class ManagerClient<P extends ParamsBase, TE extends EventMap> e
         }
         this.destroyed = true;
         if (this.ws) {
-            if (this.ws.readyState === this.ws.OPEN) {
+            if (this.ws.readyState === this.ws.OPEN || this.ws.readyState === this.ws.CONNECTING) {
                 this.ws.close();
             }
         }

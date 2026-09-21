@@ -16,7 +16,10 @@ export class SimpleInteractionHandler extends InteractionHandler {
     private static readonly touchEventsNames: InteractionEvents[] = ['mousedown', 'mouseup', 'mousemove'];
     private storage = new Map();
 
-    constructor(player: BasePlayer, private readonly listener: TouchHandlerListener) {
+    constructor(
+        player: BasePlayer,
+        private readonly listener: TouchHandlerListener,
+    ) {
         super(player, SimpleInteractionHandler.touchEventsNames, []);
     }
 

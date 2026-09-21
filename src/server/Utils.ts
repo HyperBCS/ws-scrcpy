@@ -17,9 +17,14 @@ export class Utils {
                 // ipv6List.push(`${proto}://[${ip}%${scopeid}]:${port}`);
             }
         };
-        Object.keys(os.networkInterfaces())
-            .map((key) => os.networkInterfaces()[key])
+        const networkInterfaces = os.networkInterfaces();
+        Object.keys(networkInterfaces)
+            .map((key) => networkInterfaces[key])
             .forEach((info) => {
+                if (!info) {
+                    // An interface may disappear between listing the names and reading it.
+                    return;
+                }
                 info.forEach((iface) => {
                     let scopeid: number | undefined;
                     if (iface.family === 'IPv6') {

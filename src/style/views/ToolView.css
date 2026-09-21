@@ -1,0 +1,207 @@
+.tool-view {
+    width: 100%;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--header-bg-color);
+}
+
+/* The tool page gives every spare pixel to the tool itself: the navigation row carries the
+   connection state, so there is no separate title block above the workspace. */
+.tool-navigation {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    padding: 5px max(10px, env(safe-area-inset-right, 0px)) 5px max(10px, env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--device-border-color);
+    background: var(--main-bg-color);
+}
+
+.tool-tabs {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 5px;
+    min-width: 0;
+    /* Two tabs stretched across a desktop window read as a banner, not a switcher. */
+    max-width: 420px;
+}
+
+.tool-tabs button {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.tool-navigation button,
+.tool-error button,
+.shell-shortcuts button {
+    min-height: 44px;
+    border: 1px solid var(--device-border-color);
+    border-radius: 9px;
+    background: var(--main-bg-color);
+    color: var(--text-color);
+    padding: 6px 12px;
+    font: 600 13px var(--font-stack);
+    cursor: pointer;
+}
+
+.tool-view .stream-header-back {
+    padding: 0;
+    border: 0;
+}
+
+.tool-navigation button:disabled,
+.tool-error button:disabled,
+.shell-shortcuts button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.tool-navigation button[aria-current='page'] {
+    color: var(--button-text-color);
+    border-color: var(--button-text-color);
+    background: var(--device-list-hover-color);
+}
+
+.tool-connection {
+    flex: 0 1 auto;
+    /* `margin-left: auto` pins the chip to the right edge whether or not the capped tabs left
+       any slack, and the ellipsis is the safety valve for a narrow phone. */
+    margin-left: auto;
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-color-light);
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tool-connection::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--status-starting-color);
+}
+
+.tool-connection.connected {
+    color: var(--status-ready-color);
+}
+
+.tool-connection.connected::before {
+    background: var(--status-ready-color);
+}
+
+.tool-workspace {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 auto;
+    padding: 6px max(6px, env(safe-area-inset-right, 0px)) max(6px, env(safe-area-inset-bottom, 0px))
+        max(6px, env(safe-area-inset-left, 0px));
+    gap: 6px;
+}
+
+.tool-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 auto;
+    gap: 10px;
+    padding: 6px 8px;
+    border: 1px solid var(--device-border-color);
+    border-radius: 9px;
+    background: var(--main-bg-color);
+    overflow-wrap: anywhere;
+}
+
+.tool-mount {
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--device-border-color);
+    border-radius: 10px;
+    background: var(--main-bg-color);
+}
+
+/* Files manages its own scrolling regions; anything else scrolls as a whole. */
+.tool-view-shell .tool-mount {
+    background: #000;
+    padding: 6px;
+}
+.tool-view .terminal-container {
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    box-sizing: border-box;
+}
+.shell-shortcuts {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(44px, 1fr));
+    flex: 0 0 auto;
+    gap: 5px;
+}
+.shell-shortcuts button {
+    display: grid;
+    place-items: center;
+    min-width: 0;
+    padding: 6px 4px;
+    font-size: 12px;
+}
+
+/* The Ctrl toggle reads as a held key while it is on. */
+.shell-shortcuts button[aria-pressed='true'] {
+    color: var(--button-text-color);
+    border-color: var(--button-text-color);
+    background: var(--device-list-hover-color);
+}
+
+@media (min-width: 1000px) {
+    .tool-workspace {
+        max-width: 1600px;
+        padding-inline: max(10px, env(safe-area-inset-left, 0px));
+    }
+}
+
+@media (max-width: 600px) {
+    .tool-navigation button {
+        padding: 6px 4px;
+    }
+}
+
+/* A phone gives the tool the full width: no gutter, no rounded card around it. */
+@media (max-width: 700px) {
+    .tool-workspace {
+        padding: 0 0 env(safe-area-inset-bottom, 0px);
+        gap: 0;
+    }
+    .tool-mount {
+        border-left: 0;
+        border-right: 0;
+        border-top: 0;
+        border-radius: 0;
+    }
+    .tool-error {
+        margin: 6px;
+    }
+    .shell-shortcuts {
+        padding: 6px;
+    }
+}
+
+@media (max-height: 450px) {
+    .tool-workspace {
+        padding-top: 4px;
+        padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
+        gap: 4px;
+    }
+}

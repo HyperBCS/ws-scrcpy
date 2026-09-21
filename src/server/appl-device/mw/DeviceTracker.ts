@@ -78,9 +78,25 @@ export class DeviceTracker extends Mw {
             console.error(`[${DeviceTracker.TAG}], Received message: ${event.data}. Error: ${error.message}`);
             return;
         }
-        this.icc.runCommand(command).catch((error) => {
-            console.error(`[${DeviceTracker.TAG}], Received message: ${event.data}. Error: ${error.message}`);
-        });
+        // Answered like the Android tracker does, so the device card can show the outcome of a
+        // long command (enabling Developer Mode reboots the phone) instead of guessing.
+        this.icc
+            .runCommand(command)
+            .then((result) => {
+                this.sendMessage({
+                    id: command.getId(),
+                    type: command.getType(),
+                    data: { udid: command.getUdid(), result: result ?? null },
+                });
+            })
+            .catch((error: Error) => {
+                console.error(`[${DeviceTracker.TAG}], Received message: ${event.data}. Error: ${error.message}`);
+                this.sendMessage({
+                    id: command.getId(),
+                    type: command.getType(),
+                    data: { udid: command.getUdid(), error: error.message },
+                });
+            });
     }
 
     public release(): void {

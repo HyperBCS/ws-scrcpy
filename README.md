@@ -14,6 +14,9 @@ Server:
 * Node.js v10+
 * node-gyp ([installation](https://github.com/nodejs/node-gyp#installation))
 * `adb` executable must be available in the PATH environment variable
+* For [iOS](#ios): Python 3.10+ and `usbmuxd` running on the host
+  (`apt install usbmuxd` on Debian/Ubuntu); `pymobiledevice3` talks to it over
+  `/var/run/usbmuxd` and fails outright without it.
 
 Device:
 * Android 5.0+ (API 21+)
@@ -44,8 +47,8 @@ npm start
 ### Android
 
 #### Screen casting
-The modified [version][fork] of [Genymobile/scrcpy][scrcpy] used to stream
-H264-video, which then decoded by one of included decoders:
+The stock [Genymobile/scrcpy][scrcpy] 3.1 server streams H264 video, which is
+then decoded in the browser by one of the included players:
 
 ##### Mse Player
 
@@ -56,25 +59,11 @@ Requires [Media Source API][MSE] and `video/mp4; codecs="avc1.42E01E"`
 device, then feeds them to [MediaSource][MediaSource]. In theory, it can use
 hardware acceleration.
 
-##### Broadway Player
-
-Based on [mbebenita/Broadway][broadway] and
-[131/h264-live-player][h264-live-player].<br>
-Software video-decoder compiled into wasm-module.
-Requires [WebAssembly][wasm] and preferably [WebGL][webgl] support.
-
-##### TinyH264 Player
-
-Based on [udevbe/tinyh264][tinyh264].<br>
-Software video-decoder compiled into wasm-module. A slightly updated version of
-[mbebenita/Broadway][broadway].
-Requires [WebAssembly][wasm], [WebWorkers][workers], [WebGL][webgl] support.
-
 ##### WebCodecs Player
 
-Decoding is done by browser built-in (software/hardware) media decoder.
-Requires [WebCodecs][webcodecs] support. At the moment, available only in
-[Chromium](https://www.chromestatus.com/feature/5669293909868544) and derivatives.
+Decoding is done by the browser's built-in (software/hardware) media decoder.
+Requires [WebCodecs][webcodecs] support, available in Chrome/Edge 94+,
+Safari 16.4+ and Firefox 130+. This is the default and recommended player.
 
 #### Remote control
 * Touch events (including multi-touch)
@@ -95,97 +84,161 @@ emulator (see below).
 #### Remote shell
 Control your device from `adb shell` in your browser.
 
-#### Debug WebPages/WebView
-[/docs/Devtools.md](/docs/Devtools.md)
-
 #### File listing
-* List files
-* Upload files by drag & drop
-* Download files
+A file explorer for the device: breadcrumb navigation with back/forward
+history, quick-access folders, details/list/tile views, sorting, filtering,
+multi-select, upload (picker or drag & drop), download, new folder, rename,
+delete and properties.
 
 ### iOS
 
-***Experimental Feature***: *is not built by default*
-(see [custom build](#custom-build))
+Device control goes through Apple's own **CoreDevice** developer services, driven by
+[doronz88/pymobiledevice3][pymobiledevice3]. Nothing is installed on the phone: no
+WebDriverAgent, no signing, no Apple developer account. The trade-off is the iOS
+version -- the display stream and the touch surface only exist on **iOS 27** (the
+phone rejects them on iOS 18 and earlier).
 
-#### Screen Casting
+> `INCLUDE_APPL` is **on** by default. Verified end to end on an iPhone 13 Pro Max
+> running iOS 27.0; background in
+> [docs/IOS-CONTROL-INVESTIGATION.md](/docs/IOS-CONTROL-INVESTIGATION.md) and the
+> handoff notes.
 
-Requires [ws-qvh][ws-qvh] available in `PATH`.
+#### Setup (Linux server)
 
-Tips for a stable QuickTime-over-USB stream: set the device's **Auto-Lock to
-Never** (a locked screen stops the stream), connect the iPhone **directly**
-(no USB hub), and do not run a standalone `ws-qvh`/`qvh` capture against the
-same device while ws-scrcpy is streaming — only one process may hold a device.
+```shell
+npm run setup:ios            # creates python/venv with pymobiledevice3
+sudo systemctl start usbmuxd # if it is not running already
+```
 
-#### MJPEG Server
+Then, on the phone, once:
 
-> ⚠️ **Temporarily suspended.** After the migration to a standalone Appium
-> (see [Remote control](#remote-control)) the WDA-MJPEG video path is not wired
-> up and is planned to be restored in a follow-up. iOS screen casting currently
-> runs via `ws-qvh` (see above).
+1. Plug it in over USB and tap **Trust** on the "Trust This Computer?" prompt.
+2. Turn on **Developer Mode** (Settings → Privacy & Security → Developer Mode; the
+   device card offers an **Enable** button that triggers the prompt). The phone
+   reboots and asks to confirm.
 
-Enable `USE_WDA_MJPEG_SERVER` in the build configuration file
-(see [custom build](#custom-build)).
+The server mounts Apple's Developer Disk Image itself (downloaded and personalised
+for your device the first time) whenever a screen session starts. It does not
+survive a reboot, and it is not an app.
 
-Alternative way to stream screen content. It does not
-require additional software as `ws-qvh`, but may require more resources as each
-frame encoded as jpeg image.
+#### What works
 
-#### Remote control
+* Screen: HEVC pushed by the phone (`com.apple.coredevice.displayservice`),
+  decoded in the browser with WebCodecs, or remuxed to fragmented MP4 for Media
+  Source Extensions where WebCodecs is unavailable (Chrome/Edge over plain http).
+  Chrome needs hardware HEVC decoding; Safari always has it.
+* Touch: one finger (tap, drag, swipe) through the touchscreen HID surface.
+  Multi-touch is not available on this path yet.
+* Hardware buttons: Home, Lock, Siri, volume up/down, mute.
+* App switcher: iOS has no button for it, so the server performs what opens it on
+  that model -- a swipe up from the bottom edge that pauses midway on Face ID
+  devices, a Home double press on Home-button devices (decided from the product
+  type; `IOS_APP_SWITCHER=home|gesture` overrides). The gesture is the standard
+  one; its timing has not yet been confirmed on an unlocked phone.
+* Screen and lock state, like Android's Asleep/Locked badges. The display backlight is
+  read from the phone's IORegistry over lockdown (0 while the screen is off), polled
+  every 4 s while streaming and every 15 s idle. The lock state comes from
+  `python/probes/lockstate.py`, which asks the accessibility daemon what is on screen
+  (the lock screen's padlock reads "Locked"/"Unlocked", the keypad "Enter Passcode").
+  That probe **never runs on a timer**: only when SpringBoard reports a lock change or
+  the screen blanking, when a button or passcode goes through the stream, or when you
+  ask (the Unlock button), and never while the phone is known to be awake and unlocked.
+  It also turns the accessibility inspector's on-device overlay off first, so the phone
+  does not draw a highlight box around what it reads. `IOS_LOCK_PROBE=0` turns the lock
+  half off entirely and leaves sleep detection working. The stream page shows the same
+  sleep overlay (tap to wake) and lock notice as Android. The captions are English; add
+  your phone's with `IOS_LOCKED_CAPTIONS` (a lock screen in another language reads as
+  unknown, never as unlocked). Verified on iOS 27 for screen on/off and the locked and
+  passcode screens; the unlocked reading follows from the absence of those.
+* Keyboard: your computer's keys become a virtual HID keyboard on the phone.
+  The Type text sheet (also in the Actions sheet) types as you enter text, so it
+  works from a phone browser as well, with Enter, Delete and cursor keys. Smart
+  punctuation from an iPhone keyboard (’ “ ” — …) is typed as the plain key; a
+  character with no US-layout key (é, emoji) is reported instead of dropped.
+* Sound: the phone's system audio (what it plays through its speaker) streams to the
+  browser. The phone sends AAC-ELD; the server decodes it with `ffmpeg` (any build with
+  the native AAC decoder) into the same PCM path Android uses, so the Sound button,
+  Listen unlock, mute, the volume slider in the Actions sheet (the mirrored audio
+  arrives at full scale whatever the phone's own volume) and Silent-switch handling are
+  shared. Needs `npm run setup:ios`,
+  which patches the bundled pymobiledevice3 to hand out the raw frames on Linux (upstream
+  only decodes on macOS). Set `IOS_AUDIO=0` to turn it off on the server.
+* Clipboard both ways, rotation, screenshots. The phone's own clipboard daemon
+  sometimes stops answering, which used to make reads fail until the phone was
+  rebooted; the server now notices, restarts that daemon and reads again, so the
+  read still returns -- it just takes about ten seconds instead of 50 ms.
+* Device power: Reboot and Shut down (each needs a second press to confirm). A
+  reboot also clears a phone whose screen capture has stopped responding.
+* Lock screen: typing the passcode from the Actions sheet unlocks a phone whose
+  screen is locked. It is not stored anywhere.
 
-Device control is provided by [appium/WebDriverAgent][WebDriverAgent], driven
-through a modern [Appium][appium] server over the W3C WebDriver protocol.
-ws-scrcpy bundles Appium (it is a dependency, and a `postinstall` step pins the
-XCUITest driver into a project-local `.appium-home`), spawns it as a child
-process on startup, and forwards control commands to it over HTTP — no global
-Appium installation is required.
+**A passcode changes one thing.** After a reboot, a passcode-protected iPhone
+exposes no USB data connection until it is unlocked by hand on the device -- it
+will not appear in the device list at all until then (verified: no USB
+enumeration whatsoever for 143 s after a reboot, versus 38 s to reappear with no
+passcode). Once it has been unlocked once, everything works, including locking
+the screen again and unlocking it remotely with the Actions sheet. Also enable
+Developer Mode *before* setting a passcode: a passcode blocks the toggle.
 
-Supported actions:
-* Simple touch
-* Scroll / swipe
-* Home button click
+If touch or the keyboard stop responding while the picture is still live, that session
+has lost the separate connection behind them. A moving picture is not evidence that
+input is getting through -- it travels over a different connection to the phone. (The
+clipboard is a third connection again, to a daemon on the phone that no restart on this
+side can reach, which is why it recovers itself instead of appearing here.)
 
-##### One-time device setup (real iOS device)
+Every device card and the stream page's Actions sheet carry a **Debug** group for
+this, in increasing order of how much it restarts:
 
-WebDriverAgent has to be built, signed and trusted on the device once:
+| Action | Restarts | Use it when |
+| --- | --- | --- |
+| Refresh picture | asks for a new keyframe | the picture smears |
+| Restart picture | the video, inside the same session | the picture is frozen or broken |
+| Restart services | the whole phone session (a fresh helper process) | touch or the keyboard stopped responding |
+| Remount developer image | the developer image the screen/touch services live in | the screen will not start at all |
+| Reboot phone | the phone | nothing else helped |
 
-1. Open the WDA project in Xcode — `WebDriverAgent.xcodeproj` under
-   `.appium-home/node_modules/appium-xcuitest-driver/node_modules/appium-webdriveragent/`
-   (or under `$APPIUM_HOME/…` if you point Appium elsewhere). Select the
-   `WebDriverAgentRunner` scheme, set your **Team** and a unique **Bundle
-   Identifier**, and run it on the device once (`⌘U`).
-2. On the device: **trust** the developer certificate
-   (`Settings → General → VPN & Device Management`) and enable **Developer
-   Mode** (`Settings → Privacy & Security → Developer Mode`, iOS 16+).
-3. (Optional) enable `AssistiveTouch`: `Settings → General → Accessibility`.
+The Debug group on the device card works without a stream, which matters because the
+failures it recovers from are the ones that leave no working stream page. Capture keeps
+running while the phone is locked, but the encoder throttles to a few frames per
+second until it is unlocked.
 
-See Appium's [real-device configuration guide][wda-real-device] for the full
-WebDriverAgent setup. After this one-time step ws-scrcpy builds and launches WDA
-on its own.
+Known limits: the phone's encoder emits a slightly non-conformant HEVC stream
+that smears under fast motion in every non-Apple decoder (the Refresh picture
+action asks for a new keyframe); no audio yet; no shell and no root filesystem
+on iOS.
 
-> **Be patient on the first control action.** Appium builds and launches
-> WebDriverAgent on demand, which can take a couple of minutes the first time —
-> the screen may look unresponsive until WDA is up. A free Apple developer
-> account's provisioning expires every 7 days (re-sign weekly); a paid account
-> avoids this.
+#### HTTPS
 
-##### iOS control configuration (environment variables)
+Chrome and Edge expose WebCodecs on secure origins only (`https://` or
+`localhost`). Over plain http the client falls back to Media Source Extensions,
+which costs a frame or two of latency; for the lowest-latency WebCodecs path on a
+desktop, generate a self-signed certificate for this machine once and run with both
+listeners:
+
+```shell
+npm run setup:https   # certs/ws-scrcpy.{key,crt} with the host's IPs as SANs, config.https.yaml
+npm run start:https   # http://…:8000 as before, plus https://…:8443
+```
+
+Open `https://<server-ip>:8443/` and accept the certificate warning once per browser.
+Everything (WebSockets included) then runs on that origin. If 8443 is taken on your
+machine the setup script says so; pick another with
+`WS_SCRCPY_HTTPS_PORT=8444 npm run setup:https` (`WS_SCRCPY_HTTP_PORT` likewise).
+
+#### iOS configuration (environment variables)
 
 | Variable | Purpose |
 | --- | --- |
-| `WDA_TEAM_ID` | Apple Team ID used to sign WebDriverAgent (the certificate's `OU`) |
-| `WDA_SIGNING_ID` | Signing identity (default `Apple Development`) |
-| `WDA_BUNDLE_ID` | Unique WDA bundle id, e.g. `com.<you>.WebDriverAgentRunner` |
-| `WDA_PLATFORM_VERSION` | iOS version of the device (silences a driver warning) |
-| `WDA_USE_PREBUILT` | `true` to reuse an already built/installed WDA (skip the rebuild) |
-| `WS_SCRCPY_DEBUG` | Verbose logs — surfaces the Appium (incl. xcodebuild) and `ws-qvh` output in the server console |
-| `APPIUM_BIN` / `APPIUM_HOME` / `APPIUM_PORT` / `APPIUM_LOG_LEVEL` | Override the bundled Appium binary, driver home, port or log level |
+| `IOS_PYMOBILEDEVICE3` | Path to the `pymobiledevice3` executable (default: `python/venv/bin/pymobiledevice3`, then `PATH`) |
+| `IOS_TUNNEL` | How the iOS 17+ tunnel is reached: `userspace` (default, in-process, no root) or `tunneld` (use a running `sudo pymobiledevice3 remote tunneld`) |
+| `IOS_APP_SWITCHER` | How the App switcher button opens it: `gesture` (Face ID swipe-and-hold) or `home` (Home double press). Default: by product type |
+| `IOS_STATE_PROBE` | `0` turns the screen/lock state monitor off (the badges and the sleep overlay stay silent) |
+| `IOS_LOCK_PROBE` | `0` keeps the screen probe but skips the lock probe, the one that opens a developer tunnel and talks to the accessibility daemon |
+| `IOS_STATE_NOTIFICATIONS` | `0` disables the per-device `notification observe` process; state then changes only at the poll interval |
+| `IOS_LOCKED_CAPTIONS` | Comma-separated lock-screen captions in your phone's language (e.g. `Gesperrt,Code eingeben`) |
+| `WS_SCRCPY_DEBUG` | Verbose logs, including every `pymobiledevice3` child's output |
 
-> **`xcodebuild failed with code 65`** almost always means WebDriverAgent could
-> not be **signed or launched** on the device (untrusted certificate, Developer
-> Mode off, wrong Team ID, or expired provisioning) — it is not a build error in
-> ws-scrcpy. Run with `WS_SCRCPY_DEBUG=1` to surface the underlying xcodebuild
-> error and follow the [real-device configuration guide][wda-real-device].
+[pymobiledevice3]: https://github.com/doronz88/pymobiledevice3
 
 ## Custom Build
 
@@ -196,16 +249,13 @@ You can customize project before build by overriding the
 * `INCLUDE_GOOG` - include code for Android device tracking and control
 * `INCLUDE_ADB_SHELL` - [remote shell](#remote-shell) for android devices
 ([xtermjs/xterm.js][xterm.js], [Tyriar/node-pty][node-pty])
-* `INCLUDE_DEV_TOOLS` - [dev tools](#debug-webpageswebview) for web pages and
-web views on android devices
-* `INCLUDE_FILE_LISTING` - minimalistic [file management](#file-listing)
-* `USE_BROADWAY` - include [Broadway Player](#broadway-player)
+* `INCLUDE_FILE_LISTING` - [file management](#file-listing)
 * `USE_H264_CONVERTER` - include [Mse Player](#mse-player)
-* `USE_TINY_H264` - include [TinyH264 Player](#tinyh264-player)
 * `USE_WEBCODECS` - include [WebCodecs Player](#webcodecs-player)
-* `USE_WDA_MJPEG_SERVER` - configure WebDriverAgent to start MJPEG server
-_(temporarily suspended, see [MJPEG Server](#mjpeg-server))_
-* `USE_QVH_SERVER` - include support for [ws-qvh][ws-qvh]
+* `USE_AUDIO` - forward the device's audio (scrcpy audio stream, Opus, decoded
+in the browser via WebCodecs). **Off by default**: it requires Android 11+, and
+enabling it changes how many sockets scrcpy opens, so treat it as experimental.
+Audio must also be enabled per-device in the stream settings sheet.
 * `SCRCPY_LISTENS_ON_ALL_INTERFACES` - WebSocket server in `scrcpy-server.jar`
 will listen for connections on all available interfaces. When `true`, it allows
 connecting to device directly from a browser. Otherwise, the connection must be
@@ -227,16 +277,29 @@ Configuration file example: [config.example.yaml](/config.example.yaml).
 
 * The server on the Android Emulator listens on the internal interface and not
 available from the outside. Select `proxy over adb` from the interfaces list.
-* TinyH264Player may fail to start, try to reload the page.
 * MsePlayer reports too many dropped frames in quality statistics: needs
 further investigation.
 * On Safari file upload does not show progress (it works in one piece).
-* iOS screen casting can be slow to start — if the picture does not appear,
-reload the tab a few times (or replug the device) until the QuickTime stream
-catches; once it does, it stays stable. An empty player does not necessarily
-mean it is broken.
-* iOS control: `xcodebuild failed with code 65` is a WebDriverAgent signing /
-launch issue, not a build error — see [Remote control](#remote-control).
+* iOS screen and control need iOS 27; older phones show up in the device list
+but cannot start a session. Verified on an iPhone 13 Pro Max (iPhone14,3) on
+iOS 27.0 over USB: stream, touch, keyboard, hardware buttons, clipboard, rotate.
+* The browser must decode HEVC itself (the stream is never re-encoded). Safari
+does; Chrome/Edge need a GPU with hardware HEVC decode (Chromium builds without
+proprietary codecs, such as Playwright's, show "This browser cannot decode the
+phone's HEVC stream"). WebCodecs is used where available (Safari, or Chrome/Edge on
+a secure origin -- see [HTTPS](#https)); otherwise the same access units are remuxed
+into fragmented MP4 and played through Media Source Extensions, which also works
+over plain `http://`. Add `&player=mse` or `&player=hevc` to the stream URL to force
+one decoder.
+* If the device list stops noticing an iPhone being plugged in, `usbmuxd` has
+wedged: `sudo systemctl restart usbmuxd`.
+* Drag-and-drop APK push over the stream is **broken**: `ScrcpyFilePushStream`
+sends control message type `102`, a NetrisTV extension that the stock scrcpy 3.1
+server does not implement, so it is misparsed and can drop the control socket —
+taking all input with it. Push files over adb instead until this is rerouted.
+* Changing anything in the stream settings sheet's *Stream quality* group
+restarts the scrcpy server on the device, which briefly disconnects every viewer
+of that device (they reconnect automatically).
 
 ## Security warning
 Be advised and keep in mind:
@@ -251,39 +314,25 @@ disconnected.
 ## Related projects
 * [Genymobile/scrcpy][scrcpy]
 * [xevokk/h264-converter][xevokk/h264-converter]
-* [131/h264-live-player][h264-live-player]
-* [mbebenita/Broadway][broadway]
 * [DeviceFarmer/adbkit][adbkit]
 * [xtermjs/xterm.js][xterm.js]
-* [udevbe/tinyh264][tinyh264]
-* [danielpaulus/quicktime_video_hack][qvh]
 
-## scrcpy websocket fork
+## scrcpy server
 
-Currently, support of WebSocket protocol added to v1.19 of scrcpy
+This fork ships the stock **scrcpy 3.1** server (see `SERVER_VERSION` in
+`src/common/Constants.ts`). Video and control are fanned out to multiple
+browser viewers by the server-side broadcast layer in `src/common/`, rather
+than by the WebSocket patch the older NetrisTV v1.19 fork used.
 * [Prebuilt package](/vendor/Genymobile/scrcpy/scrcpy-server.jar)
-* [Source code][fork]
 
-[fork]: https://github.com/NetrisTV/scrcpy/tree/feature/websocket-v1.19.x
 
 [scrcpy]: https://github.com/Genymobile/scrcpy
 [xevokk/h264-converter]: https://github.com/xevokk/h264-converter
-[h264-live-player]: https://github.com/131/h264-live-player
-[broadway]: https://github.com/mbebenita/Broadway
 [adbkit]: https://github.com/DeviceFarmer/adbkit
 [xterm.js]: https://github.com/xtermjs/xterm.js
-[tinyh264]: https://github.com/udevbe/tinyh264
 [node-pty]: https://github.com/Tyriar/node-pty
-[WebDriverAgent]: https://github.com/appium/WebDriverAgent
-[appium]: https://appium.io
-[wda-real-device]: https://appium.github.io/appium-xcuitest-driver/latest/preparation/real-device-config/
-[qvh]: https://github.com/danielpaulus/quicktime_video_hack
-[ws-qvh]: https://github.com/NetrisTV/ws-qvh
 
 [MSE]: https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API
 [isTypeSupported]: https://developer.mozilla.org/en-US/docs/Web/API/MediaSource/isTypeSupported
 [MediaSource]: https://developer.mozilla.org/en-US/docs/Web/API/MediaSource
-[wasm]: https://developer.mozilla.org/en-US/docs/WebAssembly
-[webgl]: https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API
-[workers]: https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API
 [webcodecs]: https://w3c.github.io/webcodecs/

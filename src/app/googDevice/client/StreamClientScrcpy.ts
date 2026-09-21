@@ -1,35 +1,27 @@
 import { BaseClient } from '../../client/BaseClient';
 import { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
-import { GoogMoreBox } from '../toolbox/GoogMoreBox';
 import { GoogToolBox } from '../toolbox/GoogToolBox';
 import VideoSettings from '../../VideoSettings';
 import Size from '../../Size';
 import { ControlMessage } from '../../controlMessage/ControlMessage';
 import { ClientsStats, DisplayCombinedInfo } from '../../client/StreamReceiver';
-import { CommandControlMessage } from '../../controlMessage/CommandControlMessage';
 import Util from '../../Util';
-import FilePushHandler from '../filePush/FilePushHandler';
-import DragAndPushLogger from '../DragAndPushLogger';
 import { KeyEventListener, KeyInputHandler } from '../KeyInputHandler';
 import { KeyCodeControlMessage } from '../../controlMessage/KeyCodeControlMessage';
 import { BasePlayer, PlayerClass } from '../../player/BasePlayer';
-import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
-import { ConfigureScrcpy } from './ConfigureScrcpy';
-import { DeviceTracker } from './DeviceTracker';
-import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
-import { html } from '../../ui/HtmlTag';
 import {
     FeaturedInteractionHandler,
     InteractionHandlerListener,
 } from '../../interactionHandler/FeaturedInteractionHandler';
 import DeviceMessage from '../DeviceMessage';
 import { DisplayInfo } from '../../DisplayInfo';
-import { Attribute } from '../../Attribute';
-import { HostTracker } from '../../client/HostTracker';
 import { ACTION } from '../../../common/Action';
 import { StreamReceiverScrcpy } from './StreamReceiverScrcpy';
-import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
-import { ScrcpyFilePushStream } from '../filePush/ScrcpyFilePushStream';
+import { computeMaxSize } from '../../ControlBarLayout';
+import { UhidKeyboard } from '../UhidKeyboard';
+import { deviceClipboard, lastFrameAt, streamConnected, streamNotice } from '../../state/stream';
+import { AudioSession, createAudioSession } from '../../state/audio';
+import { isLocalKeyboardTarget } from '../localKeyboardTarget';
 
 type StartParams = {
     udid: string;
@@ -49,17 +41,21 @@ export class StreamClientScrcpy
     private static players: Map<string, PlayerClass> = new Map<string, PlayerClass>();
 
     private controlButtons?: HTMLElement;
+    private toolBox?: GoogToolBox;
+    private uhidKeyboard?: UhidKeyboard;
+    private keyboardAttached = false;
     private deviceName = '';
     private clientId = -1;
     private clientsCount = -1;
     private joinedStream = false;
     private requestedVideoSettings?: VideoSettings;
     private touchHandler?: FeaturedInteractionHandler;
-    private moreBox?: GoogMoreBox;
     private player?: BasePlayer;
-    private filePushHandler?: FilePushHandler;
     private fitToScreen?: boolean;
+    private audioSession?: AudioSession;
     private readonly streamReceiver: StreamReceiverScrcpy;
+    private readonly container: HTMLElement;
+    private deviceView?: HTMLElement;
 
     public static registerPlayer(playerClass: PlayerClass): void {
         if (playerClass.isSupported()) {
@@ -103,12 +99,13 @@ export class StreamClientScrcpy
         player?: BasePlayer,
         fitToScreen?: boolean,
         videoSettings?: VideoSettings,
+        container?: HTMLElement,
     ): StreamClientScrcpy {
         if (query instanceof URLSearchParams) {
             const params = StreamClientScrcpy.parseParameters(query);
-            return new StreamClientScrcpy(params, streamReceiver, player, fitToScreen, videoSettings);
+            return new StreamClientScrcpy(params, streamReceiver, player, fitToScreen, videoSettings, container);
         } else {
-            return new StreamClientScrcpy(query, streamReceiver, player, fitToScreen, videoSettings);
+            return new StreamClientScrcpy(query, streamReceiver, player, fitToScreen, videoSettings, container);
         }
     }
 
@@ -133,8 +130,17 @@ export class StreamClientScrcpy
         player?: BasePlayer,
         fitToScreen?: boolean,
         videoSettings?: VideoSettings,
+        // A view hosting this client can pass its own container to mount into (see
+        // `views/StreamView.tsx`); direct/legacy callers keep working against `document.body`.
+        container: HTMLElement = document.body,
     ) {
         super(params);
+        this.container = container;
+        // Validate before opening a socket, so a stale bookmarked player cannot leave an
+        // unowned receiver reconnecting after the view reports its startup error.
+        if (!player && !StreamClientScrcpy.getPlayerClass(params.player)) {
+            throw Error(`This browser does not support the selected player: ${params.player}`);
+        }
         if (streamReceiver) {
             this.streamReceiver = streamReceiver;
         } else {
@@ -164,18 +170,27 @@ export class StreamClientScrcpy
             player: Util.parseString(params, 'player', true),
             udid: Util.parseString(params, 'udid', true),
             ws: Util.parseString(params, 'ws', true),
-            captureKeyboard: Util.parseBoolean(params, 'captureKeyboard', false),
+            // Defaults ON: with UHID the device sees a real keyboard, so this costs nothing when
+            // no physical keyboard is attached and means one less thing to switch on when there
+            // is. `?captureKeyboard=0` opts out.
+            //
+            // NB `Util.parseBoolean`'s third argument is `required`, NOT a default -- passing
+            // `true` there makes every stream deep link throw "Missing required parameter".
+            captureKeyboard: params.has('captureKeyboard') ? Util.parseBoolean(params, 'captureKeyboard') : true,
             fitToScreen: params.has('fitToScreen') ? Util.parseBoolean(params, 'fitToScreen') : undefined,
         };
     }
 
     public OnDeviceMessage = (message: DeviceMessage): void => {
-        if (this.moreBox) {
-            this.moreBox.OnDeviceMessage(message);
+        if (message.type === DeviceMessage.TYPE_CLIPBOARD) {
+            deviceClipboard.value = message.getText();
         }
     };
 
-    public onVideo = (data: ArrayBuffer): void => {
+    public onVideo = (data: Uint8Array): void => {
+        // Fed to `lastFrameAt` unconditionally (even before the player starts playing) so the
+        // frame clock reflects "is data still arriving", not "is this tab currently rendering it".
+        lastFrameAt.value = Date.now();
         if (!this.player) {
             return;
         }
@@ -184,13 +199,19 @@ export class StreamClientScrcpy
             this.player.play();
         }
         if (this.player.getState() === STATE.PLAYING) {
-            this.player.pushFrame(new Uint8Array(data));
+            this.player.pushFrame(data);
         }
     };
 
     public onClientsStats = (stats: ClientsStats): void => {
         this.deviceName = stats.deviceName;
         this.clientId = stats.clientId;
+        // `connected` precedes these stats. Wait for this viewer's assigned id before
+        // registering its keyboard on the shared scrcpy control socket.
+        this.uhidKeyboard?.setId(this.clientId);
+        if (this.streamReceiver.isReady()) {
+            this.uhidKeyboard?.create();
+        }
         this.setTitle(`Stream ${this.deviceName}`);
     };
 
@@ -235,7 +256,11 @@ export class StreamClientScrcpy
         }
 
         if (!videoSettings.equals(currentSettings)) {
-            this.applyNewVideoSettings(videoSettings, videoSettings.equals(this.requestedVideoSettings));
+            const bounds = this.fitToScreen ? this.getMaxSize() : undefined;
+            const localSettings = bounds
+                ? StreamClientScrcpy.createVideoSettingsWithBounds(videoSettings, bounds)
+                : videoSettings;
+            this.applyNewVideoSettings(localSettings, videoSettings.equals(this.requestedVideoSettings));
         }
         if (!oldInfo) {
             const bounds = currentSettings.bounds;
@@ -256,21 +281,64 @@ export class StreamClientScrcpy
         }
     };
 
+    // `StreamReceiver` retries with backoff after *every* close (see its `scheduleReconnect`),
+    // including the deliberate ones a stream-quality restart triggers (`Device.updateStreamConfig`
+    // -> `WebsocketProxy`'s `controlSocketCloseListener`) -- so `disconnected` fires on transient
+    // blips too, not just a final teardown. This used to unsubscribe every listener below, which
+    // meant the fresh `scrcpy_initial` packet the *next* connection sends (re-triggering
+    // `video`/`displayInfo`/`clientsStats`) had nobody left listening: the picture would never
+    // come back after a restart even though the socket-level reconnect worked perfectly. Only
+    // pause playback here; real teardown (unsubscribing, releasing handlers) belongs in `stop()`,
+    // which runs once, for good.
     public onDisconnected = (): void => {
+        streamConnected.value = false;
+        this.clientId = -1;
+        // A replacement scrcpy process has no virtual keyboard, even if capture remains on.
+        this.uhidKeyboard?.reset();
+        this.player?.pause();
+    };
+
+    public onConnected = (): void => {
+        streamConnected.value = true;
+    };
+
+    // Tears down the DOM this client owns and stops the underlying receiver/player. Wired up as
+    // the more-box "Stop" action, and also the right thing for a host view to call from its own
+    // unmount (see `views/StreamView.tsx`) -- safe to call more than once.
+    public stop = (ev?: string | Event): void => {
+        if (ev && ev instanceof Event && ev.type === 'error') {
+            console.error(TAG, ev);
+        }
         this.streamReceiver.off('deviceMessage', this.OnDeviceMessage);
         this.streamReceiver.off('video', this.onVideo);
         this.streamReceiver.off('clientsStats', this.onClientsStats);
         this.streamReceiver.off('displayInfo', this.onDisplayInfo);
         this.streamReceiver.off('disconnected', this.onDisconnected);
+        this.streamReceiver.off('connected', this.onConnected);
 
-        this.filePushHandler?.release();
-        this.filePushHandler = undefined;
+        this.container.removeEventListener('dragover', this.onFileDragOver);
+        this.container.removeEventListener('drop', this.onFileDrop);
         this.touchHandler?.release();
         this.touchHandler = undefined;
         window.removeEventListener('resize', this.onWindowResize);
         if (this.resizeTimeoutId !== undefined) {
             clearTimeout(this.resizeTimeoutId);
             this.resizeTimeoutId = undefined;
+        }
+        this.detachKeyboard();
+        this.toolBox?.release();
+        this.toolBox = undefined;
+        this.audioSession?.stop();
+        if (this.deviceView) {
+            const parent = this.deviceView.parentElement;
+            if (parent) {
+                parent.removeChild(this.deviceView);
+            }
+            this.deviceView = undefined;
+        }
+        this.streamReceiver.stop();
+        if (this.player) {
+            this.player.stop();
         }
     };
 
@@ -279,6 +347,10 @@ export class StreamClientScrcpy
             throw Error(`Invalid udid value: "${udid}"`);
         }
 
+        // Fresh frame clock for this session -- see `lastFrameAt`/`SleepOverlay`.
+        lastFrameAt.value = undefined;
+        streamConnected.value = this.streamReceiver.isReady();
+        deviceClipboard.value = undefined;
         this.fitToScreen = fitToScreen;
         if (!player) {
             if (typeof playerName !== 'string') {
@@ -298,50 +370,39 @@ export class StreamClientScrcpy
             player = p;
         }
         this.player = player;
+        this.fitToScreen = fitToScreen;
         this.setTouchListeners(player);
 
         if (!videoSettings) {
             videoSettings = player.getVideoSettings();
         }
 
-        const deviceView = document.createElement('div');
+        const deviceView = (this.deviceView = document.createElement('div'));
         deviceView.className = 'device-view';
-        const stop = (ev?: string | Event) => {
-            if (ev && ev instanceof Event && ev.type === 'error') {
-                console.error(TAG, ev);
-            }
-            let parent;
-            parent = deviceView.parentElement;
-            if (parent) {
-                parent.removeChild(deviceView);
-            }
-            parent = moreBox.parentElement;
-            if (parent) {
-                parent.removeChild(moreBox);
-            }
-            this.streamReceiver.stop();
-            if (this.player) {
-                this.player.stop();
-            }
-        };
 
-        const googMoreBox = (this.moreBox = new GoogMoreBox(udid, player, this));
-        const moreBox = googMoreBox.getHolderElement();
-        googMoreBox.setOnStop(stop);
-        const googToolBox = GoogToolBox.createToolBox(udid, player, this, moreBox, {
+        // A no-op (`undefined`) unless `index.tsx` registered a factory behind `/// #if
+        // USE_AUDIO` -- see `state/audio.ts`. Created once per stream so the toolbar mute button
+        // and this session share the same `AudioPlayer`/gain node.
+        this.audioSession = createAudioSession(this.streamReceiver);
+
+        const googToolBox = GoogToolBox.createToolBox(udid, player, this, {
             captureKeyboard: this.params.captureKeyboard,
+            audioSession: this.audioSession,
         });
+        // Built but deliberately NOT appended to the device view: `views/FloatingToolbar.tsx`
+        // reparents it into a draggable floating panel. The docked bar ate a fixed slice of a
+        // phone screen and, in portrait, wrapped to a second row that ran under the home
+        // indicator -- half of it was clipped and untappable.
+        this.toolBox = googToolBox;
         this.controlButtons = googToolBox.getHolderElement();
-        
+
         const video = document.createElement('div');
         video.className = 'video';
         deviceView.appendChild(video);
-        deviceView.appendChild(this.controlButtons);
-        deviceView.appendChild(moreBox);
         player.setParent(video);
         player.pause();
 
-        document.body.appendChild(deviceView);
+        this.container.appendChild(deviceView);
         if (fitToScreen) {
             const newBounds = this.getMaxSize();
             if (newBounds) {
@@ -350,9 +411,20 @@ export class StreamClientScrcpy
         }
         this.applyNewVideoSettings(videoSettings, false);
         const element = player.getTouchableElement();
-        const logger = new DragAndPushLogger(element);
-        this.filePushHandler = new FilePushHandler(element, new ScrcpyFilePushStream(this.streamReceiver));
-        this.filePushHandler.addEventListener(logger);
+        element.tabIndex = 0;
+        element.setAttribute('aria-label', 'Remote device screen');
+        element.addEventListener('pointerdown', () => {
+            // Touch handlers prevent the browser's default focus action, so explicitly focusing
+            // this canvas can still match :focus-visible on phones. Keep keyboard routing while
+            // marking pointer focus separately from keyboard navigation onto the screen.
+            element.dataset.pointerFocused = 'true';
+            element.focus({ preventScroll: true });
+        });
+        element.addEventListener('blur', () => delete element.dataset.pointerFocused);
+        // Stock scrcpy cannot read the fork's type-102 uploads: they corrupt its control socket.
+        // The device list's Files tool uploads safely over adb.
+        this.container.addEventListener('dragover', this.onFileDragOver);
+        this.container.addEventListener('drop', this.onFileDrop);
 
         const streamReceiver = this.streamReceiver;
         streamReceiver.on('deviceMessage', this.OnDeviceMessage);
@@ -360,14 +432,25 @@ export class StreamClientScrcpy
         streamReceiver.on('clientsStats', this.onClientsStats);
         streamReceiver.on('displayInfo', this.onDisplayInfo);
         streamReceiver.on('disconnected', this.onDisconnected);
+        streamReceiver.on('connected', this.onConnected);
         console.log(TAG, player.getName(), udid);
 
-        // When the player is in fit-to-screen mode, re-encode the stream at the
-        // new container size on window resize (debounced) so it stays crisp
-        // instead of being CSS-scaled. Inert when the user picked a fixed
-        // resolution.
+        // Fit changes browser playback bounds; encoder changes require a server restart.
         window.addEventListener('resize', this.onWindowResize);
     }
+
+    private onFileDragOver = (event: DragEvent): void => {
+        if (event.dataTransfer?.types.includes('Files')) {
+            event.preventDefault();
+        }
+    };
+
+    private onFileDrop = (event: DragEvent): void => {
+        if (event.dataTransfer?.files.length) {
+            event.preventDefault();
+            streamNotice.value = 'To upload files, open Files from the device list.';
+        }
+    };
 
     private resizeTimeoutId?: ReturnType<typeof setTimeout>;
 
@@ -380,7 +463,7 @@ export class StreamClientScrcpy
 
     private applyFitToScreenBounds = (): void => {
         this.resizeTimeoutId = undefined;
-        if (!this.player || !this.player.getFitToScreenStatus()) {
+        if (!this.player || !this.fitToScreen) {
             return;
         }
         const newBounds = this.getMaxSize();
@@ -400,16 +483,98 @@ export class StreamClientScrcpy
         this.streamReceiver.sendEvent(message);
     }
 
+    public isControlReady(): boolean {
+        return this.streamReceiver.isReady();
+    }
+
+    public sendImmediateMessages(messages: readonly ControlMessage[]): boolean {
+        return this.streamReceiver.sendImmediateEvents(messages);
+    }
+
     public getDeviceName(): string {
         return this.deviceName;
     }
 
-    public setHandleKeyboardEvents(enabled: boolean): void {
-        if (enabled) {
-            KeyInputHandler.addEventListener(this);
+    /**
+     * Routes host key events to the device. Default path is UHID: the device registers a real
+     * virtual keyboard, so its own layout applies and it stops raising the on-screen keyboard
+     * over the content. `useUhid: false` falls back to injecting Android keycodes, which is what
+     * older devices (pre-Android 11, where the server cannot open /dev/uhid) need.
+     */
+    public setHandleKeyboardEvents(enabled: boolean, useUhid = true): void {
+        if (enabled === this.keyboardAttached && (!enabled || useUhid === !!this.uhidKeyboard)) {
+            return;
+        }
+        this.detachKeyboard();
+        if (!enabled) {
+            return;
+        }
+        this.keyboardAttached = true;
+        if (useUhid) {
+            this.uhidKeyboard = new UhidKeyboard(this);
+            if (this.clientId > 0 && this.streamReceiver.isReady()) {
+                this.uhidKeyboard.setId(this.clientId);
+                this.uhidKeyboard.create();
+            }
+            window.addEventListener('keydown', this.onUhidKeyDown, true);
+            window.addEventListener('keyup', this.onUhidKeyUp, true);
+            window.addEventListener('blur', this.onUhidBlur);
         } else {
+            KeyInputHandler.addEventListener(this);
+        }
+    }
+
+    public isKeyboardCaptured(): boolean {
+        return this.keyboardAttached;
+    }
+
+    public isUsingUhidKeyboard(): boolean {
+        return !!this.uhidKeyboard;
+    }
+
+    private detachKeyboard(): void {
+        if (this.uhidKeyboard) {
+            window.removeEventListener('keydown', this.onUhidKeyDown, true);
+            window.removeEventListener('keyup', this.onUhidKeyUp, true);
+            window.removeEventListener('blur', this.onUhidBlur);
+            this.uhidKeyboard.destroy();
+            this.uhidKeyboard = undefined;
+        } else if (this.keyboardAttached) {
             KeyInputHandler.removeEventListener(this);
         }
+        this.keyboardAttached = false;
+    }
+
+    private onUhidKeyDown = (event: KeyboardEvent): void => {
+        // Leave typing in our own UI (the Live Text overlay, settings inputs) alone.
+        if (isLocalKeyboardTarget(event.target) || event.isComposing) {
+            this.uhidKeyboard?.releaseAll();
+            return;
+        }
+        if (this.uhidKeyboard?.handleKey(event.code, true)) {
+            event.preventDefault();
+        }
+    };
+
+    private onUhidKeyUp = (event: KeyboardEvent): void => {
+        if (isLocalKeyboardTarget(event.target) || event.isComposing) {
+            this.uhidKeyboard?.releaseAll();
+            return;
+        }
+        if (this.uhidKeyboard?.handleKey(event.code, false)) {
+            event.preventDefault();
+        }
+    };
+
+    // A key released while the tab is unfocused is never delivered, and a stuck modifier would
+    // corrupt every keystroke afterwards.
+    private onUhidBlur = (): void => {
+        this.uhidKeyboard?.releaseAll();
+    };
+
+    /** The control buttons, for `FloatingToolbar` to adopt (see `startStream`). */
+    public getControlButtonsElement(): HTMLElement | undefined {
+        return this.controlButtons;
     }
 
     public onKeyEvent(event: KeyCodeControlMessage): void {
@@ -430,13 +595,52 @@ export class StreamClientScrcpy
     }
 
     public getMaxSize(): Size | undefined {
-        if (!this.controlButtons) {
+        // The toolbar floats over the video now, so nothing is subtracted from the container.
+        return computeMaxSize(this.container.clientWidth, this.container.clientHeight);
+    }
+
+    // Exposed for `SettingsSheet`'s "Playback" group -- player choice goes through `navigate()`
+    // (it remounts the whole `StreamView`), but fit-to-screen and the quality-stats overlay are
+    // client-side-only and act on the already-running player instance in place.
+    public getPlayer(): BasePlayer | undefined {
+        return this.player;
+    }
+
+    // Keep the live value across viewport changes; saved preferences are keyed by viewport
+    // size, so reading them after rotation can accidentally undo an explicit session choice.
+    public isFitToScreen(): boolean {
+        return this.fitToScreen ?? false;
+    }
+
+    // Toggles fit-to-screen for the *current* player/session instantly, with no reconnect. Stock
+    // scrcpy has no live video-settings channel (see `sendNewVideoSetting` below), so this only
+    // resizes the local canvas/bounds the player already uses to fit the container, exactly like
+    // `applyFitToScreenBounds` does on resize. `saveToStorage: true` persists the choice so it
+    // sticks across reloads and future resizes.
+    public setFitToScreen(enabled: boolean): void {
+        if (!this.player) {
             return;
         }
-        const body = document.body;
-        const width = (body.clientWidth - this.controlButtons.clientWidth) & ~15;
-        const height = body.clientHeight & ~15;
-        return new Size(width, height);
+        this.fitToScreen = enabled;
+        if (enabled) {
+            const newBounds = this.getMaxSize();
+            if (newBounds) {
+                const updated = StreamClientScrcpy.createVideoSettingsWithBounds(
+                    this.player.getVideoSettings(),
+                    newBounds,
+                );
+                this.player.setVideoSettings(updated, true, true);
+                this.sendNewVideoSetting(updated);
+                return;
+            }
+        }
+        const nativeSize = this.player.getScreenInfo()?.videoSize;
+        const settings = this.player.getVideoSettings();
+        this.player.setVideoSettings(
+            nativeSize ? StreamClientScrcpy.createVideoSettingsWithBounds(settings, nativeSize) : settings,
+            false,
+            true,
+        );
     }
 
     private setTouchListeners(player: BasePlayer): void {
@@ -447,107 +651,9 @@ export class StreamClientScrcpy
     }
 
     private applyNewVideoSettings(videoSettings: VideoSettings, saveToStorage: boolean): void {
-        let fitToScreen = false;
-
-        // TODO: create control (switch/checkbox) instead
-        if (videoSettings.bounds && videoSettings.bounds.equals(this.getMaxSize())) {
-            fitToScreen = true;
-        }
+        const fitToScreen = this.fitToScreen ?? false;
         if (this.player) {
             this.player.setVideoSettings(videoSettings, fitToScreen, saveToStorage);
         }
     }
-
-    public static createEntryForDeviceList(
-        descriptor: GoogDeviceDescriptor,
-        blockClass: string,
-        fullName: string,
-        params: ParamsDeviceTracker,
-    ): HTMLElement | DocumentFragment | undefined {
-        const hasPid = descriptor.pid !== -1;
-        if (hasPid) {
-            const configureButtonId = `configure_${Util.escapeUdid(descriptor.udid)}`;
-            const e = html`<div class="stream ${blockClass}">
-                <button
-                    ${Attribute.UDID}="${descriptor.udid}"
-                    ${Attribute.COMMAND}="${ControlCenterCommand.CONFIGURE_STREAM}"
-                    ${Attribute.FULL_NAME}="${fullName}"
-                    ${Attribute.SECURE}="${params.secure}"
-                    ${Attribute.HOSTNAME}="${params.hostname}"
-                    ${Attribute.PORT}="${params.port}"
-                    ${Attribute.PATHNAME}="${params.pathname}"
-                    ${Attribute.USE_PROXY}="${params.useProxy}"
-                    id="${configureButtonId}"
-                    class="active action-button"
-                >
-                    Configure stream
-                </button>
-            </div>`;
-            const a = e.content.getElementById(configureButtonId);
-            a && (a.onclick = this.onConfigureStreamClick);
-            return e.content;
-        }
-        return;
-    }
-
-    private static onConfigureStreamClick = (event: MouseEvent): void => {
-        const button = event.currentTarget as HTMLAnchorElement;
-        const udid = Util.parseStringEnv(button.getAttribute(Attribute.UDID) || '');
-        const fullName = button.getAttribute(Attribute.FULL_NAME);
-        const secure = Util.parseBooleanEnv(button.getAttribute(Attribute.SECURE) || undefined) || false;
-        const hostname = Util.parseStringEnv(button.getAttribute(Attribute.HOSTNAME) || undefined) || '';
-        const port = Util.parseIntEnv(button.getAttribute(Attribute.PORT) || undefined);
-        const pathname = Util.parseStringEnv(button.getAttribute(Attribute.PATHNAME) || undefined) || '';
-        const useProxy = Util.parseBooleanEnv(button.getAttribute(Attribute.USE_PROXY) || undefined);
-        if (!udid) {
-            throw Error(`Invalid udid value: "${udid}"`);
-        }
-        if (typeof port !== 'number') {
-            throw Error(`Invalid port type: ${typeof port}`);
-        }
-        const tracker = DeviceTracker.getInstance({
-            type: 'android',
-            secure,
-            hostname,
-            port,
-            pathname,
-            useProxy,
-        });
-        const descriptor = tracker.getDescriptorByUdid(udid);
-        if (!descriptor) {
-            return;
-        }
-        event.preventDefault();
-        const elements = document.getElementsByName(`${DeviceTracker.AttributePrefixInterfaceSelectFor}${fullName}`);
-        if (!elements || !elements.length) {
-            return;
-        }
-        const select = elements[0] as HTMLSelectElement;
-        const optionElement = select.options[select.selectedIndex];
-        const ws = optionElement.getAttribute(Attribute.URL);
-        const name = optionElement.getAttribute(Attribute.NAME);
-        if (!ws || !name) {
-            return;
-        }
-        const options: ParamsStreamScrcpy = {
-            udid,
-            ws,
-            player: '',
-            action: ACTION.STREAM_SCRCPY,
-            secure,
-            hostname,
-            port,
-            pathname,
-            useProxy,
-        };
-        const dialog = new ConfigureScrcpy(tracker, descriptor, options);
-        dialog.on('closed', StreamClientScrcpy.onConfigureDialogClosed);
-    };
-
-    private static onConfigureDialogClosed = (event: { dialog: ConfigureScrcpy; result: boolean }): void => {
-        event.dialog.off('closed', StreamClientScrcpy.onConfigureDialogClosed);
-        if (event.result) {
-            HostTracker.getInstance().destroy();
-        }
-    };
 }

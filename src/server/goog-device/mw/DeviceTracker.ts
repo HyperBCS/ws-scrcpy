@@ -14,6 +14,7 @@ export class DeviceTracker extends Mw {
     public static readonly type = 'android';
     private adt: ControlCenter = ControlCenter.getInstance();
     private readonly id: string;
+    private watching = false;
 
     public static processChannel(ws: Multiplexer, code: string): Mw | undefined {
         if (code !== ChannelCode.GTRC) {
@@ -37,6 +38,8 @@ export class DeviceTracker extends Mw {
             .init()
             .then(() => {
                 this.adt.on('device', this.sendDeviceMessage);
+                this.adt.addTrackerClient();
+                this.watching = true;
                 this.buildAndSendMessage(this.adt.getDevices());
             })
             .catch((error: Error) => {
@@ -78,13 +81,41 @@ export class DeviceTracker extends Mw {
             console.error(`[${DeviceTracker.TAG}], Received message: ${event.data}. Error: ${error?.message}`);
             return;
         }
-        this.adt.runCommand(command).catch((e) => {
-            console.error(`[${DeviceTracker.TAG}], Received message: ${event.data}. Error: ${e.message}`);
-        });
+        this.adt
+            .runCommand(command)
+            .then((result) => {
+                // Commands like LIST_ENCODERS/UPDATE_STREAM_CONFIG resolve with a JSON payload
+                // for the requester; plain fire-and-forget commands (kill/start server, etc.)
+                // resolve with nothing and get no reply.
+                if (typeof result !== 'string') {
+                    return;
+                }
+                this.sendMessage({
+                    id: command.getId(),
+                    type: command.getType(),
+                    data: JSON.parse(result),
+                });
+            })
+            .catch((e) => {
+                console.error(`[${DeviceTracker.TAG}], Received message: ${event.data}. Error: ${e.message}`);
+                // Reply with the failure too. Without this a rejected command is indistinguishable
+                // from one still in progress, so a client waiting on UPDATE_STREAM_CONFIG /
+                // LIST_ENCODERS can only ever time out.
+                this.sendMessage({
+                    id: command.getId(),
+                    type: command.getType(),
+                    data: { udid: command.getUdid(), error: e.message },
+                });
+            });
     }
 
     public release(): void {
         super.release();
         this.adt.off('device', this.sendDeviceMessage);
+        // Guarded: `init()` may have rejected, in which case we never registered.
+        if (this.watching) {
+            this.watching = false;
+            this.adt.removeTrackerClient();
+        }
     }
 }

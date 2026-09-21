@@ -11,7 +11,7 @@ import { ChannelCode } from '../../common/ChannelCode';
 const TAG = '[HostTracker]';
 
 export interface HostTrackerEvents {
-    // hosts: HostItem[];
+    connected: undefined;
     disconnected: CloseEvent;
     error: string;
 }
@@ -30,7 +30,8 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
         return this.instance;
     }
 
-    private trackers: Array<GoogDeviceTracker | ApplDeviceTracker> = [];
+    private trackers = new Set<GoogDeviceTracker | ApplDeviceTracker>();
+    private reconnectTimer?: ReturnType<typeof setTimeout>;
 
     constructor() {
         super({ action: ACTION.LIST_HOSTS });
@@ -41,11 +42,25 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
     }
 
     protected onSocketClose(ev: CloseEvent): void {
+        if (this.destroyed) {
+            return;
+        }
         console.log(TAG, 'WS closed');
         this.emit('disconnected', ev);
+        if (this.reconnectTimer === undefined) {
+            this.reconnectTimer = setTimeout(() => {
+                this.reconnectTimer = undefined;
+                if (!this.destroyed) {
+                    this.openNewConnection();
+                }
+            }, 2000);
+        }
     }
 
     protected onSocketMessage(event: MessageEvent): void {
+        if (this.destroyed) {
+            return;
+        }
         let message: Message;
         try {
             // TODO: rewrite to binary
@@ -64,7 +79,9 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
             }
             case MessageType.HOSTS: {
                 const msg = message as MessageHosts;
-                // this.emit('hosts', msg.data);
+                this.emit('connected', undefined);
+                const previousTrackers = this.trackers;
+                this.trackers = new Set();
                 if (msg.data.local) {
                     msg.data.local.forEach(({ type }) => {
                         const secure = location.protocol === 'https:';
@@ -81,6 +98,11 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
                 if (msg.data.remote) {
                     msg.data.remote.forEach((item) => this.startTracker(item));
                 }
+                previousTrackers.forEach((tracker) => {
+                    if (!this.trackers.has(tracker)) {
+                        tracker.destroy();
+                    }
+                });
                 break;
             }
             default:
@@ -91,10 +113,10 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
     private startTracker(hostItem: HostItem): void {
         switch (hostItem.type) {
             case 'android':
-                this.trackers.push(GoogDeviceTracker.start(hostItem));
+                this.trackers.add(GoogDeviceTracker.start(hostItem));
                 break;
             case 'ios':
-                this.trackers.push(ApplDeviceTracker.start(hostItem));
+                this.trackers.add(ApplDeviceTracker.start(hostItem));
                 break;
             default:
                 console.warn(TAG, `Unsupported host type: "${hostItem.type}"`);
@@ -106,11 +128,21 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
     }
 
     public destroy(): void {
+        if (this.destroyed) {
+            return;
+        }
+        if (this.reconnectTimer !== undefined) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = undefined;
+        }
         super.destroy();
         this.trackers.forEach((tracker) => {
             tracker.destroy();
         });
-        this.trackers.length = 0;
+        this.trackers.clear();
+        if (HostTracker.instance === this) {
+            HostTracker.instance = undefined;
+        }
     }
 
     protected supportMultiplexing(): boolean {

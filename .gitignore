@@ -3,5 +3,11 @@
 /build
 /.idea
 /adbkeys
-/.appium-home
 /logs/
+
+# Runtime per-device scrcpy settings written by StreamConfig
+stream-config.json
+
+# Self-signed HTTPS material from `npm run setup:https`
+/certs/
+config.https.yaml

@@ -1,0 +1,15 @@
+.device-icon {
+    flex: 0 0 var(--device-icon-width, 40px);
+    width: var(--device-icon-width, 40px);
+    height: var(--device-icon-height, 44px);
+    display: grid;
+    place-items: center;
+    background: var(--progress-background-color);
+    color: var(--button-text-color);
+    border-radius: 0.75rem;
+}
+
+.device-icon svg {
+    width: var(--device-icon-glyph-width, 25px);
+    height: var(--device-icon-glyph-height, 28px);
+}

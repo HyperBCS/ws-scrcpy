@@ -1,5 +1,5 @@
 import { TypedEmitter } from '../../common/TypedEmitter';
-import { Message } from './Message';
+import { Message, MessageData } from './Message';
 import { MessageType } from './MessageType';
 import { EventClass } from './Event';
 import { CloseEventClass } from './CloseEventClass';
@@ -29,6 +29,23 @@ export interface WebsocketEventEmitter {
     ): void;
 }
 
+/**
+ * `Buffer.from()` has no overload for the whole `WebSocket.send()` union (a `Blob` has no
+ * synchronous bytes at all), so narrow by hand. Views stay views: only a string allocates.
+ */
+function toMessageData(data: string | ArrayBufferLike | Blob | ArrayBufferView): MessageData {
+    if (typeof data === 'string') {
+        return Buffer.from(data);
+    }
+    if (ArrayBuffer.isView(data)) {
+        return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    }
+    if (data instanceof Blob) {
+        throw new TypeError('Blob is not a supported payload type');
+    }
+    return new Uint8Array(data);
+}
+
 export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebSocket {
     readonly CONNECTING = 0;
     readonly OPEN = 1;
@@ -53,7 +70,11 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
         return new Multiplexer(ws);
     }
 
-    protected constructor(public readonly ws: WebSocket, private _id = 0, emitter?: WebsocketEventEmitter) {
+    protected constructor(
+        public readonly ws: WebSocket,
+        private _id = 0,
+        emitter?: WebsocketEventEmitter,
+    ) {
         super();
         this.readyState = this.CONNECTING;
         if (this._id === 0) {
@@ -80,84 +101,20 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
         };
 
         const onMessageHandler = (event: MessageEvent) => {
-            const { data } = event;
-            const message = Message.parse(data);
-            switch (message.type) {
-                case MessageType.CreateChannel: {
-                    const { channelId, data } = message;
-                    if (this.nextId < channelId) {
-                        this.nextId = channelId;
-                    }
-                    const channel = this._createChannel(channelId, false);
-                    this.emit('channel', { channel, data });
-                    break;
-                }
-                case MessageType.RawStringData: {
-                    const data = this.channels.get(message.channelId);
-                    if (data) {
-                        const { channel } = data;
-                        const msg = new MessageEventClass('message', {
-                            data: Util.utf8ByteArrayToString(Buffer.from(message.data)),
-                            lastEventId: event.lastEventId,
-                            origin: event.origin,
-                            source: event.source,
-                        });
-                        channel.dispatchEvent(msg);
-                    } else {
-                        console.error(`Channel with id (${message.channelId}) not found`);
-                    }
-                    break;
-                }
-                case MessageType.RawBinaryData: {
-                    const data = this.channels.get(message.channelId);
-                    if (data) {
-                        const { channel } = data;
-                        const msg = new MessageEventClass('message', {
-                            data: message.data,
-                            lastEventId: event.lastEventId,
-                            origin: event.origin,
-                            source: event.source,
-                        });
-                        channel.dispatchEvent(msg);
-                    } else {
-                        console.error(`Channel with id (${message.channelId}) not found`);
-                    }
-                    break;
-                }
-                case MessageType.Data: {
-                    const data = this.channels.get(message.channelId);
-                    if (data) {
-                        const { emitter } = data;
-                        const msg = new MessageEventClass('message', {
-                            data: message.data,
-                            lastEventId: event.lastEventId,
-                            origin: event.origin,
-                            source: event.source,
-                        });
-                        emitter.dispatchEvent(msg);
-                    } else {
-                        console.error(`Channel with id (${message.channelId}) not found`);
-                    }
-                    break;
-                }
-                case MessageType.CloseChannel: {
-                    const data = this.channels.get(message.channelId);
-                    if (data) {
-                        const { channel } = data;
-                        channel.readyState = channel.CLOSING;
-                        try {
-                            channel.dispatchEvent(message.toCloseEvent());
-                        } finally {
-                            channel.readyState = channel.CLOSED;
-                        }
-                    } else {
-                        console.error(`Channel with id (${message.channelId}) not found`);
-                    }
-                    break;
-                }
-                default:
-                    const error = new Error(`Unsupported message type: ${message.type}`);
-                    this.dispatchEvent(new ErrorEventClass('error', { error }));
+            let message: Message<ArrayBuffer>;
+            try {
+                message = Message.parse(event.data);
+            } catch (error) {
+                // A frame too short to hold a header must not throw out of the event listener:
+                // there is nothing to catch it there and the process would go down with it.
+                this.reportError('Failed to parse message', error);
+                this.closeSafely(4000, 'Invalid message');
+                return;
+            }
+            try {
+                this.handleMessage(event, message);
+            } catch (error) {
+                this.reportError(`Failed to handle message (type: ${message.type})`, error);
             }
         };
 
@@ -191,6 +148,106 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
         this.on('close', onThisCloseHandler);
         this.on('open', onThisOpenHandler);
         this.scheduleEmptyEvent();
+    }
+
+    private handleMessage(event: MessageEvent, message: Message<ArrayBuffer>): void {
+        switch (message.type) {
+            case MessageType.CreateChannel: {
+                const { channelId, data } = message;
+                if (this.nextId < channelId) {
+                    this.nextId = channelId;
+                }
+                const channel = this._createChannel(channelId, false);
+                this.emit('channel', { channel, data });
+                break;
+            }
+            case MessageType.RawStringData: {
+                const data = this.channels.get(message.channelId);
+                if (data) {
+                    const { channel } = data;
+                    const msg = new MessageEventClass('message', {
+                        data: Util.utf8ByteArrayToString(Buffer.from(message.data)),
+                        lastEventId: event.lastEventId,
+                        origin: event.origin,
+                        source: event.source,
+                    });
+                    channel.dispatchEvent(msg);
+                } else {
+                    console.error(`Channel with id (${message.channelId}) not found`);
+                }
+                break;
+            }
+            case MessageType.RawBinaryData: {
+                const data = this.channels.get(message.channelId);
+                if (data) {
+                    const { channel } = data;
+                    const msg = new MessageEventClass('message', {
+                        data: message.data,
+                        lastEventId: event.lastEventId,
+                        origin: event.origin,
+                        source: event.source,
+                    });
+                    channel.dispatchEvent(msg);
+                } else {
+                    console.error(`Channel with id (${message.channelId}) not found`);
+                }
+                break;
+            }
+            case MessageType.Data: {
+                const data = this.channels.get(message.channelId);
+                if (data) {
+                    const { emitter } = data;
+                    const msg = new MessageEventClass('message', {
+                        data: message.data,
+                        lastEventId: event.lastEventId,
+                        origin: event.origin,
+                        source: event.source,
+                    });
+                    emitter.dispatchEvent(msg);
+                } else {
+                    console.error(`Channel with id (${message.channelId}) not found`);
+                }
+                break;
+            }
+            case MessageType.CloseChannel: {
+                const data = this.channels.get(message.channelId);
+                if (data) {
+                    const { channel } = data;
+                    channel.readyState = channel.CLOSING;
+                    try {
+                        channel.dispatchEvent(message.toCloseEvent());
+                    } finally {
+                        channel.readyState = channel.CLOSED;
+                    }
+                } else {
+                    console.error(`Channel with id (${message.channelId}) not found`);
+                }
+                break;
+            }
+            default: {
+                const error = new Error(`Unsupported message type: ${message.type}`);
+                this.dispatchEvent(new ErrorEventClass('error', { error }));
+            }
+        }
+    }
+
+    private reportError(text: string, thrown: unknown): void {
+        const error = thrown instanceof Error ? thrown : new Error(String(thrown));
+        console.error(`[Multiplexer] ${text}: ${error.message}`);
+        try {
+            this.dispatchEvent(new ErrorEventClass('error', { error }));
+        } catch {
+            // `EventEmitter` throws back at us when nobody listens for 'error'; already logged above.
+        }
+    }
+
+    private closeSafely(code: number, reason: string): void {
+        try {
+            this.close(code, reason);
+        } catch (thrown) {
+            const error = thrown instanceof Error ? thrown : new Error(String(thrown));
+            console.error(`[Multiplexer] Failed to close (${code} ${reason}): ${error.message}`);
+        }
     }
 
     public get bufferedAmount(): number {
@@ -256,7 +313,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
             if (typeof data === 'string') {
                 data = Message.createBuffer(MessageType.RawStringData, this._id, Buffer.from(data));
             } else {
-                data = Message.createBuffer(MessageType.RawBinaryData, this._id, Buffer.from(data));
+                data = Message.createBuffer(MessageType.RawBinaryData, this._id, toMessageData(data));
             }
         }
         this._send(data);
@@ -264,7 +321,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
 
     public sendData(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
         if (this.ws instanceof Multiplexer) {
-            data = Message.createBuffer(MessageType.Data, this._id, Buffer.from(data));
+            data = Message.createBuffer(MessageType.Data, this._id, toMessageData(data));
         }
         this._send(data);
     }

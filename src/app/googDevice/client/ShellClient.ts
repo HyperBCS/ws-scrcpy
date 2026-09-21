@@ -1,47 +1,85 @@
-import 'xterm/css/xterm.css';
+import '@xterm/xterm/css/xterm.css';
 import { ManagerClient } from '../../client/ManagerClient';
-import { Terminal } from 'xterm';
-import { AttachAddon } from 'xterm-addon-attach';
-import { FitAddon } from 'xterm-addon-fit';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
 import { MessageXtermClient } from '../../../types/MessageXtermClient';
 import { ACTION } from '../../../common/Action';
 import { ParamsShell } from '../../../types/ParamsShell';
 import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
-import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
 import Util from '../../Util';
-import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { ChannelCode } from '../../../common/ChannelCode';
+import { ToolEntry } from '../../client/Tool';
+import { shellTool } from './deviceTools';
 
 const TAG = '[ShellClient]';
 
+/**
+ * Maps typed text to the control characters a physical Ctrl key would produce. Phone keyboards
+ * have no Ctrl, so the toolbar offers one as a toggle; while it is on, every letter is sent as
+ * its control code (c -> ^C, d -> ^D, l -> ^L...) and the punctuation that has a control code
+ * follows the same rule. Anything else passes through unchanged.
+ */
+export function withControl(data: string): string {
+    return Array.from(data)
+        .map((char) => {
+            if (/^[a-z]$/i.test(char)) {
+                return String.fromCharCode(char.toUpperCase().charCodeAt(0) - 64);
+            }
+            const punctuation: Record<string, string> = {
+                '@': '\x00',
+                ' ': '\x00',
+                '[': '\x1b',
+                '\\': '\x1c',
+                ']': '\x1d',
+                '^': '\x1e',
+                _: '\x1f',
+                '?': '\x7f',
+            };
+            return punctuation[char] ?? char;
+        })
+        .join('');
+}
+
 export class ShellClient extends ManagerClient<ParamsShell, never> {
     public static ACTION = ACTION.SHELL;
-    public static start(params: ParamsShell): ShellClient {
-        return new ShellClient(params);
+    public static start(params: ParamsShell, mount?: HTMLElement): ShellClient {
+        return new ShellClient(params, mount);
     }
 
     private readonly term: Terminal;
     private readonly fitAddon: FitAddon;
-    private readonly escapedUdid: string;
     private readonly udid: string;
+    private readonly container: HTMLElement;
+    private readonly resizeObserver: ResizeObserver;
+    private closed = false;
+    private controlActive = false;
 
-    constructor(params: ParamsShell) {
+    constructor(params: ParamsShell, mount?: HTMLElement) {
         super(params);
         this.udid = params.udid;
-        this.openNewConnection();
-        this.setTitle(`Shell ${this.udid}`);
-        this.setBodyClass('shell');
-        if (!this.ws) {
-            throw Error('No WebSocket');
+        if (!mount) {
+            this.setTitle(`Shell ${this.udid}`);
+            this.setBodyClass('shell');
         }
-        this.term = new Terminal();
-        this.term.loadAddon(new AttachAddon(this.ws));
+        this.container = document.createElement('div');
+        this.container.className = 'terminal-container';
+        (mount ?? document.body).appendChild(this.container);
+        this.term = new Terminal({ fontSize: 14, cursorBlink: true, scrollback: 3000 });
         this.fitAddon = new FitAddon();
         this.term.loadAddon(this.fitAddon);
-        this.escapedUdid = Util.escapeUdid(this.udid);
-        this.term.open(ShellClient.getOrCreateContainer(this.escapedUdid));
+        this.term.open(this.container);
         this.updateTerminalSize();
-        this.term.focus();
+        this.resizeObserver = new ResizeObserver(this.updateTerminalSize);
+        this.resizeObserver.observe(this.container);
+        this.openNewConnection();
+        // Typed input goes through `send` rather than the attach addon so the Ctrl toggle can
+        // rewrite it; output is written back in `onSocketMessage`.
+        this.term.onData((data) => this.send(this.controlActive ? withControl(data) : data));
+        this.term.onBinary((data) => this.send(data));
+        // On phones, opening a tool should not immediately cover it with the keyboard.
+        if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+            this.term.focus();
+        }
     }
 
     protected supportMultiplexing(): boolean {
@@ -58,23 +96,49 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
     }
 
     protected onSocketOpen = (): void => {
-        this.startShell(this.udid);
+        if (!this.destroyed) {
+            this.startShell(this.udid);
+        }
     };
 
     protected onSocketClose(event: CloseEvent): void {
+        if (this.destroyed) {
+            return;
+        }
         console.log(TAG, `Connection closed: ${event.reason}`);
-        this.term.dispose();
+        this.closed = true;
+        this.term.options.disableStdin = true;
+        this.term.writeln('\r\n[Shell disconnected. Use Reconnect to open a new session.]');
     }
 
-    protected onSocketMessage(): void {
-        // messages are processed by Attach Addon
+    protected onSocketMessage(event: MessageEvent): void {
+        if (this.destroyed) {
+            return;
+        }
+        const data = event.data;
+        this.term.write(typeof data === 'string' ? data : new Uint8Array(data as ArrayBuffer));
+    }
+
+    private send(data: string): void {
+        if (!this.destroyed && !this.closed && this.ws?.readyState === this.ws?.OPEN) {
+            this.ws?.send(data);
+        }
+    }
+
+    /** The toolbar Ctrl toggle: on until switched off, like a held modifier. */
+    public setControl(active: boolean): void {
+        this.controlActive = active;
     }
 
     public startShell(udid: string): void {
         if (!udid || !this.ws || this.ws.readyState !== this.ws.OPEN) {
             return;
         }
-        const { rows, cols } = this.fitAddon.proposeDimensions();
+        const dimensions = this.fitAddon.proposeDimensions();
+        if (!dimensions) {
+            return;
+        }
+        const { rows, cols } = dimensions;
         const message: MessageXtermClient = {
             id: 1,
             type: 'shell',
@@ -88,53 +152,36 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         this.ws.send(JSON.stringify(message));
     }
 
-    private static getOrCreateContainer(udid: string): HTMLElement {
-        let container = document.getElementById(udid);
-        if (!container) {
-            container = document.createElement('div');
-            container.className = 'terminal-container';
-            container.id = udid;
-            document.body.appendChild(container);
+    public focus(): void {
+        if (!this.destroyed && !this.closed) {
+            this.term.focus();
         }
-        return container;
     }
 
-    private updateTerminalSize(): void {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const term: any = this.term;
-        const terminalContainer: HTMLElement = ShellClient.getOrCreateContainer(this.escapedUdid);
-        const { rows, cols } = this.fitAddon.proposeDimensions();
-        const width =
-            (cols * term._core._renderService.dimensions.actualCellWidth + term._core.viewport.scrollBarWidth).toFixed(
-                2,
-            ) + 'px';
-        const height = (rows * term._core._renderService.dimensions.actualCellHeight).toFixed(2) + 'px';
-        terminalContainer.style.width = width;
-        terminalContainer.style.height = height;
-        this.fitAddon.fit();
+    public sendInput(text: string): void {
+        this.send(text);
+        this.focus();
     }
 
-    public static createEntryForDeviceList(
-        descriptor: GoogDeviceDescriptor,
-        blockClass: string,
-        params: ParamsDeviceTracker,
-    ): HTMLElement | DocumentFragment | undefined {
-        if (descriptor.state !== 'device') {
+    private updateTerminalSize = (): void => {
+        if (this.destroyed || !this.container.clientWidth || !this.container.clientHeight) {
             return;
         }
-        const entry = document.createElement('div');
-        entry.classList.add('shell', blockClass);
-        entry.appendChild(
-            BaseDeviceTracker.buildLink(
-                {
-                    action: ACTION.SHELL,
-                    udid: descriptor.udid,
-                },
-                'shell',
-                params,
-            ),
-        );
-        return entry;
+        this.fitAddon.fit();
+    };
+
+    public stop(): void {
+        if (this.destroyed) {
+            return;
+        }
+        this.resizeObserver.disconnect();
+        this.destroy();
+        this.term.dispose();
+        this.container.remove();
+    }
+
+    public static createEntryForDeviceList(descriptor: GoogDeviceDescriptor): ToolEntry | undefined {
+        return shellTool.createEntryForDeviceList(descriptor);
     }
 
     protected getChannelInitData(): Buffer {

@@ -29,7 +29,10 @@ export class FeaturedInteractionHandler extends InteractionHandler {
     private readonly storedFromTouchEvent = new Map<number, TouchControlMessage>();
     private lastScrollEvent?: { time: number; hScroll: number; vScroll: number };
 
-    constructor(player: BasePlayer, public readonly listener: InteractionHandlerListener) {
+    constructor(
+        player: BasePlayer,
+        public readonly listener: InteractionHandlerListener,
+    ) {
         super(player, FeaturedInteractionHandler.touchEventsNames, FeaturedInteractionHandler.keyEventsNames);
         this.tag.addEventListener('mouseleave', this.onMouseLeave);
         this.tag.addEventListener('mouseenter', this.onMouseEnter);
@@ -39,8 +42,8 @@ export class FeaturedInteractionHandler extends InteractionHandler {
         const messages: ScrollControlMessage[] = [];
         const touchOnClient = InteractionHandler.buildTouchOnClient(event, screenInfo);
         if (touchOnClient) {
-            const hScroll = event.deltaX > 0 ? -1 : event.deltaX < -0 ? 1 : 0;
-            const vScroll = event.deltaY > 0 ? -1 : event.deltaY < -0 ? 1 : 0;
+            const hScroll = event.deltaX > 0 ? -1 : event.deltaX < 0 ? 1 : 0;
+            const vScroll = event.deltaY > 0 ? -1 : event.deltaY < 0 ? 1 : 0;
             const time = Date.now();
             if (
                 !this.lastScrollEvent ||

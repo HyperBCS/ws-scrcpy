@@ -3,12 +3,12 @@ import { Message } from '../../types/Message';
 import { BaseDeviceDescriptor } from '../../types/BaseDeviceDescriptor';
 import { DeviceTrackerEvent } from '../../types/DeviceTrackerEvent';
 import { DeviceTrackerEventList } from '../../types/DeviceTrackerEventList';
-import { html } from '../ui/HtmlTag';
 import { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import { HostItem } from '../../types/Configuration';
 import { Tool } from './Tool';
 import Util from '../Util';
-import { EventMap } from '../../common/TypedEmitter';
+import { EventKey, EventMap } from '../../common/TypedEmitter';
+import { removeTrackerDevices, setTrackerDevices, updateTrackerDevice } from '../state/devices';
 
 const TAG = '[BaseDeviceTracker]';
 
@@ -18,12 +18,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
 > {
     public static readonly ACTION_LIST = 'devicelist';
     public static readonly ACTION_DEVICE = 'device';
-    public static readonly HOLDER_ELEMENT_ID = 'devices';
-    public static readonly AttributePrefixInterfaceSelectFor = 'interface_select_for_';
-    public static readonly AttributePlayerFullName = 'data-player-full-name';
-    public static readonly AttributePlayerCodeName = 'data-player-code-name';
-    public static readonly AttributePrefixPlayerFor = 'player_for_';
-    protected static tools: Set<Tool> = new Set();
+    public static tools: Set<Tool> = new Set();
     protected static instanceId = 0;
 
     public static registerTool(tool: Tool): void {
@@ -47,47 +42,21 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         return wsUrl;
     }
 
-    public static buildLink(q: any, text: string, params: ParamsDeviceTracker): HTMLAnchorElement {
-        let { hostname } = params;
-        let port: string | number | undefined = params.port;
-        let pathname = params.pathname ?? location.pathname;
-        let protocol = params.secure ? 'https:' : 'http:';
-        if (params.useProxy) {
-            q.hostname = hostname;
-            q.port = port;
-            q.pathname = pathname;
-            q.secure = params.secure;
-            q.useProxy = true;
-            protocol = location.protocol;
-            hostname = location.hostname;
-            port = location.port;
-            pathname = location.pathname;
-        }
-        const hash = `#!${new URLSearchParams(q).toString()}`;
-        const a = document.createElement('a');
-        a.setAttribute('href', `${protocol}//${hostname}:${port}${pathname}${hash}`);
-        a.setAttribute('rel', 'noopener noreferrer');
-        a.setAttribute('target', '_blank');
-        a.classList.add(`link-${q.action}`);
-        a.innerText = text;
-        return a;
-    }
-
     protected title = 'Device list';
-    protected tableId = 'base_device_list';
     protected descriptors: DD[] = [];
     protected elementId: string;
     protected trackerName = '';
     protected id = '';
-    private created = false;
     private messageId = 0;
+    private reconnectTimer?: ReturnType<typeof setTimeout>;
 
-    protected constructor(params: ParamsDeviceTracker, protected readonly directUrl: string) {
+    protected constructor(
+        params: ParamsDeviceTracker,
+        protected readonly directUrl: string,
+    ) {
         super(params);
         this.elementId = `tracker_instance${++BaseDeviceTracker.instanceId}`;
         this.trackerName = `Unavailable. Host: ${params.hostname}, type: ${params.type}`;
-        this.setBodyClass('list');
-        this.setTitle();
     }
 
     public static parseParameters(params: URLSearchParams): ParamsDeviceTracker {
@@ -103,61 +72,48 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         return ++this.messageId;
     }
 
-    protected buildDeviceTable(): void {
-        const data = this.descriptors;
-        const devices = this.getOrCreateTableHolder();
-        const tbody = this.getOrBuildTableBody(devices);
-
-        const block = this.getOrCreateTrackerBlock(tbody, this.trackerName);
-        data.forEach((item) => {
-            this.buildDeviceRow(block, item);
-        });
+    // Sends a `{ id, type, data }` command back over this tracker's socket, e.g. for the
+    // kill/start-server and update-interfaces actions the device list exposes per device.
+    public sendCommand(type: string, data: Record<string, unknown> = {}): number {
+        const message: Message = {
+            id: this.getNextId(),
+            type,
+            data,
+        };
+        if (this.ws && this.ws.readyState === this.ws.OPEN) {
+            this.ws.send(JSON.stringify(message));
+        }
+        return message.id;
     }
 
-    private setNameValue(parent: Element | null, name: string): void {
-        if (!parent) {
+    protected publishDevices(): void {
+        if (this.destroyed) {
             return;
         }
-        const nameBlockId = `${this.elementId}_name`;
-        let nameEl = document.getElementById(nameBlockId);
-        if (!nameEl) {
-            nameEl = document.createElement('div');
-            nameEl.id = nameBlockId;
-            nameEl.className = 'tracker-name';
-        }
-        nameEl.innerText = name;
-        parent.insertBefore(nameEl, parent.firstChild);
+        setTrackerDevices(this.id, this.trackerName, this.params, this, this.descriptors);
     }
-
-    private getOrCreateTrackerBlock(parent: Element, controlCenterName: string): Element {
-        let el = document.getElementById(this.elementId);
-        if (!el) {
-            el = document.createElement('div');
-            el.id = this.elementId;
-            parent.appendChild(el);
-            this.created = true;
-        } else {
-            while (el.children.length) {
-                el.removeChild(el.children[0]);
-            }
-        }
-        this.setNameValue(el, controlCenterName);
-        return el;
-    }
-
-    protected abstract buildDeviceRow(tbody: Element, device: DD): void;
 
     protected onSocketClose(event: CloseEvent): void {
         if (this.destroyed) {
             return;
         }
         console.log(TAG, `Connection closed: ${event.reason}`);
-        setTimeout(() => {
-            this.openNewConnection();
-        }, 2000);
+        this.descriptors = [];
+        removeTrackerDevices(this.id, this);
+        if (this.reconnectTimer === undefined) {
+            this.reconnectTimer = setTimeout(() => {
+                this.reconnectTimer = undefined;
+                if (!this.destroyed) {
+                    this.openNewConnection();
+                }
+            }, 2000);
+        }
     }
 
     protected onSocketMessage(event: MessageEvent): void {
+        if (this.destroyed) {
+            return;
+        }
         let message: Message;
         try {
             message = JSON.parse(event.data);
@@ -171,18 +127,31 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
                 const event = message.data as DeviceTrackerEventList<DD>;
                 this.descriptors = event.list;
                 this.setIdAndHostName(event.id, event.name);
-                this.buildDeviceTable();
+                this.publishDevices();
                 break;
             }
             case BaseDeviceTracker.ACTION_DEVICE: {
                 const event = message.data as DeviceTrackerEvent<DD>;
                 this.setIdAndHostName(event.id, event.name);
                 this.updateDescriptor(event.device);
-                this.buildDeviceTable();
+                if (!this.destroyed) {
+                    updateTrackerDevice(this.id, this.trackerName, this.params, this, event.device);
+                }
                 break;
             }
             default:
-                console.log(TAG, `Unknown message type: ${message.type}`);
+                // Replies to `sendCommand()` (e.g. goog's LIST_ENCODERS/UPDATE_STREAM_CONFIG,
+                // see `ControlCenterCommand`) land here with `message.type` equal to the
+                // command's own type string and `message.data` as its payload. Forward them
+                // through the typed emitter instead of every command needing its own
+                // `onSocketMessage` override in a subclass -- callers of `sendCommand()` just
+                // `.on()` the matching event name (declared in that subclass's own `TE`).
+                this.emit(
+                    message.type as EventKey<TE>,
+                    message.data && typeof message.data === 'object' && !Array.isArray(message.data)
+                        ? { ...message.data, requestId: message.id }
+                        : message.data,
+                );
         }
     }
 
@@ -190,21 +159,11 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         if (this.id === id && this.trackerName === trackerName) {
             return;
         }
+        if (this.id !== id) {
+            removeTrackerDevices(this.id, this);
+        }
         this.id = id;
         this.trackerName = trackerName;
-        this.setNameValue(document.getElementById(this.elementId), trackerName);
-    }
-
-    protected getOrCreateTableHolder(): HTMLElement {
-        const id = BaseDeviceTracker.HOLDER_ELEMENT_ID;
-        let devices = document.getElementById(id);
-        if (!devices) {
-            devices = document.createElement('div');
-            devices.id = id;
-            devices.className = 'table-wrapper';
-            document.body.appendChild(devices);
-        }
-        return devices;
     }
 
     protected updateDescriptor(descriptor: DD): void {
@@ -218,22 +177,6 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         }
     }
 
-    protected getOrBuildTableBody(parent: HTMLElement): Element {
-        const className = 'device-list';
-        let tbody = document.querySelector(
-            `#${BaseDeviceTracker.HOLDER_ELEMENT_ID} #${this.tableId}.${className}`,
-        ) as Element;
-        if (!tbody) {
-            const fragment = html`<div id="${this.tableId}" class="${className}"></div>`.content;
-            parent.appendChild(fragment);
-            const last = parent.children.item(parent.children.length - 1);
-            if (last) {
-                tbody = last;
-            }
-        }
-        return tbody;
-    }
-
     public getDescriptorByUdid(udid: string): DD | undefined {
         if (!this.descriptors.length) {
             return;
@@ -244,21 +187,18 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     }
 
     public destroy(): void {
+        if (this.destroyed) {
+            return;
+        }
+        if (this.reconnectTimer !== undefined) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = undefined;
+        }
         super.destroy();
-        if (this.created) {
-            const el = document.getElementById(this.elementId);
-            if (el) {
-                const { parentElement } = el;
-                el.remove();
-                if (parentElement && !parentElement.children.length) {
-                    parentElement.remove();
-                }
-            }
-        }
-        const holder = document.getElementById(BaseDeviceTracker.HOLDER_ELEMENT_ID);
-        if (holder && !holder.children.length) {
-            holder.remove();
-        }
+        this.descriptors = [];
+        // Two URLs can resolve to the same server id; destroying the duplicate must not
+        // remove the surviving tracker's cards.
+        removeTrackerDevices(this.id, this);
     }
 
     protected supportMultiplexing(): boolean {

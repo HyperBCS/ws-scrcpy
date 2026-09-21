@@ -8,8 +8,10 @@ export interface ProcessRunnerEvents {
     started: boolean;
     stdout: string;
     stderr: string;
-    close: { code: number; signal: string };
-    exit: { code: number | null; signal: string | null };
+    // `code` is null when the child was terminated by a signal, and `signal` is null
+    // when it exited on its own - both events carry the child_process payload verbatim.
+    close: { code: number | null; signal: NodeJS.Signals | null };
+    exit: { code: number | null; signal: NodeJS.Signals | null };
     error: Error;
 }
 

@@ -1,0 +1,194 @@
+.floating-toolbar {
+    position: fixed;
+    z-index: 8;
+    width: 56px;
+    height: 56px;
+    pointer-events: none;
+}
+
+.floating-toolbar-safearea {
+    position: fixed;
+    visibility: hidden;
+    pointer-events: none;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
+        env(safe-area-inset-left, 0px);
+}
+
+.floating-toolbar-fab {
+    position: relative;
+    pointer-events: auto;
+    width: 56px;
+    height: 56px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 20px;
+    background: #2563eb;
+    color: #fff;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+    cursor: grab;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+        background 0.15s ease,
+        box-shadow 0.15s ease;
+}
+
+.floating-toolbar-fab:hover,
+.floating-toolbar.open .floating-toolbar-fab {
+    background: #1d4ed8;
+}
+
+.floating-toolbar-fab:active,
+.floating-toolbar.dragging .floating-toolbar-fab {
+    cursor: grabbing;
+    box-shadow: 0 8px 30px rgba(37, 99, 235, 0.45);
+}
+
+.floating-toolbar-panel {
+    position: fixed;
+    pointer-events: auto;
+    width: min(292px, calc(100vw - 24px));
+    box-sizing: border-box;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--main-bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--device-border-color);
+    border-radius: 20px;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.32);
+    padding: 8px;
+}
+
+.floating-toolbar-panel[hidden] {
+    display: none;
+}
+
+.floating-toolbar.desktop {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    pointer-events: auto;
+}
+
+.floating-toolbar.desktop .floating-toolbar-panel {
+    position: static;
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    padding: 6px;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    scrollbar-width: thin;
+}
+
+.floating-toolbar.desktop .control-buttons-list.floating {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+}
+
+.floating-toolbar.desktop .control-buttons-list.floating .control-button {
+    height: 56px;
+    gap: 4px;
+    border-radius: 10px;
+}
+
+.floating-toolbar.desktop .floating-control-label {
+    font-size: 10px;
+}
+
+.floating-toolbar-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 2px 8px 8px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--device-border-color);
+}
+
+.floating-toolbar-heading strong {
+    display: block;
+    font-size: 15px;
+}
+
+.floating-toolbar-heading span {
+    display: block;
+    font-size: 11px;
+    margin-top: 4px;
+    color: var(--text-color-light);
+}
+
+
+.control-buttons-list.floating {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    width: 100%;
+    height: auto;
+    padding: 0;
+    background: transparent;
+}
+
+.control-buttons-list.floating .control-button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    min-width: 44px;
+    height: 66px;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 6px 2px;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    background: var(--header-bg-color);
+    color: var(--text-color);
+    opacity: 1;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.control-buttons-list.floating .control-button > svg {
+    width: 24px;
+    height: 24px;
+    flex: 0 0 24px;
+}
+
+.control-buttons-list.floating .control-button:hover,
+.control-buttons-list.floating .control-button:active {
+    border-color: var(--button-text-color);
+    background: var(--device-list-hover-color);
+}
+
+.floating-control-label {
+    font: 500 11px/1.15 var(--font-stack);
+    text-align: center;
+    white-space: normal;
+}
+
+.control-buttons-list.floating .control-button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.floating-toolbar button:focus-visible,
+.floating-toolbar .control-button:focus-visible {
+    outline: 3px solid var(--button-text-color);
+    outline-offset: 2px;
+}
+
+.floating-toolbar ~ * {
+    --control-bar-bottom: 0px;
+    --control-bar-side: 0px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .floating-toolbar-fab {
+        transition: none;
+    }
+}

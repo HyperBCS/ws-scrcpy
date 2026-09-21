@@ -11,6 +11,7 @@ import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { DeviceState } from '../../../common/DeviceState';
+import { streamConfig } from '../StreamConfig';
 
 export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> implements Service {
     private static readonly defaultWaitAfterError = 1000;
@@ -22,6 +23,7 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     private waitAfterError = 1000;
     private restartTimeoutId?: Timeout;
     private deviceMap: Map<string, Device> = new Map();
+    private trackerClients = 0;
     private descriptors: Map<string, GoogDeviceDescriptor> = new Map();
     private readonly id: string;
 
@@ -48,9 +50,14 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
         }
         console.log(`Device tracker is down. Will try to restart in ${this.waitAfterError}ms`);
         this.restartTimeoutId = setTimeout(() => {
+            this.restartTimeoutId = undefined;
             this.stopTracker();
             this.waitAfterError *= 1.2;
-            this.init();
+            this.init().catch((e) => {
+                console.error(`Error: Failed to restart "${this.getName()}". ${e.message}`);
+                // Without a tracker there is no 'end'/'error' event to trigger the next attempt
+                this.restartTracker();
+            });
         }, this.waitAfterError);
     };
 
@@ -91,6 +98,7 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
         } else {
             device = new Device(udid, state);
             device.on('update', this.onDeviceUpdate);
+            device.setRuntimeStatePollActive(this.trackerClients > 0);
             this.deviceMap.set(udid, device);
         }
     }
@@ -120,6 +128,10 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     }
 
     private stopTracker(): void {
+        if (this.restartTimeoutId) {
+            clearTimeout(this.restartTimeoutId);
+            this.restartTimeoutId = undefined;
+        }
         if (this.tracker) {
             this.tracker.off('changeSet', this.onChangeSet);
             this.tracker.off('end', this.restartTracker);
@@ -139,6 +151,26 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
         return this.deviceMap.get(udid);
     }
 
+    /**
+     * Tracks how many browsers have a device list open. Devices poll their runtime state
+     * (screen power, battery) on a slow interval by default and a fast one while someone is
+     * actually watching, so the "asleep" badge is not up to a minute stale in front of a user.
+     */
+    public addTrackerClient(): void {
+        if (++this.trackerClients === 1) {
+            this.deviceMap.forEach((device) => device.setRuntimeStatePollActive(true));
+        }
+    }
+
+    public removeTrackerClient(): void {
+        if (this.trackerClients === 0) {
+            return;
+        }
+        if (--this.trackerClients === 0) {
+            this.deviceMap.forEach((device) => device.setRuntimeStatePollActive(false));
+        }
+    }
+
     public getId(): string {
         return this.id;
     }
@@ -155,9 +187,16 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
 
     public release(): void {
         this.stopTracker();
+        this.deviceMap.forEach((device) => {
+            device.off('update', this.onDeviceUpdate);
+            device.release();
+        });
+        this.deviceMap.clear();
+        this.descriptors.clear();
+        this.trackerClients = 0;
     }
 
-    public async runCommand(command: ControlCenterCommand): Promise<void> {
+    public async runCommand(command: ControlCenterCommand): Promise<string | void> {
         const udid = command.getUdid();
         const device = this.getDevice(udid);
         if (!device) {
@@ -175,6 +214,20 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
             case ControlCenterCommand.UPDATE_INTERFACES:
                 await device.updateInterfaces();
                 return;
+            case ControlCenterCommand.GET_LOCK_STATE:
+                return JSON.stringify({ udid, ...(await device.refreshLockState()) });
+            case ControlCenterCommand.LIST_ENCODERS: {
+                const encoders = await device.listEncoders(true);
+                return JSON.stringify({ udid, encoders, config: streamConfig.get(udid) });
+            }
+            case ControlCenterCommand.UPDATE_STREAM_CONFIG: {
+                const patch = command.getConfig();
+                if (!patch) {
+                    throw new Error('Missing "config" in UPDATE_STREAM_CONFIG command');
+                }
+                const config = await device.updateStreamConfig(patch);
+                return JSON.stringify({ udid, config });
+            }
             default:
                 throw new Error(`Unsupported command: "${type}"`);
         }

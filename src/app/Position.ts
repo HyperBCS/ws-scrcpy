@@ -7,7 +7,10 @@ export interface PositionInterface {
 }
 
 export default class Position {
-    public constructor(readonly point: Point, readonly screenSize: Size) {}
+    public constructor(
+        readonly point: Point,
+        readonly screenSize: Size,
+    ) {}
 
     public equals(o: Position): boolean {
         if (this === o) {

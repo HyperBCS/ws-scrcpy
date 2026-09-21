@@ -1,7 +1,6 @@
 import WS from 'ws';
 import { Mw, RequestParameters } from '../../mw/Mw';
 import * as pty from 'node-pty';
-import * as os from 'os';
 import { IPty } from 'node-pty';
 import { Message } from '../../../types/Message';
 import { XtermClientMessage, XtermServiceParameters } from '../../../types/XtermMessage';
@@ -45,7 +44,7 @@ export class RemoteShell extends Mw {
         env['COLORTERM'] = 'truecolor';
         const { cols = 80, rows = 24 } = params;
         const cwd = env.PWD || '/';
-        const file = 'adb'
+        const file = 'adb';
         const term = pty.spawn(file, ['-s', params.udid, 'shell'], {
             name: 'xterm-256color',
             cols,
@@ -59,8 +58,8 @@ export class RemoteShell extends Mw {
         // @ts-ignore Documentation is incorrect for `encoding: null`
         term.onData((data) => {
             send(Buffer.from(data));
-          });
-          term.onExit(({ exitCode }) => {
+        });
+        term.onExit(({ exitCode }) => {
             if (exitCode === 0) {
                 this.closeCode = 1000;
             } else {

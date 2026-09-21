@@ -1,59 +1,62 @@
-:root {
-    --main-bg-color: hsl(0, 0%, 100%);
-    --stream-bg-color: hsl(0, 0%, 85%);
-    --shell-bg-color: hsl(0, 0%, 0%);
-    --text-shadow-color: hsl(218, 67%, 95%);
-    --header-bg-color: hsl(0, 0%, 95%);
-    --controls-bg-color: hsla(0, 0%, 95%, 0.8);
-    --control-buttons-bg-color: hsl(0, 0%, 95%);
-    --text-color: hsl(210, 16%, 22%);
-    --text-color-light: hsl(200, 16%, 52%);
-    --link-color: hsl(218, 85%, 43%);
-    --link-color-light: hsl(218, 85%, 73%);
-    --link-color_visited: hsl(271, 68%, 32%);
-    --link-color_visited-light: hsl(271, 68%, 72%);
-    --svg-checkbox-bg-color: hsl(172, 100%, 37%);
-    --svg-button-fill: hsl(199, 17%, 46%);
-    --kill-button-hover-color: hsl(342, 100%, 37%);
-    --url-color: hsl(0, 0%, 60%);
-    --button-text-color: hsl(214, 82%, 51%);
-    --button-border-color: hsl(0, 0%, 70%);
-    --progress-background-color: hsla(225, 100%, 50%, 0.2);
-    --progress-background-error-color: hsla(0, 100%, 50%, 0.2);
-    --font-size: 14px;
-    --panel-width: 3.715rem;
-}
-
-@media (prefers-color-scheme: dark) {
-    :root {
-        --main-bg-color: hsl(0, 0%, 14%);
-        --stream-bg-color: hsl(0, 0%, 20%);
-        --shell-bg-color: hsl(0, 0%, 0%);
-        --text-shadow-color: hsl(218, 17%, 18%);
-        --header-bg-color: hsl(0, 0%, 20%);
-        --controls-bg-color: hsla(201, 18%, 19%, 0.8);
-        --control-buttons-bg-color: hsl(201, 18%, 19%);
-        --text-color: hsl(0, 0%, 90%);
-        --text-color-light: hsl(0, 0%, 60%);
-        --link-color: hsl(218, 63%, 70%);
-        --link-color-light: hsl(218, 63%, 50%);
-        --link-color_visited: hsl(267, 31%, 47%);
-        --link-color_visited-light: hsl(267, 31%, 27%);
-        --svg-checkbox-bg-color: hsl(172, 100%, 27%);
-        --svg-button-fill: hsl(0, 0%, 100%);
-        --kill-button-hover-color: hsl(342, 100%, 27%);
-        --url-color: hsl(0, 0%, 60%);
-        --device-list-stripe-color: hsl(0, 0%, 16%);
-        --device-list-default-color: hsl(0, 0%, 14%);
-        --button-text-color: hsl(214, 82%, 76%);
-        --button-border-color: hsl(213, 5%, 39%);
-        --progress-background-color: hsla(225, 100%, 50%, 0.2);
-        --progress-background-error-color: hsla(0, 100%, 50%, 0.2);
-    }
-}
-
 html {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: pan-y;
     font-size: var(--font-size);
+    font-family: var(--font-stack);
+    /* Stops iOS Safari inflating text in landscape, which broke the measured touch targets. */
+    -webkit-text-size-adjust: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+    font-family: inherit;
+    box-sizing: border-box;
+}
+
+button,
+a,
+input,
+select,
+textarea,
+label {
+    -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a {
+    touch-action: manipulation;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    /* App controls should not bring up selection handles or iOS callouts on a long press.
+       Keep ordinary content (device IDs, messages, clipboard text) available for copying. */
+    button,
+    [role='button'],
+    summary,
+    label,
+    .floating-toolbar,
+    .stream-header,
+    .bottom-sheet-drag-region,
+    .device-avatar,
+    .device-status,
+    a.desc-block.stream {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+    }
+
+    /* Inputs can be nested in labels: restore native caret selection and copy/paste there. */
+    input,
+    textarea,
+    [contenteditable]:not([contenteditable='false']) {
+        -webkit-user-select: text;
+        user-select: text;
+        -webkit-touch-callout: default;
+    }
 }
 
 a {
@@ -65,17 +68,18 @@ a:visited {
 }
 
 body {
+    font-family: inherit;
     color: var(--text-color);
     background-color: var(--main-bg-color);
-    position: absolute;
     margin: 0;
     padding: 0;
     height: 100%;
     width: 100%;
     overflow: hidden;
     position: fixed; /* important for iOS full-screen behavior */
+    overscroll-behavior: none;
+    touch-action: pan-y;
 }
-
 
 body.shell {
     background-color: var(--shell-bg-color);
@@ -85,14 +89,45 @@ body.stream {
     background-color: var(--stream-bg-color);
 }
 
+body.list {
+    height: 100%;
+    height: 100dvh;
+    width: 100%;
+    overflow: hidden;
+}
+
+body.list #root {
+    height: 100%;
+    min-height: 0;
+}
+
+body.sheet-open #devices {
+    overflow: hidden;
+}
+
 .terminal-container {
     width: 100%;
     height: 100%;
     padding: 5px;
 }
 
-:focus {
+:focus:not(:focus-visible) {
     outline: none;
+}
+
+:focus-visible {
+    outline: 3px solid var(--link-color);
+    outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
 }
 
 .flex-center {
@@ -102,119 +137,4 @@ body.stream {
 
 .wait {
     cursor: wait;
-}
-
-.device-view {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    width: 100vw;
-    box-sizing: border-box;
-}
-
-.video {
-    position: relative;
-    display: inline-block;
-    background-color: #000000;
-    line-height: 0;
-}
-
-.video > canvas,
-.video > video {
-    display: block;
-    max-width: calc(100vw - 3.715rem);
-}
-
-/* Portrait override */
-@media screen and (orientation: portrait) {
-    .video {
-        align-self: flex-start; /* push video to top */
-    }
-
-    .video > video {
-        height: auto;
-        width: calc(100vw - 3.715rem);
-    }
-}
-
-/* Landscape */
-@media screen and (orientation: landscape) {
-    .video > video {
-        height: 100vh;
-        width: auto;
-    }
-}
-
-.touch-layer {
-    position: absolute;
-    top: 0;
-    left: 0;
-    height: 100%;
-    width: 100%;
-    z-index: 2;
-    pointer-events: auto;
-}
-
-.video-layer {
-    z-index: 1;
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-}
-
-.control-buttons-list {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    background-color: var(--control-buttons-bg-color);
-    flex-shrink: 0;
-    width: 3.715rem;
-}
-
-.control-button {
-    margin: .357rem .786rem;
-    padding: 0;
-    width: 2.143rem;
-    height: 2.143rem;
-    border: none;
-    opacity: 0.75;
-    background-color: var(--control-buttons-bg-color);
-}
-
-.control-button:hover {
-    opacity: 1;
-}
-
-.control-wrapper > input[type=checkbox] {
-    display: none;
-}
-
-.control-wrapper > label {
-    display: inline-block;
-}
-
-.control-button > svg {
-    fill: var(--svg-button-fill);
-}
-
-.control-wrapper > input[type=checkbox].two-images:checked + label > svg.image-on {
-    display: block;
-}
-
-.control-wrapper > input[type=checkbox].two-images:not(:checked) + label > svg.image-on {
-    display: none;
-}
-
-.control-wrapper > input[type=checkbox].two-images:checked + label > svg.image-off {
-    display: none;
-}
-
-.control-wrapper > input[type=checkbox].two-images:not(:checked) + label > svg.image-off {
-    display: block;
-}
-
-.control-wrapper > input[type=checkbox]:checked + label > svg {
-    fill: var(--svg-checkbox-bg-color);
 }

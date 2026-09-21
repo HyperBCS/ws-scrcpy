@@ -1,0 +1,136 @@
+.live-text-overlay {
+    position: fixed;
+    left: 0;
+    right: 0;
+    z-index: 12;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    box-sizing: border-box;
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+}
+
+.live-text-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.38);
+}
+
+.live-text-bar {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 560px;
+    max-height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    box-sizing: border-box;
+    padding: 16px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+    border-radius: 20px 20px 0 0;
+    border: 1px solid var(--device-border-color);
+    background: var(--main-bg-color);
+    color: var(--text-color);
+    box-shadow: 0 -10px 36px rgba(0, 0, 0, 0.25);
+}
+
+.live-text-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.live-text-heading > div {
+    flex: 1 1 auto;
+}
+
+.live-text-heading strong {
+    font-size: 16px;
+}
+
+.live-text-heading p {
+    color: var(--text-color-light);
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 6px 0 0;
+}
+
+.live-text-input {
+    flex: 0 0 48px;
+    width: 100%;
+    min-width: 0;
+    height: 48px;
+    box-sizing: border-box;
+    padding: 0 14px;
+    /* iOS zooms focused inputs below 16px, stranding controls outside the visual viewport. */
+    font-size: 16px;
+    color: var(--text-color);
+    background: var(--header-bg-color);
+    border: 1px solid var(--button-border-color);
+    border-radius: 12px;
+}
+
+.live-text-done,
+.live-text-actions button {
+    min-height: 44px;
+    flex-shrink: 0;
+    padding: 0 14px;
+    color: var(--button-text-color);
+    background: var(--header-bg-color);
+    border: 1px solid var(--button-border-color);
+    border-radius: 12px;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+}
+
+.live-text-done {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: white;
+}
+
+/* One row of keys, always: they shrink rather than wrap on a narrow phone. */
+.live-text-actions {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.live-text-actions button {
+    min-width: 0;
+    padding: 0 6px;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.live-text-key-left,
+.live-text-key-right {
+    font-size: 18px;
+}
+
+.live-text-feedback {
+    display: block;
+    margin-top: -4px;
+    color: var(--text-color-light);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
+.live-text-bar :focus-visible {
+    outline: 3px solid var(--button-text-color);
+    outline-offset: 2px;
+}
+
+@media (min-width: 700px) and (min-height: 500px) {
+    .live-text-bar {
+        border-radius: 20px;
+        margin-bottom: 24px;
+    }
+}

@@ -12,6 +12,18 @@
     padding: 0 .714rem .714rem .714rem;
 }
 
+/* Reparented into `ToolsSheet` (see that component) instead of the old UA-gated toolbar toggle:
+   laid out inline in the sheet's own flow rather than absolutely positioned next to the video. */
+.more-box.embedded {
+    display: block;
+    position: static;
+    right: auto;
+    z-index: auto;
+    width: 100% !important; /* overrides the inline width GoogMoreBox sets from video size */
+    background-color: transparent;
+    padding: 0;
+}
+
 .text-with-shadow, .more-box label {
     color: var(--text-color);
     text-shadow: var(--text-shadow-color) 0 0 .357rem;

@@ -1,0 +1,314 @@
+.bottom-sheet-root {
+    position: fixed;
+    inset: 0;
+    top: var(--sheet-viewport-top, 0px);
+    bottom: auto;
+    height: var(--sheet-viewport-height, 100dvh);
+    z-index: 10;
+    pointer-events: none;
+}
+
+.bottom-sheet-backdrop {
+    position: absolute;
+    /* Stops short of the control bar for the same reason as the panel above: a tap on the bar
+       should press the button, not just dismiss the sheet. */
+    top: 0;
+    left: 0;
+    right: var(--control-bar-side, 0px);
+    bottom: var(--control-bar-bottom, 0px);
+    background-color: rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.bottom-sheet-root.open .bottom-sheet-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.bottom-sheet {
+    --sheet-gutter: 20px;
+    position: absolute;
+    /* Inset by the control bar's footprint (published by `trackControlBarInset`) so the bar stays
+       visible and tappable while a sheet is open -- otherwise the sheet covers it and the buttons
+       under it silently stop working. Falls back to 0 outside the stream view, where there is no
+       bar. */
+    left: 0;
+    right: var(--control-bar-side, 0px);
+    bottom: var(--control-bar-bottom, 0px);
+    box-sizing: border-box;
+    min-width: 0;
+    max-height: calc(100% - max(16px, env(safe-area-inset-top, 0px)) - var(--control-bar-bottom, 0px));
+    display: flex;
+    flex-direction: column;
+    background-color: var(--main-bg-color);
+    color: var(--text-color);
+    border-radius: 1.4rem 1.4rem 0 0;
+    border: 1px solid var(--device-border-color);
+    border-bottom: 0;
+    box-shadow: 0 -0.2rem 1rem rgba(0, 0, 0, 0.3);
+    /* Must clear the control-bar inset too: `bottom` lifts the sheet off the viewport edge, so
+       translating by its own height alone leaves it peeking above the bar while "closed". */
+    transform: translateY(calc(100% + var(--control-bar-bottom, 0px)));
+    transition:
+        transform 0.22s ease,
+        visibility 0.22s;
+    /* Belt and braces -- a closed sheet must not be reachable or visible even mid-transition. */
+    visibility: hidden;
+    /* Keeps the sheet's own content clear of the home indicator on notched phones. */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+}
+
+.bottom-sheet-root.open .bottom-sheet {
+    transform: translateY(var(--sheet-drag-y, 0px));
+    visibility: visible;
+    pointer-events: auto;
+}
+.bottom-sheet-root.dragging .bottom-sheet {
+    transition: none;
+}
+.bottom-sheet-drag-region {
+    flex-shrink: 0;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: grab;
+}
+.bottom-sheet-root.dragging .bottom-sheet-drag-region {
+    cursor: grabbing;
+}
+.bottom-sheet-root[data-dismissible='false'] .bottom-sheet-drag-region {
+    cursor: default;
+}
+
+.bottom-sheet-handle {
+    width: 40px;
+    height: 5px;
+    border-radius: 999px;
+    background-color: var(--button-border-color);
+    margin: 12px auto 3px;
+    flex-shrink: 0;
+}
+
+.bottom-sheet-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px var(--sheet-gutter) 12px;
+    flex-shrink: 0;
+}
+
+.bottom-sheet-title {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: bold;
+}
+
+.bottom-sheet-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    min-width: 48px;
+    min-height: 48px;
+    padding: 10px 12px;
+    border: 1px solid var(--device-border-color);
+    border-radius: 12px;
+    background: var(--device-list-stripe-color);
+    color: var(--text-color);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.bottom-sheet-close svg {
+    width: 24px;
+    height: 24px;
+    flex: 0 0 24px;
+}
+.bottom-sheet-close:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.bottom-sheet-body {
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* Explicitly vertical: overflow-y alone computes overflow-x:auto, permitting
+       sideways rubber-banding on touch browsers even when the content fits. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: 4px var(--sheet-gutter) var(--sheet-gutter);
+}
+
+.bottom-sheet-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: 44px;
+    padding: 0.4rem 0;
+}
+
+.bottom-sheet-row input[type='checkbox'] {
+    width: 1.4rem;
+    height: 1.4rem;
+}
+
+.bottom-sheet-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    width: 100%;
+    min-height: 44px;
+    padding: 0.5rem 0.2rem;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--device-border-color);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.bottom-sheet-list-item:last-child {
+    border-bottom: none;
+}
+
+.bottom-sheet-list-item.current {
+    color: var(--link-color);
+    font-weight: bold;
+}
+
+.bottom-sheet-hint {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--text-color-light);
+}
+
+/* Shared sheet controls. `ActionsSheet` is native Preact now; it replaces the reparented
+   `GoogMoreBox`, whose vanilla DOM never matched the rest of the sheet UI. */
+.sheet-section-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-color-light);
+    margin: 0.9rem 0 0.2rem;
+}
+
+.sheet-section-title:first-child {
+    margin-top: 0.2rem;
+}
+
+.sheet-button-row {
+    flex-wrap: wrap;
+}
+
+.sheet-button {
+    min-height: 44px;
+    padding: 0 0.9rem;
+    font: inherit;
+    font-size: 0.9rem;
+    color: var(--button-text-color);
+    background-color: transparent;
+    border: 1px solid var(--button-border-color);
+    border-radius: 0.5rem;
+    cursor: pointer;
+}
+
+.sheet-button:disabled {
+    color: var(--text-color-light);
+    cursor: default;
+}
+
+.sheet-button-danger {
+    color: var(--kill-button-hover-color);
+}
+
+.sheet-input {
+    flex: 1 1 8rem;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 0.6rem;
+    font: inherit;
+    /* iOS zooms fields smaller than 16px, moving the remote screen under the keyboard. */
+    font-size: 16px;
+    color: var(--text-color);
+    background-color: var(--main-bg-color);
+    border: 1px solid var(--button-border-color);
+    border-radius: 0.5rem;
+}
+
+.sheet-readout {
+    padding: 0.5rem 0.6rem;
+    border-radius: 0.5rem;
+    background-color: var(--device-list-stripe-color);
+    font-family: var(--font-stack-mono);
+    font-size: 0.8rem;
+    word-break: break-word;
+    max-height: 6rem;
+    overflow-y: auto;
+}
+
+.bottom-sheet-close:hover:not(:disabled),
+.bottom-sheet-list-item:hover,
+.sheet-button:hover:not(:disabled) {
+    background-color: var(--device-list-hover-color);
+}
+
+.sheet-button:disabled {
+    opacity: 0.6;
+}
+
+@media (min-width: 760px) and (min-height: 540px) and (hover: hover) and (pointer: fine) {
+    .bottom-sheet {
+        --sheet-gutter: 24px;
+        left: 50%;
+        right: auto;
+        bottom: 50%;
+        width: min(560px, calc(100% - 48px));
+        max-height: min(720px, calc(100% - 64px));
+        border-radius: 1.4rem;
+        border-bottom: 1px solid var(--device-border-color);
+        transform: translate(-50%, calc(50% + 24px));
+        opacity: 0;
+        transition:
+            transform 0.2s ease,
+            opacity 0.2s ease,
+            visibility 0.2s;
+    }
+
+    .bottom-sheet-root.open .bottom-sheet {
+        transform: translate(-50%, 50%);
+        opacity: 1;
+    }
+
+    .bottom-sheet-handle {
+        display: none;
+    }
+    .bottom-sheet-drag-region {
+        cursor: default;
+        touch-action: auto;
+    }
+
+    .bottom-sheet-header {
+        padding-top: 1rem;
+    }
+}
+
+@media (max-width: 360px) {
+    .bottom-sheet {
+        --sheet-gutter: 16px;
+    }
+}

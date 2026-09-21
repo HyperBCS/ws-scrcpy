@@ -7,7 +7,10 @@ export default class Size {
     public readonly w: number;
     public readonly h: number;
 
-    constructor(readonly width: number, readonly height: number) {
+    constructor(
+        readonly width: number,
+        readonly height: number,
+    ) {
         this.w = width;
         this.h = height;
     }

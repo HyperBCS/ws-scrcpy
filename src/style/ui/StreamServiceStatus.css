@@ -1,0 +1,41 @@
+.stream-service-status {
+    --service-state-color: var(--text-color-light);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    max-width: 100%;
+    color: var(--text-color-light);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.stream-service-status-dot {
+    flex: 0 0 0.5rem;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--service-state-color);
+}
+
+.stream-service-status strong {
+    color: var(--service-state-color);
+    font-weight: 600;
+}
+
+.stream-service-status[data-stream-service='running'] {
+    --service-state-color: var(--status-ready-color);
+}
+
+.stream-service-status[data-stream-service='starting'] {
+    --service-state-color: var(--status-starting-color);
+}
+
+.stream-service-status[data-stream-service='unauthorized'] {
+    --service-state-color: var(--status-unauthorized-color);
+}
+
+.device > .stream-service-status {
+    margin: -0.45rem 0 1rem;
+}

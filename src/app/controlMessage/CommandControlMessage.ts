@@ -2,6 +2,13 @@ import { ControlMessage } from './ControlMessage';
 import VideoSettings from '../VideoSettings';
 import Util from '../Util';
 
+/** Matches scrcpy's `sc_copy_key`. */
+export enum CopyKey {
+    NONE = 0,
+    COPY = 1,
+    CUT = 2,
+}
+
 export enum FilePushState {
     NEW,
     START,
@@ -44,20 +51,43 @@ export class CommandControlMessage extends ControlMessage {
         return event;
     }
 
-    public static createSetClipboardCommand(text: string, paste = false): CommandControlMessage {
+    /**
+     * Wire format (verified against scrcpy 4.1's `control_msg.c`):
+     *   type(1) sequence(u64) paste(1) length(u32) text
+     *
+     * The 8-byte sequence was missing here, so every SET_CLIPBOARD was one field short and the
+     * server read the paste flag and length out of the wrong bytes -- the clipboard never
+     * changed. `sequence` is only used by scrcpy to ack a set; 0 means "no ack wanted".
+     */
+    public static createSetClipboardCommand(text: string, paste = false, sequence = 0): CommandControlMessage {
         const event = new CommandControlMessage(ControlMessage.TYPE_SET_CLIPBOARD);
         const textBytes: Uint8Array | null = text ? Util.stringToUtf8ByteArray(text) : null;
         const textLength = textBytes ? textBytes.length : 0;
         let offset = 0;
-        const buffer = Buffer.alloc(1 + 1 + 4 + textLength);
-        offset = buffer.writeInt8(event.type, offset);
-        offset = buffer.writeInt8(paste ? 1 : 0, offset);
-        offset = buffer.writeInt32BE(textLength, offset);
+        const buffer = Buffer.alloc(1 + 8 + 1 + 4 + textLength);
+        offset = buffer.writeUInt8(event.type, offset);
+        offset = buffer.writeBigUInt64BE(BigInt(sequence), offset);
+        offset = buffer.writeUInt8(paste ? 1 : 0, offset);
+        offset = buffer.writeUInt32BE(textLength, offset);
         if (textBytes) {
-            textBytes.forEach((byte: number, index: number) => {
-                buffer.writeUInt8(byte, index + offset);
-            });
+            buffer.set(textBytes, offset);
         }
+        event.buffer = buffer;
+        return event;
+    }
+
+    /**
+     * Wire format: type(1) copyKey(1). The copy key tells the device whether to press Ctrl+C /
+     * Ctrl+X first; `NONE` just reads whatever is already on the clipboard.
+     *
+     * A bare 1-byte GET_CLIPBOARD (what this used to send) leaves the server waiting for the
+     * missing byte, so no reply ever came back.
+     */
+    public static createGetClipboardCommand(copyKey = CopyKey.NONE): CommandControlMessage {
+        const event = new CommandControlMessage(ControlMessage.TYPE_GET_CLIPBOARD);
+        const buffer = Buffer.alloc(2);
+        buffer.writeUInt8(event.type, 0);
+        buffer.writeUInt8(copyKey, 1);
         event.buffer = buffer;
         return event;
     }

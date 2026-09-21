@@ -15,12 +15,13 @@ export class ExtendedSync {
         const readNext = async (): Promise<void> => {
             const reply = await this.parser.readAscii(4);
             switch (reply) {
-                case Protocol.DENT:
+                case Protocol.DENT: {
                     const stat = await this.parser.readBytes(16);
                     const namelen = stat.readUInt32LE(12);
                     const name = await this.parser.readBytes(namelen);
                     stream.send(Buffer.concat([Buffer.from(reply), stat, name]));
                     return readNext();
+                }
                 case Protocol.DONE:
                     await this.parser.readBytes(16);
                     stream.close(0);
@@ -44,11 +45,12 @@ export class ExtendedSync {
         this._sendCommandWithArg(Protocol.STAT, `${path}`);
         const reply = await this.parser.readAscii(4);
         switch (reply) {
-            case Protocol.STAT:
+            case Protocol.STAT: {
                 const stat = await this.parser.readBytes(12);
                 stream.send(Buffer.concat([Buffer.from(reply), stat]));
                 stream.close(1000);
                 break;
+            }
             case Protocol.FAIL:
                 return this._readError(stream);
             default:
@@ -60,12 +62,13 @@ export class ExtendedSync {
         const readNext = async (): Promise<void> => {
             const reply = await this.parser.readAscii(4);
             switch (reply) {
-                case Protocol.DATA:
+                case Protocol.DATA: {
                     const lengthData = await this.parser.readBytes(4);
                     const length = lengthData.readUInt32LE(0);
                     const data = await this.parser.readBytes(length);
                     stream.send(Buffer.concat([Buffer.from(reply), data]));
                     return readNext();
+                }
                 case Protocol.DONE:
                     await this.parser.readBytes(4);
                     stream.close(1000);

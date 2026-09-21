@@ -22,6 +22,9 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     public static readonly playerFullName = 'WebCodecs';
     public static readonly playerCodeName = 'webcodecs';
 
+    private static readonly MAX_DECODER_ERRORS = 3;
+    private static readonly DECODER_ERROR_WINDOW_MS = 5000;
+
     public static readonly preferredVideoSettings: VideoSettings = new VideoSettings({
         lockedVideoOrientation: -1,
         bitrate: 524288,
@@ -70,10 +73,13 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     public readonly supportsScreenshot = true;
     private context: CanvasRenderingContext2D;
     private decoder: VideoDecoder;
-    private buffer: ArrayBuffer | undefined;
+    private buffer: ArrayBufferLike | undefined;
     private hadIDR = false;
+    /** Set after a decoder reset: drop NALUs until the stream resynchronises on an SPS. */
+    private waitingForSPS = false;
     private bufferedSPS = false;
     private bufferedPPS = false;
+    private decoderErrors: number[] = [];
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = WebCodecsPlayer.playerFullName) {
         super(udid, displayInfo, name, WebCodecsPlayer.storageKeyPrefix);
@@ -88,13 +94,64 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     private createDecoder(): VideoDecoder {
         return new VideoDecoder({
             output: (frame) => {
+                if (!this.receivedFirstFrame) {
+                    // `onFrameDecoded()` discards frames decoded with previous video settings.
+                    // A `VideoFrame` holds a media resource, so it must be released explicitly.
+                    frame.close();
+                    return;
+                }
                 this.onFrameDecoded(0, 0, frame);
             },
             error: (error: DOMException) => {
-                console.error(error, `code: ${error.code}`);
-                this.stop();
+                console.error(`[${this.name}]`, error, `code: ${error.code}`);
+                this.onDecoderError(error);
             },
         });
+    }
+
+    private onDecoderError(error: DOMException): void {
+        const now = Date.now();
+        this.decoderErrors.push(now);
+        while (this.decoderErrors.length && this.decoderErrors[0] < now - WebCodecsPlayer.DECODER_ERROR_WINDOW_MS) {
+            this.decoderErrors.shift();
+        }
+        if (this.decoderErrors.length > WebCodecsPlayer.MAX_DECODER_ERRORS) {
+            console.error(
+                `[${this.name}]`,
+                `Decoder failed ${this.decoderErrors.length} times in ` +
+                    `${WebCodecsPlayer.DECODER_ERROR_WINDOW_MS}ms, giving up`,
+                error,
+            );
+            this.stop();
+            return;
+        }
+        this.resetDecoder();
+    }
+
+    private resetDecoder(): void {
+        // A fatal error usually closes the decoder before the error callback fires.
+        if (this.decoder.state !== 'closed') {
+            this.decoder.close();
+        }
+        this.releaseDecodedFrames();
+        this.clearState();
+        this.buffer = undefined;
+        this.hadIDR = false;
+        this.bufferedSPS = false;
+        this.bufferedPPS = false;
+        this.waitingForSPS = true;
+        this.decoder = this.createDecoder();
+        // Rest in PAUSED: `StreamClientScrcpy.onVideo()` calls `play()` on the next incoming
+        // frame, and the next SPS + IDR re-configure the fresh decoder.
+        this.pause();
+    }
+
+    private releaseDecodedFrames(): void {
+        let data = this.decodedFrames.shift();
+        while (data) {
+            this.dropFrame(data.frame);
+            data = this.decodedFrames.shift();
+        }
     }
 
     protected addToBuffer(data: Uint8Array): Uint8Array {
@@ -139,6 +196,17 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         const type = data[4] & 31;
         const isIDR = type === NALU.IDR;
 
+        if (this.waitingForSPS) {
+            // After a decoder reset the stream must restart at an SPS. Anything before it is
+            // undecodable without the lost parameter sets, and buffering it would both grow
+            // unboundedly and prepend stale NALUs to the recovery keyframe.
+            if (type !== NALU.SPS) {
+                return;
+            }
+            this.buffer = undefined;
+            this.waitingForSPS = false;
+        }
+
         if (type === NALU.SPS) {
             const { codec, width, height } = WebCodecsPlayer.parseSPS(data.subarray(4));
             this.scaleCanvas(width, height);
@@ -156,7 +224,8 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             this.addToBuffer(data);
             return;
         } else if (type === NALU.SEI) {
-            // Workaround for lonely SEI from ws-qvh
+            // Drop a lone SEI that arrives before its SPS/PPS — it carries no decodable
+            // picture data and would otherwise be flushed into the decoder unpaired.
             if (!this.bufferedSPS || !this.bufferedPPS) {
                 return;
             }
@@ -183,8 +252,11 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             const data = this.decodedFrames.shift();
             if (data) {
                 const frame: VideoFrame = data.frame;
-                this.context.drawImage(frame, 0, 0);
-                frame.close();
+                try {
+                    this.context.drawImage(frame, 0, 0);
+                } finally {
+                    frame.close();
+                }
             }
         }
         if (this.decodedFrames.length) {
@@ -216,8 +288,9 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
 
     public stop(): void {
         super.stop();
-        if (this.decoder.state === 'configured') {
+        if (this.decoder.state !== 'closed') {
             this.decoder.close();
         }
+        this.releaseDecodedFrames();
     }
 }

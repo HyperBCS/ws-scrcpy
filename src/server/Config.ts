@@ -13,33 +13,31 @@ const JSON_RE = /^.+\.(json|js)$/i;
 export class Config {
     private static instance?: Config;
     private static initConfig(userConfig: Configuration = {}): Required<Configuration> {
-        let runGoogTracker = false;
-        let announceGoogTracker = false;
-        /// #if INCLUDE_GOOG
-        runGoogTracker = true;
-        announceGoogTracker = true;
-        /// #endif
-
-        let runApplTracker = false;
-        let announceApplTracker = false;
-        /// #if INCLUDE_APPL
-        runApplTracker = true;
-        announceApplTracker = true;
-        /// #endif
         const server: ServerItem[] = [
             {
                 secure: false,
                 port: DEFAULT_PORT,
             },
         ];
+        // The `/// #if` blocks below are stripped by ifdef-loader when the feature is not built in,
+        // so these defaults are what remains in that case.
         const defaultConfig: Required<Configuration> = {
-            runGoogTracker,
-            runApplTracker,
-            announceGoogTracker,
-            announceApplTracker,
+            runGoogTracker: false,
+            runApplTracker: false,
+            announceGoogTracker: false,
+            announceApplTracker: false,
             server,
             remoteHostList: [],
         };
+        /// #if INCLUDE_GOOG
+        defaultConfig.runGoogTracker = true;
+        defaultConfig.announceGoogTracker = true;
+        /// #endif
+
+        /// #if INCLUDE_APPL
+        defaultConfig.runApplTracker = true;
+        defaultConfig.announceApplTracker = true;
+        /// #endif
         const merged = Object.assign({}, defaultConfig, userConfig);
         merged.server = merged.server.map((item) => this.parseServerItem(item));
         return merged;
@@ -139,7 +137,7 @@ export class Config {
     }
 
     public get announceLocalGoogTracker(): boolean {
-        return this.fullConfig.runGoogTracker;
+        return this.fullConfig.announceGoogTracker;
     }
 
     public get runLocalApplTracker(): boolean {
@@ -147,7 +145,7 @@ export class Config {
     }
 
     public get announceLocalApplTracker(): boolean {
-        return this.fullConfig.runApplTracker;
+        return this.fullConfig.announceApplTracker;
     }
 
     public get servers(): ServerItem[] {

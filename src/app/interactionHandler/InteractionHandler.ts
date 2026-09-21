@@ -41,13 +41,7 @@ interface MiniMouseEvent extends CommonTouchAndMouse {
 const TAG = '[TouchHandler]';
 
 export type TouchEventNames =
-    | 'touchstart'
-    | 'touchend'
-    | 'touchmove'
-    | 'touchcancel'
-    | 'mousedown'
-    | 'mouseup'
-    | 'mousemove';
+    'touchstart' | 'touchend' | 'touchmove' | 'touchcancel' | 'mousedown' | 'mouseup' | 'mousemove';
 export type WheelEventNames = 'wheel';
 export type InteractionEvents = TouchEventNames | WheelEventNames;
 export type KeyEventNames = 'keydown' | 'keyup';

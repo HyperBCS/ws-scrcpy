@@ -3,7 +3,11 @@ import Size from './Size';
 
 export default class ScreenInfo {
     public static readonly BUFFER_LENGTH: number = 25;
-    constructor(readonly contentRect: Rect, readonly videoSize: Size, readonly deviceRotation: number) {}
+    constructor(
+        readonly contentRect: Rect,
+        readonly videoSize: Size,
+        readonly deviceRotation: number,
+    ) {}
 
     public static fromBuffer(buffer: Buffer): ScreenInfo {
         const left = buffer.readInt32BE(0);

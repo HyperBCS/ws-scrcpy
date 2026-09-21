@@ -7,14 +7,18 @@ export interface ScrollControlMessageInterface extends ControlMessageInterface {
     vScroll: number;
 }
 
-function floatToI16(value : number) {
-    return Math.max(-1, Math.min(1, value)) * 0x7FFF | 0;
-  }
+function floatToI16(value: number) {
+    return (Math.max(-1, Math.min(1, value)) * 0x7fff) | 0;
+}
 
 export class ScrollControlMessage extends ControlMessage {
     public static PAYLOAD_LENGTH = 20;
 
-    constructor(readonly position: Position, readonly hScroll: number, readonly vScroll: number) {
+    constructor(
+        readonly position: Position,
+        readonly hScroll: number,
+        readonly vScroll: number,
+    ) {
         super(ControlMessage.TYPE_SCROLL);
     }
 

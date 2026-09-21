@@ -50,11 +50,6 @@ async function loadGoogModules() {
     mw2List.push(RemoteShell);
     /// #endif
 
-    /// #if INCLUDE_DEV_TOOLS
-    const { RemoteDevtools } = await import('./goog-device/mw/RemoteDevtools');
-    mwList.push(RemoteDevtools);
-    /// #endif
-
     /// #if INCLUDE_FILE_LISTING
     const { FileListing } = await import('./goog-device/mw/FileListing');
     mw2List.push(FileListing);
@@ -69,12 +64,8 @@ loadPlatformModulesPromises.push(loadGoogModules());
 async function loadApplModules() {
     const { ControlCenter } = await import('./appl-device/services/ControlCenter');
     const { DeviceTracker } = await import('./appl-device/mw/DeviceTracker');
-    const { WebDriverAgentProxy } = await import('./appl-device/mw/WebDriverAgentProxy');
-    const { AppiumRunner } = await import('./appl-device/services/AppiumRunner');
-
-    // (Removed) the old `npmlog` log-level hack: it muted the in-process appium libs,
-    // which no longer run in-process. Appium now runs as a child process with its own
-    // `--log-level warn` (see AppiumRunner), and npmlog is no longer a dependency.
+    const { CoreDeviceProxy } = await import('./appl-device/mw/CoreDeviceProxy');
+    const { CoreDeviceRunner } = await import('./appl-device/services/CoreDeviceRunner');
 
     if (config.runLocalApplTracker) {
         mw2List.push(DeviceTracker);
@@ -92,18 +83,11 @@ async function loadApplModules() {
     }
 
     servicesToStart.push(ControlCenter);
+    // Owns every per-device `pymobiledevice3 ... display serve-web` child (the screen stream +
+    // HID session) so they are all killed from the central exit() cleanup.
+    servicesToStart.push(CoreDeviceRunner);
 
-    // Start one shared Appium server (eager) as a managed child process. It hosts the
-    // per-device WebDriverAgent sessions created by WdaRunner. Registering it here also
-    // wires it into the central exit() cleanup so it (and its xcodebuild subtree) is
-    // killed on shutdown. Startup is non-fatal: video keeps working if Appium is absent.
-    servicesToStart.push(AppiumRunner);
-
-    /// #if USE_QVH_SERVER
-    const { QVHStreamProxy } = await import('./appl-device/mw/QVHStreamProxy');
-    mw2List.push(QVHStreamProxy);
-    /// #endif
-    mw2List.push(WebDriverAgentProxy);
+    mwList.push(CoreDeviceProxy);
 }
 loadPlatformModulesPromises.push(loadApplModules());
 /// #endif
@@ -137,6 +121,12 @@ Promise.all(loadPlatformModulesPromises)
 
         process.on('SIGINT', exit);
         process.on('SIGTERM', exit);
+        // nodemon restarts use SIGUSR2. Without a handler Node exits before releasing the
+        // iOS listener, leaving one orphan behind on every server rebuild.
+        process.once('SIGUSR2', () => {
+            exit('SIGUSR2');
+            process.kill(process.pid, 'SIGUSR2');
+        });
     })
     .catch((error) => {
         console.error(error.message);

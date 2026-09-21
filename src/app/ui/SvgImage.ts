@@ -15,6 +15,9 @@ import MenuSVG from '../../public/images/buttons/menu.svg';
 import ArrowBackSVG from '../../public/images/buttons/arrow_back.svg';
 import ToggleOnSVG from '../../public/images/buttons/toggle_on.svg';
 import ToggleOffSVG from '../../public/images/buttons/toggle_off.svg';
+import TuneSVG from '../../public/images/buttons/tune.svg';
+import VolumeOffSVG from '../../public/images/buttons/volume_off.svg';
+import MicSVG from '../../public/images/buttons/mic.svg';
 
 export enum Icon {
     BACK,
@@ -34,11 +37,21 @@ export enum Icon {
     ARROW_BACK,
     TOGGLE_ON,
     TOGGLE_OFF,
+    // "Stream settings" (the video/audio quality sheet) -- distinct from SETTINGS, which the
+    // "Tools" button already owns (capture-keyboard + the more-box).
+    TUNE,
+    VOLUME_OFF,
+    // Siri on the iOS toolbar. OVERVIEW is Android's Overview key; iOS has no equivalent that
+    // can be driven from here, so nothing on that toolbar uses it.
+    MIC,
 }
 
 export default class SvgImage {
     static Icon = Icon;
-    private static getSvgString(type: Icon): string {
+
+    // For JSX views, which render the markup themselves (`dangerouslySetInnerHTML`) instead of
+    // going through `create()`'s DOM-node construction below.
+    public static getSvgString(type: Icon): string {
         switch (type) {
             case Icon.KEYBOARD:
                 return KeyboardSVG;
@@ -74,6 +87,12 @@ export default class SvgImage {
                 return ToggleOnSVG;
             case Icon.TOGGLE_OFF:
                 return ToggleOffSVG;
+            case Icon.TUNE:
+                return TuneSVG;
+            case Icon.VOLUME_OFF:
+                return VolumeOffSVG;
+            case Icon.MIC:
+                return MicSVG;
             default:
                 return '';
         }

@@ -2,11 +2,16 @@ import Util from '../Util';
 
 export default class DeviceMessage {
     public static TYPE_CLIPBOARD = 0;
+    public static TYPE_ACK_CLIPBOARD = 1;
+    public static TYPE_UHID_OUTPUT = 2;
     public static TYPE_PUSH_RESPONSE = 101;
 
     public static readonly MAGIC_BYTES_MESSAGE = Util.stringToUtf8ByteArray('scrcpy_message');
 
-    constructor(public readonly type: number, protected readonly buffer: Buffer) {}
+    constructor(
+        public readonly type: number,
+        protected readonly buffer: Buffer,
+    ) {}
 
     public static fromBuffer(data: ArrayBuffer): DeviceMessage {
         const magicSize = this.MAGIC_BYTES_MESSAGE.length;

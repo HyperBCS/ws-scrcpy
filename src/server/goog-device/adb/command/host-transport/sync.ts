@@ -1,7 +1,7 @@
 import Protocol from '@dead50f7/adbkit/lib/adb/protocol';
 import Command from '@dead50f7/adbkit/lib/adb/command';
 import { ExtendedSync } from '../../ExtendedSync';
-import Bluebird from 'bluebird';
+import type Bluebird from 'bluebird';
 
 export class SyncCommand extends Command<ExtendedSync> {
     execute(): Bluebird<ExtendedSync> {

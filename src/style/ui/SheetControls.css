@@ -1,0 +1,274 @@
+/* Grouped setting rows shared by the Actions and Settings sheets (see ui/SheetControls.tsx). */
+.sheet-group {
+    margin: 0 0 22px;
+    min-width: 0;
+}
+.sheet-group:last-child {
+    margin-bottom: 0;
+}
+.sheet-group-title {
+    margin: 0 0 6px 2px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-color);
+}
+.sheet-group-hint {
+    margin: 0 0 8px 2px;
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: var(--text-color-light);
+    overflow-wrap: anywhere;
+}
+.sheet-group-card {
+    min-width: 0;
+    border: 1px solid var(--device-border-color);
+    border-radius: 14px;
+    background: var(--device-list-default-color);
+    overflow: hidden;
+}
+
+.sheet-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    align-items: center;
+    gap: 10px 16px;
+    min-height: 56px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--device-border-color);
+    box-sizing: border-box;
+    color: inherit;
+    font: inherit;
+}
+.sheet-row:first-child {
+    border-top: 0;
+}
+.sheet-row.stack {
+    grid-template-columns: minmax(0, 1fr);
+}
+.sheet-row-text {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+}
+.sheet-row-title {
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.35;
+}
+.sheet-row-desc {
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: var(--text-color-light);
+    overflow-wrap: anywhere;
+}
+.sheet-row-control {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+}
+.sheet-row.stack .sheet-row-control {
+    justify-content: stretch;
+}
+.sheet-row.stack .sheet-row-control > * {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.sheet-row.stack .sheet-row-control > textarea,
+.sheet-row.stack .sheet-row-control > .sheet-volume {
+    flex-basis: 100%;
+}
+.sheet-row .sheet-button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+.sheet-row .sheet-input {
+    flex: 1 1 8rem;
+}
+
+.sheet-button.primary {
+    background: var(--accent-solid, #2563eb);
+    border-color: var(--accent-solid, #2563eb);
+    color: white;
+}
+.sheet-button.primary:disabled {
+    background: transparent;
+    border-color: var(--button-border-color);
+    color: var(--text-color-light);
+}
+.sheet-button.danger {
+    border-color: var(--status-unauthorized-color);
+    color: var(--status-unauthorized-color);
+    font-weight: 700;
+}
+
+.sheet-toggle-row {
+    cursor: pointer;
+}
+.sheet-switch {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    width: 48px;
+    height: 44px;
+    flex: 0 0 48px;
+    margin: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+}
+.sheet-switch::before {
+    content: '';
+    position: absolute;
+    inset: 8px 0;
+    border-radius: 999px;
+    background: var(--button-border-color);
+    transition: background 150ms ease;
+}
+.sheet-switch::after {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 12px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: transform 150ms ease;
+}
+.sheet-switch:checked::before {
+    background: var(--accent-solid, #2563eb);
+}
+.sheet-switch:checked::after {
+    transform: translateX(20px);
+}
+.sheet-switch:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+.sheet-switch:focus-visible {
+    outline: 3px solid var(--button-text-color);
+    outline-offset: 2px;
+    border-radius: 999px;
+}
+
+.sheet-status {
+    margin: 8px 2px 0;
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: var(--text-color-light);
+    overflow-wrap: anywhere;
+}
+.sheet-status.error {
+    color: var(--status-unauthorized-color);
+}
+.sheet-status.success {
+    color: var(--status-ready-color);
+}
+.sheet-status.warning {
+    color: var(--status-starting-color);
+}
+
+.sheet-volume {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+}
+.sheet-volume input[type='range'] {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 44px;
+    margin: 0;
+    accent-color: var(--accent-solid, #2563eb);
+}
+.sheet-volume output {
+    flex: 0 0 3.2em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.93rem;
+    color: var(--text-color-light);
+}
+
+.sheet-details {
+    border: 1px solid var(--device-border-color);
+    border-radius: 14px;
+    background: var(--device-list-default-color);
+}
+.sheet-details > summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 52px;
+    padding: 10px 14px;
+    box-sizing: border-box;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.sheet-details > summary::-webkit-details-marker {
+    display: none;
+}
+.sheet-details > summary::after {
+    content: '+';
+    margin-left: auto;
+    font-size: 1.2rem;
+    color: var(--text-color-light);
+}
+.sheet-details[open] > summary::after {
+    content: '−';
+}
+.sheet-details > summary > span {
+    font-size: 0.86rem;
+    font-weight: 400;
+    color: var(--text-color-light);
+}
+.sheet-details .sheet-row:first-of-type {
+    border-top: 1px solid var(--device-border-color);
+}
+.sheet-facts {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    margin: 0;
+    padding: 4px 14px 12px;
+    font-size: 0.86rem;
+    color: var(--text-color-light);
+}
+.sheet-facts dt {
+    font-weight: 600;
+}
+.sheet-facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.sheet-footer {
+    display: flex;
+    justify-content: center;
+    padding: 20px 0 4px;
+}
+
+@media (max-width: 480px) {
+    .sheet-row.pair {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .sheet-row.pair .sheet-row-control {
+        justify-content: stretch;
+    }
+    .sheet-row.pair .sheet-row-control > .sheet-button {
+        flex: 1 1 auto;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .sheet-switch::before,
+    .sheet-switch::after {
+        transition: none;
+    }
+}

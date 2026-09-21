@@ -1,0 +1,85 @@
+/* Design tokens shared by every view. Values are unchanged from the previous `app.css` /
+   `devicelist.css` `:root` blocks -- only the layout rules around them moved into per-view files. */
+:root {
+    --main-bg-color: hsl(0, 0%, 100%);
+    --stream-bg-color: hsl(0, 0%, 85%);
+    --shell-bg-color: hsl(0, 0%, 0%);
+    --text-shadow-color: hsl(218, 67%, 95%);
+    --header-bg-color: hsl(0, 0%, 95%);
+    --controls-bg-color: hsla(0, 0%, 95%, 0.8);
+    --control-buttons-bg-color: hsl(0, 0%, 95%);
+    --text-color: hsl(210, 16%, 22%);
+    --text-color-light: hsl(200, 16%, 52%);
+    --link-color: hsl(218, 85%, 43%);
+    --link-color-light: hsl(218, 85%, 73%);
+    --link-color_visited: hsl(271, 68%, 32%);
+    --link-color_visited-light: hsl(271, 68%, 72%);
+    --svg-checkbox-bg-color: hsl(172, 100%, 37%);
+    --svg-button-fill: hsl(199, 17%, 46%);
+    --kill-button-hover-color: hsl(342, 100%, 37%);
+    --url-color: hsl(0, 0%, 60%);
+    --button-text-color: hsl(214, 82%, 51%);
+    --button-border-color: hsl(0, 0%, 70%);
+    --progress-background-color: hsla(225, 100%, 50%, 0.2);
+    --progress-background-error-color: hsla(0, 100%, 50%, 0.2);
+    --font-size: 14px;
+    /* No font stack was set at all, so the UI fell back to the browser default (Times on most
+       phones). Native stack: matches the platform and avoids shipping a webfont over a phone
+       connection. */
+    --font-stack: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+        sans-serif;
+    --font-stack-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --panel-width: 3.715rem;
+
+    --device-border-color: hsl(0, 0%, 82%);
+    --device-list-stripe-color: hsl(0, 0%, 96%);
+    --device-list-default-color: hsl(0, 0%, 100%);
+    --device-list-hover-color: hsl(218, 67%, 95%);
+
+    /* One status vocabulary, shared by the device list and the stream view -- see
+       `state/deviceStatus.ts`. */
+    --status-streaming-color: hsl(199, 89%, 42%);
+    --status-ready-color: hsl(142, 71%, 33%);
+    --status-asleep-color: hsl(231, 48%, 56%);
+    --status-starting-color: hsl(38, 92%, 45%);
+    --status-offline-color: hsl(0, 0%, 55%);
+    --status-unauthorized-color: hsl(0, 84%, 50%);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --main-bg-color: hsl(0, 0%, 14%);
+        --stream-bg-color: hsl(0, 0%, 20%);
+        --shell-bg-color: hsl(0, 0%, 0%);
+        --text-shadow-color: hsl(218, 17%, 18%);
+        --header-bg-color: hsl(0, 0%, 20%);
+        --controls-bg-color: hsla(201, 18%, 19%, 0.8);
+        --control-buttons-bg-color: hsl(201, 18%, 19%);
+        --text-color: hsl(0, 0%, 90%);
+        --text-color-light: hsl(0, 0%, 60%);
+        --link-color: hsl(218, 63%, 70%);
+        --link-color-light: hsl(218, 63%, 50%);
+        --link-color_visited: hsl(267, 31%, 47%);
+        --link-color_visited-light: hsl(267, 31%, 27%);
+        --svg-checkbox-bg-color: hsl(172, 100%, 27%);
+        --svg-button-fill: hsl(0, 0%, 100%);
+        --kill-button-hover-color: hsl(342, 100%, 27%);
+        --url-color: hsl(0, 0%, 60%);
+        --button-text-color: hsl(214, 82%, 76%);
+        --button-border-color: hsl(213, 5%, 39%);
+        --progress-background-color: hsla(225, 100%, 50%, 0.2);
+        --progress-background-error-color: hsla(0, 100%, 50%, 0.2);
+
+        --device-border-color: hsl(0, 0%, 32%);
+        --device-list-stripe-color: hsl(0, 0%, 16%);
+        --device-list-default-color: hsl(0, 0%, 14%);
+        --device-list-hover-color: hsl(218, 17%, 18%);
+
+        --status-streaming-color: hsl(199, 89%, 62%);
+        --status-ready-color: hsl(142, 60%, 55%);
+        --status-asleep-color: hsl(231, 63%, 75%);
+        --status-starting-color: hsl(38, 92%, 60%);
+        --status-offline-color: hsl(0, 0%, 60%);
+        --status-unauthorized-color: hsl(0, 84%, 68%);
+    }
+}

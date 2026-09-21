@@ -53,7 +53,12 @@ export class TouchControlMessage extends ControlMessage {
         offset = buffer.writeUInt32BE(this.position.point.y, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.width, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.height, offset);
-        offset = buffer.writeUInt16BE(this.pressure > 0 ? 1 : 0, offset);
+        // scrcpy reads this as 16-bit FIXED POINT, where 0xFFFF means "full pressure" (1.0), not
+        // as a boolean. Writing a literal 1 meant every touch arrived with pressure ~0.000015,
+        // which Android treats as no contact at all -- verified against a device: identical
+        // messages differing only in this field either move the screen (0xFFFF) or do nothing (1).
+        const pressure = Math.max(0, Math.min(1, this.pressure));
+        offset = buffer.writeUInt16BE(Math.round(TouchControlMessage.MAX_PRESSURE_VALUE * pressure), offset);
         offset = buffer.writeUInt32BE(this.buttons, offset);
         buffer.writeUInt32BE(this.buttons, offset);
         return buffer;

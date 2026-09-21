@@ -1,0 +1,42 @@
+/* Both Actions sheets are built from the shared rows in ui/SheetControls.css; only the two
+   clipboard text areas need anything of their own. */
+.actions-sheet {
+    padding-top: 4px;
+    min-width: 0;
+}
+
+.actions-clipboard-readout,
+.actions-paste-input {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 78px;
+    resize: vertical;
+    font-size: 16px;
+    line-height: 1.5;
+    padding: 10px 12px;
+    color: var(--text-color);
+    border: 1px solid var(--button-border-color);
+    border-radius: 12px;
+}
+
+.actions-clipboard-readout {
+    background: var(--device-list-stripe-color);
+    user-select: text;
+}
+
+/* The device card's debug group (DeviceList.css) shares this facts grid. */
+.device-debug-facts {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    margin: 0;
+    color: var(--muted-text-color, var(--text-color-light));
+    font-size: 12px;
+}
+.device-debug-facts dt {
+    font-weight: 600;
+}
+.device-debug-facts dd {
+    margin: 0;
+}

@@ -10,7 +10,6 @@ export class WebsocketMultiplexer extends Mw {
     private multiplexer: Multiplexer;
     // private mw: Set<Mw> = new Set();
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     public static processRequest(ws: WS, params: RequestParameters): WebsocketMultiplexer | undefined {
         const { action } = params;
         if (action !== ACTION.MULTIPLEX) {
@@ -49,20 +48,17 @@ export class WebsocketMultiplexer extends Mw {
     protected onChannel({ channel, data }: { channel: Multiplexer; data: ArrayBuffer }): void {
         let processed = false;
         for (const mwFactory of WebsocketMultiplexer.mwFactories.values()) {
-            try {
-                const code = Util.utf8ByteArrayToString(Buffer.from(data).slice(0, 4));
-                const buffer = data.byteLength > 4 ? data.slice(4) : undefined;
-                const mw = mwFactory.processChannel(channel, code, buffer);
-                if (mw) {
-                    processed = true;
-                    // this.mw.add(mw);
-                    // const remove = () => {
-                    //     this.mw.delete(mw);
-                    // };
-                    // channel.addEventListener('close', remove);
-                    // channel.addEventListener('error', remove);
-                }
-            } finally {
+            const code = Util.utf8ByteArrayToString(Buffer.from(data).slice(0, 4));
+            const buffer = data.byteLength > 4 ? data.slice(4) : undefined;
+            const mw = mwFactory.processChannel(channel, code, buffer);
+            if (mw) {
+                processed = true;
+                // this.mw.add(mw);
+                // const remove = () => {
+                //     this.mw.delete(mw);
+                // };
+                // channel.addEventListener('close', remove);
+                // channel.addEventListener('error', remove);
             }
         }
         if (!processed) {

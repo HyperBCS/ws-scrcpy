@@ -39,7 +39,11 @@ export default class DragAndPushLogger implements DragAndPushListener {
     };
     private logText(text: string, line: number, scheduleCleanup = false, error = false): void {
         if (!this.ctx) {
-            error ? console.error(TAG, text) : console.log(TAG, text);
+            if (error) {
+                console.error(TAG, text);
+            } else {
+                console.log(TAG, text);
+            }
             return;
         }
         if (error) {

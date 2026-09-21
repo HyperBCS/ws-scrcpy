@@ -1,0 +1,38 @@
+<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Device audio test</title>
+<style>
+    body {
+        font: 24px system-ui;
+        padding: 20px;
+        background: #eef;
+    }
+    button {
+        font: inherit;
+        padding: 32px;
+        margin: 20px 0;
+        width: 100%;
+    }
+</style>
+<h1>Device audio test</h1>
+<p>440 Hz test tone for stream playback verification.</p>
+<button id="tone">Start tone</button><button id="stop">Stop tone</button>
+<p id="status">Stopped</p>
+<script>
+    let ctx, osc;
+    document.querySelector('#tone').onclick = async () => {
+        ctx ??= new AudioContext();
+        await ctx.resume();
+        if (osc) return;
+        osc = ctx.createOscillator();
+        osc.frequency.value = 440;
+        const gain = ctx.createGain();
+        gain.gain.value = 0.15;
+        osc.connect(gain).connect(ctx.destination);
+        osc.start();
+        document.querySelector('#status').textContent = 'Playing 440 Hz';
+    };
+    document.querySelector('#stop').onclick = () => {
+        osc?.stop();
+        osc = undefined;
+        document.querySelector('#status').textContent = 'Stopped';
+    };
+</script>

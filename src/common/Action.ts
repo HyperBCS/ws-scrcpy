@@ -6,10 +6,8 @@ export enum ACTION {
     SHELL = 'shell',
     PROXY_WS = 'proxy-ws',
     PROXY_ADB = 'proxy-adb',
-    DEVTOOLS = 'devtools',
     STREAM_SCRCPY = 'stream',
-    STREAM_WS_QVH = 'stream-qvh',
-    STREAM_MJPEG = 'stream-mjpeg',
-    PROXY_WDA = 'proxy-wda',
+    STREAM_COREDEVICE = 'stream-coredevice',
+    PROXY_COREDEVICE = 'proxy-coredevice',
     FILE_LISTING = 'list-files',
 }

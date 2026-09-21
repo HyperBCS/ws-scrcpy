@@ -1,0 +1,101 @@
+.sleep-overlay {
+    /* `fixed`, not `absolute`: this is rendered by Preact as a sibling of the imperative
+       vanilla-DOM tree `StreamClientScrcpy` builds (`.device-view`, `.video`, the control bar),
+       so it has no positioned ancestor to be `absolute` relative to. */
+    position: fixed;
+    inset: 0;
+    top: calc(57px + env(safe-area-inset-top, 0px));
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* The backdrop NEVER takes input. An earlier version covered the viewport and was tappable,
+       so whenever it appeared it swallowed every touch -- including the ones aimed at the control
+       bar. Only `.sleep-overlay-card` re-enables pointer events, which bounds the damage of a
+       wrong visibility decision to "a dimmed screen" instead of "the UI is frozen". */
+    pointer-events: none;
+    background-color: rgba(0, 0, 0, 0.55);
+    color: hsl(0, 0%, 95%);
+    padding: env(safe-area-inset-top, 0px) 1rem env(safe-area-inset-bottom, 0px);
+    box-sizing: border-box;
+}
+
+.sleep-overlay-card {
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    /* Comfortably past the 44px minimum on the surface this is actually used on. */
+    min-width: 11rem;
+    max-width: min(320px, calc(100vw - 48px));
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 1.25rem 1.75rem;
+    border-radius: 20px;
+    background-color: rgba(14, 20, 32, 0.92);
+    border: 1px solid hsla(0, 0%, 100%, 0.18);
+    color: inherit;
+    font: inherit;
+    text-align: center;
+}
+
+.sleep-overlay-spinner {
+    width: 28px;
+    height: 28px;
+    margin-bottom: 10px;
+    border: 3px solid rgba(255, 255, 255, 0.2);
+    border-top-color: #60a5fa;
+    border-radius: 50%;
+    animation: stream-connecting 1s linear infinite;
+}
+
+.sleep-overlay-return {
+    min-height: 44px;
+    margin-top: 10px;
+    padding: 0 16px;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    border-radius: 10px;
+    color: inherit;
+    background: rgba(255, 255, 255, 0.08);
+    font: inherit;
+    cursor: pointer;
+}
+
+@keyframes stream-connecting {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sleep-overlay-spinner {
+        animation: none;
+    }
+}
+
+.sleep-overlay-button {
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.sleep-overlay-button:active {
+    background-color: hsla(0, 0%, 100%, 0.12);
+}
+
+.sleep-overlay-icon {
+    font-size: 2.5rem;
+    line-height: 1;
+}
+
+.sleep-overlay-label {
+    font-size: 1.05rem;
+    font-weight: bold;
+}
+
+.sleep-overlay-hint {
+    font-size: 0.85rem;
+    opacity: 0.8;
+    line-height: 1.5;
+}

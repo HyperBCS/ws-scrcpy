@@ -19,7 +19,14 @@ const buildConfigDefinePlugin = new webpack.DefinePlugin({
     '__PATHNAME__': JSON.stringify(buildConfigOptions.PATHNAME),
 });
 
-export const common = () => {
+/**
+ * `esModules: true` makes ts-loader emit real `import()` calls instead of downlevelling them to
+ * `require()`. tsconfig sets `module: commonjs` for the server, and under that setting TypeScript
+ * rewrites the dynamic imports in src/app/index.tsx before webpack ever sees them - so webpack
+ * cannot split them out and every player, the xterm terminal and the file browser end up in the
+ * initial bundle. This client is loaded over a phone connection, so that matters.
+ */
+export const common = (esModules = false) => {
     return {
         module: {
             rules: [
@@ -30,17 +37,16 @@ export const common = () => {
                 {
                     test: /\.tsx?$/,
                     use: [
-                        { loader: 'ts-loader' },
+                        {
+                            loader: 'ts-loader',
+                            options: esModules ? { compilerOptions: { module: 'esnext' } } : {},
+                        },
                         {
                             loader: 'ifdef-loader',
                             options: buildConfigOptions,
                         },
                     ],
                     exclude: /node_modules/,
-                },
-                {
-                    test: /\.worker\.js$/,
-                    use: { loader: 'worker-loader' },
                 },
                 {
                     test: /\.svg$/,
@@ -96,7 +102,7 @@ export const common = () => {
 };
 
 const front: webpack.Configuration = {
-    entry: path.join(PROJECT_ROOT, './src/app/index.ts'),
+    entry: path.join(PROJECT_ROOT, './src/app/index.tsx'),
     externals: ['fs'],
     plugins: [
         new HtmlWebpackPlugin({
@@ -109,12 +115,20 @@ const front: webpack.Configuration = {
         }),
         new CopyWebpackPlugin({
             patterns: [
-              {
-                from: path.resolve(PROJECT_ROOT, 'src/public/manifest.json'),
-                to: path.resolve(CLIENT_DIST_PATH, 'manifest.json'),
-              },
+                {
+                    from: path.resolve(PROJECT_ROOT, 'src/public/manifest.json'),
+                    to: path.resolve(CLIENT_DIST_PATH, 'manifest.json'),
+                },
+                {
+                    // The PWA/apple-touch icons are referenced by URL from manifest.json and
+                    // index.html, so nothing imports them and no loader ever sees them. Without
+                    // this they 404 in a built app and the app cannot be installed to a home
+                    // screen. Top-level only: src/public/images/** is loaded through webpack.
+                    from: path.resolve(PROJECT_ROOT, 'src/public/icon-*.png'),
+                    to: path.resolve(CLIENT_DIST_PATH, '[name][ext]'),
+                },
             ],
-          }),
+        }),
     ],
     resolve: {
         fallback: {
@@ -129,7 +143,7 @@ const front: webpack.Configuration = {
 };
 
 export const frontend = () => {
-    return Object.assign({}, common(), front);
+    return Object.assign({}, common(true), front);
 };
 
 const packageJson = JSON.parse(fs.readFileSync(PACKAGE_JSON).toString());

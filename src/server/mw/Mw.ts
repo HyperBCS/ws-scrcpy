@@ -9,6 +9,15 @@ export type RequestParameters = {
     action: string;
 };
 
+/**
+ * Shape shared by `WS.MessageEvent` (when `ws` is a real socket) and the DOM `MessageEvent`
+ * dispatched by `Multiplexer`. `Mw` can be built on either, so the handler must accept both.
+ */
+export interface SocketMessageEvent {
+    data: WS.Data;
+    type: string;
+}
+
 export interface MwFactory {
     processRequest(ws: WS, params: RequestParameters): Mw | undefined;
     processChannel(ws: Multiplexer, code: string, data?: ArrayBuffer): Mw | undefined;
@@ -26,13 +35,20 @@ export abstract class Mw {
     }
 
     protected constructor(protected readonly ws: WS | Multiplexer) {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        this.ws.addEventListener('message', this.onSocketMessage.bind(this));
-        this.ws.addEventListener('close', this.onSocketClose.bind(this));
+        const onMessage = this.onSocketMessage.bind(this);
+        const onClose = this.onSocketClose.bind(this);
+        // Both types accept these listeners, but their generic `addEventListener`
+        // declarations do not form a callable union, so narrow before registering.
+        if (this.ws instanceof Multiplexer) {
+            this.ws.addEventListener('message', onMessage);
+            this.ws.addEventListener('close', onClose);
+        } else {
+            this.ws.addEventListener('message', onMessage);
+            this.ws.addEventListener('close', onClose);
+        }
     }
 
-    protected abstract onSocketMessage(event: WS.MessageEvent): void;
+    protected abstract onSocketMessage(event: SocketMessageEvent): void;
 
     protected sendMessage = (data: Message): void => {
         if (this.ws.readyState !== this.ws.OPEN) {

@@ -9,11 +9,18 @@ import FilePushHandler from './FilePushHandler';
 
 export class AdbkitFilePushStream extends FilePushStream {
     private channels: Map<number, Multiplexer> = new Map();
-    constructor(private readonly socket: Multiplexer, private readonly fileListingClient: FileListingClient) {
+    private pendingChannels = new Set<Multiplexer>();
+    private released = false;
+    private finishing = new Set<number>();
+    private completed = new Set<number>();
+    constructor(
+        private readonly socket: Multiplexer,
+        private readonly fileListingClient: FileListingClient,
+    ) {
         super();
     }
     public hasConnection(): boolean {
-        return this.socket.readyState == this.socket.OPEN;
+        return !this.released && this.socket.readyState == this.socket.OPEN;
     }
 
     public isAllowedFile(): boolean {
@@ -48,13 +55,16 @@ export class AdbkitFilePushStream extends FilePushStream {
         if (!channel) {
             return;
         }
+        this.finishing.add(id);
         channel.send(CommandControlMessage.createPushFileCommand(finishParams).toBuffer());
     }
 
     public sendEventNew({ id }: { id: number }): void {
+        if (!this.hasConnection()) return;
         let pushId = id;
         const newParams = { id, state: FilePushState.NEW };
         const channel = this.socket.createChannel(Buffer.from(Protocol.SEND));
+        this.pendingChannels.add(channel);
         const onMessage = (event: MessageEvent): void => {
             let offset = 0;
             const buffer = Buffer.from(event.data);
@@ -65,17 +75,27 @@ export class AdbkitFilePushStream extends FilePushStream {
                 this.channels.set(id, channel);
                 pushId = id;
             }
+            if (code === FilePushResponseStatus.NO_ERROR && this.finishing.has(id)) this.completed.add(id);
             this.emit('response', { id, code });
         };
         const onClose = (event: CloseEvent): void => {
-            if (!event.wasClean) {
+            this.pendingChannels.delete(channel);
+            this.channels.delete(pushId);
+            if (!this.released && !this.completed.has(pushId)) {
                 const code = 4000 - event.code;
                 // this.emit('response', { id: pushId, code });
                 this.emit('error', {
                     id: pushId,
-                    error: new Error(FilePushHandler.getErrorMessage(code, event.reason)),
+                    error: new Error(
+                        FilePushHandler.getErrorMessage(
+                            code,
+                            event.reason || 'Upload connection closed before completion.',
+                        ),
+                    ),
                 });
             }
+            this.finishing.delete(pushId);
+            this.completed.delete(pushId);
             channel.removeEventListener('message', onMessage);
             channel.removeEventListener('close', onClose);
         };
@@ -95,8 +115,14 @@ export class AdbkitFilePushStream extends FilePushStream {
     }
 
     public release(): void {
-        this.channels.forEach((channel) => {
+        if (this.released) return;
+        this.released = true;
+        this.pendingChannels.forEach((channel) => {
             channel.close();
         });
+        this.pendingChannels.clear();
+        this.channels.clear();
+        this.finishing.clear();
+        this.completed.clear();
     }
 }

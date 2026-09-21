@@ -1,0 +1,452 @@
+.settings-sheet-content {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    min-width: 0;
+    max-width: 100%;
+}
+.settings-sheet-content *,
+.settings-sheet-content *::before,
+.settings-sheet-content *::after {
+    box-sizing: border-box;
+}
+.settings-sheet-content > *,
+.settings-sheet-section,
+.settings-advanced,
+.settings-playback,
+.settings-advanced-body,
+.settings-sheet-row > *,
+.settings-sheet-banner > *,
+.settings-sheet-button-row > * {
+    min-width: 0;
+    max-width: 100%;
+}
+.settings-device-context {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    margin: 0;
+    background: var(--device-list-stripe-color);
+    border: 1px solid var(--device-border-color);
+    border-radius: 0.8rem;
+}
+.settings-device-dot {
+    display: block;
+    background: var(--button-text-color);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.settings-device-context > div {
+    min-width: 0;
+    display: grid;
+    gap: 0.25rem;
+}
+.settings-device-context strong {
+    font-size: 1rem;
+    line-height: 1.45;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+.settings-device-context span:last-child {
+    color: var(--text-color-light);
+    font-family: var(--font-stack-mono);
+    font-size: 0.86rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.settings-sheet-section {
+    margin: 0;
+}
+.settings-sheet-section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 6px 2px;
+    letter-spacing: -0.01em;
+}
+.settings-sheet-section-hint,
+.settings-sheet-hint {
+    font-size: 0.93rem;
+    line-height: 1.5;
+    color: var(--text-color-light);
+    margin: 0 0 16px;
+    overflow-wrap: anywhere;
+}
+.settings-quality-presets {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+.settings-quality-preset {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    position: relative;
+    gap: 8px;
+    min-width: 0;
+    padding: 16px 12px;
+    border: 1px solid var(--device-border-color);
+    border-radius: 0.8rem;
+    background: var(--main-bg-color);
+    color: var(--text-color);
+    font: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+.settings-quality-preset[aria-pressed='true'] {
+    border-color: var(--button-text-color);
+    background: var(--progress-background-color);
+}
+.settings-quality-preset:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+.settings-preset-mark {
+    font-size: 1rem;
+    color: var(--button-text-color);
+}
+.settings-quality-preset strong {
+    font-size: 1rem;
+    line-height: 1.3;
+}
+.settings-quality-preset > span:not(.settings-preset-mark) {
+    min-height: 2.7em;
+    font-size: 0.86rem;
+    line-height: 1.4;
+    color: var(--text-color-light);
+}
+.settings-quality-preset small {
+    font-size: 0.8rem;
+    color: var(--text-color-light);
+    line-height: 1.4;
+    white-space: nowrap;
+}
+.settings-quality-summary > span {
+    white-space: nowrap;
+}
+.settings-quality-summary {
+    font-size: 0.86rem;
+    color: var(--text-color-light);
+    margin: 12px 0 16px;
+    line-height: 1.5;
+}
+.settings-advanced,
+.settings-playback {
+    border: 1px solid var(--device-border-color);
+    border-radius: 0.8rem;
+    margin-top: 16px;
+}
+.settings-sheet-content > .settings-playback {
+    margin-top: 0;
+}
+.settings-advanced summary,
+.settings-playback summary {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 56px;
+    padding: 12px 16px;
+    box-sizing: border-box;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.settings-advanced summary::-webkit-details-marker,
+.settings-playback summary::-webkit-details-marker {
+    display: none;
+}
+.settings-advanced summary::after,
+.settings-playback summary::after {
+    content: '+';
+    margin-left: auto;
+    font-size: 1.2rem;
+    color: var(--text-color-light);
+}
+.settings-advanced[open] summary::after,
+.settings-playback[open] summary::after {
+    content: '−';
+}
+.settings-playback summary > span {
+    color: var(--text-color-light);
+    font-size: 0.8rem;
+    font-weight: 400;
+}
+.settings-advanced-body {
+    padding: 0 16px 12px;
+}
+.settings-sheet-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+    align-items: center;
+    gap: 12px;
+    min-height: 48px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--device-border-color);
+    font-size: 1rem;
+    overflow-wrap: anywhere;
+}
+.settings-sheet-row:last-child {
+    border-bottom: none;
+}
+.settings-sheet-row > span {
+    min-width: 0;
+    line-height: 1.35;
+    font-weight: 600;
+}
+.settings-sheet-row small {
+    display: block;
+    color: var(--text-color-light);
+    font-size: 0.86rem;
+    font-weight: 400;
+    line-height: 1.45;
+    margin-top: 4px;
+}
+/* Rows grouped into one bordered card, like the Actions sheets (ui/SheetControls.css). */
+.settings-sheet-card {
+    border: 1px solid var(--device-border-color);
+    border-radius: 14px;
+    background: var(--device-list-default-color);
+    overflow: hidden;
+}
+.settings-sheet-card > .settings-sheet-row {
+    padding: 12px 14px;
+}
+.settings-sheet-card > .settings-sheet-row:last-child {
+    border-bottom: none;
+}
+.settings-sheet-card > .settings-sheet-button-row {
+    padding: 0 14px 12px;
+}
+.settings-sheet-card + .settings-advanced {
+    margin-top: 12px;
+}
+.settings-sheet-row select {
+    box-sizing: border-box;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    min-height: 48px;
+    font-family: inherit;
+    font-size: 16px;
+    color: var(--text-color);
+    background-color: var(--main-bg-color);
+    border: 1px solid var(--button-border-color);
+    border-radius: 0.55rem;
+    padding: 10px 12px;
+    text-overflow: ellipsis;
+}
+.settings-encoder-row,
+.settings-volume-row {
+    grid-template-columns: minmax(0, 1fr);
+}
+.settings-listen-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+.settings-listen-row .settings-sheet-button-row {
+    grid-auto-columns: max-content;
+}
+.settings-listen-row small {
+    font-weight: 400;
+}
+.settings-toggle-row {
+    grid-template-columns: minmax(0, 1fr) 48px;
+}
+.settings-sheet-row input[type='checkbox'] {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    width: 48px;
+    height: 44px;
+    flex: 0 0 48px;
+    margin: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+}
+.settings-sheet-row input[type='checkbox']::before {
+    content: '';
+    position: absolute;
+    inset: 8px 0;
+    border-radius: 999px;
+    background: var(--button-border-color);
+    transition: background 150ms ease;
+}
+.settings-sheet-row input[type='checkbox']::after {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 12px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: transform 150ms ease;
+}
+.settings-sheet-row input[type='checkbox']:checked::before {
+    background: var(--accent-solid, #2868e8);
+}
+.settings-sheet-row input[type='checkbox']:checked::after {
+    transform: translateX(20px);
+}
+.settings-sheet-row input:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+.settings-sheet-apply-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 0;
+    padding: 16px 0 4px;
+    border-top: 1px solid var(--device-border-color);
+    background: var(--device-list-default-color);
+    box-shadow: 0 -8px 16px var(--device-list-default-color);
+}
+.settings-sheet-apply-bar::after {
+    /* Continue the sticky surface through the shared scroller's bottom gutter,
+       so settings cannot peek out below the action buttons while scrolling. */
+    content: '';
+    position: absolute;
+    top: 100%;
+    inset-inline: 0;
+    height: var(--sheet-gutter);
+    background: inherit;
+    pointer-events: none;
+}
+.settings-apply-note {
+    color: var(--text-color-light);
+    font-size: 0.86rem;
+    line-height: 1.45;
+    margin: 0;
+    text-align: center;
+}
+.settings-sheet-button-row {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 12px;
+}
+.settings-sheet-button {
+    min-width: 0;
+    min-height: 48px;
+    padding: 12px;
+    border-radius: 0.65rem;
+    border: 1px solid var(--button-border-color);
+    background-color: var(--main-bg-color);
+    color: var(--text-color);
+    font: inherit;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.35;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+}
+.settings-sheet-button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+.settings-sheet-button.primary {
+    background-color: var(--accent-solid, #2868e8);
+    border-color: var(--accent-solid, #2868e8);
+    color: white;
+}
+.settings-sheet-button.primary:disabled {
+    background-color: var(--main-bg-color);
+    border-color: var(--button-border-color);
+    color: var(--text-color);
+}
+.settings-sheet-banner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    border-radius: 0.65rem;
+    padding: 16px;
+    font-size: 0.93rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.settings-sheet-banner p {
+    margin: 0;
+}
+.settings-audio > .settings-sheet-banner {
+    margin-top: 16px;
+}
+.settings-sheet-banner.warning {
+    background-color: color-mix(in srgb, var(--status-starting-color) 12%, transparent);
+}
+.settings-sheet-banner.progress {
+    background-color: var(--progress-background-color);
+    color: var(--button-text-color);
+}
+.settings-sheet-banner.success {
+    background: color-mix(in srgb, var(--status-ready-color) 12%, transparent);
+    color: var(--status-ready-color);
+}
+.settings-sheet-banner.error {
+    background: var(--progress-background-error-color);
+    color: var(--status-unauthorized-color);
+}
+
+@media (max-width: 600px) {
+    .settings-sheet-row:not(.settings-toggle-row) {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+    }
+    .settings-listen-row .settings-sheet-button-row {
+        grid-auto-columns: minmax(0, 1fr);
+    }
+}
+@media (max-width: 480px) {
+    .settings-quality-presets {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .settings-quality-preset {
+        display: grid;
+        grid-template-columns: 16px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 4px 12px;
+        padding: 14px;
+    }
+    .settings-preset-mark {
+        grid-column: 1;
+        grid-row: 1 / 3;
+    }
+    .settings-quality-preset strong {
+        grid-column: 2;
+        grid-row: 1;
+    }
+    .settings-quality-preset > span:not(.settings-preset-mark) {
+        grid-column: 2;
+        grid-row: 2;
+        min-height: auto;
+    }
+    .settings-quality-preset small {
+        grid-column: 3;
+        grid-row: 1 / 3;
+        text-align: right;
+    }
+}
+@media (max-height: 500px) {
+    .settings-sheet-apply-bar {
+        /* Short landscape viewports need every line of confirmation/error feedback
+           to remain reachable in the same vertical scroll area. */
+        position: static;
+    }
+    .settings-sheet-apply-bar::after {
+        display: none;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .settings-sheet-row input[type='checkbox']::before,
+    .settings-sheet-row input[type='checkbox']::after {
+        transition: none;
+    }
+}

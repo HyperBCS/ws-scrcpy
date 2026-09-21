@@ -1,0 +1,428 @@
+#devices {
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    box-sizing: border-box;
+    padding: max(0.7rem, env(safe-area-inset-top, 0px)) max(0.7rem, env(safe-area-inset-right, 0px))
+        calc(0.8rem + env(safe-area-inset-bottom, 0px)) max(0.7rem, env(safe-area-inset-left, 0px));
+}
+
+.devices-content {
+    max-width: 1680px;
+    margin: 0 auto;
+}
+.device-list-header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.7rem;
+}
+.device-list-header h1 {
+    font-size: 1.2rem;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    margin: 0;
+    font-weight: 700;
+}
+.device-list-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid var(--device-border-color);
+    border-radius: 999px;
+    padding: 0.25rem 0.6rem;
+    color: var(--text-color-light);
+    font-size: 0.8rem;
+    background: var(--device-list-default-color);
+}
+.device-list-summary-dot,
+.settings-device-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-color-light);
+    flex: 0 0 auto;
+}
+.device-list-summary-dot.available {
+    background: var(--status-ready-color);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-ready-color) 12%, transparent);
+}
+.device-search {
+    min-width: 0;
+    flex: 1 1 220px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--device-list-default-color);
+    border: 1px solid var(--device-border-color);
+    border-radius: 0.8rem;
+    padding: 0 0.85rem;
+}
+.device-search > span {
+    font-size: 1.8rem;
+    line-height: 1;
+    color: var(--text-color-light);
+}
+.device-search input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    font-family: inherit;
+    font-size: 16px;
+    outline: none;
+}
+.device-search:focus-within {
+    outline: 2px solid var(--button-text-color);
+    outline-offset: 2px;
+}
+.device-search input::placeholder {
+    color: var(--text-color-light);
+    opacity: 1;
+}
+.tracker-block {
+    margin-bottom: 0.8rem;
+}
+#devices .tracker-name {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.7rem;
+    padding: 0.1rem 0.15rem 0.35rem;
+    font-size: 0.72rem;
+    color: var(--text-color-light);
+}
+#devices .tracker-name > span:first-child {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+#devices .tracker-name > span:last-child {
+    flex-shrink: 0;
+}
+#devices .device-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.5rem;
+    align-items: start;
+}
+#devices .device {
+    min-width: 0;
+    box-sizing: border-box;
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid var(--device-border-color);
+    border-radius: 0.7rem;
+    background: var(--device-list-default-color);
+}
+#devices .device-header {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+.device-heading {
+    min-width: 0;
+    flex: 1;
+}
+#devices .device-name {
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+#devices .device-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 0.5rem;
+    color: var(--text-color-light);
+    font-size: 0.72rem;
+    line-height: 1.4;
+}
+#devices .device-battery {
+    white-space: nowrap;
+}
+#devices .device-serial {
+    font-family: var(--font-stack-mono);
+    font-size: 0.68rem;
+    color: var(--text-color-light);
+    overflow-wrap: anywhere;
+}
+#devices .device-status {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 999px;
+    padding: 0.2rem 0.4rem;
+    background: color-mix(in srgb, currentColor 9%, transparent);
+    font-size: 0.68rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+#devices .device-status-icon {
+    font-size: 0.6rem;
+}
+#devices .device-unavailable-hint {
+    color: var(--text-color-light);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin: 0;
+}
+#devices .device-asleep-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 0.55rem;
+    background: color-mix(in srgb, var(--status-asleep-color) 10%, transparent);
+    color: var(--status-asleep-color);
+    font-size: 0.76rem;
+    line-height: 1.35;
+    padding: 0.25rem 0.5rem;
+    margin: 0;
+}
+#devices .wake-button {
+    margin-left: auto;
+    min-height: 44px;
+    min-width: 56px;
+    padding: 0 0.6rem;
+    background: transparent;
+    color: inherit;
+    border: 1px solid currentColor;
+    border-radius: 0.55rem;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+#devices .services {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+#devices .desc-block,
+#devices .action-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 0.3rem 0.7rem;
+    border: 1px solid var(--device-border-color);
+    border-radius: 0.55rem;
+    background: var(--main-bg-color);
+    color: var(--text-color);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 550;
+    text-decoration: none;
+    line-height: 1.25;
+    text-align: center;
+    cursor: pointer;
+}
+#devices .device-primary-actions .stream {
+    flex: 1;
+}
+#devices .device-primary-actions .stream.primary {
+    background: var(--accent-solid, #2868e8);
+    border-color: var(--accent-solid, #2868e8);
+    color: #fff;
+    font-size: 0.87rem;
+    font-weight: 650;
+}
+#devices .device-primary-actions .stream-settings-button {
+    background: transparent;
+    padding-inline: 0.7rem;
+}
+#devices .device-details {
+    border-top: 1px solid var(--device-border-color);
+}
+#devices .device-details summary {
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-color-light);
+    font-size: 0.76rem;
+    list-style: none;
+    cursor: pointer;
+}
+#devices .device-details summary::-webkit-details-marker {
+    display: none;
+}
+#devices .device-details summary::after {
+    content: '+';
+    margin-left: auto;
+    font-size: 1.1rem;
+}
+#devices .device-details[open] summary::after {
+    content: '−';
+}
+#devices .device-details-content {
+    padding-bottom: 0.15rem;
+}
+#devices .device-interface {
+    display: grid;
+    gap: 0.25rem;
+    margin-bottom: 0.45rem;
+    font-size: 0.78rem;
+    color: var(--text-color-light);
+}
+#devices .device-interface select {
+    min-width: 0;
+    width: 100%;
+    min-height: 44px;
+    font: inherit;
+    font-size: 16px;
+    color: var(--text-color);
+    background: var(--main-bg-color);
+    border: 1px solid var(--device-border-color);
+    border-radius: 0.6rem;
+    padding: 0.5rem;
+}
+#devices .device-secondary-actions > * {
+    flex: 1 1 130px;
+    font-size: 0.76rem;
+}
+#devices button:disabled {
+    cursor: default;
+    color: var(--text-color-light);
+    background: var(--device-list-stripe-color);
+}
+#devices .not-active .device-avatar {
+    background: var(--device-list-stripe-color);
+    color: var(--text-color-light);
+}
+#devices .device-list-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    border: 1px dashed var(--device-border-color);
+    border-radius: 0.7rem;
+    padding: 1.25rem 1rem;
+    margin: 0.5rem 0;
+    text-align: center;
+}
+.device-empty-icon {
+    --device-icon-width: 48px;
+    --device-icon-height: 48px;
+    --device-icon-glyph-width: 26px;
+    --device-icon-glyph-height: 30px;
+    border-radius: 0.8rem;
+    margin-bottom: 0.6rem;
+}
+.device-list-empty h2 {
+    font-size: 1.05rem;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.35rem;
+}
+.device-list-empty p {
+    max-width: 420px;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    margin: 0 0 0.5rem;
+    color: var(--text-color-light);
+}
+.device-list-empty ol {
+    max-width: 400px;
+    text-align: left;
+    margin: 0;
+    padding-left: 1.2rem;
+    color: var(--text-color-light);
+    font-size: 0.82rem;
+    line-height: 1.45;
+}
+.device-list-empty li {
+    padding-left: 0.2rem;
+    margin-bottom: 0.3rem;
+}
+.device-empty-error {
+    overflow-wrap: anywhere;
+}
+@media (min-width: 720px) {
+    #devices {
+        padding-top: 1rem;
+        padding-inline: 1.1rem;
+    }
+    #devices .device-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .device-list-header {
+        margin-bottom: 0.9rem;
+    }
+}
+
+@media (min-width: 1040px) {
+    #devices .device-list {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+@media (min-width: 1500px) {
+    #devices .device-list {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+@media (max-width: 360px) {
+    #devices {
+        padding-inline: 0.5rem;
+    }
+    .device-avatar {
+        display: none;
+    }
+}
+@media (hover: hover) {
+    #devices .desc-block:hover,
+    #devices .action-button:hover {
+        border-color: var(--button-text-color);
+    }
+    #devices .stream.primary:hover {
+        filter: brightness(1.08);
+    }
+}
+
+/* Collapsible debug group on an iOS card: service restarts plus a small diagnostics readout.
+   Reachable without a stream, which is the point -- the failures it recovers from are the ones
+   that leave no working stream page. */
+.device-debug {
+    margin-top: 6px;
+}
+.device-debug-toggle {
+    display: block;
+    min-height: 36px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--muted-text-color);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.device-debug-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.device-debug-facts {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    margin: 0;
+    color: var(--muted-text-color);
+    font-size: 12px;
+}
+.device-debug-facts dt {
+    font-weight: 600;
+}
+.device-debug-facts dd {
+    margin: 0;
+}
+.device-debug-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
