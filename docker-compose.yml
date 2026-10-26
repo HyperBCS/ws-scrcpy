@@ -32,7 +32,6 @@ services:
       WS_NOTIFICATION_DATA: /app/data
       WS_SCRCPY_STREAM_CONFIG_PATH: /app/data/stream-config.json
       WS_PUBLIC_URL: https://mini-nuc.tailea1801.ts.net
-      WS_TRUSTED_NETWORKS: 10.10.10.0/24
     volumes:
       - ws-scrcpy-data:/app/data
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
@@ -58,7 +57,6 @@ services:
       WS_NOTIFICATION_DATA: /app/data
       WS_SCRCPY_STREAM_CONFIG_PATH: /app/data/stream-config.json
       WS_PUBLIC_URL: https://mini-nuc.tailea1801.ts.net
-      WS_TRUSTED_NETWORKS: 10.10.10.0/24
     volumes:
       - ws-scrcpy-data:/app/data
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket

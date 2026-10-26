@@ -22,7 +22,6 @@ server:
 # Announce remote device trackers. The server doesn't check their availability.
 remoteHostList:
   - useProxy: true   # optional, default: false
-    # accessKey: "remote server setup key" # kept on this server, never sent to the browser
     type: android    # required, "android" | "ios" | ["android", "ios"]
     secure: true     # required, false for HTTP, true for HTTPS
     hostname: second-mobile-stand.example.com

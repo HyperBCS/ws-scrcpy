@@ -12,17 +12,8 @@ import { CoreDeviceStreamView } from './CoreDeviceStreamView';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
 import { ACTION } from '../../common/Action';
 import { startNotificationSummary } from '../state/notifications';
-import { AccessGate } from './AccessGate';
 
 export function App() {
-    return (
-        <AccessGate>
-            <ConnectedApp />
-        </AccessGate>
-    );
-}
-
-function ConnectedApp() {
     // Started here, not in `DeviceList`: opening a stream deep link directly (or just reloading
     // one) never mounts the device list, so nothing connected the tracker and the device store
     // stayed empty. Everything that looks a device up by udid then silently did nothing --

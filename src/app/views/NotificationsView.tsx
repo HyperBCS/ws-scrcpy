@@ -5,8 +5,6 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { devices, deviceName } from '../state/devices';
 import {
     notificationRequest as api,
-    notificationKey,
-    setNotificationKey,
     registerNotificationWorker,
     applyNotificationSummary,
 } from '../state/notifications';
@@ -103,7 +101,6 @@ export function NotificationsView() {
     const [connectionError, setConnectionError] = useState('');
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
-    const [key, setKey] = useState(notificationKey());
     const [running, setRunning] = useState(0);
     const busy = running > 0;
     const [panel, setPanel] = useState<'history' | 'setup'>();
@@ -314,39 +311,18 @@ export function NotificationsView() {
             )}
             {!status && connectionError && (
                 <section class="notification-card">
-                    <h2>Open your private app</h2>
-                    <p>Connect this device to Tailscale, then open the secure app to manage notifications.</p>
-                    <a class="notification-primary notification-link-button" href={privateUrl}>
-                        Open private app
-                    </a>
-                    <AnimatedDetails class="notification-details">
-                        <summary>Connect with a setup key instead</summary>
-                        <div class="notification-details-content">
-                            <p class="notification-help">
-                                For direct access to the NUC. The setup key is stored on the server.
-                            </p>
-                            <label>
-                                Setup key
-                                <input
-                                    type="password"
-                                    value={key}
-                                    onInput={(e) => setKey(e.currentTarget.value)}
-                                    autoComplete="off"
-                                />
-                            </label>
-                            <button
-                                disabled={busy || !key.trim()}
-                                onClick={() =>
-                                    void run(async () => {
-                                        setNotificationKey(key);
-                                        await refresh();
-                                    })
-                                }
-                            >
-                                Connect
-                            </button>
-                        </div>
-                    </AnimatedDetails>
+                    <h2>Can't reach the server</h2>
+                    <button
+                        class="notification-primary"
+                        disabled={busy}
+                        onClick={() =>
+                            void run(async () => {
+                                await refresh();
+                            })
+                        }
+                    >
+                        Try again
+                    </button>
                     <AnimatedDetails class="notification-details">
                         <summary>Connection details</summary>
                         <p class="notification-help">{connectionError}</p>

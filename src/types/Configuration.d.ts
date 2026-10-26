@@ -12,8 +12,6 @@ export interface HostItem {
 }
 
 export interface HostsItem {
-    /** Server-only credential for an authenticated remote host; never announced to browsers. */
-    accessKey?: string;
     type: OperatingSystem | OperatingSystem[];
     secure: boolean;
     hostname: string;

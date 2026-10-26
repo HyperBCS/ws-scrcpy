@@ -7,7 +7,7 @@ import { PushSubscription } from 'web-push';
 import { Service } from '../services/Service';
 import { NotificationIcons } from './NotificationIcons';
 import { isDismissActionLabel } from '../../common/NotificationActions';
-import { AccessControl } from '../AccessControl';
+import { sameOrigin } from '../requestOrigin';
 
 import { NotificationEvent, NotificationSource } from '../../common/Notification';
 import { PushDelivery, PushTarget } from './PushDelivery';
@@ -85,7 +85,6 @@ export class NotificationService implements Service {
     private restart?: NodeJS.Timeout;
     private closed = false;
     private loaded = false;
-    private accessControl?: AccessControl;
     private feed = new Map<string, FeedItem>();
     private observed = new Map<string, number>();
     private replayCandidates = new Map<
@@ -109,14 +108,10 @@ export class NotificationService implements Service {
     private get delivery() {
         return this.push.stats;
     }
-    private attempts = new Map<string, { count: number; reset: number }>();
+    private requestRates = new Map<string, { count: number; reset: number }>();
 
     getName(): string {
         return 'Bluetooth notifications and Web Push';
-    }
-    get access(): AccessControl {
-        this.load();
-        return this.accessControl ?? (this.accessControl = new AccessControl(this.store.token));
     }
     private load(): void {
         if (this.loaded) return;
@@ -527,15 +522,15 @@ export class NotificationService implements Service {
     mount(app: Express, base: string): void {
         this.load();
         const router = express.Router();
-        router.use(this.access.requireAccess);
+        router.use(sameOrigin);
         router.use(express.json({ limit: '64kb', inflate: false }));
         router.use((req, res, next) => {
             res.setHeader('Cache-Control', 'no-store');
             const ip = req.socket.remoteAddress || 'unknown';
-            let rate = this.attempts.get(ip);
+            let rate = this.requestRates.get(ip);
             if (!rate || rate.reset < Date.now()) {
                 rate = { count: 0, reset: Date.now() + 60000 };
-                this.attempts.set(ip, rate);
+                this.requestRates.set(ip, rate);
             }
             if (++rate.count > 180) {
                 res.sendStatus(429);

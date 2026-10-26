@@ -4,26 +4,17 @@ import { requestJson } from '../client/request';
 
 const base = new URL('.', window.location.href);
 export const notificationApi = new URL('api/notifications/', base).href;
-const keyName = 'ws-scrcpy-notification-key';
-export function notificationKey(): string {
-    return localStorage.getItem(keyName) || '';
-}
-export function setNotificationKey(key: string): void {
-    localStorage.setItem(keyName, key.trim());
-}
 export async function notificationRequest<T>(
     route: string,
     method = 'GET',
     body?: unknown,
     signal?: AbortSignal,
 ): Promise<T> {
-    const key = notificationKey();
     return requestJson<T>(
         notificationApi + route,
         {
             method,
             headers: {
-                ...(key ? { Authorization: `Bearer ${key}` } : {}),
                 'Content-Type': 'application/json',
             },
             ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -75,7 +66,7 @@ export function startNotificationSummary(): () => void {
             const result = await notificationRequest<NotificationSummary>('summary');
             if (alive && version === summaryVersion) applyNotificationSummary(result);
         } catch {
-            // Device viewing also works without notification setup or authentication.
+            // Notification outages do not interrupt device viewing.
         } finally {
             pending = false;
         }
@@ -147,8 +138,7 @@ export function notificationIcon(source: string, app: string): Promise<Blob | nu
     const path = `icons/${encodeURIComponent(source)}/${encodeURIComponent(app)}`;
     const cached = icons.get(path);
     if (cached && cached.expires > Date.now()) return cached.blob;
-    const key = notificationKey();
-    const blob = fetch(notificationApi + path, { headers: key ? { Authorization: `Bearer ${key}` } : {} })
+    const blob = fetch(notificationApi + path)
         .then((response) =>
             response.ok && response.headers.get('Content-Type')?.startsWith('image/png') ? response.blob() : null,
         )

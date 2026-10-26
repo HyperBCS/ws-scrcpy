@@ -18,7 +18,7 @@ global.__PATHNAME__ = '/';
 require('ts-node').register({ transpileOnly: true });
 require.extensions['.jar'] = () => {};
 require.cache[require.resolve('../vendor/Genymobile/scrcpy/LICENSE')] = { exports: {} };
-const { AccessControl } = require('../src/server/AccessControl');
+const { allowsOrigin } = require('../src/server/requestOrigin');
 const { NotificationService } = require('../src/server/notifications/NotificationService');
 const { WebSocketServer } = require('../src/server/services/WebSocketServer');
 const { startServices } = require('../src/server/services/startServices');
@@ -40,17 +40,14 @@ class Socket extends EventEmitter {
 }
 function pull() { const stream = new PassThrough(); stream.cancelled = 0; stream.cancel = () => stream.cancelled++; return stream; }
 
-test('HTTP sign-in remembers LAN access; WS upgrades require the same session and origin', async () => {
+test('HTTP and WebSockets work without credentials; malformed bodies stay contained', async () => {
     const service = NotificationService.getInstance();
-    const app = express();
-    service.access.mount(app, '/'); service.mount(app, '/');
-    app.get('/private', service.access.requireAccess, (_req, res) => res.json({ ok: true }));
+    const app = express(); app.set('env', 'test'); service.mount(app, '/');
     const server = http.createServer(app);
     const wss = WebSocketServer.getInstance().attachToServer({ server, port: 0 });
     WebSocketServer.getInstance().registerMw({ processRequest(socket) { socket.send('connected'); return {}; } });
-    server.listen(0, '0.0.0.0'); await once(server, 'listening');
+    server.listen(0, '127.0.0.1'); await once(server, 'listening');
     const base = `http://127.0.0.1:${server.address().port}`;
-    const key = service.store.token;
     async function upgrade(headers) {
         return new Promise((resolve, reject) => {
             const socket = new WS(base.replace('http:', 'ws:'), { headers });
@@ -61,34 +58,24 @@ test('HTTP sign-in remembers LAN access; WS upgrades require the same session an
         });
     }
     try {
-        assert.equal((await fetch(`${base}/private`)).status, 401);
-        assert.equal(await upgrade({ Origin: base }), 401);
-        const response = await fetch(`${base}/api/access`, { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
-        assert.equal(response.status, 200);
-        const raw = response.headers.get('set-cookie');
-        assert.match(raw, /HttpOnly/); assert.match(raw, /SameSite=Strict/); assert.doesNotMatch(raw, /Secure/);
-        const cookie = raw.split(';')[0];
-        assert.equal((await fetch(`${base}/private`, { headers: { Cookie: cookie, Origin: base } })).status, 200);
-        assert.equal(await upgrade({ Cookie: cookie, Origin: base }), 'connected');
-        assert.equal(await upgrade({ Authorization: `Bearer ${key}` }), 'connected');
-        assert.equal(await upgrade({ Cookie: cookie, Origin: 'https://attacker.example' }), 403);
-        assert.equal(await upgrade({ Cookie: cookie + 'tampered', Origin: base }), 401);
-        assert.equal((await fetch(`${base}/api/notifications/history/read`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' }, body: 'malformed gzip' })).status, 401);
-        assert.equal((await fetch(`${base}/api/access`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' }, body: 'malformed gzip' })).status, 415);
-        assert.equal((await fetch(`${base}/api/access`)).status, 200, 'malformed bodies do not crash the server');
+        const response = await fetch(`${base}/api/notifications/summary`);
+        assert.equal(response.status, 200); assert.equal(response.headers.get('set-cookie'), null);
+        assert.equal(await upgrade({ Origin: base }), 'connected');
+        assert.equal(await upgrade({}), 'connected', 'native clients need no identity headers');
+        assert.equal(await upgrade({ Origin: 'https://another.example' }), 403);
+        assert.equal((await fetch(`${base}/api/access`)).status, 404, 'the login endpoint is gone');
+        assert.equal((await fetch(`${base}/api/notifications/history/read`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' }, body: 'malformed gzip' })).status, 415);
+        assert.equal((await fetch(`${base}/api/notifications/summary`)).status, 200);
     } finally { for (const client of wss.clients) client.terminate(); wss.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
 
-test('LAN origin follows the requested host; Tailscale identity is accepted only from the local proxy', () => {
-    const access = new AccessControl('key', 'https://host.example');
-    const request = { headers: { host: '192.168.1.12:8000', origin: 'http://192.168.1.12:8000', authorization: 'Bearer key' }, socket: { remoteAddress: '192.168.1.8' } };
-    assert.equal(access.authorized(request), true);
-    delete request.headers.authorization;
-    request.headers['tailscale-user-login'] = 'owner@example.com';
-    assert.equal(access.authorized(request), false);
-    request.socket.remoteAddress = '127.0.0.1'; request.headers.origin = 'https://host.example';
-    assert.equal(access.authorized(request), true);
-    request.headers.origin = 'https://attacker.example'; assert.equal(access.authorized(request), false);
+test('browser origin validation does not depend on client identity or network', () => {
+    for (const remoteAddress of ['10.10.10.8', '192.168.1.8', '203.0.113.8', '::1']) {
+        const request = { headers: { host: 'example.test:8000', origin: 'http://example.test:8000' }, socket: { remoteAddress } };
+        assert.equal(allowsOrigin(request), true);
+        request.headers.origin = 'https://another.example'; assert.equal(allowsOrigin(request), false);
+        delete request.headers.origin; assert.equal(allowsOrigin(request), true);
+    }
 });
 
 test('download cancellation covers opening, late data/error, and backpressure', async () => {
@@ -182,21 +169,18 @@ test('multiplexed channels expose underlying socket backpressure', () => {
 
 test('remote proxy carries text and multiplexed binary messages and only allows configured hosts', async () => {
     const upstream = new WS.Server({ port: 0 }); await once(upstream, 'listening');
-    let authorization;
-    upstream.on('connection', (socket, request) => { authorization = request.headers.authorization; socket.on('message', (data, binary) => socket.send(data, { binary })); });
+    upstream.on('connection', socket => socket.on('message', (data, binary) => socket.send(data, { binary })));
     const target = new URL(`ws://127.0.0.1:${upstream.address().port}/`);
     const config = Config.getInstance(); const before = config.fullConfig.remoteHostList;
-    config.fullConfig.remoteHostList = [{ hostname: target.hostname, port: Number(target.port), secure: false, pathname: '/', type: 'android', useProxy: true, accessKey: 'remote-key' }];
+    config.fullConfig.remoteHostList = [{ hostname: target.hostname, port: Number(target.port), secure: false, pathname: '/', type: 'android', useProxy: true }];
     const frontend = new WS.Server({ port: 0 }); await once(frontend, 'listening');
-    frontend.on('connection', socket => new RemoteWebsocketProxy(socket, target, 'remote-key'));
+    frontend.on('connection', socket => new RemoteWebsocketProxy(socket, target));
     const client = new WS(`ws://127.0.0.1:${frontend.address().port}`); client.on('error', () => {});
     try {
         assert.ok(config.getProxyHost(target)); assert.equal(config.getProxyHost(new URL('ws://127.0.0.1:1/')), undefined);
-        assert.equal(JSON.stringify(config.getHostList()).includes('remote-key'), false);
         await once(client, 'open');
         client.send('text'); let [data, binary] = await once(client, 'message'); assert.equal(data.toString(), 'text'); assert.equal(binary, false);
         client.send(Buffer.from([0, 255, 42])); [data, binary] = await once(client, 'message'); assert.deepEqual(data, Buffer.from([0, 255, 42])); assert.equal(binary, true);
-        assert.equal(authorization, 'Bearer remote-key');
     } finally { config.fullConfig.remoteHostList = before; client.terminate(); for (const server of [frontend, upstream]) { for (const socket of server.clients) socket.terminate(); await new Promise(resolve => server.close(resolve)); } }
 });
 
@@ -218,18 +202,17 @@ test('Android closes a saturated viewer instead of buffering unbounded video', (
 
 test('HTTP downloads stream bytes with attachment headers and cancel ADB when the browser leaves', async () => {
     const { mountFileDownloads } = require('../src/server/goog-device/filePush/HttpDownload');
-    const app = express(); mountFileDownloads(app, '/', new AccessControl('key'));
+    const app = express(); mountFileDownloads(app, '/');
     const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
     const url = `http://127.0.0.1:${server.address().port}/api/files/download?udid=fake&path=/sdcard/example.txt`;
     const original = AdbUtils.pipePullFile; let stream;
     AdbUtils.pipePullFile = async () => { stream = pull(); process.nextTick(() => stream.write('bytes')); return stream; };
     try {
-        assert.equal((await fetch(url)).status, 401);
-        const response = await fetch(url, { headers: { Authorization: 'Bearer key' } });
+        const response = await fetch(url);
         assert.equal(response.status, 200); assert.match(response.headers.get('content-disposition'), /attachment; filename="example.txt"/);
         const reader = response.body.getReader(); assert.equal(Buffer.from((await reader.read()).value).toString(), 'bytes');
         await reader.cancel(); await new Promise(resolve => setTimeout(resolve, 25)); assert.equal(stream.destroyed, true); assert.equal(stream.cancelled, 1);
-        const next = await fetch(url, { headers: { Authorization: 'Bearer key' } }); stream.end('done'); assert.equal(await next.text(), 'bytesdone');
+        const next = await fetch(url); stream.end('done'); assert.equal(await next.text(), 'bytesdone');
     } finally { AdbUtils.pipePullFile = original; server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
 
@@ -268,46 +251,20 @@ test('ADB pull ownership is returned before bytes arrive and supports an empty f
     } finally { AdbExtended.createClient = original; transfer.destroy(); }
 });
 
-test('trusted LAN access needs no key and never trusts a forwarded client address', () => {
-    const access = new AccessControl('key', '', '10.10.10.0/24, fd12:3456::/64');
-    const request = address => ({ headers: { host: '10.10.10.5:8000', origin: 'http://10.10.10.5:8000' }, socket: { remoteAddress: address } });
-    for (const address of ['10.10.10.1', '10.10.10.254', '::ffff:10.10.10.9', '::ffff:a0a:a09', 'fd12:3456::8']) {
-        assert.equal(access.authorized(request(address)), true, address);
-    }
-    for (const address of ['10.10.9.9', '10.10.11.1', '192.168.1.5', '203.0.113.8', '127.0.0.1', 'fd12:3457::8', '']) {
-        const incoming = request(address);
-        incoming.headers['x-forwarded-for'] = '10.10.10.8'; incoming.headers.forwarded = 'for=10.10.10.8';
-        assert.equal(access.authorized(incoming), false, address);
-        incoming.headers.authorization = 'Bearer key'; assert.equal(access.authorized(incoming), true);
-    }
-    const crossOrigin = request('10.10.10.8'); crossOrigin.headers.origin = 'https://another.example';
-    assert.equal(access.authorized(crossOrigin), false);
-    const native = request('10.10.10.8'); delete native.headers.origin; assert.equal(access.authorized(native), true);
-    assert.equal(new AccessControl('key', '', '').authorized(request('10.10.10.8')), false);
-    for (const invalid of ['10.10.10.0', '10.10.10.0/33', '10.10.10.0/-1', 'localhost/24', '::1/129', '10.10.10.0/24/extra']) {
-        assert.throws(() => new AccessControl('key', '', invalid), /Invalid trusted network/);
-    }
-});
 
-test('trusted connections bypass browser sign-in, HTTP API auth and WebSocket auth together', async () => {
-    const service = NotificationService.getInstance(), previous = service.accessControl;
-    // Use loopback as this test's trusted subnet; deployment trusts only the configured LAN.
-    const access = new AccessControl(service.store.token, '', '127.0.0.1/32');
-    service.accessControl = access;
-    const app = express(); access.mount(app, '/'); service.mount(app, '/');
-    const server = http.createServer(app), wss = WebSocketServer.getInstance().attachToServer({ server, port: 0 });
-    server.listen(0, '127.0.0.1'); await once(server, 'listening');
-    const base = `http://127.0.0.1:${server.address().port}`;
-    try {
-        const response = await fetch(`${base}/api/access`);
-        assert.deepEqual(await response.json(), { authenticated: true });
-        assert.equal(response.headers.get('set-cookie'), null, 'trusted access does not need a session');
-        assert.equal((await fetch(`${base}/api/notifications/summary`)).status, 200);
-        assert.equal((await fetch(`${base}/api/notifications/summary`, { headers: { Origin: 'https://another.example' } })).status, 403);
-        const socket = new WS(base.replace('http:', 'ws:'), { origin: base });
-        const [data] = await once(socket, 'message'); assert.equal(data.toString(), 'connected'); socket.close();
-    } finally {
-        service.accessControl = previous;
-        for (const client of wss.clients) client.terminate(); wss.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-    }
+test('removing app credentials preserves push keys, receivers and source settings', () => {
+    const { NotificationStorage } = require('../src/server/notifications/NotificationStorage');
+    const directory = path.join(temporary, 'old-auth-store'); fs.mkdirSync(directory);
+    const preserved = {
+        vapid: { publicKey: 'unchanged-public', privateKey: 'unchanged-private' },
+        sources: [{ id: 'phone', address: 'AA:BB:CC:DD:EE:FF', name: 'Phone', apps: [], preview: true }],
+        subscriptions: [{ id: 'receiver', sources: ['phone'], receiverSource: '', updated: 1, subscription: { endpoint: 'https://web.push.apple.com/example', keys: { auth: 'push-encryption-key', p256dh: 'push-public-key' } } }],
+    };
+    fs.writeFileSync(path.join(directory, 'notifications.json'), JSON.stringify({ ...preserved, token: 'obsolete-app-key' }));
+    fs.writeFileSync(path.join(directory, 'notification-setup-key'), 'obsolete-app-key');
+    const storage = new NotificationStorage(directory, message => assert.fail(message));
+    assert.deepEqual(storage.load(), preserved);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(directory, 'notifications.json'), 'utf8')), preserved);
+    assert.equal(fs.existsSync(path.join(directory, 'notification-setup-key')), false);
+    assert.deepEqual(storage.load(), preserved, 'subsequent loads do not regenerate push credentials');
 });

@@ -3,13 +3,13 @@ import http from 'http';
 import https from 'https';
 import { pipeline } from 'stream/promises';
 import { Readable } from 'stream';
-import { AccessControl } from '../../AccessControl';
+import { sameOrigin } from '../../requestOrigin';
 import { Config } from '../../Config';
 import { AdbUtils } from '../AdbUtils';
 
 /** Browser-managed large downloads stream to disk instead of accumulating a Blob in the tab. */
-export function mountFileDownloads(app: Express, base: string, access: AccessControl): void {
-    app.get(`${base.replace(/\/$/, '')}/api/files/download`, access.requireAccess, async (request, response) => {
+export function mountFileDownloads(app: Express, base: string): void {
+    app.get(`${base.replace(/\/$/, '')}/api/files/download`, sameOrigin, async (request, response) => {
         const { udid, path: file, remote } = request.query;
         if (
             typeof udid !== 'string' ||
@@ -46,7 +46,6 @@ export function mountFileDownloads(app: Express, base: string, access: AccessCon
                         target,
                         {
                             signal: controller.signal,
-                            headers: host.accessKey ? { Authorization: `Bearer ${host.accessKey}` } : {},
                         },
                         (reply) => {
                             if (reply.statusCode !== 200) {

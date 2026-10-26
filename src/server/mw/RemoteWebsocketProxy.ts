@@ -24,19 +24,17 @@ export class RemoteWebsocketProxy extends Mw {
             socket.close(4003, 'Remote host is not configured');
             return;
         }
-        return new RemoteWebsocketProxy(socket, target, host.accessKey);
+        return new RemoteWebsocketProxy(socket, target);
     }
 
     constructor(
         private readonly client: WS,
         target: URL,
-        key?: string,
     ) {
         super(client);
         this.upstream = new WS(target, {
             handshakeTimeout: 10000,
             maxPayload: 20 * 1024 * 1024,
-            ...(key ? { headers: { Authorization: `Bearer ${key}` } } : {}),
         });
         client.pause();
         this.upstream.on('open', () => {

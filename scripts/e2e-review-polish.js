@@ -68,18 +68,32 @@ async function main() {
         }
         console.log('PASS coherent Android/iOS cards in light desktop and dark mobile layouts');
         const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
-        const page = await context.newPage(); let authenticated = false;
-        await page.route('**/api/access', route => {
-            if (route.request().method() === 'POST') authenticated = route.request().postDataJSON().key === 'fixture-key';
-            return route.fulfill({ status: route.request().method() === 'POST' && !authenticated ? 401 : 200, json: { authenticated, ...(!authenticated ? { error: 'That setup key did not match.' } : {}) } });
-        });
+        const page = await context.newPage(); const requests = [];
+        page.on('request', request => requests.push(request));
         await page.routeWebSocket('**', () => {});
-        await page.goto(BASE); await page.getByLabel('Setup key').fill('wrong'); await page.getByRole('button', { name: 'Connect', exact: true }).click();
-        await page.getByRole('alert').waitFor();
-        await page.screenshot({ path: `${out}/lan-sign-in.png`, fullPage: true });
-        await page.getByLabel('Setup key').fill('fixture-key'); await page.getByRole('button', { name: 'Connect', exact: true }).click();
-        await page.locator('#devices').waitFor(); await page.reload(); await page.locator('#devices').waitFor();
-        await context.close(); console.log('PASS LAN sign-in errors and remembered access UI');
+        await page.goto(BASE); await page.locator('#devices').waitFor();
+        assert.equal(await page.locator('input[type="password"]').count(), 0);
+        assert.equal((await context.cookies()).length, 0);
+        assert.equal((await context.request.get(new URL('api/access', BASE).href)).status(), 404);
+        await page.reload(); await page.locator('#devices').waitFor();
+        assert.equal(requests.some(request => new URL(request.url()).pathname === '/api/access'), false, 'the app never performs a login check');
+        assert.equal(requests.some(request => request.headers().authorization), false, 'no API credential headers');
+        await context.close(); console.log('PASS direct app startup without login endpoints, forms, cookies or credentials');
+        const recovery = await browser.newContext({ serviceWorkers: 'block' });
+        const recoveryPage = await recovery.newPage(); let offline = true;
+        await recoveryPage.routeWebSocket('**', () => {});
+        await recoveryPage.route('**/api/notifications/**', route => {
+            if (offline) return route.fulfill({ status: 503, json: { error: 'Connection unavailable' } });
+            return route.fulfill({ json: { sources: [], notifications: [], bluetooth: [], statuses: {}, pairing: null, pairingOpen: false, error: '', delivery: { sent: 0, failed: 0, lastError: '' }, unread: 0, unreadBySource: {}, publicKey: '', publicUrl: 'https://example.test' } });
+        });
+        const notificationUrl = new URL(BASE); notificationUrl.hash = '!action=notifications';
+        await recoveryPage.goto(notificationUrl.href);
+        await recoveryPage.getByRole('heading', { name: "Can't reach the server" }).waitFor();
+        assert.equal(await recoveryPage.locator('input[type="password"]').count(), 0);
+        offline = false; await recoveryPage.getByRole('button', { name: 'Try again', exact: true }).click();
+        await recoveryPage.getByRole('button', { name: 'Setup & delivery', exact: true }).waitFor();
+        await recovery.close(); console.log('PASS notification connection failures recover with Retry, without setup credentials');
+
     } finally { await browser.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

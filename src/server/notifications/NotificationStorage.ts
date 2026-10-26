@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
 import webpush, { PushSubscription } from 'web-push';
 import { NotificationSource, NotificationHistoryItem } from '../../common/Notification';
 
@@ -12,7 +11,6 @@ export interface SubscriptionRecord {
     updated: number;
 }
 export interface NotificationStore {
-    token: string;
     vapid: { publicKey: string; privateKey: string };
     sources: NotificationSource[];
     subscriptions: SubscriptionRecord[];
@@ -43,14 +41,14 @@ export class NotificationStorage {
     load(): NotificationStore {
         fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
         const existing = this.read('notifications.json') as NotificationStore | undefined;
-        const store = existing || {
-            token: crypto.randomBytes(24).toString('base64url'),
-            vapid: webpush.generateVAPIDKeys(),
-            sources: [],
-            subscriptions: [],
+        const store: NotificationStore = {
+            vapid: existing?.vapid || webpush.generateVAPIDKeys(),
+            sources: existing?.sources || [],
+            subscriptions: existing?.subscriptions || [],
         };
-        if (!existing) this.save(store);
-        fs.writeFileSync(path.join(this.directory, 'notification-setup-key'), store.token + '\n', { mode: 0o600 });
+        if (!existing || 'token' in existing) this.save(store);
+        // Remove obsolete app credentials while preserving push keys and device settings.
+        fs.rmSync(path.join(this.directory, 'notification-setup-key'), { force: true });
         return store;
     }
     save(store: NotificationStore): void {

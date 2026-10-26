@@ -1,4 +1,4 @@
-/* No stream, notification content, or authenticated response is cached. */
+/* No streams, notification content or API responses are cached. */
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 async function setUnreadBadge(count) {
@@ -10,7 +10,6 @@ async function setUnreadBadge(count) {
 }
 async function currentUnreadCount(fallback) {
     // A queued push may arrive after the alert was read on another device.
-    // The private HTTPS proxy authenticates this request when reachable.
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 1500);
     try {
@@ -22,7 +21,7 @@ async function currentUnreadCount(fallback) {
             const summary = await response.json();
             if (Number.isSafeInteger(summary.unread) && summary.unread >= 0) return summary.unread;
         }
-    } catch (_) { /* Offline or setup-key access: use the authenticated push count. */ }
+    } catch (_) { /* Offline: use the count included in the push. */ }
     finally { clearTimeout(timeout); }
     return fallback;
 }
@@ -55,6 +54,6 @@ self.addEventListener('notificationclick', event => {
         const existing = windows.find(client => new URL(client.url).origin === target.origin);
         if (existing) { await existing.navigate(target.href); await existing.focus(); }
         else await self.clients.openWindow(target.href);
-        // The opened history page marks only this alert read after authenticating.
+        // The opened history page marks only this alert read.
     })());
 });

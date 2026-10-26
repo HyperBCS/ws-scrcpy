@@ -13,7 +13,6 @@ export async function requestJson<T>(url: string, options: RequestInit = {}, sig
         const response = await fetch(url, { ...options, signal: controller.signal });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
-            if (response.status === 401) throw new Error(result.error || 'Sign in with your setup key to continue.');
             throw new Error(result.error || `Request failed (${response.status})`);
         }
         return result as T;

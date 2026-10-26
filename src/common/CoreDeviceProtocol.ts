@@ -86,7 +86,7 @@ export function isCoreDeviceButton(value: unknown): value is CoreDeviceButton {
     return typeof value === 'string' && (COREDEVICE_BUTTONS as readonly string[]).includes(value);
 }
 
-/** JSON from a socket is untrusted even when the transport is authenticated. */
+/** Validate incoming JSON before dispatching device commands. */
 export function isCoreDeviceClientMessage(value: unknown): value is CoreDeviceClientMessage {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const message = value as Record<string, unknown>;

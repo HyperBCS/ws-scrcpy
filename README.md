@@ -400,9 +400,7 @@ set `WS_PUSH_SUBJECT` to a real HTTPS URL or `mailto:` address. Placeholder loca
 addresses can cause Apple to reject delivery with `403 BadJwtToken`. Changing
 this contact address preserves the existing keys and receiver subscriptions.
 
-1. Open **Notifications** on the iPhone’s device card. Private Tailscale
-   access signs in automatically. API access outside the trusted LAN requires the private setup key in
-   `/app/data/notification-setup-key` (Docker) or `data/notification-setup-key` (host).
+1. Open **Notifications** on the iPhone’s device card.
 2. Open **Setup & delivery**. Under **Send from an iPhone**, choose **Start Bluetooth pairing**, open that
    iPhone's Bluetooth settings, select **ws-scrcpy**, and
    confirm the matching numeric code on both sides. Allow notification sharing;
@@ -493,29 +491,17 @@ virtual environment. `npm test` includes ANCS fragmentation, touch lifecycle,
 notification policy, persistence, and service-worker regression tests.
 
 
-### LAN access and sign-in
+### Access
 
-The server continues to listen on port 8000 on the host network. Open
-`http://10.10.10.5:8000` from another device on your LAN. The compose configuration
-trusts `10.10.10.0/24`, so LAN browsers, APIs, downloads and WebSockets need no
-setup key or sign-in. `WS_TRUSTED_NETWORKS` accepts comma-separated IPv4 or IPv6
-subnets and checks the actual connection address, not forwarding headers. Set it
-to your own subnet on another server, or leave it empty to require authentication.
+Open `http://10.10.10.5:8000` on the LAN or the configured private Tailscale URL.
+The app has no login, setup key, session cookie, trusted-network setting or API
+credential. Device connections, notifications and downloads open directly.
+The server listens on port 8000 on the host network.
 
-Other connections can still use the existing setup key; an HttpOnly cookie remembers
-browser sign-in for 90 days. Read the key with
-`docker exec ws-scrcpy cat /app/data/notification-setup-key`
-(or `cat data/notification-setup-key` for a host installation). Keep the data volume
-when rebuilding so the key and existing settings survive.
-
-The configured private Tailscale Serve address signs in automatically through
-its authenticated loopback proxy. HTTP APIs, downloads, and WebSocket upgrades
-share the access policy. Native clients can send `Authorization: Bearer <key>`.
-Cross-origin browser requests are rejected even with a valid key or cookie.
-
-For a proxied remote server, put its setup key in that server's `accessKey` entry
-in `remoteHostList`; only configured upstream origins and paths can be proxied.
-Keys stay on the server and are omitted from device-discovery responses.
+Browser requests retain same-origin validation. Remote WebSocket and download
+proxies connect only to hosts listed in `remoteHostList`; no per-host access key
+is needed. Existing notification sources, receiver subscriptions and Web Push
+keys survive updates. Keep the data volume when rebuilding.
 
 Large file downloads use the browser's download manager and stream directly from
 ADB. Small downloads retain in-app progress; at most two 16 MiB buffers or pending

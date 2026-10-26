@@ -55,15 +55,14 @@ test('relay policy excludes old alerts, modifications, unselected sources and th
     assert.equal(shouldRelay(event, { ...source, apps: ['different'] }, sub), false);
 });
 
-test('API authentication, settings persistence, delivery deduplication and expired endpoints', async () => {
+test('Open API, settings persistence, delivery deduplication and expired endpoints', async () => {
     const service = freshService();
     const app = express(); service.mount(app, '/');
     const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
     const base = `http://127.0.0.1:${server.address().port}/api/notifications`;
-    const token = fs.readFileSync(path.join(temporary, 'notification-setup-key'), 'utf8').trim();
-    const api = (url, body, extra = {}) => fetch(base + url, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...extra }, body: body && JSON.stringify(body) });
+    const api = (url, body, extra = {}) => fetch(base + url, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...extra }, body: body && JSON.stringify(body) });
     try {
-        assert.equal((await fetch(base + '/status')).status, 401);
+        assert.equal((await fetch(base + '/status')).status, 200);
         assert.equal((await api('/status', null, { origin: 'https://evil.example' })).status, 403);
         assert.equal((await api('/sources', source)).status, 200);
         assert.equal((await api('/subscriptions', { subscription, sources: ['iphone'], receiverSource: '' })).status, 200);
@@ -93,7 +92,7 @@ test('API authentication, settings persistence, delivery deduplication and expir
         assert.equal(delivered.at(-1).body, 'Open the device to view it.');
         const status = await (await api('/status')).json();
         assert.ok(status.notifications.every(n => !n.body));
-        assert.equal(JSON.stringify(status).includes(token), false);
+        assert.equal('token' in status, false);
         assert.equal(JSON.stringify(status).includes(subscription.endpoint), false);
         const before = JSON.parse(fs.readFileSync(path.join(temporary, 'notifications.json')));
         const reloaded = new NotificationService(); reloaded.mount(express(), '/');
@@ -294,9 +293,8 @@ async function historyApi(run) {
     const app = express(); app.set('env', 'test'); service.mount(app, '/');
     const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
     const base = `http://127.0.0.1:${server.address().port}/api/notifications`;
-    const token = fs.readFileSync(path.join(temporary, 'notification-setup-key'), 'utf8').trim();
     const api = (url, body, method = body === undefined ? 'GET' : 'POST') => fetch(base + url, {
-        method, headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        method, headers: { 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
     });
     try {

@@ -80,10 +80,9 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
 
     public async start(): Promise<void> {
         this.mainApp = express();
-        NotificationService.getInstance().access.mount(this.mainApp, PATHNAME);
         NotificationService.getInstance().mount(this.mainApp, PATHNAME);
         /// #if INCLUDE_GOOG && INCLUDE_FILE_LISTING
-        mountFileDownloads(this.mainApp, PATHNAME, NotificationService.getInstance().access);
+        mountFileDownloads(this.mainApp, PATHNAME);
         /// #endif
         if (HttpServer.SERVE_STATIC && HttpServer.PUBLIC_DIR) {
             this.mainApp.use(

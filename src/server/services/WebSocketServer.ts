@@ -3,7 +3,7 @@ import WS from 'ws';
 import { Service } from './Service';
 import { HttpServer, ServerAndPort } from './HttpServer';
 import { MwFactory } from '../mw/Mw';
-import { NotificationService } from '../notifications/NotificationService';
+import { allowsOrigin } from '../requestOrigin';
 
 export class WebSocketServer implements Service {
     private static instance?: WebSocketServer;
@@ -32,13 +32,11 @@ export class WebSocketServer implements Service {
     public attachToServer(item: ServerAndPort): WSServer {
         const { server, port } = item;
         const TAG = `WebSocket Server {tcp:${port}}`;
-        const access = NotificationService.getInstance().access;
         const wss = new WSServer({
             server,
             maxPayload: 4 * 1024 * 1024,
             verifyClient: ({ req }, done) => {
-                if (!access.allowsOrigin(req)) done(false, 403, 'Origin not allowed');
-                else if (!access.authorized(req)) done(false, 401, 'Sign in to connect');
+                if (!allowsOrigin(req)) done(false, 403, 'Origin not allowed');
                 else done(true);
             },
         });

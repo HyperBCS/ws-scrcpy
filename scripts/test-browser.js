@@ -1,4 +1,4 @@
-// Serves built assets and synthetic access responses ONLY for isolated browser fixtures.
+// Serves built assets and a synthetic notification summary for isolated browser fixtures.
 // Production never loads this server, and it does not expose any device middleware.
 const express = require('express');
 const path = require('node:path');
@@ -6,7 +6,6 @@ const { spawn } = require('node:child_process');
 const { once } = require('node:events');
 async function main() {
     const app = express();
-    app.get('/api/access', (_req, res) => res.json({ authenticated: true }));
     app.get('/api/notifications/summary', (_req, res) => res.json({ sources: [], unread: 0, unreadBySource: {} }));
     app.use(express.static(path.join(__dirname, '../dist/public')));
     const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
