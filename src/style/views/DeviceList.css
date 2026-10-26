@@ -4,12 +4,11 @@
     overflow-y: auto;
     overscroll-behavior-y: contain;
     box-sizing: border-box;
-    padding: max(0.7rem, env(safe-area-inset-top, 0px)) max(0.7rem, env(safe-area-inset-right, 0px))
-        calc(0.8rem + env(safe-area-inset-bottom, 0px)) max(0.7rem, env(safe-area-inset-left, 0px));
+    padding: 20px 16px 24px;
 }
 
 .devices-content {
-    max-width: 1680px;
+    max-width: 1200px;
     margin: 0 auto;
 }
 .device-list-header {
@@ -18,10 +17,10 @@
     justify-content: space-between;
     align-items: center;
     gap: 0.6rem;
-    margin-bottom: 0.7rem;
+    margin-bottom: 20px;
 }
 .device-list-header h1 {
-    font-size: 1.2rem;
+    font-size: 22px;
     line-height: 1.2;
     letter-spacing: -0.02em;
     margin: 0;
@@ -95,7 +94,7 @@
     justify-content: space-between;
     gap: 0.7rem;
     padding: 0.1rem 0.15rem 0.35rem;
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     color: var(--text-color-light);
 }
 #devices .tracker-name > span:first-child {
@@ -108,17 +107,17 @@
 #devices .device-list {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 0.5rem;
+    gap: 12px;
     align-items: start;
 }
 #devices .device {
     min-width: 0;
     box-sizing: border-box;
     display: grid;
-    gap: 0.45rem;
-    padding: 0.6rem 0.7rem;
+    gap: 10px;
+    padding: 14px;
     border: 1px solid var(--device-border-color);
-    border-radius: 0.7rem;
+    border-radius: var(--radius-panel);
     background: var(--device-list-default-color);
 }
 #devices .device-header {
@@ -131,7 +130,7 @@
     flex: 1;
 }
 #devices .device-name {
-    font-size: 0.95rem;
+    font-size: 1rem;
     font-weight: 700;
     line-height: 1.25;
     overflow-wrap: anywhere;
@@ -142,7 +141,7 @@
     align-items: baseline;
     gap: 0 0.5rem;
     color: var(--text-color-light);
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     line-height: 1.4;
 }
 #devices .device-battery {
@@ -179,7 +178,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    border-radius: 0.55rem;
+    border-radius: var(--radius-control);
     background: color-mix(in srgb, var(--status-asleep-color) 10%, transparent);
     color: var(--status-asleep-color);
     font-size: 0.76rem;
@@ -195,7 +194,7 @@
     background: transparent;
     color: inherit;
     border: 1px solid currentColor;
-    border-radius: 0.55rem;
+    border-radius: var(--radius-control);
     font: inherit;
     font-weight: 600;
     cursor: pointer;
@@ -214,7 +213,7 @@
     min-height: 44px;
     padding: 0.3rem 0.7rem;
     border: 1px solid var(--device-border-color);
-    border-radius: 0.55rem;
+    border-radius: var(--radius-control);
     background: var(--main-bg-color);
     color: var(--text-color);
     font: inherit;
@@ -302,9 +301,9 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    border: 1px dashed var(--device-border-color);
-    border-radius: 0.7rem;
-    padding: 1.25rem 1rem;
+    border: 1px solid var(--device-border-color);
+    border-radius: var(--radius-panel);
+    padding: 48px 20px;
     margin: 0.5rem 0;
     text-align: center;
 }
@@ -346,25 +345,19 @@
 }
 @media (min-width: 720px) {
     #devices {
-        padding-top: 1rem;
-        padding-inline: 1.1rem;
+        padding: 28px 24px;
     }
     #devices .device-list {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .device-list-header {
-        margin-bottom: 0.9rem;
+        margin-bottom: 20px;
     }
 }
 
 @media (min-width: 1040px) {
     #devices .device-list {
         grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-}
-@media (min-width: 1500px) {
-    #devices .device-list {
-        grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 }
 @media (max-width: 360px) {

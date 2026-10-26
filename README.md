@@ -127,7 +127,10 @@ survive a reboot, and it is not an app.
   decoded in the browser with WebCodecs, or remuxed to fragmented MP4 for Media
   Source Extensions where WebCodecs is unavailable (Chrome/Edge over plain http).
   Chrome needs hardware HEVC decoding; Safari always has it.
-* Touch: one finger (tap, drag, swipe) through the touchscreen HID surface.
+* Touch: tap, drag, swipe, and up to five simultaneous fingers through the touchscreen
+  HID surface. Touchscreen browsers can pinch and use multiple fingers; a mouse sends
+  one contact. Contacts are released on blur, cancellation, rotation, and disconnect.
+  One viewer owns a phone's active gesture at a time.
   Multi-touch is not available on this path yet.
 * Hardware buttons: Home, Lock, Siri, volume up/down, mute.
 * App switcher: iOS has no button for it, so the server performs what opens it on
@@ -155,6 +158,10 @@ survive a reboot, and it is not an app.
   works from a phone browser as well, with Enter, Delete and cursor keys. Smart
   punctuation from an iPhone keyboard (’ “ ” — …) is typed as the plain key; a
   character with no US-layout key (é, emoji) is reported instead of dropped.
+  Done, backgrounding the viewer, and disconnecting remove the virtual keyboard
+  after pending text finishes, so the phone's own keyboard can appear again.
+  Touch and mirroring keep their connections. `npm run patch:ios` installs the
+  keyboard lifecycle support alongside the audio and multitouch patches.
 * Sound: the phone's system audio (what it plays through its speaker) streams to the
   browser. The phone sends AAC-ELD; the server decodes it with `ffmpeg` (any build with
   the native AAC decoder) into the same PCM path Android uses, so the Sound button,
@@ -336,3 +343,151 @@ than by the WebSocket patch the older NetrisTV v1.19 fork used.
 [isTypeSupported]: https://developer.mozilla.org/en-US/docs/Web/API/MediaSource/isTypeSupported
 [MediaSource]: https://developer.mozilla.org/en-US/docs/Web/API/MediaSource
 [webcodecs]: https://w3c.github.io/webcodecs/
+
+### Bluetooth notifications and Safari PWA
+
+The Linux server captures notifications that an iPhone exposes through Apple's
+[ANCS Bluetooth service](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleNotificationCenterServiceSpecification/Specification/Specification.html)
+and relays them using Web Push. Capture continues without an open screen stream.
+This collector is for iPhones; Android notification capture is not included.
+
+The server uses the host BlueZ daemon and an adapter supporting LE advertising.
+For a host installation, install `bluez python3-dbus python3-gi`, enable Bluetooth
+with `sudo systemctl enable --now bluetooth`, then start the app. The collector
+uses `/usr/bin/python3`, independently of the CoreDevice virtual environment.
+`WS_BLUETOOTH_PYTHON` overrides that interpreter. `WS_NOTIFICATIONS_COLLECTOR=0`
+disables Bluetooth collection for development without hardware.
+
+For Docker on an AppArmor host, load the supplied profile before starting:
+
+```shell
+sudo install -m 644 config/apparmor-ws-scrcpy /etc/apparmor.d/ws-scrcpy-bluetooth
+sudo apparmor_parser -r /etc/apparmor.d/ws-scrcpy-bluetooth
+sudo systemctl enable --now bluetooth
+docker compose up -d --build ws-scrcpy
+```
+
+The profile retains Docker's default filesystem restrictions and permits the
+BlueZ D-Bus calls and callbacks needed for pairing and notifications. The compose
+file mounts the system bus socket and persists settings in `ws-scrcpy-data`.
+On a host without AppArmor, omit the compose `security_opt` entries. Do not run
+another Bluetooth daemon for this container or remove existing device bonds.
+
+Safari on iOS/iPadOS 16.4+ requires a trusted HTTPS origin and installation using
+**Share → Add to Home Screen** for background push. A certificate warning or the
+plain LAN URL is insufficient. The configured private address for this server is
+`https://mini-nuc.tailea1801.ts.net/`. Connect the receiving phone to the same
+Tailscale network before opening it. The host's Tailscale container serves it with:
+
+```shell
+docker exec tailscale tailscale serve --bg --yes http://127.0.0.1:8000
+```
+
+Serve manages certificate renewal and persists its configuration. This is private
+Serve, not public Funnel. On another server, update `WS_PUBLIC_URL` in compose and
+use that server's Tailscale DNS name.
+
+If an older iPhone Home Screen installation has blurred headers or a gray strip
+at the bottom, delete that Home Screen app and add it again from Safari, then
+enable notifications again. iOS can retain the former translucent status-bar
+mode in the installed app even after a reload. The current app omits that legacy
+setting and sizes every view from the shared viewport. Bluetooth pairing and
+source mappings on the server survive reinstalling the receiving app. See the
+[WebKit explanation](https://www2.webkit.org/show_bug.cgi?id=317153#c2).
+
+The push sender uses `WS_PUBLIC_URL` as its VAPID contact address. To override it,
+set `WS_PUSH_SUBJECT` to a real HTTPS URL or `mailto:` address. Placeholder local
+addresses can cause Apple to reject delivery with `403 BadJwtToken`. Changing
+this contact address preserves the existing keys and receiver subscriptions.
+
+1. Open **Notification history** on the iPhone’s device card. Private Tailscale
+   access signs in automatically. Direct API access requires the private setup key in
+   `/app/data/notification-setup-key` (Docker) or `data/notification-setup-key` (host).
+2. Open **Setup & delivery**. Under **Send from an iPhone**, choose **Start Bluetooth pairing**, open that
+   iPhone's Bluetooth settings, select **ws-scrcpy**, and
+   confirm the matching numeric code on both sides. Allow notification sharing;
+   **Settings → Bluetooth → ws-scrcpy → Share System Notifications** must remain on.
+3. Match that iPhone's USB and Bluetooth connections, then choose **Use this iPhone**.
+   The phone's expandable settings contain message previews and optional app filters.
+4. On the receiving device, open the installed PWA and use **Receive on this device**.
+   Choose the sending phones and identify whether this is one of those same phones,
+   then tap **Enable on this device**. Otherwise keep **A different phone, tablet or
+   computer**. Then use **Send test notification**. The receiver/source choice prevents
+   loops. Later changes use **Save changes** without another permission prompt.
+
+Keys, source mappings, subscriptions, and notification history persist across
+restarts; keep the data volume when updating. **History** shows the selected
+phone’s alerts, with **Inbox**, **Unread**, and **All history** filters. Device
+cards link directly to that phone’s history; there is no global history link on
+the Devices page. The NUC keeps up to 500 alerts per phone for 30 days in its private data directory. History starts with alerts collected by this
+relay, including those iOS shares when connecting; it cannot recover alerts the
+phone no longer exposes. Turning message previews off also removes saved message
+text for that phone. Removing a source deletes its history and cached icons.
+
+Original app icons are read over the trusted USB connection and cached on the
+NUC. If an app icon is unavailable, the history shows a letter placeholder. This
+does not change iOS's system-managed PWA notification icon or attribution.
+
+**Mark read** and **Mark all read** update shared app unread counts; they do not
+mark messages read inside the original iPhone app. **Dismiss here** moves an alert
+out of the inbox while retaining it in **All history**. Where iOS offers a phone
+action, the card’s **⋯** menu shows its actual label, such as **Clear on
+iPhone**. A negative ANCS action is not always dismissal (it can decline a call),
+so its label is checked again before sending. Actions require a current Bluetooth
+session. Acceptance of an action does not claim the iPhone has removed the alert.
+
+**Dismiss all here** and **Dismiss all on phone** live in the history toolbar’s
+**⋯** menu. They each confirm the selected phone and alert count, then act on
+that exact list of search/filter matches, including older results beyond the
+current page. Alerts arriving afterward are left alone. Phone bulk dismissal includes
+only explicit Clear/Dismiss actions, excludes actions such as Decline or Delete,
+and stops if the phone disconnects or cannot confirm an action. Partial results
+show how many requests were accepted and how many remain. Cards show a compact
+preview with **Show more** for longer messages.
+
+Web previews make HTTP/HTTPS links in the shared title and message clickable.
+Direct HTTPS image links (including GIFs), video links, and audio links offer
+**Load image**, **Load video**, or **Load audio** inside the card. Media loads
+from the displayed host only after a tap; video and audio use the browser's
+playback controls without autoplay. **Hide** stops playback and removes the
+preview. Unavailable files and unsupported formats retain an **Open** link.
+Up to four distinct media links appear per notification, and turning message
+previews off hides both text and media.
+
+This works with URLs included in notification text. The current Bluetooth
+[ANCS protocol](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleNotificationCenterServiceSpecification/Appendix/Appendix.html)
+does not expose photo, video, or audio attachments. An alert saying “sent a photo”
+without a media URL therefore remains text. Ordinary webpage links open in a new
+tab; page metadata and third-party embeds are not fetched. Direct media links
+must end in a supported file extension before any query string; the browser must
+support the file's codec and the host must permit embedding.
+
+Search matches app names, titles, and full message text, ignoring case and accents.
+**Filters** limits results to one app; **Inbox**, **Unread**, and **All history**
+remain directly accessible. Opening a notification from a push clears any filters
+that would hide it. Search and filters are scoped to the selected phone.
+
+On a touch screen, swipe right to toggle read/unread or left to dismiss here.
+Vertical scrolling, short drags, cancelled touches, and multitouch do not trigger
+actions. Both gestures have a short-lived **Undo** control that restores the app
+state; they never perform an action on the iPhone. Card menus offer the same
+controls for keyboard/mouse use, plus **Move to inbox** for dismissed alerts.
+
+Unread badges show each phone’s count on its device card and notification page.
+The installed PWA icon shows the combined count where supported and permitted
+in OS settings. Pushes and app opening refresh the Home Screen badge. Reading an alert closes its matching
+banner on this receiving device where supported. Other closed installations
+refresh their badges on the next push or app opening; Safari does not permit
+silent pushes just to synchronise state.
+
+Existing alerts on reconnect are shown in history but not pushed again.
+Modifications/removals update history without silent pushes. Expired subscriptions
+are removed automatically. Focus, app notification settings, preview permissions,
+connectivity, and the push provider can affect which alerts appear and when.
+Notifications cannot bypass those iOS settings. No private content is cached by
+the service worker.
+
+The iOS toolchain is pinned in `python/requirements.txt`. `npm run setup:ios`
+applies the raw-audio and five-contact HID patches; rerun it after recreating the
+virtual environment. `npm test` includes ANCS fragmentation, touch lifecycle,
+notification policy, persistence, and service-worker regression tests.

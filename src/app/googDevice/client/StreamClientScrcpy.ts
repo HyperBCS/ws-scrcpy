@@ -17,7 +17,7 @@ import DeviceMessage from '../DeviceMessage';
 import { DisplayInfo } from '../../DisplayInfo';
 import { ACTION } from '../../../common/Action';
 import { StreamReceiverScrcpy } from './StreamReceiverScrcpy';
-import { computeMaxSize } from '../../ControlBarLayout';
+import { getVideoBounds } from '../../ControlBarLayout';
 import { UhidKeyboard } from '../UhidKeyboard';
 import { deviceClipboard, lastFrameAt, streamConnected, streamNotice } from '../../state/stream';
 import { AudioSession, createAudioSession } from '../../state/audio';
@@ -56,6 +56,8 @@ export class StreamClientScrcpy
     private readonly streamReceiver: StreamReceiverScrcpy;
     private readonly container: HTMLElement;
     private deviceView?: HTMLElement;
+    private videoWrapper?: HTMLElement;
+    private resizeObserver?: ResizeObserver;
 
     public static registerPlayer(playerClass: PlayerClass): void {
         if (playerClass.isSupported()) {
@@ -170,9 +172,9 @@ export class StreamClientScrcpy
             player: Util.parseString(params, 'player', true),
             udid: Util.parseString(params, 'udid', true),
             ws: Util.parseString(params, 'ws', true),
-            // Defaults ON: with UHID the device sees a real keyboard, so this costs nothing when
-            // no physical keyboard is attached and means one less thing to switch on when there
-            // is. `?captureKeyboard=0` opts out.
+            // Capture defaults on, but UHID attaches only for an actual physical key press.
+            // Touch viewing keeps Android's software keyboard available. `captureKeyboard=0`
+            // opts out of physical keyboard capture.
             //
             // NB `Util.parseBoolean`'s third argument is `required`, NOT a default -- passing
             // `true` there makes every stream deep link throw "Missing required parameter".
@@ -206,12 +208,9 @@ export class StreamClientScrcpy
     public onClientsStats = (stats: ClientsStats): void => {
         this.deviceName = stats.deviceName;
         this.clientId = stats.clientId;
-        // `connected` precedes these stats. Wait for this viewer's assigned id before
-        // registering its keyboard on the shared scrcpy control socket.
+        // Remember this viewer's namespace without registering an unused hardware keyboard.
+        // A supported physical keydown creates it lazily after these stats arrive.
         this.uhidKeyboard?.setId(this.clientId);
-        if (this.streamReceiver.isReady()) {
-            this.uhidKeyboard?.create();
-        }
         this.setTitle(`Stream ${this.deviceName}`);
     };
 
@@ -321,6 +320,8 @@ export class StreamClientScrcpy
         this.touchHandler?.release();
         this.touchHandler = undefined;
         window.removeEventListener('resize', this.onWindowResize);
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = undefined;
         if (this.resizeTimeoutId !== undefined) {
             clearTimeout(this.resizeTimeoutId);
             this.resizeTimeoutId = undefined;
@@ -336,6 +337,7 @@ export class StreamClientScrcpy
             }
             this.deviceView = undefined;
         }
+        this.videoWrapper = undefined;
         this.streamReceiver.stop();
         if (this.player) {
             this.player.stop();
@@ -396,7 +398,7 @@ export class StreamClientScrcpy
         this.toolBox = googToolBox;
         this.controlButtons = googToolBox.getHolderElement();
 
-        const video = document.createElement('div');
+        const video = (this.videoWrapper = document.createElement('div'));
         video.className = 'video';
         deviceView.appendChild(video);
         player.setParent(video);
@@ -414,6 +416,7 @@ export class StreamClientScrcpy
         element.tabIndex = 0;
         element.setAttribute('aria-label', 'Remote device screen');
         element.addEventListener('pointerdown', () => {
+            this.releaseVirtualKeyboard();
             // Touch handlers prevent the browser's default focus action, so explicitly focusing
             // this canvas can still match :focus-visible on phones. Keep keyboard routing while
             // marking pointer focus separately from keyboard navigation onto the screen.
@@ -437,6 +440,11 @@ export class StreamClientScrcpy
 
         // Fit changes browser playback bounds; encoder changes require a server restart.
         window.addEventListener('resize', this.onWindowResize);
+        if (typeof ResizeObserver !== 'undefined') {
+            this.resizeObserver?.disconnect();
+            this.resizeObserver = new ResizeObserver(this.onWindowResize);
+            this.resizeObserver.observe(video);
+        }
     }
 
     private onFileDragOver = (event: DragEvent): void => {
@@ -455,6 +463,9 @@ export class StreamClientScrcpy
     private resizeTimeoutId?: ReturnType<typeof setTimeout>;
 
     private onWindowResize = (): void => {
+        if (!this.videoWrapper) {
+            return;
+        }
         if (this.resizeTimeoutId !== undefined) {
             clearTimeout(this.resizeTimeoutId);
         }
@@ -497,8 +508,8 @@ export class StreamClientScrcpy
 
     /**
      * Routes host key events to the device. Default path is UHID: the device registers a real
-     * virtual keyboard, so its own layout applies and it stops raising the on-screen keyboard
-     * over the content. `useUhid: false` falls back to injecting Android keycodes, which is what
+     * virtual keyboard on the first physical keydown, so its own layout applies. Returning to
+     * touch/local controls unregisters it. `useUhid: false` injects Android keycodes, which is what
      * older devices (pre-Android 11, where the server cannot open /dev/uhid) need.
      */
     public setHandleKeyboardEvents(enabled: boolean, useUhid = true): void {
@@ -514,11 +525,13 @@ export class StreamClientScrcpy
             this.uhidKeyboard = new UhidKeyboard(this);
             if (this.clientId > 0 && this.streamReceiver.isReady()) {
                 this.uhidKeyboard.setId(this.clientId);
-                this.uhidKeyboard.create();
             }
             window.addEventListener('keydown', this.onUhidKeyDown, true);
             window.addEventListener('keyup', this.onUhidKeyUp, true);
             window.addEventListener('blur', this.onUhidBlur);
+            window.addEventListener('pagehide', this.onUhidBlur);
+            document.addEventListener('visibilitychange', this.onUhidVisibilityChange);
+            document.addEventListener('focusin', this.onLocalFocus);
         } else {
             KeyInputHandler.addEventListener(this);
         }
@@ -537,6 +550,9 @@ export class StreamClientScrcpy
             window.removeEventListener('keydown', this.onUhidKeyDown, true);
             window.removeEventListener('keyup', this.onUhidKeyUp, true);
             window.removeEventListener('blur', this.onUhidBlur);
+            window.removeEventListener('pagehide', this.onUhidBlur);
+            document.removeEventListener('visibilitychange', this.onUhidVisibilityChange);
+            document.removeEventListener('focusin', this.onLocalFocus);
             this.uhidKeyboard.destroy();
             this.uhidKeyboard = undefined;
         } else if (this.keyboardAttached) {
@@ -548,7 +564,11 @@ export class StreamClientScrcpy
     private onUhidKeyDown = (event: KeyboardEvent): void => {
         // Leave typing in our own UI (the Live Text overlay, settings inputs) alone.
         if (isLocalKeyboardTarget(event.target) || event.isComposing) {
-            this.uhidKeyboard?.releaseAll();
+            this.releaseVirtualKeyboard();
+            return;
+        }
+        if (!this.streamReceiver.isReady()) {
+            if (UhidKeyboard.isSupportedCode(event.code)) event.preventDefault();
             return;
         }
         if (this.uhidKeyboard?.handleKey(event.code, true)) {
@@ -558,7 +578,11 @@ export class StreamClientScrcpy
 
     private onUhidKeyUp = (event: KeyboardEvent): void => {
         if (isLocalKeyboardTarget(event.target) || event.isComposing) {
-            this.uhidKeyboard?.releaseAll();
+            this.releaseVirtualKeyboard();
+            return;
+        }
+        if (!this.streamReceiver.isReady()) {
+            if (UhidKeyboard.isSupportedCode(event.code)) event.preventDefault();
             return;
         }
         if (this.uhidKeyboard?.handleKey(event.code, false)) {
@@ -566,10 +590,22 @@ export class StreamClientScrcpy
         }
     };
 
-    // A key released while the tab is unfocused is never delivered, and a stuck modifier would
-    // corrupt every keystroke afterwards.
+    /** Release this viewer's HID device without changing its physical-key capture preference. */
+    public releaseVirtualKeyboard(): void {
+        this.uhidKeyboard?.destroy();
+    }
+
+    // Removing the HID device clears held keys and restores Android's software keyboard.
     private onUhidBlur = (): void => {
-        this.uhidKeyboard?.releaseAll();
+        this.releaseVirtualKeyboard();
+    };
+
+    private onUhidVisibilityChange = (): void => {
+        if (document.visibilityState === 'hidden') this.releaseVirtualKeyboard();
+    };
+
+    private onLocalFocus = (event: FocusEvent): void => {
+        if (isLocalKeyboardTarget(event.target)) this.releaseVirtualKeyboard();
     };
 
     /** The control buttons, for `FloatingToolbar` to adopt (see `startStream`). */
@@ -595,8 +631,8 @@ export class StreamClientScrcpy
     }
 
     public getMaxSize(): Size | undefined {
-        // The toolbar floats over the video now, so nothing is subtracted from the container.
-        return computeMaxSize(this.container.clientWidth, this.container.clientHeight);
+        // Its layout already accounts for the mount's padding and the desktop controls slot.
+        return this.videoWrapper ? getVideoBounds(this.videoWrapper) : undefined;
     }
 
     // Exposed for `SettingsSheet`'s "Playback" group -- player choice goes through `navigate()`

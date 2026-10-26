@@ -1,3 +1,4 @@
+import { NotificationService } from './notifications/NotificationService';
 import '../../LICENSE';
 import * as readline from 'readline';
 import { Config } from './Config';
@@ -9,7 +10,7 @@ import { WebsocketProxy } from './mw/WebsocketProxy';
 import { HostTracker } from './mw/HostTracker';
 import { WebsocketMultiplexer } from './mw/WebsocketMultiplexer';
 
-const servicesToStart: ServiceClass[] = [HttpServer, WebSocketServer];
+const servicesToStart: ServiceClass[] = [HttpServer, WebSocketServer, NotificationService];
 
 // MWs that accept WebSocket
 const mwList: MwFactory[] = [WebsocketProxy, WebsocketMultiplexer];

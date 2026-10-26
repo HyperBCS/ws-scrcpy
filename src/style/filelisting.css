@@ -1068,3 +1068,33 @@ body.file-listing-page {
         filter: brightness(1.08);
     }
 }
+
+.fx-menu {
+    transform-origin: top left;
+    border-radius: var(--radius-panel);
+    box-shadow: 0 12px 40px rgb(0 0 0 / 18%);
+}
+.fx-menu button,
+.fx-button,
+.fx-place {
+    transition:
+        background-color var(--motion-fast),
+        color var(--motion-fast),
+        border-color var(--motion-fast);
+}
+.fx-dialog {
+    border-radius: 20px;
+    box-shadow: 0 20px 64px rgb(0 0 0 / 25%);
+}
+.fx-dialog::backdrop {
+    animation: sheet-backdrop-in var(--motion-settle) ease-out;
+    transition: opacity var(--motion-exit);
+}
+.fx-dialog[data-exiting]::backdrop {
+    animation: none;
+    opacity: 0;
+}
+.fx-menu[data-exiting],
+.fx-dialog[data-exiting] {
+    pointer-events: none;
+}

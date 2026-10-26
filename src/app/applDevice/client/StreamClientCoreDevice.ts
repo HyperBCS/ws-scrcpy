@@ -10,7 +10,7 @@ import { CoreDeviceInteractionHandler } from '../CoreDeviceInteractionHandler';
 import { ApplToolBox } from '../toolbox/ApplToolBox';
 import { hidUsageForCode, keyboardReportsForText } from '../hidKeyboard';
 import { isLocalKeyboardTarget } from '../../googDevice/localKeyboardTarget';
-import { computeMaxSize } from '../../ControlBarLayout';
+import { getVideoBounds } from '../../ControlBarLayout';
 import { deviceClipboard, deviceClipboardError, lastFrameAt, streamConnected, streamNotice } from '../../state/stream';
 import { AudioSession, createAudioSession } from '../../state/audio';
 import Size from '../../Size';
@@ -80,7 +80,9 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     private nextRequestId = 1;
     private stopped = false;
     private typing = Promise.resolve();
+    private typingGeneration = 0;
     private resizeTimer?: ReturnType<typeof setTimeout>;
+    private resizeObserver?: ResizeObserver;
 
     protected constructor(params: ParamsStreamCoreDevice, container: HTMLElement = document.body) {
         super(params);
@@ -114,6 +116,13 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.receiver.on('clipboard', this.onClipboard);
         this.receiver.on('result', (result) => this.emit('result', result));
         window.addEventListener('resize', this.onWindowResize);
+        window.addEventListener('blur', this.onKeyboardBlur);
+        window.addEventListener('pagehide', this.onKeyboardBlur);
+        document.addEventListener('visibilitychange', this.onVisibilityChange);
+        if (typeof ResizeObserver !== 'undefined') {
+            this.resizeObserver = new ResizeObserver(this.onWindowResize);
+            this.resizeObserver.observe(this.videoWrapper);
+        }
         if (params.captureKeyboard !== false) {
             this.setHandleKeyboardEvents(true);
         }
@@ -171,12 +180,44 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         });
     }
 
+    public sendContacts(
+        contacts: import('../../../common/CoreDeviceProtocol').CoreDeviceContact[],
+        videoSize: Size,
+    ): void {
+        if (!videoSize.width || !videoSize.height) return;
+        this.receiver.send({
+            type: 'touch-frame',
+            contacts: contacts.map((c) => ({
+                ...c,
+                x: clampHid((c.x / videoSize.width) * 65535),
+                y: clampHid((c.y / videoSize.height) * 65535),
+            })),
+        });
+    }
+
     public pressButton(name: CoreDeviceButton, state: 'press' | 'down' | 'up' = 'press'): void {
         this.receiver.send({ type: 'button', name, state });
     }
 
     public sendKeyboardReport(usages: Iterable<number>): void {
         this.receiver.send({ type: 'key', usages: Array.from(usages) });
+    }
+
+    /** Reopening typing invalidates a close request that is still waiting for earlier keys. */
+    public beginTyping(): void {
+        this.typingGeneration++;
+    }
+
+    /** Finish earlier reports before unregistering HID, unless a newer typing session began. */
+    public endTyping(): Promise<void> {
+        const generation = ++this.typingGeneration;
+        const run = this.typing.then(() => {
+            if (!this.stopped && generation === this.typingGeneration) {
+                this.receiver.send({ type: 'keyboard-detach' });
+            }
+        });
+        this.typing = run.catch(() => undefined);
+        return this.typing;
     }
 
     /** Types text as key presses; characters without a US-layout key are reported, not sent. */
@@ -201,6 +242,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
      * for the device, which coalesces a press and release that arrive in the same instant.
      */
     private enqueueReports(reports: number[][]): Promise<void> {
+        this.beginTyping();
         const run = this.typing.then(async () => {
             for (const report of reports) {
                 if (this.stopped) {
@@ -239,7 +281,8 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
             return Promise.resolve(false);
         }
         const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-        this.typing = this.typing.then(async () => {
+        this.beginTyping();
+        const run = this.typing.then(async () => {
             if (this.stopped) {
                 return;
             }
@@ -267,7 +310,11 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
                 await pause(180);
             }
         });
-        return this.typing.then(() => true);
+        this.typing = run.catch(() => undefined);
+        // Schedule this now, so newer typing invalidates it even while the passcode runs.
+        // The recovery queue also runs it after a failed operation, without losing that error.
+        const detached = this.endTyping();
+        return run.then(() => true).finally(() => detached);
     }
 
     public requestClipboard(): void {
@@ -283,6 +330,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     }
 
     public rotate(direction: 'left' | 'right'): number {
+        this.touchHandler?.releaseActiveTouch();
         const id = this.nextRequestId++;
         this.receiver.send({ type: 'rotate', direction, id });
         return id;
@@ -315,12 +363,11 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         if (enabled) {
             window.addEventListener('keydown', this.onKey, true);
             window.addEventListener('keyup', this.onKey, true);
-            window.addEventListener('blur', this.releaseAllKeys);
         } else {
             window.removeEventListener('keydown', this.onKey, true);
             window.removeEventListener('keyup', this.onKey, true);
-            window.removeEventListener('blur', this.releaseAllKeys);
             this.releaseAllKeys();
+            void this.endTyping();
         }
     }
 
@@ -343,6 +390,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
                 return; // auto-repeat
             }
             this.pressedUsages.add(usage);
+            this.beginTyping();
         } else {
             this.pressedUsages.delete(usage);
         }
@@ -354,6 +402,15 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
             this.pressedUsages.clear();
             this.sendKeyboardReport([]);
         }
+    };
+
+    private onKeyboardBlur = (): void => {
+        this.releaseAllKeys();
+        void this.endTyping();
+    };
+
+    private onVisibilityChange = (): void => {
+        if (document.visibilityState === 'hidden') this.onKeyboardBlur();
     };
 
     // ------------------------------------------------------------------ receiver events
@@ -474,7 +531,10 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     // ------------------------------------------------------------------ layout
 
     private onWindowResize = (): void => {
-        if (this.resizeTimer) {
+        if (this.stopped) {
+            return;
+        }
+        if (this.resizeTimer !== undefined) {
             clearTimeout(this.resizeTimer);
         }
         this.resizeTimer = setTimeout(() => {
@@ -484,11 +544,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     };
 
     private applyBounds(): void {
-        const bounds = computeMaxSize(
-            document.body.clientWidth,
-            document.body.clientHeight,
-            this.toolBox.getHolderElement(),
-        );
+        const bounds = getVideoBounds(this.videoWrapper);
         if (bounds) {
             this.player?.setBounds(bounds);
         }
@@ -505,8 +561,14 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.touchHandler?.release();
         this.touchHandler = undefined;
         window.removeEventListener('resize', this.onWindowResize);
-        if (this.resizeTimer) {
+        window.removeEventListener('blur', this.onKeyboardBlur);
+        window.removeEventListener('pagehide', this.onKeyboardBlur);
+        document.removeEventListener('visibilitychange', this.onVisibilityChange);
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = undefined;
+        if (this.resizeTimer !== undefined) {
             clearTimeout(this.resizeTimer);
+            this.resizeTimer = undefined;
         }
         this.toolBox.release();
         this.audioSession?.stop();

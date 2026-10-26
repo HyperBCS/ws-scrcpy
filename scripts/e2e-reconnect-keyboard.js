@@ -44,7 +44,7 @@ async function applyPreset(page, name, nextHandshake) {
     await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
     await page.getByRole('button', { name: 'Apply & restart', exact: true }).click();
     await page
-        .getByText('Saved. Active screens will reconnect automatically.', { exact: true })
+        .getByText('Settings saved.', { exact: true })
         .waitFor({ timeout: 35000 });
     await nextHandshake();
     await page.keyboard.press('Escape');

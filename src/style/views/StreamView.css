@@ -1,11 +1,28 @@
 .stream-view {
-    height: 100vh;
-    height: 100dvh;
+    height: 100%;
     width: 100%;
     display: flex;
     flex-direction: column;
     background: #05080e;
     overflow: hidden;
+}
+
+/* While typing, the mirror and its input dock share the visible browser area.
+   Safari can pan this viewport when the keyboard opens; moving only the dock
+   would leave the full-size mirror clipped above it. Reserve the measured dock
+   once, then let the existing video sizing fit the complete screen in the stage. */
+.stream-view.stream-typing {
+    position: fixed;
+    top: var(--typing-viewport-top);
+    left: var(--typing-viewport-left);
+    width: var(--typing-viewport-width);
+    height: var(--typing-viewport-height);
+    padding-bottom: var(--typing-dock-height);
+    box-sizing: border-box;
+}
+
+.stream-typing .stream-mount {
+    padding-bottom: 0;
 }
 
 .stream-stage {
@@ -116,8 +133,9 @@
     position: fixed;
     z-index: 9;
     top: calc(56px + env(safe-area-inset-top, 0px));
-    left: 50%;
-    transform: translateX(-50%);
+    left: 0;
+    right: 0;
+    margin-inline: auto;
     width: min(440px, calc(100% - 24px));
     min-width: 0;
     max-width: 100%;

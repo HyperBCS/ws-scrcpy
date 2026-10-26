@@ -123,6 +123,7 @@ const field = (page) => page.locator('.unlock-sheet-field input');
 const status = (page) => page.locator('[data-unlock-state]');
 async function open(page) {
     await page.locator('.lock-screen-notice').getByRole('button', { name: 'Unlock', exact: true }).click();
+    await require('./ui-motion').settleMotion(page);
     await page.getByRole('dialog', { name: 'Unlock device', exact: true }).waitFor();
 }
 async function state(page, value) {
@@ -164,7 +165,7 @@ async function main() {
             await field(page).pressSequentially(PIN);
             assert.equal(test.texts.length, 0, 'Typing masked digits never sends remote text');
             assert.equal(test.keys.length, 0, 'Global keyboard capture does not forward local passcode keys');
-            assert(test.uhidCreated, 'The fixture exercises an active UHID keyboard');
+            assert.equal(test.uhidCreated, false, 'Typing in the local unlock field never attaches a remote HID keyboard');
             assert.equal(test.hidReports.length, 0, 'Masked local typing never sends HID key reports');
             await page.getByRole('button', { name: 'Send PIN', exact: true }).click();
             assert.equal(await field(page).inputValue(), '', 'Clear the draft before preflight completes');

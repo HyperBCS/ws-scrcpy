@@ -1,3 +1,5 @@
+import { AutoHeight } from '../ui/AutoHeight';
+import { AnimatedDetails } from '../ui/AnimatedDetails';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { VolumeSlider } from '../ui/SheetControls';
@@ -22,9 +24,9 @@ const MAX_SIZE_OPTIONS = [0, 720, 960, 1280, 1600, 1920];
 const MAX_FPS_OPTIONS = [0, 15, 24, 30, 45, 60];
 const IFRAME_INTERVAL_OPTIONS = [1, 2, 5, 10];
 const QUALITY_PRESETS = [
-    { name: 'Data saver', hint: 'For mobile networks', bitrate: 1_000_000, maxFps: 30, maxSize: 720 },
-    { name: 'Balanced', hint: 'Smooth everyday use', bitrate: 3_500_000, maxFps: 60, maxSize: 1280 },
-    { name: 'Sharper', hint: 'For a fast connection', bitrate: 8_000_000, maxFps: 60, maxSize: 1920 },
+    { name: 'Data saver', bitrate: 1_000_000, maxFps: 30, maxSize: 720 },
+    { name: 'Balanced', bitrate: 3_500_000, maxFps: 60, maxSize: 1280 },
+    { name: 'Sharper', bitrate: 8_000_000, maxFps: 60, maxSize: 1920 },
 ];
 const APPLY_TIMEOUT_MS = 20000;
 const LOAD_TIMEOUT_MS = 15000;
@@ -121,7 +123,7 @@ export function SettingsSheet() {
         pendingRequestId.current = undefined;
         if (!tracker) {
             setLoading(false);
-            setLoadError('Waiting for this device to connect. Settings will load automatically.');
+            setLoadError('Waiting for device…');
             return;
         }
         const udid = target.udid;
@@ -170,7 +172,7 @@ export function SettingsSheet() {
             setConfigKnown(true);
             setApplyError(undefined);
             setPatch({});
-            setAppliedNote('Saved. Active screens will reconnect automatically.');
+            setAppliedNote('Settings saved.');
         };
         tracker.on('list_encoders', onEncoders);
         tracker.on('update_stream_config', onUpdated);
@@ -241,8 +243,8 @@ export function SettingsSheet() {
     const otherViewers = client?.getClientsCount() ?? 0;
     const viewerWarning =
         otherViewers > 0
-            ? `${otherViewers} other viewer${otherViewers === 1 ? '' : 's'} will also reconnect.`
-            : 'Any other viewers will also reconnect.';
+            ? `${otherViewers} other open screen${otherViewers === 1 ? '' : 's'} will also reconnect.`
+            : '';
 
     function setFields(fields: Partial<ScrcpyServerConfig>): void {
         setPatch((previous) => {
@@ -317,19 +319,17 @@ export function SettingsSheet() {
             title="Settings"
         >
             <div class="settings-sheet-content">
-                <div class="settings-device-context">
+                <div class="settings-device-context" title={renderTarget.udid}>
                     <span class="settings-device-dot" aria-hidden="true" />
                     <div>
                         <strong>{entry ? deviceName(entry) : 'Device settings'}</strong>
-                        <span>{renderTarget.udid}</span>
                     </div>
                 </div>
                 <section class="settings-sheet-section">
                     <h2 class="settings-sheet-section-title">Stream quality</h2>
-                    <p class="settings-sheet-section-hint">Choose a balance of detail, smoothness, and data use.</p>
                     {loading && (
                         <p class="settings-sheet-banner progress" role="status">
-                            Loading current device settings…
+                            Loading settings…
                         </p>
                     )}
                     {loadError && (
@@ -348,8 +348,7 @@ export function SettingsSheet() {
                     )}
                     {!loading && !configKnown && tracker && (
                         <p class="settings-sheet-hint">
-                            Current values are unavailable. The values below are suggestions; only your changes will be
-                            applied.
+                            Current settings unavailable. Only values you change will be applied.
                         </p>
                     )}
                     {!loading && codec !== 'h264' && (
@@ -379,7 +378,7 @@ export function SettingsSheet() {
                                     {selectedPreset === preset.name ? '●' : '○'}
                                 </span>
                                 <strong>{preset.name}</strong>
-                                <span>{preset.hint}</span>
+                                <span>{formatBitrate(preset.bitrate)}</span>
                                 <small>
                                     {preset.maxSize}px · {preset.maxFps} fps
                                 </small>
@@ -392,7 +391,7 @@ export function SettingsSheet() {
                             <span>{formatMaxFps(shown.maxFps)}</span>
                         </div>
                     )}
-                    <details class="settings-advanced">
+                    <AnimatedDetails class="settings-advanced">
                         <summary>Advanced quality settings</summary>
                         <div class="settings-advanced-body">
                             <label class="settings-sheet-row">
@@ -519,7 +518,7 @@ export function SettingsSheet() {
                                 </select>
                             </label>
                         </div>
-                    </details>
+                    </AnimatedDetails>
                 </section>
                 <section class="settings-sheet-section settings-audio">
                     <h2 class="settings-sheet-section-title">Sound</h2>
@@ -615,14 +614,14 @@ export function SettingsSheet() {
                                 <label class="settings-sheet-row settings-volume-row">
                                     <span>
                                         Volume
-                                        <small>For this browser only. The device's own volume is not changed.</small>
+                                        <small>Browser volume only.</small>
                                     </span>
                                     <VolumeSlider session={audioSession} />
                                 </label>
                             </>
                         )}
                     </div>
-                    <details class="settings-advanced">
+                    <AnimatedDetails class="settings-advanced">
                         <summary>Audio format</summary>
                         <div class="settings-advanced-body">
                             <label class="settings-sheet-row">
@@ -647,18 +646,18 @@ export function SettingsSheet() {
                                 </select>
                             </label>
                         </div>
-                    </details>
+                    </AnimatedDetails>
                     {!client && (
                         <p class="settings-sheet-hint">After applying, open the screen and tap Sound to listen.</p>
                     )}
                 </section>
                 {client ? (
-                    <details class="settings-playback">
+                    <AnimatedDetails class="settings-playback">
                         <summary>
                             Playback &amp; keyboard<span>This browser only</span>
                         </summary>
                         <div class="settings-advanced-body">
-                            <p class="settings-sheet-section-hint">Changes here apply instantly.</p>
+                            <p class="settings-sheet-section-hint">Applies immediately.</p>
                             <label class="settings-sheet-row">
                                 <span>
                                     Video player
@@ -729,13 +728,11 @@ export function SettingsSheet() {
                                 />
                             </label>
                         </div>
-                    </details>
+                    </AnimatedDetails>
                 ) : (
-                    <p class="settings-sheet-hint">
-                        Open this device's screen to adjust playback and keyboard options.
-                    </p>
+                    <p class="settings-sheet-hint">Open the screen for playback and keyboard settings.</p>
                 )}
-                <div class="settings-sheet-apply-bar">
+                <AutoHeight className="settings-sheet-apply-bar">
                     {applyError && (
                         <div class="settings-sheet-banner error" role="alert">
                             {applyError}
@@ -748,7 +745,7 @@ export function SettingsSheet() {
                     )}
                     {applying ? (
                         <div class="settings-sheet-banner progress" role="status">
-                            Saving settings… The screen will reconnect automatically.
+                            Saving and reconnecting…
                         </div>
                     ) : confirming ? (
                         <div class="settings-sheet-banner warning">
@@ -765,11 +762,7 @@ export function SettingsSheet() {
                         </div>
                     ) : (
                         <>
-                            <p class="settings-apply-note">
-                                {hasChanges
-                                    ? 'Capture changes restart the stream for every viewer.'
-                                    : 'Capture settings apply to every viewer of this device.'}
-                            </p>
+                            {hasChanges && <p class="settings-apply-note">Applying restarts the stream.</p>}
                             <div class="settings-sheet-button-row">
                                 <button
                                     class="settings-sheet-button"
@@ -792,7 +785,7 @@ export function SettingsSheet() {
                             </div>
                         </>
                     )}
-                </div>
+                </AutoHeight>
             </div>
         </BottomSheet>
     );

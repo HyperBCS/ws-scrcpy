@@ -214,7 +214,7 @@ async function main() {
             await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
             await page.getByRole('button', { name: 'Apply & restart', exact: true }).click();
             await page
-                .getByText('Saving settings… The screen will reconnect automatically.', { exact: true })
+                .getByText('Saving and reconnecting…', { exact: true })
                 .waitFor();
             assert(await close.isDisabled(), 'Apply disables Close');
             if (touch) {
@@ -249,6 +249,9 @@ async function main() {
             assert(sendAudioError, 'stream fixture exposes controlled audio status');
             sendAudioError();
             await page.locator('.stream-notice').waitFor();
+            await require('./ui-motion').settleMotion(page);
+            const noticeBox = await page.locator('.stream-notice').boundingBox();
+            assert(Math.abs(noticeBox.x + noticeBox.width / 2 - width / 2) < 1, 'stream feedback stays centered after its entrance');
             assert(
                 await canvas.evaluate((el) => el === window.sheetTestCanvas && el.isConnected),
                 'notice insertion preserves the actual remote canvas',

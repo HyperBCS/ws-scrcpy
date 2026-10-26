@@ -109,7 +109,6 @@ export function DeviceSwitcherSheet({ currentDeviceKey, onSelectDevice }: Device
             title="Switch device"
             bodyClassName="device-switcher-body"
         >
-            <p class="device-switcher-hint">Choose a device to continue here. Its stream starts automatically.</p>
             {entries.length > 3 && (
                 <label class="device-search device-switcher-search">
                     <span aria-hidden="true">⌕</span>

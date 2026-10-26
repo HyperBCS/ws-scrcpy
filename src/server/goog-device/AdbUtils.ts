@@ -162,13 +162,7 @@ export class AdbUtils {
         return port;
     }
 
-    public static async forwardFileSocket(serial: string, remote: string, pid: number): Promise<string> {
-        const client = AdbExtended.createClient();
-        const socketPath = `/tmp/scrcpy-${pid}`;
-        await client.forward(serial, `localfilesystem:${socketPath}`, remote);
-        return socketPath;
-    }
-
+    /** Remove legacy filesystem forwards left by an earlier server version. */
     public static async removeFileSocketForwards(serial: string): Promise<void> {
         const client = AdbExtended.createClient();
         const forwards = await client.listForwards(serial);

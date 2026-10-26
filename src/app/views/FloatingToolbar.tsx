@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { deviceSwitcherOpen, liveTextOpen, streamConnected, toolsSheetOpen } from '../state/stream';
 import { settingsSheetTarget } from '../state/settingsSheet';
 import '../../style/views/FloatingToolbar.css';
+import { usePresence } from '../ui/Presence';
 
 const STORAGE_KEY = 'floating_toolbar_position';
 const DRAG_THRESHOLD_PX = 6;
@@ -64,10 +65,18 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
     const [pos, setPos] = useState<Position>(loadPosition);
     const [open, setOpen] = useState(false);
     const [dragging, setDragging] = useState(false);
-    const [panelStyle, setPanelStyle] = useState({ left: '12px', top: '12px', maxHeight: '70dvh' });
+    const [panelStyle, setPanelStyle] = useState({
+        left: '12px',
+        top: '12px',
+        maxHeight: '70dvh',
+        transformOrigin: 'center bottom',
+    });
     const rootRef = useRef<HTMLDivElement>(null);
     const hostRef = useRef<HTMLDivElement>(null);
-    const panelRef = useRef<HTMLDivElement>(null);
+    const { ref: panelRef, present: panelPresent } = usePresence<HTMLDivElement>(
+        !mobile || open,
+        mobile ? 'popover' : 'fade',
+    );
     const fabRef = useRef<HTMLButtonElement>(null);
     const suppressClick = useRef(false);
     const dragState = useRef<{ dx: number; dy: number; start: Position; moved: boolean; id: number }>();
@@ -199,6 +208,7 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
             left: `${Math.max(bounds.left, Math.min(left, bounds.right - width))}px`,
             top: `${top}px`,
             maxHeight: `${maxHeight}px`,
+            transformOrigin: `${pos.x + FAB_SIZE / 2 - Math.max(bounds.left, Math.min(left, bounds.right - width))}px ${pos.y < top ? 0 : height}px`,
         });
     }, [mobile, open, pos]);
 
@@ -292,7 +302,9 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
                 id="stream-controls"
                 class="floating-toolbar-panel"
                 ref={panelRef}
-                hidden={mobile && !open}
+                hidden={!panelPresent}
+                aria-hidden={mobile && !open}
+                data-exiting={(mobile && !open) || undefined}
                 style={mobile ? panelStyle : undefined}
                 role="group"
                 aria-label="Device controls"
@@ -301,7 +313,6 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
                     <div class="floating-toolbar-heading">
                         <div>
                             <strong>Device controls</strong>
-                            <span>Drag the blue button to move it</span>
                         </div>
                     </div>
                 )}
@@ -350,16 +361,15 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
                         stroke-width="2"
                         aria-hidden="true"
                     >
-                        {open ? (
+                        <g class="toolbar-close-glyph">
                             <path d="m6 6 12 12M6 18 18 6" />
-                        ) : (
-                            <>
-                                <path d="M4 6h16M4 12h16M4 18h16" />
-                                <circle cx="9" cy="6" r="2" />
-                                <circle cx="15" cy="12" r="2" />
-                                <circle cx="9" cy="18" r="2" />
-                            </>
-                        )}
+                        </g>
+                        <g class="toolbar-controls-glyph">
+                            <path d="M4 6h16M4 12h16M4 18h16" />
+                            <circle cx="9" cy="6" r="2" />
+                            <circle cx="15" cy="12" r="2" />
+                            <circle cx="9" cy="18" r="2" />
+                        </g>
                     </svg>
                 </button>
             )}

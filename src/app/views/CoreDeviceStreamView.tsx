@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ParamsStreamCoreDevice } from '../../types/ParamsStreamCoreDevice';
 import ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
@@ -145,28 +146,26 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                 keyguardShowing="unknown"
                 onUnlock={() => openSheet('tools')}
             />
-            {(session.state === 'error' || session.state === 'starting') && session.message && !error && (
-                <div
-                    key="session-notice"
-                    class={`stream-notice ${session.state === 'error' ? 'error' : ''}`}
-                    role="status"
-                >
-                    <span>{session.message}</span>
-                    {session.state === 'error' && active && (
-                        <button type="button" onClick={() => active.client.restartStream()}>
-                            Retry
-                        </button>
-                    )}
-                </div>
-            )}
-            {streamNotice.value && (
-                <div key="notice" class="stream-notice" role="status">
-                    <span>{streamNotice.value}</span>
-                    <button type="button" onClick={() => (streamNotice.value = '')} aria-label="Dismiss message">
-                        ✕
+            <Presence
+                show={(session.state === 'error' || session.state === 'starting') && !!session.message && !error}
+                kind="collapse"
+                key="session-notice"
+                class={`stream-notice ${session.state === 'error' ? 'error' : ''}`}
+                role="status"
+            >
+                <span>{session.message}</span>
+                {session.state === 'error' && active && (
+                    <button type="button" onClick={() => active.client.restartStream()}>
+                        Retry
                     </button>
-                </div>
-            )}
+                )}
+            </Presence>
+            <Presence show={!!streamNotice.value} kind="collapse" key="notice" class="stream-notice" role="status">
+                <span>{streamNotice.value}</span>
+                <button type="button" onClick={() => (streamNotice.value = '')} aria-label="Dismiss message">
+                    ✕
+                </button>
+            </Presence>
             <div key="stage" class="stream-stage">
                 <div class="stream-mount" ref={containerRef} />
                 <aside class="stream-controls-slot" aria-label="Device controls">
@@ -192,7 +191,7 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                         screenOff={screenOff}
                         onWake={() => active.client.pressButton('lock')}
                     />
-                    {liveTextOpen.value && liveText && <LiveTextOverlay target={liveText} />}
+                    {liveText && <LiveTextOverlay open={liveTextOpen.value} target={liveText} />}
                 </>
             )}
         </div>

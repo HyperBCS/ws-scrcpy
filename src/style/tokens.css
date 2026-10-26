@@ -1,15 +1,23 @@
-/* Design tokens shared by every view. Values are unchanged from the previous `app.css` /
-   `devicelist.css` `:root` blocks -- only the layout rules around them moved into per-view files. */
+/* Shared surfaces, controls and motion. */
 :root {
-    --main-bg-color: hsl(0, 0%, 100%);
+    color-scheme: light;
+    --accent-solid: #2868e8;
+    --muted-text-color: var(--text-color-light);
+    --radius-control: 10px;
+    --radius-panel: 14px;
+    --motion-fast: 160ms;
+    --motion-settle: 320ms;
+    --motion-exit: 220ms;
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --main-bg-color: #f5f6f8;
     --stream-bg-color: hsl(0, 0%, 85%);
     --shell-bg-color: hsl(0, 0%, 0%);
     --text-shadow-color: hsl(218, 67%, 95%);
-    --header-bg-color: hsl(0, 0%, 95%);
+    --header-bg-color: #eceef2;
     --controls-bg-color: hsla(0, 0%, 95%, 0.8);
-    --control-buttons-bg-color: hsl(0, 0%, 95%);
-    --text-color: hsl(210, 16%, 22%);
-    --text-color-light: hsl(200, 16%, 52%);
+    --control-buttons-bg-color: #eceef2;
+    --text-color: #20242c;
+    --text-color-light: #626977;
     --link-color: hsl(218, 85%, 43%);
     --link-color-light: hsl(218, 85%, 73%);
     --link-color_visited: hsl(271, 68%, 32%);
@@ -19,20 +27,19 @@
     --kill-button-hover-color: hsl(342, 100%, 37%);
     --url-color: hsl(0, 0%, 60%);
     --button-text-color: hsl(214, 82%, 51%);
-    --button-border-color: hsl(0, 0%, 70%);
+    --button-border-color: #cbd0d9;
     --progress-background-color: hsla(225, 100%, 50%, 0.2);
     --progress-background-error-color: hsla(0, 100%, 50%, 0.2);
     --font-size: 14px;
     /* No font stack was set at all, so the UI fell back to the browser default (Times on most
        phones). Native stack: matches the platform and avoids shipping a webfont over a phone
        connection. */
-    --font-stack: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-        sans-serif;
+    --font-stack: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     --font-stack-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --panel-width: 3.715rem;
 
-    --device-border-color: hsl(0, 0%, 82%);
-    --device-list-stripe-color: hsl(0, 0%, 96%);
+    --device-border-color: #dfe2e8;
+    --device-list-stripe-color: #f0f2f5;
     --device-list-default-color: hsl(0, 0%, 100%);
     --device-list-hover-color: hsl(218, 67%, 95%);
 
@@ -48,15 +55,16 @@
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --main-bg-color: hsl(0, 0%, 14%);
+        color-scheme: dark;
+        --main-bg-color: #17191d;
         --stream-bg-color: hsl(0, 0%, 20%);
         --shell-bg-color: hsl(0, 0%, 0%);
         --text-shadow-color: hsl(218, 17%, 18%);
-        --header-bg-color: hsl(0, 0%, 20%);
-        --controls-bg-color: hsla(201, 18%, 19%, 0.8);
-        --control-buttons-bg-color: hsl(201, 18%, 19%);
-        --text-color: hsl(0, 0%, 90%);
-        --text-color-light: hsl(0, 0%, 60%);
+        --header-bg-color: #282c33;
+        --controls-bg-color: rgb(32 35 41 / 90%);
+        --control-buttons-bg-color: #282c33;
+        --text-color: #edf0f5;
+        --text-color-light: #a0a7b3;
         --link-color: hsl(218, 63%, 70%);
         --link-color-light: hsl(218, 63%, 50%);
         --link-color_visited: hsl(267, 31%, 47%);
@@ -70,10 +78,10 @@
         --progress-background-color: hsla(225, 100%, 50%, 0.2);
         --progress-background-error-color: hsla(0, 100%, 50%, 0.2);
 
-        --device-border-color: hsl(0, 0%, 32%);
-        --device-list-stripe-color: hsl(0, 0%, 16%);
-        --device-list-default-color: hsl(0, 0%, 14%);
-        --device-list-hover-color: hsl(218, 17%, 18%);
+        --device-border-color: #343943;
+        --device-list-stripe-color: #252930;
+        --device-list-default-color: #202329;
+        --device-list-hover-color: #2c3340;
 
         --status-streaming-color: hsl(199, 89%, 62%);
         --status-ready-color: hsl(142, 60%, 55%);

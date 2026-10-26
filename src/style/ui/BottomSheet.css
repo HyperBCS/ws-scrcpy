@@ -18,11 +18,11 @@
     bottom: var(--control-bar-bottom, 0px);
     background-color: rgba(0, 0, 0, 0.4);
     opacity: 0;
-    transition: opacity 0.2s ease;
+    transition: opacity var(--motion-settle) var(--ease-out);
 }
 
 .bottom-sheet-root.open .bottom-sheet-backdrop {
-    opacity: 1;
+    opacity: var(--sheet-backdrop-opacity, 1);
     pointer-events: auto;
 }
 
@@ -41,7 +41,7 @@
     max-height: calc(100% - max(16px, env(safe-area-inset-top, 0px)) - var(--control-bar-bottom, 0px));
     display: flex;
     flex-direction: column;
-    background-color: var(--main-bg-color);
+    background-color: var(--device-list-default-color);
     color: var(--text-color);
     border-radius: 1.4rem 1.4rem 0 0;
     border: 1px solid var(--device-border-color);
@@ -49,10 +49,7 @@
     box-shadow: 0 -0.2rem 1rem rgba(0, 0, 0, 0.3);
     /* Must clear the control-bar inset too: `bottom` lifts the sheet off the viewport edge, so
        translating by its own height alone leaves it peeking above the bar while "closed". */
-    transform: translateY(calc(100% + var(--control-bar-bottom, 0px)));
-    transition:
-        transform 0.22s ease,
-        visibility 0.22s;
+    transform: translateY(var(--sheet-drag-y, 0px));
     /* Belt and braces -- a closed sheet must not be reachable or visible even mid-transition. */
     visibility: hidden;
     /* Keeps the sheet's own content clear of the home indicator on notched phones. */
@@ -118,9 +115,9 @@
     min-width: 48px;
     min-height: 48px;
     padding: 10px 12px;
-    border: 1px solid var(--device-border-color);
-    border-radius: 12px;
-    background: var(--device-list-stripe-color);
+    border: 0;
+    border-radius: var(--radius-control);
+    background: transparent;
     color: var(--text-color);
     font: inherit;
     font-weight: 600;
@@ -274,23 +271,18 @@
 @media (min-width: 760px) and (min-height: 540px) and (hover: hover) and (pointer: fine) {
     .bottom-sheet {
         --sheet-gutter: 24px;
-        left: 50%;
-        right: auto;
-        bottom: 50%;
+        inset: 0;
+        height: fit-content;
+        margin: auto;
         width: min(560px, calc(100% - 48px));
         max-height: min(720px, calc(100% - 64px));
         border-radius: 1.4rem;
         border-bottom: 1px solid var(--device-border-color);
-        transform: translate(-50%, calc(50% + 24px));
-        opacity: 0;
-        transition:
-            transform 0.2s ease,
-            opacity 0.2s ease,
-            visibility 0.2s;
+        transform: none;
     }
 
     .bottom-sheet-root.open .bottom-sheet {
-        transform: translate(-50%, 50%);
+        transform: none;
         opacity: 1;
     }
 
@@ -310,5 +302,27 @@
 @media (max-width: 360px) {
     .bottom-sheet {
         --sheet-gutter: 16px;
+    }
+}
+
+.bottom-sheet-root.dragging .bottom-sheet-backdrop {
+    transition: none;
+}
+
+.bottom-sheet-root[hidden] {
+    display: none;
+}
+.bottom-sheet-root[data-exiting] .bottom-sheet-backdrop {
+    opacity: 0;
+}
+.bottom-sheet-root.open:not([data-exiting]) .bottom-sheet-backdrop {
+    animation: sheet-backdrop-in var(--motion-settle) ease-out;
+}
+@keyframes sheet-backdrop-in {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
     }
 }

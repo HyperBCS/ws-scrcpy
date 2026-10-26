@@ -3,6 +3,7 @@ import { Mw, RequestParameters, SocketMessageEvent } from '../../mw/Mw';
 import { ACTION } from '../../../common/Action';
 import {
     COREDEVICE_FRAME_AUDIO,
+    CoreDeviceContact,
     CoreDeviceClientMessage,
     CoreDeviceServerMessage,
     clampHid,
@@ -40,6 +41,9 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 // A healthy HID post answers in milliseconds; anything longer is a wedged channel, and a queue of
 // typed characters must not sit behind the default 15 s for each of them.
 const INPUT_TIMEOUT_MS = 4000;
+// Detach waits for actual native removal and close, bounded at 8 s by serve-web. Leave room
+// for that completion response so a busy input queue does not trigger a premature restart.
+const KEYBOARD_DETACH_TIMEOUT_MS = 10000;
 // Typing bursts are a few hundred reports; a backlog beyond this means the phone stopped
 // answering, and stale input aimed at an old picture is worse than dropped input.
 const MAX_QUEUED_INPUT = 512;
@@ -55,6 +59,11 @@ const MAX_QUEUED_INPUT = 512;
  */
 export class CoreDeviceProxy extends Mw {
     public static readonly TAG = TAG;
+    private static touchOwners = new Map<string, CoreDeviceProxy>();
+    private static keyboardOwners = new Map<string, CoreDeviceProxy>();
+    private contacts: CoreDeviceContact[] = [];
+    private keyboardPressed = false;
+    private keyboardBusy = false;
     private readonly runner = CoreDeviceRunner.getInstance();
     private readonly udid: string;
     private stream?: NodeJS.ReadableStream & { destroy?: () => void };
@@ -209,7 +218,9 @@ export class CoreDeviceProxy extends Mw {
         let rest: Uint8Array = new Uint8Array(0);
         response.on('data', (chunk: Buffer) => {
             if (this.ws.readyState !== this.ws.OPEN) {
-                response.destroy();
+                // A final HID release may still be in flight. Teardown owns the media
+                // lifetime so incoming video cannot detach it before that release finishes.
+                this.release();
                 return;
             }
             const merged = new Uint8Array(rest.length + chunk.length);
@@ -363,7 +374,14 @@ export class CoreDeviceProxy extends Mw {
         } catch {
             return;
         }
-        if (message.type === 'touch' || message.type === 'key' || message.type === 'button') {
+        if (
+            message.type === 'touch' ||
+            message.type === 'touch-frame' ||
+            message.type === 'rotate' ||
+            message.type === 'key' ||
+            message.type === 'keyboard-detach' ||
+            message.type === 'button'
+        ) {
             this.queueInput(message);
             return;
         }
@@ -394,7 +412,16 @@ export class CoreDeviceProxy extends Mw {
     /** Dispatches one message and turns its failure into a reply where the browser can use one. */
     private run(message: CoreDeviceClientMessage): Promise<void> {
         return this.handle(message).catch((error: Error) => {
-            if ('id' in message && typeof message.id === 'number') {
+            if (message.type === 'touch' || message.type === 'touch-frame') {
+                // The failed request may already have reached the phone. Close this
+                // viewer and use its normal teardown to lift every finger before
+                // another viewer can claim control, instead of retaining a dead owner.
+                this.failSession(`Touch input failed: ${error.message}`);
+            } else if (message.type === 'key' || message.type === 'keyboard-detach') {
+                // A failed report may have reached the phone with a modifier still held.
+                // Teardown retains keyboard ownership until the native keyboard is removed.
+                this.failSession(`Keyboard input failed: ${error.message}`);
+            } else if ('id' in message && typeof message.id === 'number') {
                 this.send({ type: 'result', id: message.id, ok: false, error: error.message });
             } else if (message.type === 'clipboard') {
                 // A `clipboard get` carries no id, so without this the viewer waits for ever on a
@@ -408,18 +435,63 @@ export class CoreDeviceProxy extends Mw {
 
     private async handle(message: CoreDeviceClientMessage): Promise<void> {
         switch (message.type) {
+            case 'touch-frame': {
+                if (!Array.isArray(message.contacts) || message.contacts.length < 1 || message.contacts.length > 5)
+                    return;
+                const ids = new Set<number>();
+                for (const c of message.contacts) {
+                    if (
+                        !c ||
+                        !Number.isInteger(c.id) ||
+                        c.id < 0 ||
+                        c.id > 4 ||
+                        ids.has(c.id) ||
+                        typeof c.touching !== 'boolean' ||
+                        !Number.isFinite(c.x) ||
+                        !Number.isFinite(c.y)
+                    )
+                        return;
+                    ids.add(c.id);
+                }
+                if (!this.claimTouch()) return;
+                const frame = message.contacts.map((c) => ({ ...c, x: clampHid(c.x), y: clampHid(c.y) }));
+                frame.push(...this.contacts.filter((c) => !ids.has(c.id)).map((c) => ({ ...c, touching: false })));
+                const reply = await this.runner.request(
+                    this.udid,
+                    'POST',
+                    '/touch',
+                    JSON.stringify({ type: 'frame', contacts: frame }),
+                    INPUT_TIMEOUT_MS,
+                );
+                if (reply.status !== 200) throw Error('The phone rejected the touch frame');
+                this.contacts = frame.filter((c) => c.touching);
+                if (!this.contacts.length) {
+                    // Once teardown starts it keeps ownership until its all-fingers-up
+                    // report completes, even if a normal release was already in flight.
+                    if (!this.released) CoreDeviceProxy.touchOwners.delete(this.udid);
+                    DeviceStateMonitor.getInstance().pokeInput(this.udid);
+                }
+                return;
+            }
             case 'touch': {
                 if (!['contact', 'release', 'tap'].includes(message.op)) {
                     return;
                 }
-                await this.runner.request(
+                if (!this.claimTouch()) return;
+                this.contacts =
+                    message.op === 'contact'
+                        ? [{ id: 2, touching: true, x: clampHid(message.x), y: clampHid(message.y) }]
+                        : [];
+                const reply = await this.runner.request(
                     this.udid,
                     'POST',
                     '/touch',
                     JSON.stringify({ type: message.op, x: clampHid(message.x), y: clampHid(message.y) }),
                     INPUT_TIMEOUT_MS,
                 );
+                if (reply.status !== 200) throw Error('The phone rejected the touch report');
                 if (message.op !== 'contact') {
+                    if (!this.released) CoreDeviceProxy.touchOwners.delete(this.udid);
                     // A finger lifting on the lock screen is a swipe that may have unlocked it.
                     DeviceStateMonitor.getInstance().pokeInput(this.udid);
                 }
@@ -429,13 +501,40 @@ export class CoreDeviceProxy extends Mw {
                 const usages = Array.isArray(message.usages)
                     ? message.usages.filter((usage) => Number.isInteger(usage) && usage >= 0 && usage < 240)
                     : [];
-                await this.runner.request(this.udid, 'POST', '/key', JSON.stringify({ usages }), INPUT_TIMEOUT_MS);
+                if (usages.length) {
+                    if (!this.claimKeyboard()) return;
+                } else if (CoreDeviceProxy.keyboardOwners.get(this.udid) !== this || !this.keyboardPressed) {
+                    // A viewer which never typed must not attach a keyboard just to release it,
+                    // or clear another viewer's held keys when its own text field loses focus.
+                    return;
+                }
+                this.keyboardBusy = true;
+                try {
+                    const reply = await this.runner.request(
+                        this.udid,
+                        'POST',
+                        '/key',
+                        JSON.stringify({ usages }),
+                        INPUT_TIMEOUT_MS,
+                    );
+                    if (reply.status !== 200) throw Error('The phone rejected the keyboard report');
+                    this.keyboardPressed = usages.length > 0;
+                } catch (error) {
+                    // An uncertain release still belongs to this viewer until cleanup finishes.
+                    this.keyboardPressed = true;
+                    throw error;
+                } finally {
+                    this.keyboardBusy = false;
+                }
                 if (usages.length === 0) {
                     // A release ends a keystroke; on a locked phone that may have been a passcode digit.
                     DeviceStateMonitor.getInstance().pokeInput(this.udid);
                 }
                 return;
             }
+            case 'keyboard-detach':
+                await this.detachKeyboard();
+                return;
             case 'button': {
                 if (!isCoreDeviceButton(message.name)) {
                     return;
@@ -531,6 +630,45 @@ export class CoreDeviceProxy extends Mw {
         }
     }
 
+    private claimTouch(): boolean {
+        const owner = CoreDeviceProxy.touchOwners.get(this.udid);
+        if (owner && owner !== this) return false;
+        CoreDeviceProxy.touchOwners.set(this.udid, this);
+        return true;
+    }
+
+    private claimKeyboard(): boolean {
+        const owner = CoreDeviceProxy.keyboardOwners.get(this.udid);
+        // Keep full reports from different viewers from overwriting held modifiers. Once all
+        // keys are released, another viewer may take over responsibility for eventual detach.
+        if (owner && owner !== this && (owner.keyboardPressed || owner.keyboardBusy || owner.released)) return false;
+        CoreDeviceProxy.keyboardOwners.set(this.udid, this);
+        return true;
+    }
+
+    private async detachKeyboard(): Promise<void> {
+        if (CoreDeviceProxy.keyboardOwners.get(this.udid) !== this) return;
+        this.keyboardBusy = true;
+        try {
+            const reply = await this.runner.request(
+                this.udid,
+                'POST',
+                '/keyboard/detach',
+                undefined,
+                KEYBOARD_DETACH_TIMEOUT_MS,
+            );
+            if (reply.status !== 200) throw Error('The phone could not disconnect the keyboard');
+            this.keyboardPressed = false;
+            // A closing viewer keeps ownership until every teardown request has completed.
+            if (!this.released) CoreDeviceProxy.keyboardOwners.delete(this.udid);
+        } catch (error) {
+            this.keyboardPressed = true;
+            throw error;
+        } finally {
+            this.keyboardBusy = false;
+        }
+    }
+
     public release(): void {
         if (this.released) {
             return;
@@ -542,12 +680,50 @@ export class CoreDeviceProxy extends Mw {
         }
         this.unsubscribeAudio?.();
         this.unsubscribeAudio = undefined;
-        this.stream?.destroy?.();
-        this.stream = undefined;
-        if (this.acquired) {
-            this.acquired = false;
-            this.runner.release(this.udid);
-        }
+        const finish = () => {
+            this.stream?.destroy?.();
+            this.stream = undefined;
+            if (this.acquired) {
+                this.acquired = false;
+                this.runner.release(this.udid);
+            }
+        };
+        if (
+            CoreDeviceProxy.touchOwners.get(this.udid) === this ||
+            CoreDeviceProxy.keyboardOwners.get(this.udid) === this
+        ) {
+            void this.inputChain
+                .then(async () => {
+                    if (CoreDeviceProxy.touchOwners.get(this.udid) === this) {
+                        await this.runner
+                            .request(
+                                this.udid,
+                                'POST',
+                                '/touch',
+                                JSON.stringify({
+                                    type: 'frame',
+                                    contacts: [0, 1, 2, 3, 4].map((id) => ({ id, touching: false, x: 0, y: 0 })),
+                                }),
+                                INPUT_TIMEOUT_MS,
+                            )
+                            .catch(() => undefined);
+                    }
+                    try {
+                        await this.detachKeyboard();
+                    } catch {
+                        // A timeout gives no ordering guarantee: a late detach could remove the
+                        // next viewer's keyboard. End this native session before freeing ownership.
+                        this.runner.stopSession(this.udid, 'Restarting after keyboard disconnect failed');
+                    }
+                })
+                .finally(() => {
+                    if (CoreDeviceProxy.touchOwners.get(this.udid) === this)
+                        CoreDeviceProxy.touchOwners.delete(this.udid);
+                    if (CoreDeviceProxy.keyboardOwners.get(this.udid) === this)
+                        CoreDeviceProxy.keyboardOwners.delete(this.udid);
+                    finish();
+                });
+        } else finish();
         super.release();
     }
 }

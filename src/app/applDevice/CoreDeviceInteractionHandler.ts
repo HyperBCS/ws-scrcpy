@@ -2,8 +2,10 @@ import { InteractionEvents, InteractionHandler } from '../interactionHandler/Int
 import { clientPointToVideo } from './touchMath';
 import { BasePlayer } from '../player/BasePlayer';
 import Size from '../Size';
+import { CoreDeviceContact } from '../../common/CoreDeviceProtocol';
 
 export interface CoreDeviceTouchTarget {
+    sendContacts(contacts: CoreDeviceContact[], videoSize: Size): void;
     sendTouch(op: 'contact' | 'release' | 'tap', x: number, y: number, videoSize: Size): void;
 }
 
@@ -12,10 +14,7 @@ const TAG = '[CoreDeviceTouch]';
 /**
  * Maps pointer input on the video canvas to CoreDevice touchscreen reports.
  *
- * The device side (`com.apple.coredevice.hid.universalhidservice`, report 0x09) tracks one
- * contact: every CONTACT sample is "the finger is here now", RELEASE lifts it. So this handler
- * follows the first active pointer only and ignores the others until it lifts -- a second finger
- * would otherwise teleport the single contact between two places. Moves are coalesced per frame.
+ * Sends complete contact frames with stable identities; moves are coalesced per frame.
  */
 export class CoreDeviceInteractionHandler extends InteractionHandler {
     // Only `mousedown` is taken from the canvas. Once a button is held the move/up pair is read
@@ -29,7 +28,7 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
         'touchcancel',
         'mousedown',
     ];
-    private activeTouchId?: number;
+    private touches = new Map<number, CoreDeviceContact>();
     private mouseActive = false;
     private pending?: { x: number; y: number; size: Size };
     private frame?: number;
@@ -41,7 +40,12 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
         super(player, CoreDeviceInteractionHandler.eventNames, []);
         this.tag.addEventListener('contextmenu', (event) => event.preventDefault());
         window.addEventListener('blur', this.releaseActiveTouch);
+        document.addEventListener('visibilitychange', this.onVisibility);
     }
+
+    private onVisibility = (): void => {
+        if (document.hidden) this.releaseActiveTouch();
+    };
 
     /**
      * `clientX`/`clientY` are read explicitly: `Touch` and `MouseEvent` keep their coordinates
@@ -86,10 +90,19 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
     }
 
     public releaseActiveTouch = (): void => {
-        if (this.activeTouchId === undefined && !this.mouseActive) {
+        if (this.touches.size) {
+            const size = this.player.getScreenInfo()?.videoSize;
+            this.cancelPending();
+            if (size)
+                this.target.sendContacts(
+                    [...this.touches.values()].map((c) => ({ ...c, touching: false })),
+                    size,
+                );
+            this.touches.clear();
+        }
+        if (!this.mouseActive) {
             return;
         }
-        this.activeTouchId = undefined;
         this.setMouseActive(false);
         const size = this.player.getScreenInfo()?.videoSize;
         if (size) {
@@ -108,39 +121,52 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
         }
     }
 
+    private cancelPending(): void {
+        if (this.frame !== undefined) cancelAnimationFrame(this.frame);
+        this.frame = undefined;
+        this.pending = undefined;
+    }
+
     private onTouch(event: TouchEvent): void {
-        if (event.type === 'touchstart') {
-            if (this.activeTouchId !== undefined) {
-                event.preventDefault();
-                return;
-            }
-            const touch = event.changedTouches[0];
-            const position = this.position(touch.clientX, touch.clientY);
-            if (!position) {
-                return;
-            }
-            this.activeTouchId = touch.identifier;
-            this.contact(position.x, position.y, position.size);
-            event.preventDefault();
-            return;
-        }
-        if (this.activeTouchId === undefined) {
-            return;
-        }
-        const touch = Array.from(event.changedTouches).find((item) => item.identifier === this.activeTouchId);
-        if (!touch) {
-            return;
-        }
         event.preventDefault();
-        const position = this.position(touch.clientX, touch.clientY);
-        if (!position) {
+        if (this.mouseActive) return;
+        const size = this.player.getScreenInfo()?.videoSize;
+        if (!size) {
+            this.releaseActiveTouch();
             return;
         }
+        const ending = event.type === 'touchend' || event.type === 'touchcancel';
+        for (const touch of Array.from(event.changedTouches)) {
+            let contact = this.touches.get(touch.identifier);
+            const position = this.position(touch.clientX, touch.clientY);
+            if (!contact && event.type === 'touchstart' && this.touches.size < 5 && position) {
+                const used = new Set([...this.touches.values()].map((c) => c.id));
+                const id = [0, 1, 2, 3, 4].find((id) => !used.has(id))!;
+                contact = { id, touching: true, x: position.x, y: position.y };
+                this.touches.set(touch.identifier, contact);
+            }
+            if (contact) {
+                if (position) {
+                    contact.x = position.x;
+                    contact.y = position.y;
+                }
+                contact.touching = !ending;
+            }
+        }
+        if (!this.touches.size) return;
+        const send = () => {
+            this.frame = undefined;
+            this.target.sendContacts(
+                [...this.touches.values()].map((c) => ({ ...c })),
+                size,
+            );
+        };
         if (event.type === 'touchmove') {
-            this.contact(position.x, position.y, position.size);
+            if (this.frame === undefined) this.frame = requestAnimationFrame(send);
         } else {
-            this.activeTouchId = undefined;
-            this.lift(position.x, position.y, position.size);
+            this.cancelPending();
+            send();
+            if (ending) for (const touch of Array.from(event.changedTouches)) this.touches.delete(touch.identifier);
         }
     }
 
@@ -148,7 +174,7 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
         if (event.type !== 'mousedown') {
             return;
         }
-        if (event.button !== 0 || this.activeTouchId !== undefined || this.mouseActive) {
+        if (event.button !== 0 || this.touches.size > 0 || this.mouseActive) {
             return;
         }
         const position = this.position(event.clientX, event.clientY);
@@ -198,6 +224,7 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
 
     public release(): void {
         window.removeEventListener('blur', this.releaseActiveTouch);
+        document.removeEventListener('visibilitychange', this.onVisibility);
         this.releaseActiveTouch();
         this.setMouseActive(false);
         if (this.frame !== undefined) {

@@ -2,8 +2,8 @@
 // Exercises lifecycle races against controlled sockets/processes; no attached device required.
 const assert = require('node:assert/strict');
 const { test, after } = require('node:test');
-const { EventEmitter } = require('node:events');
-const { Socket } = require('node:net');
+const { EventEmitter, once } = require('node:events');
+const { Socket, createServer } = require('node:net');
 const { PassThrough } = require('node:stream');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -573,6 +573,43 @@ test('encoder read returns current quality settings without restarting', async (
         ),
     );
     assert.equal(JSON.parse(reply).config.bitrate, 5000000);
+});
+
+test('Android video, optional audio and control connect through a TCP-only adb forward', { timeout: 5000 }, async (t) => {
+    for (const audioEnabled of [false, true]) {
+        const udid = `tcp-forward-${audioEnabled}`;
+        const peers = [];
+        const connected = deferred();
+        const expectedConnections = audioEnabled ? 3 : 2;
+        const server = createServer((socket) => {
+            peers.push(socket);
+            socket.on('error', () => {});
+            if (peers.length === 1) {
+                const header = Buffer.alloc(16);
+                header.writeUInt32BE(0x68323634, 0);
+                header.writeUInt32BE(720, 8);
+                header.writeUInt32BE(1280, 12);
+                socket.write(header);
+            }
+            if (peers.length === expectedConnections) connected.resolve();
+        });
+        t.after(() => {
+            broadcastManager.stopBroadcast(udid);
+            peers.forEach((socket) => socket.destroy());
+            server.close();
+        });
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        await broadcastManager.startBroadcast(udid, server.address().port, audioEnabled);
+        await connected.promise;
+        const broadcast = broadcastManager.getBroadcast(udid);
+        assert.equal(await broadcast.whenReady(), true, 'Video header arrives without a shared filesystem');
+        assert.equal(peers.length, expectedConnections);
+        const received = once(peers.at(-1), 'data');
+        broadcast.getControlSocket().write(Buffer.from('control probe'));
+        assert.equal((await received)[0].toString(), 'control probe', 'Input uses the final scrcpy channel');
+        broadcastManager.stopBroadcast(udid);
+    }
 });
 
 test('a stopped broadcast never advertises its stale header as ready', async () => {

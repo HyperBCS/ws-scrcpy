@@ -134,7 +134,8 @@ test('single-use control batches never queue before handshake or replay after re
     assert.equal(receiver.sendImmediateEvents([event(5)]), false);
 });
 
-test('UHID reset recreates the keyboard without replaying held keys or destroy messages', () => {
+test('UHID reset recreates the keyboard without replaying held keys or destroy messages', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     const sent = [];
     const keyboard = new UhidKeyboard({ sendMessage: (message) => sent.push(message.toBuffer()) }, 17);
     keyboard.create();
@@ -143,6 +144,7 @@ test('UHID reset recreates the keyboard without replaying held keys or destroy m
         sent.map((data) => data[0]),
         [12],
     );
+    t.mock.timers.tick(500);
     keyboard.handleKey('ShiftLeft', true);
     keyboard.handleKey('KeyA', true);
     assert.equal(sent.at(-1)[5], 2);
@@ -157,6 +159,7 @@ test('UHID reset recreates the keyboard without replaying held keys or destroy m
     assert.deepEqual(sent, [], 'reconnect must wait for the newly assigned client id');
     keyboard.setId(18);
     keyboard.create();
+    t.mock.timers.tick(500);
     keyboard.handleKey('KeyB', true);
     assert.deepEqual(
         sent.map((data) => data[0]),
@@ -169,13 +172,15 @@ test('UHID reset recreates the keyboard without replaying held keys or destroy m
     assert.equal(sent.at(-1)[0], 14);
 });
 
-test('two viewers use independent keyboard ids for create, input, and teardown', () => {
+test('two viewers use independent keyboard ids for create, input, and teardown', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     const firstMessages = [];
     const secondMessages = [];
     const first = new UhidKeyboard({ sendMessage: (message) => firstMessages.push(message.toBuffer()) }, 101);
     const second = new UhidKeyboard({ sendMessage: (message) => secondMessages.push(message.toBuffer()) }, 202);
     first.create();
     second.create();
+    t.mock.timers.tick(500);
     first.handleKey('KeyA', true);
     second.handleKey('KeyB', true);
     first.destroy();
@@ -199,7 +204,8 @@ test('two viewers use independent keyboard ids for create, input, and teardown',
     assert.equal(secondMessages.at(-1)[7], 0);
 });
 
-test('unassigned and invalid keyboard ids cannot reach the control socket', () => {
+test('unassigned and invalid keyboard ids cannot reach the control socket', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     const sent = [];
     const keyboard = new UhidKeyboard({ sendMessage: (message) => sent.push(message.toBuffer()) });
     keyboard.create();
@@ -211,4 +217,113 @@ test('unassigned and invalid keyboard ids cannot reach the control socket', () =
     keyboard.setId(65535);
     keyboard.create();
     assert.equal(sent[0].readUInt16BE(1), 65535);
+});
+
+test('lazy UHID buffers first keys and modifiers through registration, preserving FIFO while draining', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const sent = [];
+    const keyboard = new UhidKeyboard({ sendMessage: message => sent.push(message.toBuffer()) }, 41);
+    keyboard.handleKey('KeyX', false);
+    keyboard.handleKey('Unidentified', true);
+    keyboard.releaseAll();
+    assert.deepEqual(sent, [], 'key releases and unsupported keys do not create an external keyboard');
+    keyboard.handleKey('ShiftLeft', true);
+    keyboard.handleKey('KeyX', true);
+    keyboard.handleKey('KeyX', false);
+    keyboard.handleKey('KeyY', true);
+    keyboard.handleKey('KeyY', false);
+    keyboard.handleKey('ShiftLeft', false);
+    const inputs = () => sent.filter(message => message[0] === 13);
+    assert.deepEqual(sent.map(message => message[0]), [12]);
+    t.mock.timers.tick(499);
+    assert.deepEqual(inputs(), [], 'first presses/releases stay buffered throughout registration');
+    t.mock.timers.tick(1);
+    assert.equal(inputs().length, 1, 'the queued reports do not burst together');
+    assert.deepEqual([...inputs()[0].subarray(5)], [2, 0, 0, 0, 0, 0, 0, 0]);
+    t.mock.timers.tick(7);
+    assert.equal(inputs().length, 1);
+    t.mock.timers.tick(1);
+    keyboard.handleKey('KeyZ', true);
+    keyboard.handleKey('KeyZ', false);
+    for (let report = 0; report < 6; report++) t.mock.timers.tick(8);
+    assert.deepEqual(inputs().map(message => [message[5], message[7]]), [
+        [2, 0], [2, 0x1b], [2, 0], [2, 0x1c], [2, 0], [0, 0], [0, 0x1d], [0, 0],
+    ], 'immutable snapshots retain early keyups, modifiers and newly appended reports');
+    keyboard.handleKey('KeyA', true);
+    keyboard.handleKey('KeyA', true);
+    assert.equal(inputs().length, 9, 'normal input is immediate after draining, and repeat does not duplicate it');
+    keyboard.handleKey('KeyA', false);
+    assert.equal(inputs().length, 10);
+    keyboard.destroy();
+});
+
+for (const cancellation of ['destroy', 'reset', 'setId']) {
+    test(`UHID ${cancellation} cancels pending registration and drain before a fresh session`, (t) => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        const sent = [];
+        const keyboard = new UhidKeyboard({ sendMessage: message => sent.push(message.toBuffer()) }, 51);
+        const cancel = () => cancellation === 'setId' ? keyboard.setId(52) : keyboard[cancellation]();
+        keyboard.handleKey('KeyA', true);
+        keyboard.handleKey('KeyA', false);
+        t.mock.timers.tick(100);
+        cancel();
+        t.mock.timers.tick(1000);
+        assert.equal(sent.filter(message => message[0] === 13).length, 0, 'no initial report survives cancellation');
+        assert.equal(sent.filter(message => message[0] === 14).length, cancellation === 'reset' ? 0 : 1);
+        keyboard.setId(52);
+        keyboard.handleKey('KeyB', true);
+        keyboard.handleKey('KeyB', false);
+        t.mock.timers.tick(500);
+        const input = sent.filter(message => message[0] === 13);
+        assert.equal(input.length, 1);
+        assert.equal(input[0].readUInt16BE(1), 52);
+        assert.equal(input[0][7], 5, 'only the new session key reaches the new namespace');
+        const beforeCancel = sent.length;
+        if (cancellation === 'setId') keyboard.setId(53);
+        else keyboard[cancellation]();
+        t.mock.timers.tick(1000);
+        assert.equal(sent.slice(beforeCancel).filter(message => message[0] === 13).length, 0, 'cancellation also stops an active drain');
+    });
+}
+
+test('UHID registration backlog is bounded and overflow unregisters without replaying held keys', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const sent = [];
+    const keyboard = new UhidKeyboard({ sendMessage: message => sent.push(message.toBuffer()) }, 61);
+    for (let report = 0; report < 257; report++) keyboard.handleKey('KeyA', report % 2 === 0);
+    assert.deepEqual(sent.map(message => message[0]), [12, 14]);
+    t.mock.timers.tick(1000);
+    keyboard.handleKey('KeyA', false);
+    assert.deepEqual(sent.map(message => message[0]), [12, 14], 'overflow clears timers and late releases cannot reattach');
+    keyboard.handleKey('KeyB', true);
+    keyboard.handleKey('KeyB', false);
+    t.mock.timers.tick(500);
+    t.mock.timers.tick(8);
+    const inputs = sent.filter(message => message[0] === 13);
+    assert.deepEqual(inputs.map(message => [message[5], message[7]]), [[0, 5], [0, 0]]);
+    keyboard.destroy();
+});
+
+test('destroying a draining keyboard cannot leak its reports into a new keyboard with the same id', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const sent = [];
+    const keyboard = new UhidKeyboard({ sendMessage: message => sent.push(message.toBuffer()) }, 71);
+    keyboard.handleKey('ShiftLeft', true);
+    keyboard.handleKey('KeyA', true);
+    keyboard.handleKey('KeyA', false);
+    keyboard.handleKey('ShiftLeft', false);
+    t.mock.timers.tick(500);
+    assert.deepEqual(sent.map(message => message[0]), [12, 13]);
+    keyboard.destroy();
+    keyboard.handleKey('KeyB', true);
+    keyboard.handleKey('KeyB', false);
+    const newSession = sent.length;
+    t.mock.timers.tick(8);
+    assert.equal(sent.length, newSession, 'the previous drain timer must not consume the new session queue');
+    t.mock.timers.tick(492);
+    t.mock.timers.tick(8);
+    assert.deepEqual(sent.slice(newSession).map(message => [message[0], message.readUInt16BE(1), message[5], message[7]]), [
+        [13, 71, 0, 5], [13, 71, 0, 0],
+    ], 'only unmodified B from the fresh session is delivered');
+    keyboard.destroy();
 });

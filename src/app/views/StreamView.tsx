@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ParamsStreamScrcpy } from '../../types/ParamsStreamScrcpy';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
@@ -130,14 +131,12 @@ export function StreamView({ params }: StreamViewProps) {
                 keyguardShowing={keyguardShowing}
                 onUnlock={() => openSheet('unlock')}
             />
-            {streamNotice.value && (
-                <div key="notice" class="stream-notice" role="status">
-                    <span>{streamNotice.value}</span>
-                    <button type="button" onClick={() => (streamNotice.value = '')} aria-label="Dismiss message">
-                        ✕
-                    </button>
-                </div>
-            )}
+            <Presence show={!!streamNotice.value} kind="collapse" key="notice" class="stream-notice" role="status">
+                <span>{streamNotice.value}</span>
+                <button type="button" onClick={() => (streamNotice.value = '')} aria-label="Dismiss message">
+                    ✕
+                </button>
+            </Presence>
             {/* `StreamClientScrcpy` owns everything inside this node imperatively (see the effect
                 above); the sheets/overlays below are rendered by Preact as siblings, not children,
                 of that subtree so the two never fight over the same DOM nodes. Keep the stage
@@ -176,7 +175,7 @@ export function StreamView({ params }: StreamViewProps) {
                             submitDevicePasscode(session.client, params.udid, passcode, signal)
                         }
                     />
-                    {liveTextOpen.value && liveText && <LiveTextOverlay target={liveText} />}
+                    {liveText && <LiveTextOverlay open={liveTextOpen.value} target={liveText} />}
                 </>
             )}
         </div>

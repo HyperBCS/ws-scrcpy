@@ -14,7 +14,7 @@
 .live-text-backdrop {
     position: absolute;
     inset: 0;
-    background: rgba(0, 0, 0, 0.38);
+    background: rgba(0, 0, 0, 0.08);
 }
 
 .live-text-bar {
@@ -132,5 +132,59 @@
     .live-text-bar {
         border-radius: 20px;
         margin-bottom: 24px;
+    }
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .live-text-bar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: 'input done' 'keys keys';
+        gap: 6px;
+        padding: 8px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+        border-radius: 14px 14px 0 0;
+        margin-bottom: 0;
+    }
+
+    .keyboard-raised .live-text-bar {
+        padding-bottom: 8px;
+    }
+
+    .live-text-heading {
+        display: contents;
+    }
+
+    .live-text-heading > div,
+    .live-text-feedback:not(.live-text-feedback-error) {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+    }
+
+    .live-text-input {
+        grid-area: input;
+        height: 44px;
+        padding: 0 10px;
+    }
+
+    .live-text-done {
+        grid-area: done;
+        padding: 0 12px;
+    }
+
+    .live-text-actions {
+        grid-area: keys;
+        gap: 6px;
+    }
+
+    .live-text-feedback-error {
+        grid-column: 1 / -1;
+        margin: 0;
     }
 }

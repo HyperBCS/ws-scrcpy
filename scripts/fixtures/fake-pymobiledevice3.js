@@ -305,7 +305,7 @@ if (command === 'developer core-device display serve-web') {
                     return;
                 }
             }
-            if (['/touch', '/key', '/button', '/pli', '/restart'].includes(path)) {
+            if (['/touch', '/key', '/keyboard/detach', '/button', '/pli', '/restart'].includes(path)) {
                 response.writeHead(200).end('ok');
                 return;
             }

@@ -1,3 +1,4 @@
+import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { ACTION } from '../../common/Action';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
@@ -229,14 +230,12 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                 </span>
             </nav>
             <section class="tool-workspace" aria-label={tool?.title}>
-                {(error || connectionLost) && (
-                    <div class="tool-error" role="status">
-                        <span>{error || 'The connection is closed. Reconnect to continue.'}</span>
-                        <button type="button" onClick={() => setAttempt((value) => value + 1)}>
-                            Reconnect
-                        </button>
-                    </div>
-                )}
+                <Presence show={!!error || connectionLost} kind="collapse" class="tool-error" role="status">
+                    <span>{error || 'The connection is closed. Reconnect to continue.'}</span>
+                    <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+                        Reconnect
+                    </button>
+                </Presence>
                 <div key="tool-mount" ref={mountRef} class="tool-mount" />
                 {action === ACTION.SHELL && (
                     <div class="shell-shortcuts" aria-label="Terminal keys">

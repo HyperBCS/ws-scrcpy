@@ -1,3 +1,4 @@
+const { settleMotion } = require('./ui-motion');
 /* eslint-disable */
 // BASE=http://127.0.0.1:8000 E2E_OUT=/tmp/ws-scrcpy-files node scripts/e2e-files.js
 // Exercises the real nested FSLS/SEND protocol against an in-memory fixture only. Folder
@@ -372,6 +373,7 @@ async function main() {
                 assert.equal(await page.getByRole('button', { name: 'Quick access' }).isVisible(), false);
             } else {
                 await page.getByRole('button', { name: 'Quick access', exact: true }).click();
+                await settleMotion(page);
                 const places = await page.locator('.fx-menu [data-menu="place"]').evaluateAll((items) =>
                     items.map((item) => item.getBoundingClientRect().height),
                 );

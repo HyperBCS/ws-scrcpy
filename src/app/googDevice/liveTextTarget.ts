@@ -16,6 +16,12 @@ const KEYCODES: Record<LiveTextKey, number> = {
 export function scrcpyLiveTextTarget(client: StreamClientScrcpy): LiveTextTarget {
     return {
         hint: 'Tap a text field on the device first. Text is sent as you type.',
+        beginTyping() {
+            client.releaseVirtualKeyboard();
+        },
+        endTyping() {
+            client.releaseVirtualKeyboard();
+        },
         sendText(text) {
             client.sendMessage(new TextControlMessage(text));
         },

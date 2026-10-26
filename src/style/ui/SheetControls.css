@@ -126,7 +126,7 @@
     inset: 8px 0;
     border-radius: 999px;
     background: var(--button-border-color);
-    transition: background 150ms ease;
+    transition: background var(--motion-fast) ease;
 }
 .sheet-switch::after {
     content: '';
@@ -138,7 +138,7 @@
     border-radius: 50%;
     background: white;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    transition: transform 150ms ease;
+    transition: transform var(--motion-settle) var(--ease-out);
 }
 .sheet-switch:checked::before {
     background: var(--accent-solid, #2563eb);

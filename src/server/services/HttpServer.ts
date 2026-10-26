@@ -1,3 +1,4 @@
+import { NotificationService } from '../notifications/NotificationService';
 import * as http from 'http';
 import * as https from 'https';
 import path from 'path';
@@ -76,8 +77,17 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
 
     public async start(): Promise<void> {
         this.mainApp = express();
+        NotificationService.getInstance().mount(this.mainApp, PATHNAME);
         if (HttpServer.SERVE_STATIC && HttpServer.PUBLIC_DIR) {
-            this.mainApp.use(PATHNAME, express.static(HttpServer.PUBLIC_DIR));
+            this.mainApp.use(
+                PATHNAME,
+                express.static(HttpServer.PUBLIC_DIR, {
+                    setHeaders: (res, filePath) => {
+                        // Always load the HTML that references this build's asset URLs.
+                        if (path.basename(filePath) === 'index.html') res.setHeader('Cache-Control', 'no-store');
+                    },
+                }),
+            );
         }
         const config = Config.getInstance();
         config.servers.forEach((serverItem) => {

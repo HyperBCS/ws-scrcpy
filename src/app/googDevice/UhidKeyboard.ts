@@ -160,20 +160,29 @@ const CODE_TO_MODIFIER: Record<string, number> = {
 };
 
 const MAX_KEYS = 6;
+// Stock scrcpy does not forward UHID_START/OPEN acknowledgements. Android may lose inputs
+// sent immediately after CREATE, so buffer the first reports during this compatibility
+// warmup. It is a tested delay, not a guarantee of readiness on every device.
+const REGISTRATION_WARMUP_MS = 500;
+const REPORT_INTERVAL_MS = 8;
+const MAX_PENDING_REPORTS = 256;
 
 /**
  * Presents the browser's keyboard to the device as a real USB keyboard, over scrcpy's UHID
  * control messages.
  *
  * Preferred over injecting Android keycodes: the device applies its own layout, dead keys and
- * auto-repeat work, and -- because the device believes a hardware keyboard is attached -- it stops
- * popping its on-screen keyboard over the content you are trying to see.
+ * auto-repeat work. Attaching it may hide Android's software keyboard, so create only for a
+ * real key press and destroy when returning to touch or local browser controls.
  */
 export class UhidKeyboard {
     private readonly pressed: number[] = [];
     private modifiers = 0;
     private created = false;
     private id?: number;
+    private warmingUp = false;
+    private readonly pendingReports: Uint8Array[] = [];
+    private reportTimer?: ReturnType<typeof setTimeout>;
 
     constructor(
         private readonly sender: UhidKeyboardSender,
@@ -207,9 +216,15 @@ export class UhidKeyboard {
         this.sender.sendMessage(
             new UhidCreateControlMessage(this.id, VENDOR_ID, PRODUCT_ID, 'scrcpy', REPORT_DESCRIPTOR),
         );
+        this.warmingUp = true;
+        this.reportTimer = setTimeout(() => {
+            this.warmingUp = false;
+            this.flushReport();
+        }, REGISTRATION_WARMUP_MS);
     }
 
     public destroy(): void {
+        this.cancelReports();
         if (!this.created || this.id === undefined) {
             return;
         }
@@ -221,6 +236,7 @@ export class UhidKeyboard {
 
     /** Forget the old server's keyboard without queuing messages for the replacement session. */
     public reset(): void {
+        this.cancelReports();
         this.created = false;
         this.id = undefined;
         this.pressed.length = 0;
@@ -233,10 +249,17 @@ export class UhidKeyboard {
      *     handling rather than being swallowed.
      */
     public handleKey(code: string, down: boolean): boolean {
+        if (!UhidKeyboard.isSupportedCode(code)) {
+            return false;
+        }
+        if (down && !this.created) {
+            this.create();
+        }
         if (!this.created) {
             // Keep browser shortcuts suppressed during reconnect without carrying offline
-            // key presses into the new device's first input report.
-            return UhidKeyboard.isSupportedCode(code);
+            // key presses into the new device's first input report. A stray keyup must never
+            // register an otherwise unused keyboard and hide Android's software keyboard.
+            return true;
         }
         const modifier = CODE_TO_MODIFIER[code];
         if (modifier !== undefined) {
@@ -286,6 +309,34 @@ export class UhidKeyboard {
         for (let i = 0; i < this.pressed.length && i < MAX_KEYS; i++) {
             report[2 + i] = this.pressed[i];
         }
+        if (this.pendingReports.length >= MAX_PENDING_REPORTS) {
+            // Never retain an unbounded backlog or leave partially delivered modifiers held.
+            this.destroy();
+            return;
+        }
+        // Each snapshot preserves its own press/release/modifier state, even if the physical
+        // key was released before registration finished. Never retry an already sent report.
+        this.pendingReports.push(report);
+        if (!this.warmingUp && this.reportTimer === undefined) {
+            this.flushReport();
+        }
+    }
+
+    private flushReport = (): void => {
+        this.reportTimer = undefined;
+        if (!this.created || this.id === undefined || this.warmingUp) return;
+        const report = this.pendingReports.shift();
+        if (!report) return;
         this.sender.sendMessage(new UhidInputControlMessage(this.id, report));
+        if (this.pendingReports.length) {
+            this.reportTimer = setTimeout(this.flushReport, REPORT_INTERVAL_MS);
+        }
+    };
+
+    private cancelReports(): void {
+        if (this.reportTimer !== undefined) clearTimeout(this.reportTimer);
+        this.reportTimer = undefined;
+        this.warmingUp = false;
+        this.pendingReports.length = 0;
     }
 }

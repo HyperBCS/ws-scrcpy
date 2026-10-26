@@ -11,3 +11,6 @@ stream-config.json
 # Self-signed HTTPS material from `npm run setup:https`
 /certs/
 config.https.yaml
+
+/data/
+__pycache__/

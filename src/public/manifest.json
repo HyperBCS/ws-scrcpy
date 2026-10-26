@@ -1,4 +1,5 @@
 {
+    "id": ".",
     "name": "ws-scrcpy",
     "short_name": "scrcpy",
     "start_url": ".",

@@ -281,10 +281,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 reject(error);
             });
 
-            const adbPid = adb.pid;
-            if (typeof adbPid !== 'number') {
-                // Spawn failed: without a pid the forwarded socket path would be
-                // `/tmp/scrcpy-undefined`, shared by every device that fails to start.
+            if (typeof adb.pid !== 'number') {
                 const msg = `[${udid}] Failed to spawn adb process: ${cmd} ${args.join(' ')}`;
                 console.error(msg);
                 reject(new Error(msg));
@@ -292,9 +289,11 @@ export class Device extends TypedEmitter<DeviceEvents> {
             }
 
             adb.stdout.once('data', () => {
-                AdbUtils.forwardFileSocket(udid, 'localabstract:scrcpy', adbPid)
-                    .then(async (socketPath: string) => {
-                        console.log(`[${udid}] Starting broadcast with socket path ${socketPath}`);
+                // The adb daemon may run outside this container. TCP reaches its forward
+                // through the shared network; a filesystem socket lives in the daemon's /tmp.
+                AdbUtils.forward(udid, 'localabstract:scrcpy')
+                    .then(async (port: number) => {
+                        console.log(`[${udid}] Starting broadcast on 127.0.0.1:${port}`);
                         try {
                             await sleep(1000); // 1s delay
                             if (exited) {
@@ -302,7 +301,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
                             }
                             // Use the launch-time audio setting: an Apply may already have
                             // changed the stored config while this process is still connecting.
-                            await broadcastManager.startBroadcast(udid, socketPath, audioEnabled, {
+                            await broadcastManager.startBroadcast(udid, port, audioEnabled, {
                                 onFailure: reportAudioFailure,
                                 failure: audioEnabled ? undefined : this.audioFailure,
                             });

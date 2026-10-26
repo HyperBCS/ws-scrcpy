@@ -57,20 +57,13 @@ export function DeviceList() {
                 {!entries.length ? (
                     <section class="device-list-empty" role="status">
                         <DeviceIcon className="device-empty-icon" />
-                        <h2>{disconnected ? 'Connection interrupted' : 'Your next screen starts here'}</h2>
+                        <h2>{disconnected ? 'Connection lost' : 'No devices connected'}</h2>
                         <p>
                             {disconnected
-                                ? 'Reconnecting to the device server. Your devices will appear when it is reachable.'
-                                : 'Connected Android and iOS devices appear here automatically.'}
+                                ? 'Reconnecting…'
+                                : 'Connect a device by USB or wireless debugging, then unlock it.'}
                         </p>
                         {hostsError.value && disconnected && <p class="device-empty-error">{hostsError.value}</p>}
-                        {!disconnected && (
-                            <ol>
-                                <li>Connect your device to the server by USB or wireless debugging.</li>
-                                <li>Unlock it and approve the debugging or trust prompt.</li>
-                                <li>Choose Open screen to start controlling it.</li>
-                            </ol>
-                        )}
                     </section>
                 ) : (
                     groups.map((group) => (

@@ -1,12 +1,7 @@
 import Size from './Size';
 
-// Both `StreamClientScrcpy.getMaxSize()` and `StreamClientCoreDevice.getMaxSize()` need
-// the video area left over once the control bar is subtracted from the container -- this feeds
-// the fit-to-screen encode bounds, so getting the wrong axis is a correctness bug, not a cosmetic
-// one. Which axis to subtract from depends on whether the bar is currently docked as a side rail
-// (desktop/landscape, tall and thin) or a bottom bar (mobile portrait, wide and short -- see
-// `views/StreamView.css`). Comparing the bar's own footprint tells us which, without duplicating
-// the CSS breakpoint here.
+// Legacy hosts can reserve a docked control bar on either axis. Current stream clients measure
+// their video wrapper directly, since surrounding layout has already reserved that space.
 export function computeMaxSize(containerWidth: number, containerHeight: number, controlBar?: HTMLElement): Size {
     if (!controlBar) {
         // Floating toolbar: it overlays the video rather than reserving space, so the encode
@@ -17,6 +12,17 @@ export function computeMaxSize(containerWidth: number, containerHeight: number, 
     const width = isBottomBar ? containerWidth : containerWidth - controlBar.clientWidth;
     const height = isBottomBar ? containerHeight - controlBar.clientHeight : containerHeight;
     return new Size(width & ~15, height & ~15);
+}
+
+/** The laid-out video area already excludes headers, safe areas and any adjacent controls. */
+export function getVideoBounds(video: HTMLElement): Size | undefined {
+    const style = getComputedStyle(video);
+    const padding = (value: string) => parseFloat(value) || 0;
+    const width = video.clientWidth - padding(style.paddingLeft) - padding(style.paddingRight);
+    const height = video.clientHeight - padding(style.paddingTop) - padding(style.paddingBottom);
+    const bounds = computeMaxSize(Math.max(0, width), Math.max(0, height));
+    // Hidden or not-yet-laid-out players should keep their previous bounds until visible.
+    return bounds.width > 0 && bounds.height > 0 ? bounds : undefined;
 }
 
 /**

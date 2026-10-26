@@ -18,15 +18,16 @@ class BroadcastManager {
      */
     async startBroadcast(
         udid: string,
-        socketPath: string,
+        port: number,
         audioEnabled: boolean,
         audioOptions?: BroadcastAudioOptions,
     ): Promise<void> {
         if (this.broadcasts.has(udid)) return;
 
-        const socket = net.connect({ path: socketPath });
-        const audio = audioEnabled ? net.connect({ path: socketPath }) : undefined;
-        const control = net.connect({ path: socketPath });
+        const endpoint = { host: '127.0.0.1', port };
+        const socket = net.connect(endpoint);
+        const audio = audioEnabled ? net.connect(endpoint) : undefined;
+        const control = net.connect(endpoint);
         const sockets = audio ? [socket, audio, control] : [socket, control];
 
         return new Promise((resolve, reject) => {
@@ -45,12 +46,12 @@ class BroadcastManager {
             sockets.forEach((s) => s.once('error', onStartupError));
 
             control.once('connect', () => {
-                console.log(`Connected to control server at ${socketPath}`);
+                console.log(`Connected to control server at 127.0.0.1:${port}`);
             });
 
             if (audio) {
                 audio.once('connect', () => {
-                    console.log(`Connected to audio server at ${socketPath}`);
+                    console.log(`Connected to audio server at 127.0.0.1:${port}`);
                 });
             }
 

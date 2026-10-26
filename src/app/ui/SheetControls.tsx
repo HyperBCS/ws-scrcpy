@@ -1,4 +1,5 @@
 import { ComponentChildren } from 'preact';
+import { AutoHeight } from './AutoHeight';
 import { useState } from 'preact/hooks';
 import type { AudioSession } from '../state/audio';
 import '../../style/ui/SheetControls.css';
@@ -22,7 +23,7 @@ export function SheetGroup({ title, hint, class: className, children }: SheetGro
         <section class={`sheet-group ${className || ''}`}>
             {title && <h3 class="sheet-group-title">{title}</h3>}
             {hint && <p class="sheet-group-hint">{hint}</p>}
-            <div class="sheet-group-card">{children}</div>
+            <AutoHeight className="sheet-group-card">{children}</AutoHeight>
         </section>
     );
 }

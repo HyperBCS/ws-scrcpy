@@ -18,6 +18,12 @@ const USAGES: Record<LiveTextKey, number> = {
 export function coreDeviceLiveTextTarget(client: StreamClientCoreDevice): LiveTextTarget {
     return {
         hint: 'Tap a text field on the phone first. Each character is typed on the phone as you enter it.',
+        beginTyping() {
+            client.beginTyping();
+        },
+        endTyping() {
+            void client.endTyping();
+        },
         sendText(text) {
             return client.typeText(text);
         },

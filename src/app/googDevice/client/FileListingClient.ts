@@ -1,3 +1,4 @@
+import { transitionVisibility, cancelVisibility } from '../../ui/motion';
 import '../../../style/filelisting.css';
 import { ParamsFileListing } from '../../../types/ParamsFileListing';
 import { ManagerClient } from '../../client/ManagerClient';
@@ -407,6 +408,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.transfers = this.wrapper.querySelector('.fx-transfers') as HTMLElement;
         this.menu = this.wrapper.querySelector('.fx-menu') as HTMLElement;
         this.dialog = this.wrapper.querySelector('.fx-dialog') as HTMLDialogElement;
+        this.dialog.addEventListener('cancel', this.onDialogCancel);
+        this.dialog.addEventListener('submit', this.onDialogSubmit);
         this.picker = this.wrapper.querySelector('input[type="file"]') as HTMLInputElement;
         this.wrapper.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) => {
             this.buttons.set(button.dataset.command as string, button);
@@ -871,7 +874,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     };
 
     private onKeyDown = (event: KeyboardEvent): void => {
-        if (this.menu.hidden === false && this.onMenuKeyDown(event)) {
+        if (!this.menu.hidden && !this.menu.inert && this.onMenuKeyDown(event)) {
             return;
         }
         const target = event.target as HTMLElement | null;
@@ -1163,6 +1166,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const top = Math.max(4, Math.min(clientY - bounds.top, bounds.height - size.height - 4));
         this.menu.style.left = `${left}px`;
         this.menu.style.top = `${top}px`;
+        this.menu.style.transformOrigin = `${clientX - bounds.left - left}px ${clientY - bounds.top - top}px`;
+        transitionVisibility(this.menu, true);
         this.menu.querySelector<HTMLElement>('button:not([disabled])')?.focus();
         if (!this.closeMenuListener) {
             this.closeMenuListener = (event: Event) => {
@@ -1191,11 +1196,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private closeMenu(): void {
-        if (this.menu.hidden) {
+        if (this.menu.hidden || this.menu.inert) {
             return;
         }
-        this.menu.hidden = true;
-        this.menu.innerHTML = '';
+        transitionVisibility(this.menu, false, () => {
+            this.menu.innerHTML = '';
+        });
         this.menuBuilder = undefined;
         ['view-menu', 'places', 'actions'].forEach((command) =>
             this.buttons.get(command)?.setAttribute('aria-expanded', 'false'),
@@ -1579,7 +1585,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 <button type="submit" class="fx-button fx-primary" value="close">Close</button>
             </div>
         </form>`;
-        this.dialog.showModal();
+        this.presentDialog();
     }
 
     // ---------------------------------------------------------------- dialogs
@@ -1627,6 +1633,27 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         );
     }
 
+    private presentDialog(): void {
+        transitionVisibility(this.dialog, true);
+        this.dialog.showModal();
+    }
+
+    private closeDialog(value: string): void {
+        if (!this.dialog.open || this.dialog.inert) return;
+        transitionVisibility(this.dialog, false, () => this.dialog.close(value));
+    }
+
+    private onDialogCancel = (event: Event): void => {
+        event.preventDefault();
+        this.closeDialog('');
+    };
+
+    private onDialogSubmit = (event: SubmitEvent): void => {
+        event.preventDefault();
+        const submitter = event.submitter;
+        this.closeDialog(submitter instanceof HTMLButtonElement ? submitter.value : '');
+    };
+
     private showDialog(onOpen: () => void): Promise<string> {
         return new Promise((resolve) => {
             const finish = () => {
@@ -1636,9 +1663,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             this.dialog.returnValue = '';
             this.dialog.addEventListener('close', finish);
             this.dialog.querySelector<HTMLButtonElement>('[data-dialog="cancel"]')?.addEventListener('click', () => {
-                this.dialog.close('');
+                this.closeDialog('');
             });
-            this.dialog.showModal();
+            this.presentDialog();
             onOpen();
         });
     }
@@ -2076,6 +2103,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             cancelAnimationFrame(this.renderHandle);
             this.renderHandle = 0;
         }
+        cancelVisibility(this.menu);
+        cancelVisibility(this.dialog);
+        this.dialog.removeEventListener('cancel', this.onDialogCancel);
+        this.dialog.removeEventListener('submit', this.onDialogSubmit);
         if (this.dialog.open) {
             this.dialog.close('');
         }

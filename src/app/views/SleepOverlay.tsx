@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { streamConnected } from '../state/stream';
 import { goToDeviceList } from '../state/router';
 import '../../style/views/SleepOverlay.css';
+import { Presence } from '../ui/Presence';
 
 // How long to stay optimistically hidden after the user taps Wake. The Android device-state poll
 // runs every 10s while a tracker client is connected (the iOS one every 4s while streaming), so
@@ -72,10 +73,6 @@ export function SleepOverlay({ sessionKey, screenOff, onWake }: SleepOverlayProp
         return () => clearTimeout(id);
     }, [suppressed, wakeRequestedAt]);
 
-    if (!visible) {
-        return null;
-    }
-
     const wake = () => {
         onWake();
         // Hide immediately rather than waiting up to a poll interval for the descriptor to catch
@@ -87,18 +84,12 @@ export function SleepOverlay({ sessionKey, screenOff, onWake }: SleepOverlayProp
         // `pointer-events: none` on the backdrop (see the stylesheet) so only the card below can
         // ever receive input. Even if the visibility logic above is wrong, this overlay cannot
         // block the video surface or the control bar.
-        <div class="sleep-overlay" aria-live="polite" role="status">
+        <Presence show={visible} class="sleep-overlay" aria-live="polite" role="status">
             {disconnected ? (
                 <div class="sleep-overlay-card">
                     <div class="sleep-overlay-spinner" aria-hidden="true" />
                     <div class="sleep-overlay-label">{hasConnected ? 'Reconnecting…' : 'Connecting to device…'}</div>
-                    <div class="sleep-overlay-hint">
-                        {waiting
-                            ? 'Taking longer than expected. Check that the device is online and unlocked.'
-                            : hasConnected
-                              ? 'Your stream will resume automatically.'
-                              : 'Starting the screen stream. This may take a moment.'}
-                    </div>
+                    {waiting && <div class="sleep-overlay-hint">Check that the device is online and unlocked.</div>}
                     {waiting && (
                         <button type="button" class="sleep-overlay-return" onClick={goToDeviceList}>
                             Back to devices
@@ -114,6 +105,6 @@ export function SleepOverlay({ sessionKey, screenOff, onWake }: SleepOverlayProp
                     <div class="sleep-overlay-hint">Tap to wake the device</div>
                 </button>
             )}
-        </div>
+        </Presence>
     );
 }

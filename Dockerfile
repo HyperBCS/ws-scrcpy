@@ -27,7 +27,7 @@ LABEL maintainer="Vitaly Repin <vitaly.repin@gmail.com>"
 # even though adbkit speaks the protocol itself. python3: the venv symlinks to it.
 # ffmpeg: CoreDeviceAudio.ts:307 spawns it to decode the phone's AAC-ELD audio.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        adb python3 ffmpeg ca-certificates \
+        adb python3 python3-dbus python3-gi ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app /app
 # Server dist; `resolveBin()` walks cwd and its parent, finding /app/python/venv.

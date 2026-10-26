@@ -7,6 +7,8 @@
 #     AdbUtils.ts:180 spawns `adb ... forward --remove` with no -H flag, so it too
 #     goes to 127.0.0.1:5037. Under bridge networking that spawned client would fork
 #     its own server inside the container, blind to USB, while adbkit used the host's.
+#   * Android video/audio/control use a loopback TCP forward owned by the host adb
+#     daemon, so they also share its network namespace without mounting the host /tmp.
 #   * CoreDeviceRunner binds each device's serve-web to loopback (it has no auth);
 #     sharing the host netns is what lets the server reach it.
 #   * The HTTP server binds 8000 (and 8443 when configured) directly on the host.
@@ -22,7 +24,17 @@ services:
     container_name: ws-scrcpy
     restart: unless-stopped
     network_mode: host
+    # Load config/apparmor-ws-scrcpy on the host before starting (see README).
+    security_opt:
+      - apparmor=ws-scrcpy-bluetooth
+    environment:
+      WS_NOTIFICATION_DATA: /app/data
+      WS_SCRCPY_STREAM_CONFIG_PATH: /app/data/stream-config.json
+      WS_PUBLIC_URL: https://mini-nuc.tailea1801.ts.net
     volumes:
+      - ws-scrcpy-data:/app/data
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+
       # iOS: the host's usbmuxd. It also serves the pairing records over this
       # socket, so /var/lib/lockdown does NOT need mounting.
       - /run/usbmuxd:/var/run/usbmuxd
@@ -36,9 +48,22 @@ services:
       dockerfile: Dockerfile.dev
     container_name: ws-scrcpy-dev
     network_mode: host
+    # Load config/apparmor-ws-scrcpy on the host before starting (see README).
+    security_opt:
+      - apparmor=ws-scrcpy-bluetooth
+    environment:
+      WS_NOTIFICATION_DATA: /app/data
+      WS_SCRCPY_STREAM_CONFIG_PATH: /app/data/stream-config.json
+      WS_PUBLIC_URL: https://mini-nuc.tailea1801.ts.net
     volumes:
+      - ws-scrcpy-data:/app/data
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+
       - /run/usbmuxd:/var/run/usbmuxd
       # Live sources; node_modules and the venv stay baked in the image.
       - ./src:/app/src
       - /app/node_modules
       - /app/python/venv
+
+volumes:
+  ws-scrcpy-data:

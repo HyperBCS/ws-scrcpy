@@ -56,10 +56,20 @@ export type CoreDeviceServerMessage =
     | { type: 'clipboard'; text: string | null; error?: string }
     | { type: 'result'; id: number; ok: boolean; error?: string; data?: unknown };
 
+export interface CoreDeviceContact {
+    id: number;
+    touching: boolean;
+    x: number;
+    y: number;
+}
+
 // browser -> server
 export type CoreDeviceClientMessage =
+    | { type: 'touch-frame'; contacts: CoreDeviceContact[] }
     | { type: 'touch'; op: 'contact' | 'release' | 'tap'; x: number; y: number }
     | { type: 'key'; usages: number[] }
+    // Unregisters the virtual keyboard after queued key reports, restoring the phone keyboard.
+    | { type: 'keyboard-detach' }
     | { type: 'button'; name: CoreDeviceButton; state?: 'press' | 'down' | 'up' }
     | { type: 'clipboard'; op: 'get'; id?: number }
     | { type: 'clipboard'; op: 'set'; text: string; id?: number }

@@ -854,13 +854,461 @@ test('browser side: keyboard usages, typed text and touch normalisation', () => 
     assert.equal(HID_USAGE.ARROW_RIGHT, hidUsageForCode('ArrowRight'));
 });
 
-test('HID input leaves the proxy one report at a time, in the order it arrived', async () => {
+test('touch frames serialize, reject invalid identities, exclude other viewers and release before disconnect', async () => {
+    const posts = [];
+    const stopped = [];
+    const make = () => {
+        const socket = new FakeSocket();
+        const proxy = new CoreDeviceProxy(socket, 'multitouch-phone');
+        proxy.runner = { request: async (_id, _method, _path, body) => { posts.push(JSON.parse(body)); await tick(); return { status: 200, body: '' }; }, release: () => stopped.push('runner') };
+        proxy.stream = { destroy: () => stopped.push('stream') };
+        proxy.acquired = true;
+        return { socket, proxy };
+    };
+    const first = make(), second = make();
+    const contact = (id, touching = true) => ({ id, touching, x: 1000, y: 2000 });
+    const send = (viewer, contacts) => viewer.socket.message(JSON.stringify({ type: 'touch-frame', contacts }));
+    try {
+        send(first, [contact(0), contact(1)]);
+        send(first, [contact(1)]);
+        await first.proxy.inputChain;
+        assert.deepEqual(posts[1].contacts.map(c => [c.id, c.touching]), [[1, true], [0, false]], 'omitted finger is explicitly lifted');
+        send(first, [contact(1), contact(1)]);
+        send(first, [contact(5)]);
+        send(second, [contact(2)]);
+        await Promise.all([first.proxy.inputChain, second.proxy.inputChain]);
+        assert.equal(posts.length, 2, 'invalid reports and another viewer cannot mix contacts');
+        first.proxy.release();
+        assert.equal(stopped.length, 0, 'media stays attached until the release reaches the phone');
+        for (let i = 0; i < 10 && !stopped.length; i++) await tick();
+        assert.ok(posts.at(-1).contacts.every(c => !c.touching));
+        assert.equal(posts.at(-1).contacts.length, 5);
+        send(second, [contact(2)]); await second.proxy.inputChain;
+        assert.equal(posts.at(-1).contacts[0].id, 2, 'another viewer can claim after the release');
+    } finally {
+        first.proxy.release(); second.proxy.release();
+        for (let i = 0; i < 5; i++) await tick();
+    }
+});
+
+for (const inputType of ['touch-frame', 'touch'])
+    test(`disconnect keeps touch ownership and media until an in-flight ${inputType} release and teardown both finish`, async () => {
+        const udid = `multitouch-disconnect-race-${inputType}`;
+        const contact = (id, touching = true) => ({ id, touching, x: 1000, y: 2000 });
+        const deferred = () => {
+            let resolve;
+            const promise = new Promise((done) => {
+                resolve = done;
+            });
+            return { promise, resolve };
+        };
+        const normalRelease = deferred(),
+            teardown = deferred();
+        const media = new EventEmitter();
+        let destroyed = 0,
+            otherTouches = 0,
+            teardownStarted = false;
+        Object.assign(media, { statusCode: 200, destroy: () => destroyed++ });
+        const firstSocket = new FakeSocket(),
+            secondSocket = new FakeSocket();
+        const first = new CoreDeviceProxy(firstSocket, udid),
+            second = new CoreDeviceProxy(secondSocket, udid);
+        first.runner = {
+            openStream: async () => media,
+            request: async (_id, _method, _path, body) => {
+                const frame = JSON.parse(body);
+                if (frame.type === 'frame' && frame.contacts.length === 5) {
+                    teardownStarted = true;
+                    return teardown.promise;
+                }
+                if (frame.type === 'release' || frame.contacts?.every((c) => !c.touching)) return normalRelease.promise;
+                return { status: 200, body: '' };
+            },
+            release() {},
+        };
+        second.runner = {
+            request: async () => {
+                otherTouches++;
+                return { status: 200, body: '' };
+            },
+            release() {},
+        };
+        second.stream = { destroy() {} };
+        await first.attachStream();
+        const send = (socket, contacts) =>
+            socket.message(
+                JSON.stringify(
+                    inputType === 'touch-frame'
+                        ? { type: inputType, contacts }
+                        : { type: inputType, op: contacts[0].touching ? 'contact' : 'release', x: 1000, y: 2000 },
+                ),
+            );
+        try {
+            send(firstSocket, [contact(0)]);
+            await first.inputChain;
+            send(firstSocket, [contact(0, false)]);
+            await tick();
+            firstSocket.close(1000, 'viewer left while releasing');
+            normalRelease.resolve({ status: 200, body: '' });
+            await tick();
+            assert.equal(teardownStarted, true);
+            media.emit('data', Buffer.alloc(0));
+            const destroyedBeforeCleanup = destroyed;
+            send(secondSocket, [contact(1)]);
+            await second.inputChain;
+            const touchesBeforeCleanup = otherTouches;
+            teardown.resolve({ status: 200, body: '' });
+            await tick();
+            assert.equal(
+                destroyedBeforeCleanup,
+                0,
+                'video frames on a closing socket must not detach media before HID release',
+            );
+            assert.equal(
+                touchesBeforeCleanup,
+                0,
+                'the old teardown must finish before another viewer can put fingers down',
+            );
+            assert.equal(destroyed, 1);
+            send(secondSocket, [contact(1)]);
+            await second.inputChain;
+            assert.equal(otherTouches, 1, 'the next viewer can claim control after teardown');
+        } finally {
+            normalRelease.resolve({ status: 200, body: '' });
+            teardown.resolve({ status: 200, body: '' });
+            first.release();
+            second.release();
+            for (let i = 0; i < 5; i++) await tick();
+        }
+    });
+
+for (const inputType of ['touch-frame', 'touch'])
+    for (const failure of ['transport', 'http'])
+        test(`a ${failure} failure of ${inputType} closes its viewer and retains ownership until cleanup finishes`, async () => {
+            const firstSocket = new FakeSocket(),
+                secondSocket = new FakeSocket();
+            const udid = `multitouch-failure-${inputType}-${failure}`;
+            const first = new CoreDeviceProxy(firstSocket, udid),
+                second = new CoreDeviceProxy(secondSocket, udid);
+            let finishCleanup;
+            const cleanup = new Promise((resolve) => {
+                finishCleanup = resolve;
+            });
+            let firstCalls = 0,
+                secondCalls = 0;
+            first.runner = {
+                request: async (_id, _method, _path, body) => {
+                    if (++firstCalls === 1) {
+                        if (failure === 'transport') throw Error('HID unavailable');
+                        return { status: 503, body: 'not ready' };
+                    }
+                    assert.ok(JSON.parse(body).contacts.every((c) => !c.touching));
+                    return cleanup;
+                },
+                release() {},
+            };
+            second.runner = {
+                request: async () => {
+                    secondCalls++;
+                    return { status: 200, body: '' };
+                },
+                release() {},
+            };
+            first.stream = second.stream = { destroy() {} };
+            const message = JSON.stringify(
+                inputType === 'touch-frame'
+                    ? { type: inputType, contacts: [{ id: 0, touching: true, x: 1000, y: 2000 }] }
+                    : { type: inputType, op: 'contact', x: 1000, y: 2000 },
+            );
+            try {
+                firstSocket.message(message);
+                await first.inputChain;
+                await tick();
+                assert.equal(firstSocket.readyState, firstSocket.CLOSED);
+                assert.match(firstSocket.texts().at(-1).message, /Touch input failed:/);
+                assert.equal(firstCalls, 2, 'a failed first contact still gets an all-fingers-up cleanup');
+                secondSocket.message(message);
+                await second.inputChain;
+                assert.equal(secondCalls, 0, 'no new contacts while the previous phone state is uncertain');
+                // Also cover an unresponsive helper: ownership must be freed after the
+                // bounded cleanup request times out, without replaying the failed contact.
+                finishCleanup(
+                    failure === 'transport' ? Promise.reject(Error('Cleanup timed out')) : { status: 200, body: '' },
+                );
+                await tick();
+                secondSocket.message(message);
+                await second.inputChain;
+                assert.equal(secondCalls, 1, 'the failed viewer cannot retain control forever');
+            } finally {
+                finishCleanup({ status: 200, body: '' });
+                first.release();
+                second.release();
+                for (let i = 0; i < 5; i++) await tick();
+            }
+        });
+
+test('keyboard releases and detach from viewers that never typed do not attach a keyboard', async () => {
+    const socket = new FakeSocket();
+    const proxy = new CoreDeviceProxy(socket, 'keyboard-empty-viewer');
+    const requests = [];
+    proxy.runner = {
+        request: async (_id, _method, route) => {
+            requests.push(route);
+            return { status: 200, body: '' };
+        },
+        release() {},
+    };
+    proxy.stream = { destroy() {} };
+    try {
+        socket.message(JSON.stringify({ type: 'key', usages: [] }));
+        socket.message(JSON.stringify({ type: 'keyboard-detach' }));
+        await proxy.inputChain;
+        proxy.release();
+        await tick();
+        assert.deepEqual(requests, [], 'focus cleanup alone must never create or remove a native keyboard');
+    } finally {
+        proxy.release();
+    }
+});
+
+test('keyboard ownership protects held modifiers and transfers only after release acknowledgement', async () => {
+    const udid = 'keyboard-multiple-viewers';
+    const requests = [], stopped = [];
+    let acknowledgeRelease;
+    const releaseReply = new Promise((resolve) => { acknowledgeRelease = resolve; });
+    const make = (name) => {
+        const socket = new FakeSocket();
+        const proxy = new CoreDeviceProxy(socket, udid);
+        proxy.runner = {
+            request: async (_id, _method, route, body) => {
+                const usages = body ? JSON.parse(body).usages : undefined;
+                requests.push({ name, route, usages });
+                if (name === 'first' && route === '/key' && !usages.length) return releaseReply;
+                return { status: 200, body: '' };
+            },
+            release: () => stopped.push(name),
+        };
+        proxy.stream = { destroy() {} };
+        proxy.acquired = true;
+        return { socket, proxy };
+    };
+    const first = make('first'), second = make('second');
+    const send = (viewer, usages) => viewer.socket.message(JSON.stringify({ type: 'key', usages }));
+    const detach = (viewer) => viewer.socket.message(JSON.stringify({ type: 'keyboard-detach' }));
+    try {
+        send(first, [0xe1]);
+        await first.proxy.inputChain;
+        send(second, [4]); send(second, []); detach(second);
+        await second.proxy.inputChain;
+        assert.equal(requests.length, 1, 'another viewer cannot overwrite, release, or detach held Shift');
+
+        send(first, []);
+        await tick();
+        send(second, [4]);
+        await second.proxy.inputChain;
+        assert.equal(requests.length, 2, 'release must be acknowledged before a different viewer takes over');
+        acknowledgeRelease({ status: 200, body: '' });
+        await first.proxy.inputChain;
+
+        send(second, [4]);
+        await second.proxy.inputChain;
+        send(first, []); detach(first);
+        await first.proxy.inputChain;
+        first.proxy.release();
+        await tick();
+        assert.deepEqual(requests, [
+            { name: 'first', route: '/key', usages: [0xe1] },
+            { name: 'first', route: '/key', usages: [] },
+            { name: 'second', route: '/key', usages: [4] },
+        ], 'old viewer blur, detach, and disconnect leave the new keyboard owner alone');
+        assert.deepEqual(stopped, ['first']);
+
+        detach(second);
+        await second.proxy.inputChain;
+        assert.deepEqual(requests.at(-1), { name: 'second', route: '/keyboard/detach', usages: undefined });
+        second.proxy.release();
+        await tick();
+        assert.equal(requests.length, 4, 'a successful explicit detach needs no disconnect detach');
+    } finally {
+        acknowledgeRelease({ status: 200, body: '' });
+        first.proxy.release(); second.proxy.release();
+        for (let i = 0; i < 5; i++) await tick();
+    }
+});
+
+test('disconnect waits for keyboard input, touch cleanup, and native detach while another viewer keeps video alive', async () => {
+    const udid = 'keyboard-disconnect-order';
+    const events = [];
+    let acknowledgeKey, acknowledgeDetach;
+    const keyReply = new Promise((resolve) => { acknowledgeKey = resolve; });
+    const detachReply = new Promise((resolve) => { acknowledgeDetach = resolve; });
+    const firstSocket = new FakeSocket(), secondSocket = new FakeSocket();
+    const first = new CoreDeviceProxy(firstSocket, udid), second = new CoreDeviceProxy(secondSocket, udid);
+    first.runner = {
+        request: async (_id, _method, route, body) => {
+            events.push(`first:${route}`);
+            if (route === '/key') return keyReply;
+            if (route === '/keyboard/detach') return detachReply;
+            const contacts = JSON.parse(body).contacts;
+            if (contacts.length === 5) assert.ok(contacts.every((contact) => !contact.touching));
+            return { status: 200, body: '' };
+        },
+        release: () => events.push('first:runner-release'),
+    };
+    second.runner = {
+        request: async (_id, _method, route) => {
+            events.push(`second:${route}`);
+            return { status: 200, body: '' };
+        },
+        release: () => events.push('second:runner-release'),
+    };
+    first.stream = { destroy: () => events.push('first:media-destroy') };
+    second.stream = { destroy: () => events.push('second:media-destroy') };
+    first.acquired = second.acquired = true;
+    try {
+        firstSocket.message(JSON.stringify({ type: 'touch-frame', contacts: [{ id: 0, touching: true, x: 1, y: 2 }] }));
+        await first.inputChain;
+        firstSocket.message(JSON.stringify({ type: 'key', usages: [4] }));
+        firstSocket.message(JSON.stringify({ type: 'key', usages: [] }));
+        firstSocket.message(JSON.stringify({ type: 'keyboard-detach' }));
+        await tick();
+        firstSocket.close(1000, 'viewer left');
+        assert.deepEqual(events, ['first:/touch', 'first:/key'], 'media remains attached while input is in flight');
+        acknowledgeKey({ status: 200, body: '' });
+        await tick();
+        assert.deepEqual(events, ['first:/touch', 'first:/key', 'first:/touch', 'first:/keyboard/detach']);
+        secondSocket.message(JSON.stringify({ type: 'key', usages: [5] }));
+        await second.inputChain;
+        assert.equal(events.length, 4, 'new typing cannot race the previous owner disconnect');
+        assert.equal(secondSocket.readyState, secondSocket.OPEN);
+
+        acknowledgeDetach({ status: 200, body: '' });
+        await tick();
+        assert.deepEqual(events.slice(-2), ['first:media-destroy', 'first:runner-release']);
+        assert.equal(second.acquired, true, 'detaching the keyboard does not release another viewer media session');
+        secondSocket.message(JSON.stringify({ type: 'key', usages: [5] }));
+        await second.inputChain;
+        assert.equal(events.at(-1), 'second:/key');
+        secondSocket.message(JSON.stringify({ type: 'key', usages: [] }));
+        await second.inputChain;
+        second.release();
+        await tick();
+        assert.deepEqual(events.slice(-4), [
+            'second:/key', 'second:/keyboard/detach', 'second:media-destroy', 'second:runner-release',
+        ], 'the last typing viewer still owns detach after releasing every key');
+    } finally {
+        acknowledgeKey({ status: 200, body: '' });
+        acknowledgeDetach({ status: 200, body: '' });
+        first.release(); second.release();
+        for (let i = 0; i < 5; i++) await tick();
+    }
+});
+
+for (const inputType of ['key', 'keyboard-detach'])
+    test(`a rejected ${inputType} closes its viewer and reserves keyboard ownership until detach succeeds`, async () => {
+        const udid = `keyboard-rejected-${inputType}`;
+        const firstSocket = new FakeSocket(), secondSocket = new FakeSocket();
+        const first = new CoreDeviceProxy(firstSocket, udid), second = new CoreDeviceProxy(secondSocket, udid);
+        let finishCleanup;
+        const cleanup = new Promise((resolve) => { finishCleanup = resolve; });
+        let rejected = false, cleanupStarted = false, otherKeys = 0;
+        first.runner = {
+            request: async (_id, _method, route) => {
+                if (!rejected && route === (inputType === 'key' ? '/key' : '/keyboard/detach')) {
+                    rejected = true;
+                    return { status: 503, body: '' };
+                }
+                if (route === '/keyboard/detach') {
+                    cleanupStarted = true;
+                    return cleanup;
+                }
+                return { status: 200, body: '' };
+            },
+            release() {},
+        };
+        second.runner = {
+            request: async (_id, _method, route) => {
+                if (route === '/key') otherKeys++;
+                return { status: 200, body: '' };
+            },
+            release() {},
+        };
+        first.stream = second.stream = { destroy() {} };
+        try {
+            firstSocket.message(JSON.stringify({ type: 'key', usages: [0xe1] }));
+            if (inputType === 'keyboard-detach') firstSocket.message(JSON.stringify({ type: inputType }));
+            await first.inputChain;
+            await tick();
+            assert.equal(firstSocket.readyState, firstSocket.CLOSED);
+            assert.match(firstSocket.texts().at(-1).message, /Keyboard input failed:/);
+            assert.equal(cleanupStarted, true);
+            secondSocket.message(JSON.stringify({ type: 'key', usages: [4] }));
+            await second.inputChain;
+            assert.equal(otherKeys, 0, 'a failed report cannot free keyboard ownership before cleanup');
+            finishCleanup({ status: 200, body: '' });
+            await tick();
+            secondSocket.message(JSON.stringify({ type: 'key', usages: [4] }));
+            await second.inputChain;
+            assert.equal(otherKeys, 1);
+        } finally {
+            finishCleanup({ status: 200, body: '' });
+            first.release(); second.release();
+            for (let i = 0; i < 5; i++) await tick();
+        }
+    });
+
+for (const failure of ['transport', 'http'])
+    test(`a ${failure} detach cleanup failure ends the native session before allowing a new keyboard owner`, async () => {
+        const udid = `keyboard-cleanup-failure-${failure}`;
+        const events = [];
+        let finishDetach;
+        const cleanup = new Promise((resolve) => { finishDetach = resolve; });
+        const firstSocket = new FakeSocket(), secondSocket = new FakeSocket();
+        const first = new CoreDeviceProxy(firstSocket, udid), second = new CoreDeviceProxy(secondSocket, udid);
+        first.runner = {
+            request: async (_id, _method, route) => {
+                events.push(`first:${route}`);
+                return route === '/keyboard/detach' ? cleanup : { status: 200, body: '' };
+            },
+            stopSession: () => events.push('native-stop'),
+            release: () => events.push('runner-release'),
+        };
+        second.runner = {
+            request: async (_id, _method, route) => {
+                events.push(`second:${route}`);
+                return { status: 200, body: '' };
+            },
+            release() {},
+        };
+        first.stream = second.stream = { destroy() {} };
+        first.acquired = true;
+        try {
+            firstSocket.message(JSON.stringify({ type: 'key', usages: [0xe1] }));
+            await first.inputChain;
+            first.release();
+            await tick();
+            secondSocket.message(JSON.stringify({ type: 'key', usages: [4] }));
+            await second.inputChain;
+            assert.deepEqual(events, ['first:/key', 'first:/keyboard/detach']);
+            finishDetach(failure === 'transport' ? Promise.reject(Error('request timed out')) : { status: 503, body: '' });
+            await tick();
+            secondSocket.message(JSON.stringify({ type: 'key', usages: [4] }));
+            await second.inputChain;
+            assert.deepEqual(events.slice(2), ['native-stop', 'runner-release', 'second:/key']);
+        } finally {
+            finishDetach({ status: 200, body: '' });
+            first.release(); second.release();
+            for (let i = 0; i < 5; i++) await tick();
+        }
+    });
+
+test('HID input and keyboard detach leave the proxy one report at a time, in the order they arrived', async () => {
     const keyLog = path.join(temporary, 'keys.log');
     fs.rmSync(keyLog, { force: true });
     const posts = () =>
-        (fs.existsSync(keyLog) ? fs.readFileSync(keyLog, 'utf8').trim().split('\n') : []).filter((line) =>
-            line.startsWith('post /key') || line.startsWith('post /touch'),
-        );
+        (fs.existsSync(keyLog) ? fs.readFileSync(keyLog, 'utf8').trim().split('\n') : [])
+            .filter((line) => line.startsWith('post /key') || line.startsWith('post /touch'))
+            .map((line) => line.trimEnd());
     // The fake answers every /key after 150 ms. Without serialisation all reports would be logged
     // at once; with it, each one is posted only after the previous answer.
     await withEnv({ FAKE_LOG: keyLog, FAKE_SLOW_KEY_MS: '150' }, async () => {
@@ -878,18 +1326,24 @@ test('HID input leaves the proxy one report at a time, in the order it arrived',
         socket.message(JSON.stringify({ type: 'key', usages: [0xe1, 0x0b] }));
         socket.message(JSON.stringify({ type: 'key', usages: [0xe1] }));
         socket.message(JSON.stringify({ type: 'key', usages: [] }));
+        socket.message(JSON.stringify({ type: 'keyboard-detach' }));
         socket.message(JSON.stringify({ type: 'touch', op: 'tap', x: 1, y: 2 }));
         socket.message(JSON.stringify({ type: 'key', usages: [0x0c] }));
+        socket.message(JSON.stringify({ type: 'key', usages: [] }));
+        socket.message(JSON.stringify({ type: 'keyboard-detach' }));
         await sleep(60);
         assert.deepEqual(posts(), ['post /key {"usages":[225]}'], 'the second report waits for the first answer');
-        for (let i = 0; i < 100 && posts().length < 6; i++) await sleep(20);
+        await proxy.inputChain;
         assert.deepEqual(posts(), [
             'post /key {"usages":[225]}',
             'post /key {"usages":[225,11]}',
             'post /key {"usages":[225]}',
             'post /key {"usages":[]}',
+            'post /keyboard/detach',
             'post /touch {"type":"tap","x":1,"y":2}',
             'post /key {"usages":[12]}',
+            'post /key {"usages":[]}',
+            'post /keyboard/detach',
         ]);
         socket.close(1000, 'bye');
         await tick();
@@ -1032,6 +1486,8 @@ function installBrowserMocks() {
     global.requestAnimationFrame = () => 1;
     global.cancelAnimationFrame = () => {};
     global.document = {
+        addEventListener() {},
+        removeEventListener() {},
         createElement: element,
         body: { addEventListener() {}, removeEventListener() {}, clientWidth: 1000, clientHeight: 800 },
     };
@@ -1212,6 +1668,204 @@ test('browser side: decoder selection prefers WebCodecs, falls back to MSE, and 
     global.MediaSource.isTypeSupported = () => false;
     assert.match(StreamClientCoreDevice.explainNoDecoder('hev1.1.6.L150.B0'), /https:\/\//, 'the plain-http case points at the https listener');
     global.VideoDecoder = saved;
+});
+
+function streamLayoutFixture(t, platform, legacy = false) {
+    const { element } = installBrowserMocks();
+    let client;
+    t.after(() => client?.stop());
+    const layout = { width: 380, height: 780 };
+    const observers = [];
+    const windowListeners = new Map();
+    const createElement = () => ({
+        ...element(),
+        children: [],
+        get clientWidth() {
+            return this.className === 'video' ? layout.width : 1000;
+        },
+        get clientHeight() {
+            return this.className === 'video' ? layout.height : 950;
+        },
+        appendChild(child) {
+            this.children.push(child);
+            child.parentElement = this;
+        },
+        removeChild(child) {
+            this.children.splice(this.children.indexOf(child), 1);
+            child.parentElement = null;
+        },
+        remove() {
+            this.parentElement?.removeChild(this);
+        },
+    });
+    const body = createElement();
+    const globals = {
+        document: { ...global.document, body, createElement, querySelector: () => ({}) },
+        location: new URL('http://localhost:8000/'),
+        addEventListener: (event, listener) => windowListeners.set(event, listener),
+        removeEventListener: (event) => windowListeners.delete(event),
+        getComputedStyle: () => ({
+            paddingLeft: '10px',
+            paddingRight: '10px',
+            paddingTop: '8px',
+            paddingBottom: '24px',
+        }),
+        WebSocket: class {},
+        ResizeObserver: legacy
+            ? undefined
+            : class {
+                  disconnected = false;
+                  constructor(callback) {
+                      this.callback = callback;
+                      observers.push(this);
+                  }
+                  observe(target) {
+                      this.target = target;
+                  }
+                  disconnect() {
+                      this.disconnected = true;
+                  }
+              },
+    };
+    for (const [key, value] of Object.entries(globals)) {
+        const previous = Object.getOwnPropertyDescriptor(global, key);
+        Object.defineProperty(global, key, { configurable: true, writable: true, value });
+        t.after(() => (previous ? Object.defineProperty(global, key, previous) : delete global[key]));
+    }
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const Size = require('../src/app/Size').default;
+    const VideoSettings = require('../src/app/VideoSettings').default;
+    const bounds = [];
+    let settings = new VideoSettings({ bounds: new Size(720, 1280), bitrate: 4000000, maxFps: 60 });
+    const player = {
+        getName: () => 'Layout fixture',
+        getVideoSettings: () => settings,
+        getScreenInfo: () => ({ videoSize: new Size(720, 1280) }),
+        getTouchableElement: createElement,
+        setVideoSettings(next) {
+            settings = next;
+            bounds.push(next.bounds);
+        },
+        setBounds(next) {
+            bounds.push(next);
+        },
+        setParent() {},
+        pause() {},
+        stop() {},
+    };
+    const controls = { clientWidth: 280, clientHeight: 460 };
+    const toolbox = { getHolderElement: () => controls, release() {} };
+    const params = { action: 'stream', udid: `layout-${platform}`, player: 'fixture', captureKeyboard: false };
+    const mount = legacy ? undefined : createElement();
+    if (platform === 'ios') {
+        const { StreamClientCoreDevice } = require('../src/app/applDevice/client/StreamClientCoreDevice');
+        const { CoreDeviceReceiver } = require('../src/app/applDevice/client/CoreDeviceReceiver');
+        const { ApplToolBox } = require('../src/app/applDevice/toolbox/ApplToolBox');
+        t.mock.method(CoreDeviceReceiver.prototype, 'openNewConnection', () => undefined);
+        t.mock.method(ApplToolBox, 'createToolBox', () => toolbox);
+        client = StreamClientCoreDevice.start(params, mount);
+        client.player = player;
+        client.applyBounds();
+    } else {
+        const { StreamClientScrcpy } = require('../src/app/googDevice/client/StreamClientScrcpy');
+        const { GoogToolBox } = require('../src/app/googDevice/toolbox/GoogToolBox');
+        t.mock.method(GoogToolBox, 'createToolBox', () => toolbox);
+        t.mock.method(StreamClientScrcpy.prototype, 'setTouchListeners', () => {});
+        const receiver = Object.assign(new EventEmitter(), { isReady: () => true, stop() {} });
+        client = StreamClientScrcpy.start(params, receiver, player, true, undefined, mount);
+    }
+    return { client, layout, observers, windowListeners, bounds, body, mount };
+}
+
+for (const platform of ['ios', 'android']) {
+    test(`browser side: ${platform} stream bounds follow the video content box and stop observing on teardown`, (t) => {
+        const { client, layout, observers, windowListeners, bounds } = streamLayoutFixture(t, platform);
+        const lastBounds = () => [bounds.at(-1).width, bounds.at(-1).height];
+        assert.deepEqual(
+            lastBounds(),
+            [352, 736],
+            'exclude surrounding header, controls and safe areas, then wrapper padding',
+        );
+        assert.equal(observers.length, 1);
+        assert.equal(observers[0].target, client.videoWrapper, 'observe the actual video area');
+        Object.assign(layout, { width: 876, height: 410 });
+        observers[0].callback();
+        t.mock.timers.tick(300);
+        assert.deepEqual(lastBounds(), [848, 368], 'element-only changes update the existing player');
+        const visibleCount = bounds.length;
+        Object.assign(layout, { width: 0, height: 0 });
+        observers[0].callback();
+        t.mock.timers.tick(300);
+        assert.equal(bounds.length, visibleCount, 'hidden layout does not overwrite useful playback bounds');
+        if (platform === 'android') {
+            client.setFitToScreen(false);
+            assert.deepEqual(lastBounds(), [720, 1280], 'native-size mode retains the device size');
+            Object.assign(layout, { width: 500, height: 700 });
+            const nativeCount = bounds.length;
+            observers[0].callback();
+            t.mock.timers.tick(300);
+            assert.equal(bounds.length, nativeCount, 'layout changes do not turn fitting back on');
+            client.setFitToScreen(true);
+            assert.deepEqual(lastBounds(), [480, 656], 're-enabling fitting uses the current wrapper');
+        }
+        Object.assign(layout, { width: 900, height: 600 });
+        observers[0].callback();
+        const pendingCount = bounds.length;
+        client.stop();
+        t.mock.timers.tick(300);
+        assert.equal(bounds.length, pendingCount, 'teardown cancels a queued bounds update');
+        assert.equal(observers[0].disconnected, true);
+        assert.equal(windowListeners.has('resize'), false);
+    });
+
+    test(`browser side: ${platform} direct-body streams retain the window resize fallback`, (t) => {
+        const { client, layout, observers, windowListeners, bounds, body } = streamLayoutFixture(t, platform, true);
+        assert.equal(client.deviceView.parentElement, body);
+        assert.equal(observers.length, 0);
+        Object.assign(layout, { width: 876, height: 410 });
+        windowListeners.get('resize')();
+        t.mock.timers.tick(300);
+        assert.deepEqual([bounds.at(-1).width, bounds.at(-1).height], [848, 368]);
+    });
+}
+
+test('browser side: multitouch preserves identities, releases individual fingers, limits to five and cancels on blur', () => {
+    installBrowserMocks();
+    const listeners = {};
+    global.window.addEventListener = (name, fn) => { listeners[name] = fn; };
+    global.window.removeEventListener = (name) => { delete listeners[name]; };
+    const canvas = { getContext: () => ({}), addEventListener() {}, removeEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0 }), clientWidth: 100, clientHeight: 100 };
+    const Size = require('../src/app/Size').default;
+    const player = { getTouchableElement: () => canvas, getScreenInfo: () => ({ videoSize: new Size(1000, 1000) }) };
+    const sent = [];
+    const { CoreDeviceInteractionHandler } = require('../src/app/applDevice/CoreDeviceInteractionHandler');
+    const frames = [];
+    global.requestAnimationFrame = (fn) => frames.push(fn);
+    global.cancelAnimationFrame = () => frames.splice(0);
+    const handler = new CoreDeviceInteractionHandler(player, { sendContacts: contacts => sent.push(contacts), sendTouch: () => assert.fail('touches use contact frames') });
+    const touch = (identifier, clientX = 50) => ({ identifier, clientX, clientY: 50 });
+    const dispatch = (type, ...changedTouches) => handler.onTouch({ type, changedTouches, preventDefault() {} });
+    dispatch('touchstart', touch(10));
+    dispatch('touchstart', touch(20));
+    assert.deepEqual(sent.at(-1).map(c => c.id), [0, 1]);
+    dispatch('touchmove', touch(20, 60));
+    dispatch('touchmove', touch(20, 70));
+    assert.equal(frames.length, 1, 'moves coalesce');
+    frames.splice(0).forEach(fn => fn());
+    assert.equal(sent.at(-1)[1].x, 700);
+    dispatch('touchend', touch(10));
+    assert.deepEqual(sent.at(-1).map(c => [c.id, c.touching]), [[0, false], [1, true]]);
+    dispatch('touchstart', touch(30));
+    assert.deepEqual(sent.at(-1).map(c => c.id), [1, 0], 'released identity can be reused without renumbering the other finger');
+    dispatch('touchstart', touch(40), touch(50), touch(60), touch(70));
+    assert.equal(sent.at(-1).length, 5);
+    listeners.blur();
+    assert.equal(sent.at(-1).length, 5);
+    assert.ok(sent.at(-1).every(c => !c.touching));
+    dispatch('touchstart', touch(80));
+    dispatch('touchcancel', touch(80));
+    assert.deepEqual(sent.at(-1).map(c => [c.id, c.touching]), [[0, false]]);
+    handler.release();
 });
 
 test('browser side: a mouse button released outside the canvas still ends the touch', () => {

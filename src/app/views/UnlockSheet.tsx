@@ -186,9 +186,7 @@ export function UnlockSheet({
                 autoComplete="off"
                 onKeyUp={(event) => event.stopPropagation()}
             >
-                <p class="unlock-sheet-intro">
-                    Enter the device’s PIN or password. We’ll open its lock-screen keypad before sending.
-                </p>
+                <p class="unlock-sheet-intro">Enter the device’s PIN or password.</p>
                 {keyguardOccluded === true && (
                     <p class="unlock-sheet-feedback warning" role="status">
                         Another screen is covering the device lock. Return to the lock screen before sending a passcode.
@@ -239,7 +237,7 @@ export function UnlockSheet({
                     />
                 </label>
                 <p id="unlock-input-hint" class="unlock-sheet-hint">
-                    Masked here and cleared after sending. Nothing is sent while you type.
+                    Sent only when you submit, then cleared.
                 </p>
                 <div
                     id="unlock-feedback"
@@ -264,10 +262,7 @@ export function UnlockSheet({
                         </button>
                     )}
                 </div>
-                <p class="unlock-sheet-hint">
-                    For a pattern lock, close this panel and draw on the remote screen if it is visible. Otherwise,
-                    unlock on the device.
-                </p>
+                <p class="unlock-sheet-hint">For a pattern lock, draw on the remote screen or unlock on the device.</p>
             </form>
         </BottomSheet>
     );

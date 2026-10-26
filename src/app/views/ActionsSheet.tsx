@@ -106,7 +106,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                 <SheetGroup title="Clipboard">
                     <SheetRow
                         title="Read the device's clipboard"
-                        description="Shows what the device last copied. Copy here puts it on this browser's clipboard."
+                        description="Copy from the device to this browser."
                         layout="pair"
                     >
                         <button
@@ -140,14 +140,14 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                     )}
                     <SheetRow
                         title="Paste text on the device"
-                        description="Tap a field on the device first. The text is pasted there straight away."
+                        description="Tap a field on the device, then paste."
                         layout="stack"
                     >
                         <textarea
                             id="device-paste-text"
                             class="sheet-input actions-paste-input"
                             aria-label="Text to paste on device"
-                            placeholder="Type or paste your text here…"
+                            placeholder="Type or paste text…"
                             value={clipboardDraft}
                             rows={3}
                             onInput={(event) => setClipboardDraft(event.currentTarget.value)}
@@ -165,7 +165,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                 {clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>}
 
                 <SheetGroup title="Device panels">
-                    <SheetRow title="Notifications" description="Pulls the notification shade down.">
+                    <SheetRow title="Notifications">
                         <button
                             type="button"
                             class="sheet-button"
@@ -175,7 +175,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                             Open
                         </button>
                     </SheetRow>
-                    <SheetRow title="Quick settings" description="Opens the quick settings tiles.">
+                    <SheetRow title="Quick settings">
                         <button
                             type="button"
                             class="sheet-button"
@@ -185,7 +185,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                             Open
                         </button>
                     </SheetRow>
-                    <SheetRow title="Collapse panels" description="Closes whichever panel is open.">
+                    <SheetRow title="Collapse panels">
                         <button
                             type="button"
                             class="sheet-button"
@@ -198,10 +198,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                 </SheetGroup>
 
                 <SheetGroup title="Session">
-                    <SheetRow
-                        title="Sound and stream quality"
-                        description="Listen in this browser, set the volume, and change capture quality for every viewer."
-                    >
+                    <SheetRow title="Sound and stream quality">
                         <button
                             type="button"
                             class="sheet-button"
@@ -217,10 +214,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                         </button>
                     </SheetRow>
                     {lockActive && (
-                        <SheetRow
-                            title="Unlock device"
-                            description="The device is locked. Enter its PIN or password from here."
-                        >
+                        <SheetRow title="Unlock device" description="Enter the device PIN or password.">
                             <button
                                 type="button"
                                 class="sheet-button"
@@ -231,10 +225,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                             </button>
                         </SheetRow>
                     )}
-                    <SheetRow
-                        title="Disconnect"
-                        description="Returns to your devices. Other viewers keep their stream; file uploads live under Files."
-                    >
+                    <SheetRow title="Disconnect" description="Return to devices.">
                         <button type="button" class="sheet-button danger" onClick={goToDeviceList}>
                             Disconnect
                         </button>

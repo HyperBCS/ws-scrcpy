@@ -1,3 +1,4 @@
+import { NotificationsView } from './NotificationsView';
 import { useEffect } from 'preact/hooks';
 import '../ui/viewport';
 import { route } from '../state/router';
@@ -10,6 +11,7 @@ import { isToolAction, ToolView } from './ToolView';
 import { CoreDeviceStreamView } from './CoreDeviceStreamView';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
 import { ACTION } from '../../common/Action';
+import { startNotificationSummary } from '../state/notifications';
 
 export function App() {
     // Started here, not in `DeviceList`: opening a stream deep link directly (or just reloading
@@ -18,10 +20,12 @@ export function App() {
     // the stream-settings button, the device switcher, and the sleep overlay's screen state.
     useEffect(() => {
         startHostTracker();
+        return startNotificationSummary();
     }, []);
 
     const params = route.value;
     let view;
+    if (params.get('action') === 'notifications') view = <NotificationsView />;
 
     if (params.get('action') === StreamClientScrcpy.ACTION && params.get('udid')) {
         try {

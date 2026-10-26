@@ -1,3 +1,4 @@
+import { AnimatedDetails } from '../ui/AnimatedDetails';
 import { useEffect, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { SheetGroup, SheetRow, SheetStatus, SheetToggleRow, SoundRows } from '../ui/SheetControls';
@@ -141,7 +142,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
             setPower(
                 action === 'reboot'
                     ? 'Press Confirm reboot to go ahead. The stream reconnects once the phone is back.'
-                    : 'Press Confirm shut down to go ahead. You will have to power the phone on by hand.',
+                    : 'Press Confirm shut down to go ahead. Power it on using the phone’s button.',
             );
             return;
         }
@@ -225,11 +226,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 </SheetGroup>
 
                 <SheetGroup title="Screen">
-                    <SheetRow
-                        title="Rotate"
-                        description="Turns the phone's display. Apps that lock their orientation ignore it."
-                        layout="pair"
-                    >
+                    <SheetRow title="Rotate" description="Apps with a fixed orientation may ignore this." layout="pair">
                         <button
                             type="button"
                             class="sheet-button"
@@ -247,10 +244,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             Right
                         </button>
                     </SheetRow>
-                    <SheetRow
-                        title="Refresh picture"
-                        description="Asks the phone for a fresh keyframe. Use it when the picture smears."
-                    >
+                    <SheetRow title="Refresh picture" description="Refresh a smeared picture.">
                         <button
                             type="button"
                             class="sheet-button"
@@ -263,10 +257,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             Refresh
                         </button>
                     </SheetRow>
-                    <SheetRow
-                        title="Restart picture"
-                        description="Rebuilds the video in the current session. Use it when the picture is frozen or broken."
-                    >
+                    <SheetRow title="Restart picture" description="Restart frozen or broken video.">
                         <button
                             type="button"
                             class="sheet-button"
@@ -278,10 +269,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             Restart
                         </button>
                     </SheetRow>
-                    <SheetRow
-                        title="Restart session"
-                        description="Reconnects everything. Use it when the picture is fine but touch or the keyboard stopped responding. (The clipboard has its own recovery and does not need this.)"
-                    >
+                    <SheetRow title="Restart session" description="Reconnect video, touch and keyboard.">
                         <button
                             type="button"
                             class="sheet-button"
@@ -297,10 +285,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 {screenNote && <SheetStatus>{screenNote}</SheetStatus>}
 
                 <SheetGroup title="Keyboard">
-                    <SheetRow
-                        title="Type text"
-                        description="Opens a field here and types each character on the phone as you enter it, so it works from a phone browser too."
-                    >
+                    <SheetRow title="Type text">
                         <button
                             type="button"
                             class="sheet-button"
@@ -312,7 +297,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     </SheetRow>
                     <SheetToggleRow
                         title="Send this computer's keystrokes"
-                        description="Keys pressed on this page reach the phone as a hardware keyboard. Turn it off to type in the browser normally."
+                        description="Send this keyboard’s keys to the phone."
                         checked={keyboard}
                         onChange={onKeyboardToggle}
                     />
@@ -321,7 +306,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 <SheetGroup title="Lock screen">
                     <SheetRow
                         title="Unlock with passcode"
-                        description="Typed on the phone's keypad and not saved. Works once the phone has been unlocked by hand since it last rebooted."
+                        description="Not saved. After a reboot, unlock once on the phone first."
                         layout="stack"
                     >
                         <input
@@ -349,7 +334,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 <SheetGroup title="Clipboard">
                     <SheetRow
                         title="Read the phone's clipboard"
-                        description="Shows what the phone last copied. Copy here puts it on this browser's clipboard."
+                        description="Copy from the phone to this browser."
                         layout="pair"
                     >
                         <button
@@ -383,14 +368,14 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     )}
                     <SheetRow
                         title="Send text to the phone"
-                        description="Lands on the phone's clipboard. Long-press a field on the phone and choose Paste."
+                        description="Copy to the phone, then paste in a field."
                         layout="stack"
                     >
                         <textarea
                             id="ios-clipboard-text"
                             class="sheet-input actions-paste-input"
                             aria-label="Text for the device clipboard"
-                            placeholder="Type or paste your text here…"
+                            placeholder="Type or paste text…"
                             value={clipboardDraft}
                             rows={3}
                             onInput={(event) => setClipboardDraft(event.currentTarget.value)}
@@ -410,7 +395,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 <SheetGroup title="Phone" hint={phoneSummary}>
                     <SheetRow
                         title="Reboot"
-                        description="Takes about a minute; the stream reconnects on its own. A phone with a passcode must be unlocked by hand before it reappears."
+                        description="Reconnects after restarting. If a passcode is set, unlock on the phone."
                     >
                         <button
                             type="button"
@@ -420,7 +405,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             {confirming === 'reboot' ? 'Confirm reboot' : 'Reboot'}
                         </button>
                     </SheetRow>
-                    <SheetRow title="Shut down" description="You will have to power the phone on by hand.">
+                    <SheetRow title="Shut down" description="Power it on using the phone’s button.">
                         <button
                             type="button"
                             class={`sheet-button ${confirming === 'shutdown' ? 'danger' : ''}`}
@@ -432,7 +417,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 </SheetGroup>
                 {power && <SheetStatus tone={confirming ? 'warning' : 'neutral'}>{power}</SheetStatus>}
 
-                <details class="sheet-details">
+                <AnimatedDetails class="sheet-details">
                     <summary>
                         Troubleshooting<span>services and diagnostics</span>
                     </summary>
@@ -454,10 +439,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                                   : 'unknown'}
                         </dd>
                     </dl>
-                    <SheetRow
-                        title="Restart services"
-                        description="Starts a fresh helper process on the server. Fixes touch, keyboard or clipboard that stopped responding."
-                    >
+                    <SheetRow title="Restart services" description="Restart unresponsive touch, keyboard or clipboard.">
                         <button
                             type="button"
                             class="sheet-button"
@@ -475,7 +457,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     </SheetRow>
                     <SheetRow
                         title="Remount developer image"
-                        description="Reloads the image the screen and touch services live in. Use it when the screen will not start at all."
+                        description="Reload developer services if the screen won’t start."
                     >
                         <button
                             type="button"
@@ -492,10 +474,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             Remount
                         </button>
                     </SheetRow>
-                    <SheetRow
-                        title="Refresh info"
-                        description="Reads the phone's pairing and Developer Mode state again."
-                    >
+                    <SheetRow title="Refresh info" description="Check pairing and Developer Mode.">
                         <button
                             type="button"
                             class="sheet-button"
@@ -512,7 +491,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         </button>
                     </SheetRow>
                     {debugNote && <SheetStatus>{debugNote}</SheetStatus>}
-                </details>
+                </AnimatedDetails>
 
                 <div class="sheet-footer">
                     <button type="button" class="sheet-button" onClick={goToDeviceList}>

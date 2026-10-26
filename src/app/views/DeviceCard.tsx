@@ -1,3 +1,5 @@
+import { Presence } from '../ui/Presence';
+import { AnimatedDetails } from '../ui/AnimatedDetails';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { DeviceEntry, deviceName } from '../state/devices';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
@@ -24,6 +26,8 @@ import { openSettingsSheet } from '../state/settingsSheet';
 import { isToolAction } from './ToolView';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { hasRunningStreamService } from '../state/streamService';
+import { notificationSummary } from '../state/notifications';
+import { UnreadBadge } from './NotificationHistory';
 import { DeviceIcon } from '../ui/DeviceIcon';
 
 function collectTools(tools: Set<Tool>, descriptor: GoogDeviceDescriptor | ApplDeviceDescriptor): ToolEntry[] {
@@ -188,7 +192,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                 )}
             </div>
             {isActive && (
-                <details class="device-details">
+                <AnimatedDetails class="device-details">
                     <summary>Connection &amp; tools</summary>
                     <div class="device-details-content">
                         <label class="device-interface">
@@ -249,7 +253,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                             ))}
                         </div>
                     </div>
-                </details>
+                </AnimatedDetails>
             )}
         </article>
     );
@@ -386,6 +390,13 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                     </button>
                 )}
             </div>
+            <a
+                class="device-notification-history"
+                href={`#!${new URLSearchParams({ action: 'notifications', source: descriptor.udid })}`}
+            >
+                Notification history{' '}
+                <UnreadBadge count={notificationSummary.value.unreadBySource[descriptor.udid] || 0} />
+            </a>
             <div class="device-debug">
                 <button
                     type="button"
@@ -395,73 +406,67 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                 >
                     {debugOpen ? '▾' : '▸'} Debug
                 </button>
-                {debugOpen && (
-                    <div class="device-debug-body">
-                        <dl class="device-debug-facts">
-                            <dt>Session</dt>
-                            <dd>{session}</dd>
-                            <dt>Paired</dt>
-                            <dd>{descriptor.paired === false ? 'no' : 'yes'}</dd>
-                            <dt>Developer Mode</dt>
-                            <dd>
-                                {developerMode === 'unknown' || developerMode === undefined
-                                    ? 'unknown'
-                                    : developerMode
-                                      ? 'on'
-                                      : 'off'}
-                            </dd>
-                        </dl>
-                        <p class="device-unavailable-hint">
-                            Restart services when the picture works but touch, the keyboard or the clipboard do not.
-                            Remount when the phone has rebooted or the screen will not start at all.
-                        </p>
-                        <div class="device-debug-actions">
-                            <button
-                                type="button"
-                                class="action-button"
-                                disabled={!!busy || !isActive}
-                                title="Ends the phone session so the next viewer gets a fresh one"
-                                onClick={() =>
-                                    runCommand(
-                                        ControlCenterCommand.RESTART_SESSION,
-                                        'Restarting services',
-                                        'Services restarted. Open the screen again.',
-                                    )
-                                }
-                            >
-                                Restart services
-                            </button>
-                            <button
-                                type="button"
-                                class="action-button"
-                                disabled={!!busy || !isActive}
-                                onClick={() =>
-                                    runCommand(
-                                        ControlCenterCommand.REMOUNT_DDI,
-                                        'Remounting the developer image',
-                                        'Developer image mounted.',
-                                    )
-                                }
-                            >
-                                Remount developer image
-                            </button>
-                            <button
-                                type="button"
-                                class="action-button"
-                                disabled={!!busy}
-                                onClick={() =>
-                                    runCommand(
-                                        ControlCenterCommand.REFRESH_DEVICE,
-                                        'Refreshing',
-                                        'Device info refreshed.',
-                                    )
-                                }
-                            >
-                                Refresh info
-                            </button>
-                        </div>
+                <Presence show={debugOpen} kind="collapse" class="device-debug-body">
+                    <dl class="device-debug-facts">
+                        <dt>Session</dt>
+                        <dd>{session}</dd>
+                        <dt>Paired</dt>
+                        <dd>{descriptor.paired === false ? 'no' : 'yes'}</dd>
+                        <dt>Developer Mode</dt>
+                        <dd>
+                            {developerMode === 'unknown' || developerMode === undefined
+                                ? 'unknown'
+                                : developerMode
+                                  ? 'on'
+                                  : 'off'}
+                        </dd>
+                    </dl>
+                    <p class="device-unavailable-hint">
+                        Restart services when the picture works but touch, the keyboard or the clipboard do not. Remount
+                        when the phone has rebooted or the screen will not start at all.
+                    </p>
+                    <div class="device-debug-actions">
+                        <button
+                            type="button"
+                            class="action-button"
+                            disabled={!!busy || !isActive}
+                            title="Ends the phone session so the next viewer gets a fresh one"
+                            onClick={() =>
+                                runCommand(
+                                    ControlCenterCommand.RESTART_SESSION,
+                                    'Restarting services',
+                                    'Services restarted. Open the screen again.',
+                                )
+                            }
+                        >
+                            Restart services
+                        </button>
+                        <button
+                            type="button"
+                            class="action-button"
+                            disabled={!!busy || !isActive}
+                            onClick={() =>
+                                runCommand(
+                                    ControlCenterCommand.REMOUNT_DDI,
+                                    'Remounting the developer image',
+                                    'Developer image mounted.',
+                                )
+                            }
+                        >
+                            Remount developer image
+                        </button>
+                        <button
+                            type="button"
+                            class="action-button"
+                            disabled={!!busy}
+                            onClick={() =>
+                                runCommand(ControlCenterCommand.REFRESH_DEVICE, 'Refreshing', 'Device info refreshed.')
+                            }
+                        >
+                            Refresh info
+                        </button>
                     </div>
-                )}
+                </Presence>
             </div>
         </article>
     );

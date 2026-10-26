@@ -1,3 +1,4 @@
+import { registerNotificationWorker } from './state/notifications';
 import '../style/tokens.css';
 import '../style/app.css';
 import { render } from 'preact';
@@ -11,6 +12,8 @@ import type { AudioFrame } from './client/audioPacket';
 import type { AudioMetadata } from '../common/AudioProtocol';
 
 window.onload = async function (): Promise<void> {
+    if (window.isSecureContext && 'serviceWorker' in navigator)
+        void registerNotificationWorker().catch(() => undefined);
     /// #if USE_H264_CONVERTER
     const { MsePlayer } = await import('./player/MsePlayer');
     StreamClientScrcpy.registerPlayer(MsePlayer);
