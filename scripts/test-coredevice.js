@@ -2086,17 +2086,32 @@ test('a Lock tap holds for 300 ms, above the ignored 120 ms pulse and below the 
     t.mock.timers.enable({ apis: ['setTimeout'] });
     t.mock.method(DeviceStateMonitor.getInstance(), 'pokeButton', () => {});
     const edges = [];
+    let confirmDown;
     const proxy = Object.create(CoreDeviceProxy.prototype);
     proxy.udid = 'fixture-lock';
     proxy.runner = { request: async (_udid, _method, _path, body) => {
-        edges.push(JSON.parse(body).state); return { status: 200, body: 'ok' };
+        const edge = JSON.parse(body).state;
+        edges.push(edge);
+        if (edge === 'down') await new Promise(resolve => { confirmDown = resolve; });
+        return { status: 200, body: 'ok' };
     } };
     const pressed = proxy.handle({ type: 'button', name: 'lock', state: 'press' });
-    await Promise.resolve();
+    t.mock.timers.tick(1000); await Promise.resolve();
+    assert.deepEqual(edges, ['down'], 'startup time is not counted as part of the button hold');
+    confirmDown(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     t.mock.timers.tick(299); await Promise.resolve();
     assert.deepEqual(edges, ['down']);
     t.mock.timers.tick(1); await pressed;
     assert.deepEqual(edges, ['down', 'up']);
+    edges.length = 0;
+    proxy.runner.request = async (_udid, _method, _path, body) => {
+        const edge = JSON.parse(body).state; edges.push(edge);
+        return { status: edge === 'down' ? 503 : 200, body: '' };
+    };
+    await assert.rejects(proxy.handle({ type: 'button', name: 'lock', state: 'press' }), /rejected/);
+    assert.deepEqual(edges, ['down', 'up'], 'failed or uncertain DOWN still releases the button');
+    proxy.runner.request = async () => ({ status: 503, body: '' });
+    await assert.rejects(proxy.handle({ type: 'button', name: 'lock', state: 'up' }), /rejected/);
 });
 
 test('Home and Lock are sent as a held down/up pair, because serve-web\'s own press is too short', async () => {

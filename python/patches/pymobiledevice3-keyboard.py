@@ -61,7 +61,7 @@ def patch_stream_initial(source):
     return source
 
 
-def patch_stream(source):
+def patch_stream_v2(source):
     source = patch_stream_initial(source)
     if VERSION_MARKER in source:
         return source
@@ -121,6 +121,21 @@ def patch_stream(source):
                 return
 
             if method == "POST" and path in ("/touch", "/button", "/key"):''')
+    return source
+
+
+def patch_stream(source):
+    source = patch_stream_v2(source)
+    marker = '# ws-scrcpy button completion'
+    if marker in source:
+        return source
+    # The proxy measures each button hold after DOWN reaches the phone. A queue
+    # acknowledgement can arrive before HID connects, collapsing DOWN/UP together.
+    source = replace_once(source, '            if method == "POST" and path == "/keyboard/detach":',
+                          f'''            {marker}
+            if method == "POST" and path in ("/keyboard/detach", "/button"):''')
+    for suffix in ('timed out', 'interrupted', 'failed'):
+        source = source.replace(f'Keyboard disconnect {suffix}', f'Device input {suffix}')
     return source
 
 

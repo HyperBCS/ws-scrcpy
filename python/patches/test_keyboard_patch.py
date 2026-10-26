@@ -91,8 +91,10 @@ class Harness:
 class NativeQueueTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         source = patch.patch_stream(native_paths[0].read_text())
-        names = {'_hid_worker', '_handle_key', '_handle_keyboard_detach', '_stop_hid', '_serve_connection'}
-        self.scope = {'asyncio': asyncio, 'contextlib': contextlib, 'json': json, 'logger': logger}
+        self.assertEqual(patch.patch_stream(source), source)
+        names = {'_hid_worker', '_handle_key', '_handle_button', '_handle_keyboard_detach', '_stop_hid', '_serve_connection'}
+        self.scope = {'asyncio': asyncio, 'contextlib': contextlib, 'json': json, 'logger': logger,
+                      '_NAMED_BUTTONS': {'lock': (1, 2, 0.5)}, 'HID_BUTTON_STATE_DOWN': 1, 'HID_BUTTON_STATE_UP': 0}
         native = methods(source, names, self.scope)
         self.server = type('PatchedNativeHarness', (Harness,), native)()
         self.tasks = []
@@ -109,15 +111,53 @@ class NativeQueueTests(unittest.IsolatedAsyncioTestCase):
         self.tasks.append(task)
         return task
 
-    async def request(self):
+    async def request(self, path='/keyboard/detach', body=b''):
         reader = asyncio.StreamReader()
-        reader.feed_data(b'POST /keyboard/detach HTTP/1.1\r\nContent-Length: 0\r\n\r\n')
+        reader.feed_data(f'POST {path} HTTP/1.1\r\nContent-Length: {len(body)}\r\n\r\n'.encode() + body)
         reader.feed_eof()
         writer = Writer()
         task = asyncio.create_task(self.server._serve_connection(reader, writer))
         self.tasks.append(task)
         await asyncio.sleep(0)
         return task, writer
+
+    async def test_button_reply_waits_for_hid_startup_and_the_actual_edge(self):
+        connecting, connected = asyncio.Event(), asyncio.Event()
+        edges = []
+
+        async def ensure_hid():
+            connecting.set()
+            await connected.wait()
+
+        class Buttons:
+            async def send_button(self, page, usage, state):
+                edges.append(state)
+
+        self.server._ensure_hid = ensure_hid
+        self.server._indigo = Buttons()
+        self.worker()
+        down, writer = await self.request('/button', b'{"name":"lock","state":"down"}')
+        await connecting.wait()
+        self.assertFalse(writer.data, 'DOWN must not be acknowledged while HID is still connecting')
+        self.assertEqual(edges, [])
+        connected.set()
+        await down
+        self.assertTrue(writer.data.startswith(b'HTTP/1.1 200 OK\r\n'))
+        self.assertEqual(edges, [1])
+        up, writer = await self.request('/button', b'{"name":"lock","state":"up"}')
+        await up
+        self.assertTrue(writer.data.startswith(b'HTTP/1.1 200 OK\r\n'))
+        self.assertEqual(edges, [1, 0])
+
+    async def test_button_failure_is_reported_instead_of_acknowledging_the_queue(self):
+        async def ensure_hid():
+            raise RuntimeError('private native error')
+        self.server._ensure_hid = ensure_hid
+        self.worker()
+        request, writer = await self.request('/button', b'{"name":"lock","state":"down"}')
+        await request
+        self.assertTrue(writer.data.startswith(b'HTTP/1.1 503 '))
+        self.assertNotIn(b'private native error', writer.data)
 
     async def test_http_200_waits_for_completed_detach(self):
         self.server._keyboard.gate = asyncio.Event()

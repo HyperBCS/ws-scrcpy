@@ -45,9 +45,8 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 // A healthy HID post answers in milliseconds; anything longer is a wedged channel, and a queue of
 // typed characters must not sit behind the default 15 s for each of them.
 const INPUT_TIMEOUT_MS = 4000;
-// Detach waits for actual native removal and close, bounded at 8 s by serve-web. Leave room
-// for that completion response so a busy input queue does not trigger a premature restart.
-const KEYBOARD_DETACH_TIMEOUT_MS = 10000;
+// Button edges and keyboard detach wait for native completion, bounded at 8 s by serve-web.
+const INPUT_COMPLETION_TIMEOUT_MS = 10000;
 // Typing bursts are a few hundred reports; a backlog beyond this means the phone stopped
 // answering, and stale input aimed at an old picture is worse than dropped input.
 const MAX_QUEUED_INPUT = 512;
@@ -433,6 +432,8 @@ export class CoreDeviceProxy extends Mw {
                 // A failed report may have reached the phone with a modifier still held.
                 // Teardown retains keyboard ownership until the native keyboard is removed.
                 this.failSession(`Keyboard input failed: ${error.message}`);
+            } else if (message.type === 'button') {
+                this.failSession(`Button input failed: ${error.message}`);
             } else if ('id' in message && typeof message.id === 'number') {
                 this.send({ type: 'result', id: message.id, ok: false, error: error.message });
             } else if (message.type === 'clipboard') {
@@ -555,32 +556,35 @@ export class CoreDeviceProxy extends Mw {
                 if (state === 'press' && (message.name === 'lock' || message.name === 'home')) {
                     // Both need a hold serve-web's `press` will not give them (see the constants).
                     const holdMs = message.name === 'lock' ? LOCK_TAP_MS : HOME_PRESS_MS;
-                    const send = (edge: 'down' | 'up') =>
-                        this.runner.request(
+                    const send = async (edge: 'down' | 'up') => {
+                        const reply = await this.runner.request(
                             this.udid,
                             'POST',
                             '/button',
                             JSON.stringify({ name: message.name, state: edge }),
-                            INPUT_TIMEOUT_MS,
+                            INPUT_COMPLETION_TIMEOUT_MS,
                         );
-                    await send('down');
+                        if (reply.status !== 200) throw Error('The phone rejected the button press');
+                    };
                     try {
+                        await send('down');
                         await new Promise((resolve) => setTimeout(resolve, holdMs));
                     } finally {
                         // Always release: a button left down is a stuck Home or a phone that
                         // eventually answers the long press with Siri.
-                        await send('up').catch(() => undefined);
+                        await send('up');
                     }
                     DeviceStateMonitor.getInstance().pokeButton(this.udid);
                     return;
                 }
-                await this.runner.request(
+                const reply = await this.runner.request(
                     this.udid,
                     'POST',
                     '/button',
                     JSON.stringify({ name: message.name, state }),
-                    INPUT_TIMEOUT_MS,
+                    INPUT_COMPLETION_TIMEOUT_MS,
                 );
+                if (reply.status !== 200) throw Error('The phone rejected the button press');
                 if (state !== 'down') {
                     // Lock sleeps or wakes the phone, Home leaves the lock screen once unlocked.
                     DeviceStateMonitor.getInstance().pokeButton(this.udid);
@@ -667,7 +671,7 @@ export class CoreDeviceProxy extends Mw {
                 'POST',
                 '/keyboard/detach',
                 undefined,
-                KEYBOARD_DETACH_TIMEOUT_MS,
+                INPUT_COMPLETION_TIMEOUT_MS,
             );
             if (reply.status !== 200) throw Error('The phone could not disconnect the keyboard');
             this.keyboardPressed = false;
