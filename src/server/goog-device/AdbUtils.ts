@@ -87,23 +87,9 @@ export class AdbUtils {
     }
 
     public static async pipePullFile(serial: string, pathString: string): Promise<PullTransfer> {
-        const client = AdbExtended.createClient();
-        const transfer = await client.pull(serial, pathString);
-
-        transfer.on('progress', function (stats) {
-            console.log('[%s] [%s] Pulled %d bytes so far', serial, pathString, stats.bytesTransferred);
-        });
-        transfer.on('end', function () {
-            console.log('[%s] [%s] Pull complete', serial, pathString);
-        });
-        return new Promise((resolve, reject) => {
-            transfer.on('readable', () => {
-                resolve(transfer);
-            });
-            transfer.on('error', (e) => {
-                reject(e);
-            });
-        });
+        // Return ownership immediately. A retained `readable` listener prevents pipeline's
+        // flowing mode, and waiting for a first chunk also strands empty-file downloads.
+        return AdbExtended.createClient().pull(serial, pathString);
     }
 
     /**

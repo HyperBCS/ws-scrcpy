@@ -255,3 +255,15 @@ test('file download buffers include pending Blob URLs in their memory bound', ()
         assert.equal(downloads.buffers.size, 0); assert.equal(links.filter(link => link.startsWith('https:')).length, 3);
     } finally { downloads.release(); global.document = previous; }
 });
+
+test('ADB pull ownership is returned before bytes arrive and supports an empty file', async () => {
+    const { AdbExtended } = require('../src/server/goog-device/adb');
+    const original = AdbExtended.createClient, transfer = pull();
+    AdbExtended.createClient = () => ({ pull: async () => transfer });
+    try {
+        const result = await Promise.race([AdbUtils.pipePullFile('fake', '/empty'), new Promise((_, reject) => setTimeout(() => reject(Error('waited for data before returning ownership')), 100))]);
+        assert.equal(result, transfer); assert.equal(result.listenerCount('readable'), 0);
+        const channel = new Socket(); const work = sendFileDownload(async () => result, channel); transfer.end(); await work;
+        assert.deepEqual(channel.sent.map(data => data.toString()), ['DONE']);
+    } finally { AdbExtended.createClient = original; transfer.destroy(); }
+});

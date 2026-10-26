@@ -8,7 +8,7 @@ This release addresses the 13 findings in the repository review, preserves LAN a
 | --- | --- | --- |
 | Unauthenticated WebSockets | HTTP APIs, downloads and WebSocket upgrades share `AccessControl`. Native clients use a bearer key; browsers use a signed, HttpOnly, SameSite cookie. Origin checks run before middleware or JSON parsing. | Real HTTP/WS tests exercise allowed LAN origins, remembered sessions, bad keys, tampered cookies, cross-origin requests, and the loopback-only Tailscale identity policy. |
 | File operations overwrite destinations | Copy and move use Android no-clobber options, reject existing files, folders and dangling symlinks, and return a conflict instead of silently succeeding. | Shell regression cases plus real Android Toybox checks in an isolated temporary directory. Successful file copy, move, and empty-folder copy also verified. |
-| Downloads outlive closed channels | A download owns its ADB pull from opening through completion. Closing cancels and destroys it, and late errors are contained. WebSocket backpressure pauses reads with a bounded timeout. | Pending-open cancellation, late errors, saturation, DONE, and listener cleanup tests. |
+| Downloads outlive closed channels | A download owns its ADB pull from opening through completion. Closing cancels and destroys it, and late errors are contained. WebSocket backpressure pauses reads with a bounded timeout. | Pending-open cancellation, empty files, late errors, saturation, DONE, and listener cleanup tests. The real-device HTTP check also caught and removed a legacy `readable` listener that prevented streaming pipelines from flowing. |
 | Malformed iOS messages crash the server | Validate parsed JSON and each supported message shape before accessing fields or queuing input. | Null, arrays, primitives, truncated JSON and malformed input messages cannot escape the handler. |
 | Compressed request-body crash | Upgrade Express and lock body-parser 1.20.9; authenticate notification requests before parsing and disable compressed JSON bodies. | Malformed compressed requests are rejected; subsequent requests still succeed. |
 | Concurrent iOS session startup | Reserve the session in the map synchronously, before selecting a port or starting subprocesses. | Concurrent cold opens share one port, startup and reference-counted session. |
@@ -40,11 +40,13 @@ Get the key on the server with `docker exec ws-scrcpy cat /app/data/notification
 
 ## Validation
 
-- `npm run check`: TypeScript, ESLint, 221 JavaScript tests, 29 notification Python tests, 15 patch Python tests, and the production build.
+- `npm run check`: TypeScript, ESLint, 222 JavaScript tests, 29 notification Python tests, 15 patch Python tests, and the production build.
 - Chromium fixtures: review regressions and visual checks, notifications, motion, settings, sheets, device switcher, unlock, tools, files, iOS typing and audio availability.
 - WebKit fixtures: review regressions and visual checks, notifications and motion.
 - Existing 40 lint warnings and three webpack asset-size warnings remain; there are no lint/type/build errors.
 - Real Android file-operation checks use a dedicated temporary directory and remove it afterwards.
+- Live LAN checks cover browser sign-in and reload, Android discovery, rejected unauthenticated WebSockets, notification API access and authenticated downloads.
+- The deployment host does not resolve its private MagicDNS hostname through its normal resolver. The existing Tailscale Serve mapping was checked, and its trusted loopback HTTP/WS access policy was tested. An external tailnet-client check was not available in this environment.
 
 ## Remaining upstream advisory
 
