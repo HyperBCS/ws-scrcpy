@@ -9,6 +9,34 @@ const { submitDevicePasscode, requestLockState } = require('../src/app/state/unl
 const { activeStream, unlockSheetOpen } = require('../src/app/state/stream');
 const { devices } = require('../src/app/state/devices');
 const { findDeviceForStream } = require('../src/app/state/streamDevice');
+const { readSavedPasscode, savePasscode, forgetPasscode } = require('../src/app/state/savedPasscode');
+
+test('saved passcodes preserve leading zeros and password mode, stay per device, and can be forgotten', (t) => {
+    const previous = Object.getOwnPropertyDescriptor(global, 'localStorage');
+    const values = new Map();
+    Object.defineProperty(global, 'localStorage', { configurable: true, value: {
+        getItem: key => values.get(key) ?? null,
+        setItem: (key, value) => values.set(key, value),
+        removeItem: key => values.delete(key),
+    } });
+    t.after(() => { if (previous) Object.defineProperty(global, 'localStorage', previous); else delete global.localStorage; });
+    assert.equal(readSavedPasscode('phone-a'), undefined);
+    assert.equal(savePasscode('phone-a', '000719', 'pin'), true);
+    assert.equal(savePasscode('phone-b', 'Fixture 7!', 'password'), true);
+    assert.deepEqual(readSavedPasscode('phone-a'), { value: '000719', mode: 'pin' });
+    assert.deepEqual(readSavedPasscode('phone-b'), { value: 'Fixture 7!', mode: 'password' });
+    assert.equal(forgetPasscode('phone-a'), true);
+    assert.equal(readSavedPasscode('phone-a'), undefined);
+    assert.equal(readSavedPasscode('phone-b').value, 'Fixture 7!');
+    for (const value of ['invalid json', 'null', '{"value":4,"mode":"pin"}', '{"value":"bad","mode":"pin"}']) {
+        values.set('ws-scrcpy:passcode:phone-a', value);
+        assert.equal(readSavedPasscode('phone-a'), undefined);
+    }
+    Object.defineProperty(global, 'localStorage', { configurable: true, get() { throw Error('Storage blocked'); } });
+    assert.equal(readSavedPasscode('phone-a'), undefined);
+    assert.equal(savePasscode('phone-a', '000719', 'pin'), false);
+    assert.equal(forgetPasscode('phone-a'), false);
+});
 
 const locked = {
     'device.locked': true,

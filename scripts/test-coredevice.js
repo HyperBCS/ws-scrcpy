@@ -2082,6 +2082,23 @@ test('the state monitor can be switched off, and the lock walk on its own', asyn
 
 // ---------------------------------------------------------- Home / Lock button hold (iOS)
 
+test('a Lock tap holds for 300 ms, above the ignored 120 ms pulse and below the Siri hold', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    t.mock.method(DeviceStateMonitor.getInstance(), 'pokeButton', () => {});
+    const edges = [];
+    const proxy = Object.create(CoreDeviceProxy.prototype);
+    proxy.udid = 'fixture-lock';
+    proxy.runner = { request: async (_udid, _method, _path, body) => {
+        edges.push(JSON.parse(body).state); return { status: 200, body: 'ok' };
+    } };
+    const pressed = proxy.handle({ type: 'button', name: 'lock', state: 'press' });
+    await Promise.resolve();
+    t.mock.timers.tick(299); await Promise.resolve();
+    assert.deepEqual(edges, ['down']);
+    t.mock.timers.tick(1); await pressed;
+    assert.deepEqual(edges, ['down', 'up']);
+});
+
 test('Home and Lock are sent as a held down/up pair, because serve-web\'s own press is too short', async () => {
     fs.rmSync(logFile, { force: true });
     await withEnv({ FAKE_LOG: logFile }, async () => {

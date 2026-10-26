@@ -29,16 +29,12 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
     const [clipboardDraft, setClipboardDraft] = useState('');
     const [screenNote, setScreenNote] = useState('');
     const [clipboardNote, setClipboardNote] = useState('');
-    const [lockNote, setLockNote] = useState('');
     const [reading, setReading] = useState(false);
     const [pending, setPending] = useState<PendingRequest>();
     const [keyboard, setKeyboard] = useState(client.isHandlingKeyboardEvents());
     // Reboot and shut down are disruptive, so each needs a second, explicit press.
     const [confirming, setConfirming] = useState<'reboot' | 'shutdown'>();
     const [power, setPower] = useState('');
-    // Held only for the moment it takes to type it through: never persisted anywhere.
-    const [passcode, setPasscode] = useState('');
-    const [unlocking, setUnlocking] = useState(false);
     const [debugBusy, setDebugBusy] = useState(false);
     const [debugNote, setDebugNote] = useState('');
     const received = deviceClipboard.value;
@@ -50,7 +46,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
         setClipboardDraft('');
         setScreenNote('');
         setClipboardNote('');
-        setLockNote('');
         setReading(false);
         setKeyboard(client.isHandlingKeyboardEvents());
         const onResult = (result: { id: number; ok: boolean; error?: string; data?: unknown }) => {
@@ -163,19 +158,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
         entry.tracker.on(command as never, onReply as never);
         entry.tracker.sendCommand(command, { udid: client.getDeviceUdid() });
         setPower(action === 'reboot' ? 'Asking the phone to reboot…' : 'Asking the phone to shut down…');
-    };
-
-    const onUnlock = async () => {
-        setUnlocking(true);
-        setLockNote('Unlocking…');
-        const accepted = await client.unlockWithPasscode(passcode);
-        setUnlocking(false);
-        if (!accepted) {
-            setLockNote('Enter the numeric passcode (4 to 10 digits).');
-            return;
-        }
-        setPasscode('');
-        setLockNote('Passcode sent. If the phone stays locked, it was rebooted and needs one unlock by hand.');
     };
 
     /** Service-level recovery that does not depend on the stream socket still working. */
@@ -304,32 +286,17 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 </SheetGroup>
 
                 <SheetGroup title="Lock screen">
-                    <SheetRow
-                        title="Unlock with passcode"
-                        description="Not saved. After a reboot, unlock once on the phone first."
-                        layout="stack"
-                    >
-                        <input
-                            class="sheet-input"
-                            type="password"
-                            inputMode="numeric"
-                            autoComplete="off"
-                            placeholder="Passcode"
-                            aria-label="Device passcode"
-                            value={passcode}
-                            onInput={(event) => setPasscode(event.currentTarget.value)}
-                        />
+                    <SheetRow title="Unlock device" description="Enter the device passcode.">
                         <button
                             type="button"
                             class="sheet-button"
-                            onClick={onUnlock}
-                            disabled={!connected || !passcode || unlocking}
+                            onClick={() => openSheet('unlock')}
+                            disabled={!connected}
                         >
-                            {unlocking ? 'Unlocking…' : 'Unlock'}
+                            Unlock
                         </button>
                     </SheetRow>
                 </SheetGroup>
-                {lockNote && <SheetStatus>{lockNote}</SheetStatus>}
 
                 <SheetGroup title="Clipboard">
                     <SheetRow

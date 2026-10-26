@@ -24,7 +24,7 @@ function channelJson(id, data) {
     return frame;
 }
 
-async function start(browser, { mobile = true, mockViewport = false } = {}) {
+async function start(browser, { mobile = true, mockViewport = false, udid = UDID, locked = false } = {}) {
     const context = await browser.newContext({
         viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 700 },
         isMobile: mobile,
@@ -63,12 +63,14 @@ async function start(browser, { mobile = true, mockViewport = false } = {}) {
             const frame = Buffer.from(data);
             if (frame.length < 5 || frame[0] !== 4) return;
             if (frame.subarray(5).toString() === 'HSTS') {
-                socket.send(channelJson(frame.readUInt32LE(1), { id: -1, type: 'hosts', data: { local: [] } }));
+                socket.send(channelJson(frame.readUInt32LE(1), { id: -1, type: 'hosts', data: { local: [{ type: 'ios' }] } }));
+            } else if (frame.subarray(5).toString() === 'ATRC') {
+                socket.send(channelJson(frame.readUInt32LE(1), { id: -1, type: 'devicelist', data: { id: 'ios', name: 'Devices', list: [{ udid, name: 'iPhone fixture', state: 'Connected', model: 'iPhone', version: '27', paired: true, developerMode: true, session: 'ready', 'screen.power': 'on', 'device.locked': locked }] } }));
             }
         });
     });
     const url = new URL(BASE);
-    url.hash = `!${new URLSearchParams({ action: 'stream-coredevice', udid: UDID })}`;
+    url.hash = `!${new URLSearchParams({ action: 'stream-coredevice', udid })}`;
     await page.goto(url.toString());
     await page.waitForFunction(() =>
         document.querySelector('.stream-header-status')?.textContent.includes('Connected'),
@@ -293,6 +295,8 @@ async function keyboardLifecycleFlow(browser) {
         // This dummy code and its wake/swipe/key sequence are intercepted by fixture sockets.
         await page.locator('.floating-toolbar-fab').click();
         await page.locator('.control-buttons-list [title="Actions"]').click();
+        await page.getByRole('dialog', { name: 'Actions', exact: true }).getByRole('button', { name: 'Unlock', exact: true }).click();
+        await settleMotion(page);
         const beforePasscode = test.keys().length;
         await page.getByLabel('Device passcode').fill('1234');
         assert.equal(test.keys().length, beforePasscode, 'editing the local passcode field sends no remote keys');
@@ -301,7 +305,7 @@ async function keyboardLifecycleFlow(browser) {
         assert.deepEqual(test.keys().slice(beforePasscode), [...press(0x1e), ...press(0x1f), ...press(0x20), ...press(0x21)]);
         assert.equal(keyboardMessages().at(-1).type, 'keyboard-detach');
         await page.getByText('Passcode sent.', { exact: false }).waitFor();
-        assert.equal(await page.getByLabel('Device passcode').inputValue(), '', 'the fixture passcode is cleared after sending');
+        assert.equal(await page.getByLabel('Device passcode').inputValue(), '1234', 'the masked passcode is retained for reuse');
         assert.deepEqual(test.errors, []);
         console.log('keyboard lifecycle: queued close, reopen race, blur/background, held-key release and passcode cleanup passed');
     } finally { await test.context.close(); }
@@ -430,10 +434,59 @@ async function keyboardViewportFlow(browser) {
     } finally { await test.context.close(); }
 }
 
+async function unlockFlow(browser) {
+    for (const mobile of [true, false]) {
+        const test = await start(browser, { mobile, locked: true });
+        const { page } = test;
+        const openUnlock = async () => {
+            await page.locator('.lock-screen-notice').getByRole('button', { name: 'Unlock', exact: true }).click();
+            await settleMotion(page);
+            return page.getByRole('dialog', { name: 'Unlock device', exact: true });
+        };
+        try {
+            if (mobile) { await page.locator('.floating-toolbar-fab').click(); await settleMotion(page); }
+            await page.locator('.control-buttons-list [title="Lock"]').click();
+            assert.deepEqual(test.sent.filter(m => m.type === 'button'), [{ type: 'button', name: 'lock', state: 'press' }]);
+            const dialog = await openUnlock();
+            const input = dialog.getByLabel('Device passcode');
+            const button = dialog.getByRole('button', { name: 'Unlock', exact: true });
+            for (const control of [input, button]) {
+                const box = await control.boundingBox();
+                assert(box.y >= 0 && box.y + box.height <= page.viewportSize().height, 'unlock controls are visible immediately without scrolling');
+            }
+            assert.equal(await dialog.getByRole('heading', { name: 'Sound', exact: true }).count(), 0);
+            assert.equal(await input.getAttribute('type'), 'password');
+            await input.fill('000719'); assert.equal(test.keys().length, 0);
+            await input.press('Enter');
+            await dialog.getByText('Passcode sent.', { exact: true }).waitFor();
+            assert.deepEqual(test.keys(), [...press(0x27), ...press(0x27), ...press(0x27), ...press(0x24), ...press(0x1e), ...press(0x26)]);
+            const count = test.keys().length;
+            await page.reload(); await openUnlock();
+            assert.equal(await input.inputValue(), '000719', 'saved code survives reload');
+            assert.equal(test.keys().length, count, 'saved codes never send themselves');
+            await page.getByRole('button', { name: 'Close Unlock device' }).click();
+            await page.evaluate(() => { location.hash = location.hash.replace('fixture-iphone-typing', 'fixture-other-phone'); });
+            await page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
+            if (mobile) { await page.locator('.floating-toolbar-fab').click(); await settleMotion(page); }
+            await page.locator('.control-buttons-list [title="Actions"]').click();
+            await page.getByRole('dialog', { name: 'Actions', exact: true }).getByRole('button', { name: 'Unlock', exact: true }).click();
+            await settleMotion(page);
+            assert.equal(await input.inputValue(), '', 'another device does not inherit the code');
+            await page.evaluate(() => { location.hash = location.hash.replace('fixture-other-phone', 'fixture-iphone-typing'); });
+            await openUnlock(); assert.equal(await input.inputValue(), '000719');
+            await dialog.getByRole('button', { name: 'Forget', exact: true }).click();
+            await page.reload(); await openUnlock(); assert.equal(await input.inputValue(), '');
+            assert.equal(test.keys().length, count);
+            assert.deepEqual(test.errors, []);
+            console.log('PASS iOS', mobile ? 'mobile' : 'desktop', 'Lock dispatch, direct Unlock panel, masked per-device persistence, reload and Forget');
+        } finally { await test.context.close(); }
+    }
+}
+
 (async () => {
     const browser = await ({ chromium, webkit }[browserName] || chromium).launch({ headless: true });
     try {
-        const scenarios = [mobileFlow, desktopFlow, keyboardViewportFlow, keyboardLifecycleFlow];
+        const scenarios = [mobileFlow, desktopFlow, keyboardViewportFlow, keyboardLifecycleFlow, unlockFlow];
         const selected = process.env.SCENARIO ? scenarios.filter(run => run.name === process.env.SCENARIO) : scenarios;
         assert.ok(selected.length, 'SCENARIO names a known typing fixture');
         for (const run of selected) await run(browser);

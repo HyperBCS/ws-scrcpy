@@ -176,8 +176,10 @@ survive a reboot, and it is not an app.
   read still returns -- it just takes about ten seconds instead of 50 ms.
 * Device power: Reboot and Shut down (each needs a second press to confirm). A
   reboot also clears a phone whose screen capture has stopped responding.
-* Lock screen: typing the passcode from the Actions sheet unlocks a phone whose
-  screen is locked. It is not stored anywhere.
+* Lock screen: **Unlock** opens the passcode panel directly. Android and iOS
+  passcodes are saved per device in this browser's local storage when submitted,
+  then filled in next time. **Forget** removes a saved code. Codes are only sent
+  to the device when you press the submit button.
 
 **A passcode changes one thing.** After a reboot, a passcode-protected iPhone
 exposes no USB data connection until it is unlocked by hand on the device -- it

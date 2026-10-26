@@ -19,7 +19,8 @@ import { CoreDeviceAudioRelay } from '../services/CoreDeviceAudio';
 import { DeviceStateMonitor } from '../services/DeviceStateMonitor';
 
 const TAG = 'CoreDeviceProxy';
-const LOCK_TAP_MS = 120;
+// 120 ms is ignored by the connected iPhone; 300 ms locks/wakes it without invoking Siri.
+const LOCK_TAP_MS = 300;
 // serve-web's own `press` holds a button for 50 ms, and iOS 27 discards that as debounce noise for
 // both of these: a 50 ms Home does nothing at all on a Face ID phone, and a 500 ms Lock reads as a
 // long press and starts Siri. The proxy therefore sends its own down/up pair for each. Measured on

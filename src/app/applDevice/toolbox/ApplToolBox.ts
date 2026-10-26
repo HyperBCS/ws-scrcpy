@@ -45,7 +45,7 @@ export class ApplToolBox extends ToolBox {
                 target.addEventListener('click', () => client.pressButton(item.name, 'press'));
                 return button;
             }
-            // Hardware buttons on iOS need their hold time (Lock ~0.5 s, Siri ~1 s), which the
+            // Hardware buttons on iOS need their hold time (Lock 0.3 s, Siri ~1 s), which the
             // server applies for a `press`; down/up pairs are only sent for a genuine hold.
             let activePointer: number | undefined;
             let held = false;

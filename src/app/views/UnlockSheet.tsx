@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { UnlockRequestError } from '../googDevice/client/passcode';
+import { readSavedPasscode, savePasscode, forgetPasscode } from '../state/savedPasscode';
 import type { DeviceLockValue } from './LockScreenNotice';
 import '../../style/views/UnlockSheet.css';
 
@@ -36,8 +37,8 @@ export function UnlockSheet({
     const timeout = useRef<ReturnType<typeof setTimeout>>();
     const composing = useRef(false);
     const [mode, setMode] = useState<'pin' | 'password'>('pin');
-    // Keep only whether the uncontrolled field has text; no passcode is put in application state.
     const [hasDraft, setHasDraft] = useState(false);
+    const [saved, setSaved] = useState(false);
     const [phase, setPhase] = useState<Phase>('idle');
     const [feedback, setFeedback] = useState('');
     const confirmed = connected && locked === false && keyguardShowing === false;
@@ -63,7 +64,13 @@ export function UnlockSheet({
         clearDraft();
         cancelPending();
         composing.current = false;
-        setMode('pin');
+        const stored = open ? readSavedPasscode(udid) : undefined;
+        setSaved(!!stored);
+        setMode(stored?.mode || 'pin');
+        if (stored && input.current) {
+            input.current.value = stored.value;
+            setHasDraft(true);
+        }
         setPhase('idle');
         setFeedback('');
         return () => {
@@ -130,6 +137,7 @@ export function UnlockSheet({
             );
             return;
         }
+        setSaved(savePasscode(udid, passcode, mode));
         const attempt = new AbortController();
         controller.current = attempt;
         setPhase('sending');
@@ -237,7 +245,22 @@ export function UnlockSheet({
                     />
                 </label>
                 <p id="unlock-input-hint" class="unlock-sheet-hint">
-                    Sent only when you submit, then cleared.
+                    {saved ? 'Saved in this browser.' : 'Saved in this browser when you send it.'}
+                    {saved && (
+                        <button
+                            type="button"
+                            class="unlock-forget"
+                            disabled={pending}
+                            onClick={() => {
+                                if (forgetPasscode(udid)) {
+                                    setSaved(false);
+                                    clearDraft();
+                                }
+                            }}
+                        >
+                            Forget
+                        </button>
+                    )}
                 </p>
                 <div
                     id="unlock-feedback"

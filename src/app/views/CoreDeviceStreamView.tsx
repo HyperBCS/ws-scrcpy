@@ -19,6 +19,7 @@ import { goToDeviceList } from '../state/router';
 import { FloatingToolbar } from './FloatingToolbar';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { ApplActionsSheet } from './ApplActionsSheet';
+import { ApplUnlockSheet } from './ApplUnlockSheet';
 import { LiveTextOverlay } from './LiveTextOverlay';
 import { LockScreenNotice } from './LockScreenNotice';
 import { SleepOverlay } from './SleepOverlay';
@@ -137,14 +138,13 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                     Switch
                 </button>
             </header>
-            {/* Unlock opens the Actions sheet: its "Lock screen" group holds the passcode field. */}
             <LockScreenNotice
                 key="lock-notice"
                 udid={params.udid}
                 connected={connected}
                 locked={locked}
                 keyguardShowing="unknown"
-                onUnlock={() => openSheet('tools')}
+                onUnlock={() => openSheet('unlock')}
             />
             <Presence
                 show={(session.state === 'error' || session.state === 'starting') && !!session.message && !error}
@@ -184,6 +184,7 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
             {active && active.params.udid === params.udid && (
                 <>
                     <ApplActionsSheet client={active.client} descriptor={descriptor} />
+                    <ApplUnlockSheet client={active.client} />
                     <DeviceSwitcherSheet />
                     {/* A short Side-button tap wakes the display (the proxy sends the down/up pair). */}
                     <SleepOverlay

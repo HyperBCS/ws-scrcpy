@@ -131,12 +131,12 @@ async function state(page, value) {
 }
 async function noLeaks(test) {
     const storage = await test.page.evaluate(() => ({
-        local: { ...localStorage },
+        local: Object.fromEntries(Object.entries(localStorage).filter(([key]) => !key.startsWith('ws-scrcpy:passcode:'))),
         session: { ...sessionStorage },
         url: location.href,
     }));
     for (const secret of [PIN, PASSWORD]) {
-        assert(!JSON.stringify(storage).includes(secret), 'No credential in storage or URL');
+        assert(!JSON.stringify(storage).includes(secret), 'Passcodes stay in their dedicated device storage entry, never in session storage or URLs');
         assert(!test.logs.some((log) => log.includes(secret)), 'No credential in browser logs');
         assert(!JSON.stringify(test.commands).includes(secret), 'Tracker commands never contain credentials');
     }
@@ -204,7 +204,7 @@ async function main() {
             await field(page).fill(PIN);
             await page.getByRole('button', { name: 'Close Unlock device' }).click();
             await open(page);
-            assert.equal(await field(page).inputValue(), '', 'Closing and reopening clears the draft');
+            assert.equal(await field(page).inputValue(), PIN, 'Reopening restores the saved PIN');
             await page.getByRole('radio', { name: 'Password', exact: true }).check();
             assert.equal(await field(page).getAttribute('type'), 'password');
             assert.equal(await field(page).getAttribute('inputmode'), 'text');
@@ -225,6 +225,15 @@ async function main() {
                 'No horizontal form overflow',
             );
             await noLeaks(test);
+            await page.reload();
+            await open(page);
+            assert.equal(await field(page).inputValue(), PASSWORD, 'Reload restores the saved passcode');
+            assert.equal(await page.getByRole('radio', { name: 'Password', exact: true }).isChecked(), true);
+            assert.deepEqual(test.texts, [PIN, PASSWORD], 'Restoring a passcode never submits it');
+            await page.getByRole('button', { name: 'Forget', exact: true }).click();
+            assert.equal(await field(page).inputValue(), '');
+            await page.reload(); await open(page);
+            assert.equal(await field(page).inputValue(), '', 'Forget survives reload');
             await test.context.close();
             console.log(
                 'PASS',
@@ -314,7 +323,7 @@ async function main() {
             await test.page.waitForTimeout(1000);
             assert.deepEqual(test.texts, [], 'Closing cancels a pending preflight before any credential bytes');
             await open(test.page);
-            assert.equal(await field(test.page).inputValue(), '');
+            assert.equal(await field(test.page).inputValue(), PIN, 'Canceled input remains saved without being resent');
             await noLeaks(test);
             await test.context.close();
             console.log('PASS close cancels lock check', holdQuery);
@@ -350,8 +359,8 @@ async function main() {
         await open(changedClient.page);
         assert.equal(
             await field(changedClient.page).inputValue(),
-            '',
-            'A new client cannot inherit the previous draft',
+            PIN,
+            'A new client for the same device restores the saved passcode without sending it',
         );
         await noLeaks(changedClient);
         await changedClient.context.close();

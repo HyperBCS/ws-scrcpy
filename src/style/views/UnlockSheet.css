@@ -59,6 +59,17 @@
     font-size: 13px;
     color: var(--text-color-light);
 }
+.unlock-forget {
+    min-height: 44px;
+    margin-left: 8px;
+    padding: 0 12px;
+    border: 1px solid var(--button-border-color);
+    border-radius: 10px;
+    color: var(--text-color);
+    background: var(--main-bg-color);
+    font: inherit;
+    cursor: pointer;
+}
 .unlock-sheet-modes {
     display: flex;
     gap: 12px;
