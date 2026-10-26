@@ -3,6 +3,7 @@ import WS from 'ws';
 import { Service } from './Service';
 import { HttpServer, ServerAndPort } from './HttpServer';
 import { MwFactory } from '../mw/Mw';
+import { NotificationService } from '../notifications/NotificationService';
 
 export class WebSocketServer implements Service {
     private static instance?: WebSocketServer;
@@ -31,19 +32,36 @@ export class WebSocketServer implements Service {
     public attachToServer(item: ServerAndPort): WSServer {
         const { server, port } = item;
         const TAG = `WebSocket Server {tcp:${port}}`;
-        const wss = new WSServer({ server });
-        wss.on('connection', async (ws: WS, request) => {
+        const access = NotificationService.getInstance().access;
+        const wss = new WSServer({
+            server,
+            maxPayload: 4 * 1024 * 1024,
+            verifyClient: ({ req }, done) => {
+                if (!access.allowsOrigin(req)) done(false, 403, 'Origin not allowed');
+                else if (!access.authorized(req)) done(false, 401, 'Sign in to connect');
+                else done(true);
+            },
+        });
+        wss.on('connection', (ws: WS, request) => {
             if (!request.url) {
                 ws.close(4001, `[${TAG}] Invalid url`);
                 return;
             }
-            const url = new URL(request.url, 'https://example.org/');
+            let url: URL;
+            try {
+                url = new URL(request.url, 'https://example.org/');
+            } catch {
+                ws.close(4001, 'Invalid URL');
+                return;
+            }
             const action = url.searchParams.get('action') || '';
             let processed = false;
             for (const mwFactory of this.mwFactories.values()) {
-                const service = mwFactory.processRequest(ws, { action, request, url });
-                if (service) {
-                    processed = true;
+                try {
+                    if (mwFactory.processRequest(ws, { action, request, url })) processed = true;
+                } catch {
+                    ws.close(1011, 'Connection could not be started');
+                    return;
                 }
             }
             if (!processed) {
@@ -76,6 +94,12 @@ export class WebSocketServer implements Service {
 
     public release(): void {
         this.servers.forEach((server) => {
+            for (const client of server.clients) {
+                client.close(1001, 'Server restarting');
+                const timer = setTimeout(() => client.terminate(), 1000);
+                timer.unref();
+                client.once('close', () => clearTimeout(timer));
+            }
             server.close();
         });
     }

@@ -1,7 +1,7 @@
 import * as process from 'process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Configuration, HostItem, ServerItem } from '../types/Configuration';
+import { Configuration, HostItem, HostsItem, ServerItem } from '../types/Configuration';
 import { EnvName } from './EnvName';
 import YAML from 'yaml';
 
@@ -106,6 +106,16 @@ export class Config {
     }
 
     constructor(private fullConfig: Required<Configuration>) {}
+
+    public getProxyHost(target: URL): HostsItem | undefined {
+        if (!['ws:', 'wss:'].includes(target.protocol) || target.username || target.password || target.hash) return;
+        return this.fullConfig.remoteHostList.find((host) => {
+            const base = new URL(
+                `${host.secure ? 'wss' : 'ws'}://${host.hostname}:${host.port}${host.pathname || '/'}`,
+            );
+            return base.origin === target.origin && base.pathname === target.pathname;
+        });
+    }
 
     public getHostList(): HostItem[] {
         if (!this.fullConfig.remoteHostList || !this.fullConfig.remoteHostList.length) {

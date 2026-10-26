@@ -9,6 +9,9 @@ import { Config } from '../Config';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import * as process from 'process';
 import { EnvName } from '../EnvName';
+/// #if INCLUDE_GOOG && INCLUDE_FILE_LISTING
+import { mountFileDownloads } from '../goog-device/filePush/HttpDownload';
+/// #endif
 
 const DEFAULT_STATIC_DIR = path.join(__dirname, './public');
 
@@ -77,7 +80,11 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
 
     public async start(): Promise<void> {
         this.mainApp = express();
+        NotificationService.getInstance().access.mount(this.mainApp, PATHNAME);
         NotificationService.getInstance().mount(this.mainApp, PATHNAME);
+        /// #if INCLUDE_GOOG && INCLUDE_FILE_LISTING
+        mountFileDownloads(this.mainApp, PATHNAME, NotificationService.getInstance().access);
+        /// #endif
         if (HttpServer.SERVE_STATIC && HttpServer.PUBLIC_DIR) {
             this.mainApp.use(
                 PATHNAME,
@@ -90,7 +97,7 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
             );
         }
         const config = Config.getInstance();
-        config.servers.forEach((serverItem) => {
+        for (const serverItem of config.servers) {
             const { secure, port, redirectToSecure } = serverItem;
             let proto: string;
             let server: http.Server | https.Server;
@@ -131,10 +138,15 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                 server = http.createServer(options, currentApp);
             }
             this.servers.push({ server, port });
-            server.listen(port, () => {
-                Utils.printListeningMsg(proto, port, PATHNAME);
+            await new Promise<void>((resolve, reject) => {
+                server.once('error', reject);
+                server.listen(port, () => {
+                    server.off('error', reject);
+                    Utils.printListeningMsg(proto, port, PATHNAME);
+                    resolve();
+                });
             });
-        });
+        }
         this.started = true;
         this.emit('started', true);
     }

@@ -114,7 +114,7 @@ test('changing notification policy cancels pending retries carrying old previews
     webpush.sendNotification = () => { calls++; return new Promise((_, r) => reject = r); };
     service.receive({ ...event, uid: 40, date: 'new' });
     service.receive({ ...event, uid: 41, date: 'newer' });
-    service.deliveryGeneration++;
+    service.store.subscriptions = [];
     reject({ statusCode: 500 });
     await new Promise(r => setTimeout(r, 1100));
     assert.equal(calls, 1);
@@ -239,8 +239,8 @@ test('missing Web Push sender configuration fails once without contacting a prov
                 sent: 0, failed: 1,
                 lastError: 'Set WS_PUBLIC_URL or WS_PUSH_SUBJECT to configure the push sender.',
             });
-            assert.equal(service.draining.size, 0, 'no retry is left waiting');
-            assert.equal(service.queues.size, 0);
+            assert.equal(service.push.pending, 0, 'no retry is left waiting');
+            assert.equal(service.push.pending, 0);
             assert.equal(service.store.subscriptions.length, 1);
         } finally { service.release(); }
     });
@@ -263,7 +263,7 @@ test('Web Push authentication failures retain subscriptions and expose only a re
                 assert.equal(service.delivery.failed, 1);
                 assert.equal(service.delivery.sent, 0);
                 assert.deepEqual(service.store.subscriptions, [sub]);
-                assert.equal(service.draining.size, 0, 'authentication errors are not retried');
+                assert.equal(service.push.pending, 0, 'authentication errors are not retried');
                 assert.equal(service.delivery.lastError.includes(subscription.endpoint), false);
                 assert.equal(service.delivery.lastError.includes('private provider detail'), false);
                 if (body.includes('BadJwtToken')) {
@@ -503,7 +503,7 @@ test('an action confirmation marks the current history record read after an inte
     });
 });
 
-test('queued pushes use current unread counts after the user marks history read', async () => {
+test('queued pushes are cancelled after the user marks history read', async () => {
     await historyApi(async ({ service, api }) => {
         service.store.subscriptions = [sub];
         const delivered = []; let finishFirst;
@@ -515,8 +515,7 @@ test('queued pushes use current unread counts after the user marks history read'
         service.receive({ ...event, uid: 2, date: 'later' });
         await api('/history/read', { all: true });
         finishFirst(); await tick();
-        assert.equal(delivered.length, 2);
-        assert.equal(delivered[1].unreadCount, 0);
+        assert.equal(delivered.length, 1, 'read notifications never leave the queue');
     });
 });
 
@@ -794,4 +793,49 @@ test('restoring history rejects invalid read states, malformed bodies and expire
         assert.equal(service.feed.has(item.key), false, 'expired history cannot be resurrected by Undo');
         assert.equal(service.counts().unread, 0);
     });
+});
+
+for (const invalidation of ['dismiss', 'removed', 'source removed', 'subscription removed']) {
+    test(`queued delivery rechecks eligibility after ${invalidation}`, async () => {
+        await historyApi(async ({ service, api }) => {
+            service.store.subscriptions = [sub];
+            const sent = []; let finish;
+            webpush.sendNotification = async (_subscription, payload) => {
+                sent.push(JSON.parse(payload)); if (sent.length === 1) await new Promise(resolve => finish = resolve);
+            };
+            service.receive(event); service.receive({ ...event, uid: 2, date: 'second' });
+            const item = [...service.feed.values()].find(item => item.uid === 2);
+            if (invalidation === 'dismiss') await api('/history/dismiss', { source: source.id, keys: [item.key] });
+            if (invalidation === 'removed') service.receive({ ...event, uid: 2, event: 'removed' });
+            if (invalidation === 'source removed') await api(`/sources/${source.id}`, undefined, 'DELETE');
+            if (invalidation === 'subscription removed') service.store.subscriptions = [];
+            finish(); await tick();
+            assert.equal(sent.length, 1); assert.equal(service.push.pending, 0);
+        });
+    });
+}
+
+test('queued pushes use current preview policy without disrupting another receiver', async () => {
+    await historyApi(async ({ service, api }) => {
+        service.store.subscriptions = [sub, { ...sub, id: 'other-receiver', subscription: { ...subscription, endpoint: subscription.endpoint + '-other' } }];
+        const sent = []; const finishes = [];
+        webpush.sendNotification = async (receiver, payload) => {
+            sent.push({ receiver: receiver.endpoint, ...JSON.parse(payload) });
+            if (sent.length <= 2) await new Promise(resolve => finishes.push(resolve));
+        };
+        service.receive(event); service.receive({ ...event, uid: 2, title: 'Private second message', date: 'second' });
+        await api('/sources', { ...source, preview: false });
+        service.store.subscriptions = service.store.subscriptions.filter(item => item.id !== 'other-receiver');
+        finishes.forEach(finish => finish()); await tick();
+        assert.equal(sent.length, 3, 'the remaining receiver still receives its queued event');
+        assert.equal(sent[2].title, 'iPhone: new notification'); assert.equal(sent[2].body, 'Open the device to view it.');
+        assert.equal(JSON.stringify(sent[2]).includes('Private second message'), false);
+    });
+});
+
+test('stopping during an in-flight failed push cannot create a new retry timer', async () => {
+    const service = freshService(); service.load(); service.store.sources = [source]; service.store.subscriptions = [sub];
+    let reject; webpush.sendNotification = () => new Promise((_resolve, fail) => reject = fail);
+    service.receive(event); service.release(); reject({ statusCode: 500 }); await tick();
+    assert.equal(service.push.pending, 0); assert.equal(service.push.waiting.size, 0);
 });

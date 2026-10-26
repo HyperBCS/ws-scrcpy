@@ -1,3 +1,4 @@
+import { trapDialogTab, restoreDialogFocus } from './dialogFocus';
 import { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import '../../style/ui/BottomSheet.css';
@@ -12,8 +13,6 @@ interface BottomSheetProps {
     title: string;
     children: ComponentChildren;
 }
-
-const FOCUSABLE = 'button, a[href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
 
 export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, title, children }: BottomSheetProps) {
     const rootRef = useRef<HTMLDivElement>(null);
@@ -87,39 +86,7 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
                 event.preventDefault();
                 event.stopPropagation();
                 requestClose();
-            } else if (event.key === 'Tab') {
-                const controls = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => {
-                    if (el.matches(':disabled, [hidden]') || !el.getClientRects().length) {
-                        return false;
-                    }
-                    // Closed <details> descendants may retain layout boxes in Chromium.
-                    // Only the summary is reachable by native Tab navigation.
-                    let ancestor = el.parentElement;
-                    while (ancestor && ancestor !== panel) {
-                        if (
-                            ancestor.matches('details:not([open])') &&
-                            !ancestor.querySelector('summary')?.contains(el)
-                        ) {
-                            return false;
-                        }
-                        ancestor = ancestor.parentElement;
-                    }
-                    return true;
-                });
-                const first = controls[0];
-                const last = controls[controls.length - 1];
-                const active = document.activeElement;
-                if (!first) {
-                    event.preventDefault();
-                    panel.focus();
-                } else if (event.shiftKey && (active === first || !panel.contains(active) || active === panel)) {
-                    event.preventDefault();
-                    last.focus();
-                } else if (!event.shiftKey && (active === last || !panel.contains(active) || active === panel)) {
-                    event.preventDefault();
-                    first.focus();
-                }
-            }
+            } else trapDialogTab(event, panel);
         };
         window.addEventListener('keydown', onKeyDown, true);
         return () => {
@@ -135,15 +102,7 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
             viewport?.removeEventListener('scroll', updateViewport);
             window.removeEventListener('resize', updateViewport);
             window.removeEventListener('keydown', onKeyDown, true);
-            if (
-                previousFocus instanceof HTMLElement &&
-                previousFocus.isConnected &&
-                previousFocus.getClientRects().length
-            ) {
-                previousFocus.focus({ preventScroll: true });
-            } else {
-                document.querySelector<HTMLButtonElement>('.floating-toolbar-fab')?.focus({ preventScroll: true });
-            }
+            restoreDialogFocus(previousFocus, document.querySelector<HTMLElement>('.floating-toolbar-fab'));
         };
     }, [present]);
 

@@ -1,3 +1,4 @@
+import { trapDialogTab, restoreDialogFocus } from '../ui/dialogFocus';
 import type { ComponentChildren } from 'preact';
 import { useId, useLayoutEffect, useRef } from 'preact/hooks';
 import '../../style/views/NotificationActionSheet.css';
@@ -43,11 +44,10 @@ export function NotificationActionSheet({ open, title, description, onClose, chi
             release();
             closing.current = true;
             if (node.open) node.close();
-            if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
-            else
-                document
-                    .querySelector<HTMLElement>('.notification-history-tools .notification-menu-button')
-                    ?.focus({ preventScroll: true });
+            restoreDialogFocus(
+                previous,
+                document.querySelector<HTMLElement>('.notification-history-tools .notification-menu-button'),
+            );
         };
     }, [present]);
 
@@ -70,26 +70,7 @@ export function NotificationActionSheet({ open, title, description, onClose, chi
                 event.preventDefault();
                 close();
             }}
-            onKeyDown={(event) => {
-                if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return;
-                const node = event.currentTarget;
-                const focusable = Array.from(
-                    node.querySelectorAll<HTMLElement>(
-                        'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]',
-                    ),
-                ).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0);
-                const first = focusable[0];
-                const last = focusable[focusable.length - 1];
-                // Native dialogs keep the page inert, but some browsers send Tab
-                // from the last control to browser chrome. Keep this menu's cycle local.
-                if (event.shiftKey && (document.activeElement === first || document.activeElement === node)) {
-                    event.preventDefault();
-                    last?.focus();
-                } else if (!event.shiftKey && document.activeElement === last) {
-                    event.preventDefault();
-                    first?.focus();
-                }
-            }}
+            onKeyDown={(event) => trapDialogTab(event, event.currentTarget)}
             onPointerDown={(event) => {
                 backdropStart.current =
                     event.target === event.currentTarget && outside(event.currentTarget, event.clientX, event.clientY);

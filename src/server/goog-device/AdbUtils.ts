@@ -12,6 +12,7 @@ import { ReadStream } from 'fs';
 import { spawn } from 'child_process';
 import { Duplex } from 'stream';
 import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
+import { sendFileDownload } from './filePush/FileDownload';
 
 export type ShellResult = {
     code: number;
@@ -130,20 +131,7 @@ export class AdbUtils {
 
     public static async pipePullFileToStream(serial: string, pathString: string, stream: Multiplexer): Promise<void> {
         const client = AdbExtended.createClient();
-        const transfer = await client.pull(serial, pathString);
-        transfer.on('data', (data) => {
-            stream.send(Buffer.concat([Buffer.from(Protocol.DATA, 'ascii'), data]));
-        });
-        return new Promise((resolve, reject) => {
-            transfer.on('end', function () {
-                stream.send(Buffer.from(Protocol.DONE, 'ascii'));
-                stream.close();
-                resolve();
-            });
-            transfer.on('error', (e) => {
-                reject(e);
-            });
-        });
+        return sendFileDownload(() => client.pull(serial, pathString), stream);
     }
 
     public static async forward(serial: string, remote: string): Promise<number> {
@@ -261,19 +249,31 @@ export class AdbUtils {
     }
 
     public static async move(serial: string, from: string, to: string): Promise<void> {
-        // No `-f`: silently replacing a different file is not what a rename or a paste means.
+        const source = AdbUtils.quote(from);
+        const destination = AdbUtils.quote(to);
+        const conflict = "printf '%s\\n' 'An item with this name already exists.'; false";
         return AdbUtils.runFileOperation(
             serial,
-            `mv -- ${AdbUtils.quote(from)} ${AdbUtils.quote(to)}`,
+            `if [ -e ${destination} ] || [ -L ${destination} ]; then ${conflict}; ` +
+                `else mv -nT -- ${source} ${destination} && { ` +
+                `if [ -e ${source} ] || [ -L ${source} ]; then ${conflict}; else true; fi; }; fi`,
             'The device refused to move this item.',
             FILE_OPERATION_TIMEOUT,
         );
     }
 
     public static async copy(serial: string, from: string, to: string): Promise<void> {
+        const source = AdbUtils.quote(from);
+        const destination = AdbUtils.quote(to);
+        const conflict = "printf '%s\\n' 'An item with this name already exists.'; false";
         return AdbUtils.runFileOperation(
             serial,
-            `cp -r -- ${AdbUtils.quote(from)} ${AdbUtils.quote(to)}`,
+            // -n protects destinations created after the check; -T prevents nesting into an
+            // existing folder. Verbose output distinguishes a silent skip from a successful copy.
+            `if [ -e ${destination} ] || [ -L ${destination} ]; then ${conflict}; ` +
+                `else report=$(cp -rnTv -- ${source} ${destination} 2>&1); result=$?; ` +
+                `if [ "$result" -ne 0 ]; then printf '%s\\n' "$report"; (exit "$result"); ` +
+                `elif [ -z "$report" ]; then ${conflict}; else true; fi; fi`,
             'The device refused to copy this item.',
             FILE_OPERATION_TIMEOUT,
         );

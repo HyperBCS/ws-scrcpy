@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import type { NotificationSource } from '../../server/notifications/NotificationService';
+import type { NotificationSource } from '../../common/Notification';
 import type { HistoryItem } from './NotificationHistory';
 import { notificationIcon } from '../state/notifications';
 import { NotificationSwipe, NotificationSwipeAction } from '../ui/notificationSwipe';

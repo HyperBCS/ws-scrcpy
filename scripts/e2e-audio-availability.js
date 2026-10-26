@@ -66,7 +66,7 @@ async function main() {
                 () =>
                     !document
                         .querySelector('.bottom-sheet-root.open')
-                        ?.textContent.includes('Loading current device settings'),
+                        ?.textContent.includes('Loading settings…'),
             );
             const section = page.locator('.settings-audio');
             const text = await section.textContent();

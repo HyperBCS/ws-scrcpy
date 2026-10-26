@@ -27,6 +27,7 @@ function cleanup(worker) {
         exports: module.exports,
         require: name => {
             if (name === '@preact/signals') return { signal: value => ({ value }) };
+            if (name === '../client/request') return {};
             if (name === './router') return { route: { value: new URLSearchParams() } };
             throw Error(`Unexpected dependency ${name}`);
         },

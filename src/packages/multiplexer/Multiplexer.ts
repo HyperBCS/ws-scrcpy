@@ -251,7 +251,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
     }
 
     public get bufferedAmount(): number {
-        return 0;
+        return this.ws.bufferedAmount || 0;
     }
 
     public get extensions(): string {

@@ -1,6 +1,6 @@
 import { AnimatedDetails } from '../ui/AnimatedDetails';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import type { NotificationEvent, NotificationSource } from '../../server/notifications/NotificationService';
+import type { NotificationSource } from '../../common/Notification';
 import { notificationRequest as api, closeReadNotifications } from '../state/notifications';
 import { route, pushRoute } from '../state/router';
 import { Toast } from '../ui/Toast';
@@ -9,15 +9,8 @@ import { NotificationCard } from './NotificationCard';
 import { NotificationActionSheet } from './NotificationActionSheet';
 import { isDismissActionLabel } from '../../common/NotificationActions';
 
-export type HistoryItem = NotificationEvent & {
-    key: string;
-    received: number;
-    read: boolean;
-    dismissed: boolean;
-    active: boolean;
-    canDismiss?: boolean;
-    negativeActionLabel?: string;
-};
+export type { NotificationHistoryItem as HistoryItem } from '../../common/Notification';
+import type { NotificationHistoryItem as HistoryItem } from '../../common/Notification';
 
 export function UnreadBadge({ count }: { count: number }) {
     return count > 0 ? (
@@ -275,41 +268,35 @@ export function NotificationHistory({
             aria-labelledby="notification-history-heading"
             aria-busy={!!bulkBusy}
         >
-            <div class="notification-source-heading">
-                <h2 id="notification-history-heading" class="visually-hidden">
-                    {filter === 'history' ? 'All history' : filter === 'unread' ? 'Unread' : 'Inbox'}
-                </h2>
-                {sources.length > 1 && (
-                    <label class="notification-history-device">
-                        <span class="visually-hidden">Device</span>
-                        <select
-                            disabled={busy}
-                            value={source?.id || ''}
-                            onChange={(event) => {
-                                const params = new URLSearchParams(route.value);
-                                params.set('source', event.currentTarget.value);
-                                params.delete('notification');
-                                pushRoute(params);
-                            }}
-                        >
-                            {sources.map((s) => (
-                                <option key={s.id} value={s.id}>
-                                    {s.name}
-                                    {unreadBySource[s.id] ? ` · ${unreadBySource[s.id]} unread` : ''}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                )}
-                {source && (
-                    <a
-                        class="notification-open-screen"
-                        href={`#!${new URLSearchParams({ action: 'stream-coredevice', udid: source.id })}`}
-                    >
-                        Open screen →
-                    </a>
-                )}
-            </div>
+            <h2 id="notification-history-heading" class="visually-hidden">
+                {filter === 'history' ? 'All history' : filter === 'unread' ? 'Unread' : 'Inbox'}
+            </h2>
+            {sources.length > 1 && (
+                <div class="notification-source-heading">
+                    {sources.length > 1 && (
+                        <label class="notification-history-device">
+                            <span class="visually-hidden">Device</span>
+                            <select
+                                disabled={busy}
+                                value={source?.id || ''}
+                                onChange={(event) => {
+                                    const params = new URLSearchParams(route.value);
+                                    params.set('source', event.currentTarget.value);
+                                    params.delete('notification');
+                                    pushRoute(params);
+                                }}
+                            >
+                                {sources.map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                        {s.name}
+                                        {unreadBySource[s.id] ? ` · ${unreadBySource[s.id]} unread` : ''}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
+                </div>
+            )}
             <div class="notification-history-tools">
                 <div class="notification-search-row">
                     <input
@@ -324,6 +311,14 @@ export function NotificationHistory({
                         enterKeyHint="search"
                         autoComplete="off"
                     />
+                    {source && (
+                        <a
+                            class="ui-button notification-open-screen"
+                            href={`#!${new URLSearchParams({ action: 'stream-coredevice', udid: source.id })}`}
+                        >
+                            Open screen
+                        </a>
+                    )}
                     <button
                         class="notification-filter-button"
                         aria-haspopup="dialog"

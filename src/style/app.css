@@ -172,19 +172,45 @@ body.sheet-open #devices {
     vertical-align: middle;
     flex-shrink: 0;
 }
-.device-notification-history {
+/* Navigation actions share the same surface and touch target as buttons. */
+.ui-button,
+.ui-button:visited {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
+    gap: 0.45rem;
+    box-sizing: border-box;
     min-height: 44px;
-}
-.device-notification-history {
-    margin-top: 8px;
-    font-size: 14px;
-    padding: 0 12px;
+    padding: 0.5rem 0.85rem;
     border: 1px solid var(--device-border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-control);
+    background: var(--control-buttons-bg-color);
+    color: var(--text-color);
+    font: 550 0.9rem/1.25 var(--font-stack);
     text-decoration: none;
+    text-align: center;
+    cursor: pointer;
+    transition:
+        background-color var(--motion-fast),
+        border-color var(--motion-fast),
+        transform var(--motion-fast) var(--ease-out);
+}
+.ui-button-primary {
+    background: var(--accent-solid);
+    border-color: var(--accent-solid);
+    color: white;
+}
+.ui-button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+.ui-button:active:not(:disabled) {
+    transform: scale(0.97);
+}
+@media (hover: hover) {
+    .ui-button:hover {
+        border-color: var(--link-color);
+    }
 }
 
 /* Feedback stays on controls, never on the remote touch surface. */

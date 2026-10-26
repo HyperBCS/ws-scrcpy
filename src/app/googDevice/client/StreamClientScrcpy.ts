@@ -1,3 +1,4 @@
+import { observeViewport } from '../../client/observeViewport';
 import { BaseClient } from '../../client/BaseClient';
 import { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
 import { GoogToolBox } from '../toolbox/GoogToolBox';
@@ -57,7 +58,7 @@ export class StreamClientScrcpy
     private readonly container: HTMLElement;
     private deviceView?: HTMLElement;
     private videoWrapper?: HTMLElement;
-    private resizeObserver?: ResizeObserver;
+    private stopObservingViewport?: () => void;
 
     public static registerPlayer(playerClass: PlayerClass): void {
         if (playerClass.isSupported()) {
@@ -319,9 +320,8 @@ export class StreamClientScrcpy
         this.container.removeEventListener('drop', this.onFileDrop);
         this.touchHandler?.release();
         this.touchHandler = undefined;
-        window.removeEventListener('resize', this.onWindowResize);
-        this.resizeObserver?.disconnect();
-        this.resizeObserver = undefined;
+        this.stopObservingViewport?.();
+        this.stopObservingViewport = undefined;
         if (this.resizeTimeoutId !== undefined) {
             clearTimeout(this.resizeTimeoutId);
             this.resizeTimeoutId = undefined;
@@ -439,12 +439,8 @@ export class StreamClientScrcpy
         console.log(TAG, player.getName(), udid);
 
         // Fit changes browser playback bounds; encoder changes require a server restart.
-        window.addEventListener('resize', this.onWindowResize);
-        if (typeof ResizeObserver !== 'undefined') {
-            this.resizeObserver?.disconnect();
-            this.resizeObserver = new ResizeObserver(this.onWindowResize);
-            this.resizeObserver.observe(video);
-        }
+        this.stopObservingViewport?.();
+        this.stopObservingViewport = observeViewport(video, this.onWindowResize);
     }
 
     private onFileDragOver = (event: DragEvent): void => {

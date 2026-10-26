@@ -1,0 +1,66 @@
+.access-page {
+    height: 100%;
+    overflow-y: auto;
+    display: grid;
+    place-items: center;
+    min-height: 100%;
+    padding: 24px;
+    box-sizing: border-box;
+}
+.access-card {
+    width: min(100%, 400px);
+    padding: 28px;
+    box-sizing: border-box;
+    border: 1px solid var(--device-border-color);
+    border-radius: 24px;
+    background: var(--device-list-default-color);
+}
+.access-mark {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    background: var(--accent-solid);
+    color: white;
+    font-size: 24px;
+    margin-bottom: 20px;
+}
+.access-card h1 {
+    margin: 0 0 12px;
+    font-size: 26px;
+}
+.access-card p {
+    color: var(--text-color-light);
+    line-height: 1.5;
+}
+.access-card form {
+    display: grid;
+    gap: 12px;
+    margin: 24px 0;
+}
+.access-card input {
+    padding: 10px 12px;
+    font-size: 16px;
+    color: var(--text-color);
+    background: var(--main-bg-color);
+    border: 1px solid var(--device-border-color);
+    border-radius: var(--radius-control);
+    width: 100%;
+    min-height: 44px;
+    box-sizing: border-box;
+}
+.access-card summary {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-color-light);
+}
+.access-card details code {
+    display: block;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+    line-height: 1.6;
+}
+.access-error p {
+    color: var(--status-unauthorized-color);
+}

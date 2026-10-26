@@ -86,6 +86,61 @@ export function isCoreDeviceButton(value: unknown): value is CoreDeviceButton {
     return typeof value === 'string' && (COREDEVICE_BUTTONS as readonly string[]).includes(value);
 }
 
+/** JSON from a socket is untrusted even when the transport is authenticated. */
+export function isCoreDeviceClientMessage(value: unknown): value is CoreDeviceClientMessage {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const message = value as Record<string, unknown>;
+    if (message.id !== undefined && (!Number.isSafeInteger(message.id) || (message.id as number) < 0)) return false;
+    switch (message.type) {
+        case 'touch':
+            return (
+                ['contact', 'release', 'tap'].includes(message.op as string) &&
+                Number.isFinite(message.x) &&
+                Number.isFinite(message.y)
+            );
+        case 'touch-frame':
+            return (
+                Array.isArray(message.contacts) &&
+                message.contacts.length > 0 &&
+                message.contacts.length <= 5 &&
+                message.contacts.every(
+                    (contact) =>
+                        contact &&
+                        typeof contact === 'object' &&
+                        Number.isInteger(contact.id) &&
+                        contact.id >= 0 &&
+                        contact.id <= 4 &&
+                        typeof contact.touching === 'boolean' &&
+                        Number.isFinite(contact.x) &&
+                        Number.isFinite(contact.y),
+                )
+            );
+        case 'key':
+            return (
+                Array.isArray(message.usages) && message.usages.length <= 256 && message.usages.every(Number.isInteger)
+            );
+        case 'button':
+            return (
+                isCoreDeviceButton(message.name) &&
+                (message.state === undefined || ['press', 'down', 'up'].includes(message.state as string))
+            );
+        case 'clipboard':
+            return (
+                message.op === 'get' ||
+                (message.op === 'set' && typeof message.text === 'string' && message.text.length <= 1000000)
+            );
+        case 'rotate':
+            return message.direction === 'left' || message.direction === 'right';
+        case 'keyboard-detach':
+        case 'pli':
+        case 'restart':
+        case 'restart-session':
+            return true;
+        default:
+            return false;
+    }
+}
+
 export function clampHid(value: number): number {
     if (!Number.isFinite(value)) {
         return 0;

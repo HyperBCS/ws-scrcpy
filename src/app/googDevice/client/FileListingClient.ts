@@ -1,3 +1,5 @@
+import { FileDownloads } from './FileDownloads';
+import { trapDialogTab } from '../../ui/dialogFocus';
 import { transitionVisibility, cancelVisibility } from '../../ui/motion';
 import '../../../style/filelisting.css';
 import { ParamsFileListing } from '../../../types/ParamsFileListing';
@@ -25,7 +27,6 @@ type Request = {
     generation: number;
     entry?: Entry;
     received: number;
-    chunks: Uint8Array<ArrayBuffer>[];
     completed: boolean;
     failed: boolean;
     /** Mutating requests reload the folder and report this once the device answers DONE. */
@@ -153,8 +154,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private filePushHandler?: FilePushHandler;
     private readonly requests = new Map<Multiplexer, Request>();
     private readonly uploads = new Map<string, HTMLElement>();
-    private readonly objectUrls = new Set<string>();
-    private readonly timers = new Set<ReturnType<typeof setTimeout>>();
+    private readonly fileDownloads = new FileDownloads((destination) => {
+        const direct = this.buildDirectWebSocketUrl();
+        const endpoint = new URL('api/files/download', new URL('.', location.href));
+        endpoint.searchParams.set('udid', this.params.udid);
+        endpoint.searchParams.set('path', destination);
+        if (this.params.useProxy) endpoint.searchParams.set('remote', direct.toString());
+        return endpoint;
+    });
     /** Live downloads by device path, so progress survives a re-render (sorting, filtering, polling). */
     private readonly downloads = new Map<string, { received: number; size: number }>();
 
@@ -410,6 +417,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.dialog = this.wrapper.querySelector('.fx-dialog') as HTMLDialogElement;
         this.dialog.addEventListener('cancel', this.onDialogCancel);
         this.dialog.addEventListener('submit', this.onDialogSubmit);
+        this.dialog.addEventListener('keydown', this.onDialogKeyDown);
         this.picker = this.wrapper.querySelector('input[type="file"]') as HTMLInputElement;
         this.wrapper.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) => {
             this.buttons.set(button.dataset.command as string, button);
@@ -1643,6 +1651,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         transitionVisibility(this.dialog, false, () => this.dialog.close(value));
     }
 
+    private onDialogKeyDown = (event: KeyboardEvent): void => trapDialogTab(event, this.dialog);
+
     private onDialogCancel = (event: Event): void => {
         event.preventDefault();
         this.closeDialog('');
@@ -1722,7 +1732,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             generation: this.generation,
             entry,
             received: 0,
-            chunks: [],
             completed: false,
             failed: false,
             success,
@@ -1748,6 +1757,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             channel.removeEventListener('close', onClose);
             this.requests.delete(channel);
             if (kind === 'download') {
+                this.fileDownloads.cancel(request.path);
                 this.downloads.delete(request.path);
                 this.scheduleRender();
             }
@@ -1836,8 +1846,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 this.scheduleRender();
             }
         } else if (code === Protocol.DATA && request.kind === 'download') {
-            request.chunks.push(new Uint8Array(data.subarray(4)));
-            request.received += data.length - 4;
+            const received = this.fileDownloads.append(request.path, data.subarray(4));
+            if (received === undefined) {
+                request.completed = true;
+                channel.close();
+                return;
+            }
+            request.received = received;
             const progress = this.downloads.get(request.path);
             if (progress) {
                 progress.received = request.received;
@@ -1924,29 +1939,16 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         this.report(`Downloading ${entry.name}…`);
+        if (!this.fileDownloads.start(destination, entry.size)) return;
         this.downloads.set(destination, { received: 0, size: entry.size });
         this.scheduleRender();
         this.request('download', destination, entry);
     }
 
     private finishDownload(request: Request): void {
-        const file = new Blob(request.chunks, { type: 'application/octet-stream' });
-        request.chunks = [];
-        const url = URL.createObjectURL(file);
-        this.objectUrls.add(url);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = request.entry?.name || path.basename(request.path);
-        this.wrapper.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        const timer = setTimeout(() => {
-            URL.revokeObjectURL(url);
-            this.objectUrls.delete(url);
-            this.timers.delete(timer);
-        }, 60000);
-        this.timers.add(timer);
-        this.report(`Downloaded ${anchor.download}.`);
+        const name = request.entry?.name || path.basename(request.path);
+        this.fileDownloads.finish(request.path, name);
+        this.report(`Downloaded ${name}.`);
     }
 
     // ---------------------------------------------------------------- navigation
@@ -2107,6 +2109,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         cancelVisibility(this.dialog);
         this.dialog.removeEventListener('cancel', this.onDialogCancel);
         this.dialog.removeEventListener('submit', this.onDialogSubmit);
+        this.dialog.removeEventListener('keydown', this.onDialogKeyDown);
         if (this.dialog.open) {
             this.dialog.close('');
         }
@@ -2118,14 +2121,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.requests.clear();
         this.uploads.clear();
         this.downloads.clear();
-        for (const timer of this.timers) {
-            clearTimeout(timer);
-        }
-        this.timers.clear();
-        for (const url of this.objectUrls) {
-            URL.revokeObjectURL(url);
-        }
-        this.objectUrls.clear();
+        this.fileDownloads.release();
         this.picker.value = '';
         this.wrapper.removeEventListener('click', this.onClick);
         this.wrapper.removeEventListener('dblclick', this.onDoubleClick);

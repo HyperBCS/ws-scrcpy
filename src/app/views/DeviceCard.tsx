@@ -1,4 +1,4 @@
-import { Presence } from '../ui/Presence';
+import { ComponentChildren } from 'preact';
 import { AnimatedDetails } from '../ui/AnimatedDetails';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { DeviceEntry, deviceName } from '../state/devices';
@@ -65,7 +65,7 @@ function NavLink({ entry, params, className }: NavLinkProps) {
     };
     return (
         <a
-            class={className}
+            class={`ui-button ${className || ''}`}
             href={href}
             onClick={onClick}
             target={local ? undefined : '_blank'}
@@ -84,6 +84,30 @@ function StatusBadge({ info }: { info: DeviceStatusInfo }) {
             </span>
             <span class="device-status-label">{info.label}</span>
         </span>
+    );
+}
+
+function DeviceHeader({
+    entry,
+    platform,
+    children,
+}: {
+    entry: DeviceEntry;
+    platform: string;
+    children?: ComponentChildren;
+}) {
+    return (
+        <div class="device-header">
+            <DeviceIcon className="device-avatar" />
+            <div class="device-heading">
+                <div class="device-name">{deviceName(entry)}</div>
+                <div class="device-meta">
+                    <span>{platform}</span>
+                    {children}
+                </div>
+            </div>
+            <StatusBadge info={getDeviceStatusInfo(entry)} />
+        </div>
     );
 }
 
@@ -134,27 +158,13 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             class={`device ${isActive ? 'active' : 'not-active'} ${isAsleep ? 'asleep' : ''}`}
             data-device-key={entry.key}
         >
-            <div class="device-header">
-                <DeviceIcon className="device-avatar" />
-                <div class="device-heading">
-                    <div class="device-name">{deviceName(entry)}</div>
-                    <div class="device-meta">
-                        <span>Android {descriptor['ro.build.version.release'] || 'device'}</span>
-                        {descriptor['battery.level'] >= 0 && (
-                            <span
-                                class="device-battery"
-                                title={descriptor['battery.charging'] ? 'Charging' : 'On battery'}
-                            >
-                                {descriptor['battery.level']}%{descriptor['battery.charging'] ? ' · Charging' : ''}
-                            </span>
-                        )}
-                        <span class="device-serial" title="Device serial">
-                            {descriptor.udid}
-                        </span>
-                    </div>
-                </div>
-                <StatusBadge info={statusInfo} />
-            </div>
+            <DeviceHeader entry={entry} platform={`Android ${descriptor['ro.build.version.release'] || ''}`}>
+                {descriptor['battery.level'] >= 0 && (
+                    <span class="device-battery" title={descriptor['battery.charging'] ? 'Charging' : 'On battery'}>
+                        {descriptor['battery.level']}%{descriptor['battery.charging'] ? ' · Charging' : ''}
+                    </span>
+                )}
+            </DeviceHeader>
             <StreamServiceStatus descriptor={descriptor} deviceKey={entry.key} />
             {isAsleep && (
                 <div class="device-asleep-banner">
@@ -173,7 +183,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                     <NavLink
                         className="desc-block stream primary"
                         params={params}
-                        entry={streamEntry(primaryPlayer, 'Open screen →')}
+                        entry={streamEntry(primaryPlayer, 'Open screen')}
                     />
                 ) : (
                     <button class="desc-block stream unavailable" disabled>
@@ -195,6 +205,9 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                 <AnimatedDetails class="device-details">
                     <summary>Connection &amp; tools</summary>
                     <div class="device-details-content">
+                        <p class="device-serial" title="Device serial">
+                            {descriptor.udid}
+                        </p>
                         <label class="device-interface">
                             <span>Connection</span>
                             <select
@@ -265,7 +278,6 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const statusInfo = getDeviceStatusInfo(entry);
     const [enabling, setEnabling] = useState(false);
     const [feedback, setFeedback] = useState('');
-    const [debugOpen, setDebugOpen] = useState(false);
     const [busy, setBusy] = useState('');
     const developerMode = descriptor.developerMode;
     const session = descriptor.session ?? 'stopped';
@@ -320,37 +332,25 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             class={`device ${isActive ? 'active' : 'not-active'} ${isAsleep ? 'asleep' : ''}`}
             data-device-key={entry.key}
         >
-            <div class="device-header">
-                <DeviceIcon className="device-avatar" />
-                <div class="device-heading">
-                    <div class="device-name">{deviceName(entry)}</div>
-                    <div class="device-meta">
-                        <span>iOS {descriptor.version}</span>
-                        <span>{descriptor.model}</span>
-                        <span class="device-serial" title="Device serial">
-                            {descriptor.udid}
-                        </span>
-                    </div>
-                </div>
-                <StatusBadge info={statusInfo} />
-            </div>
-            {!isActive && (
-                <p class="device-unavailable-hint">
-                    {descriptor.state === 'unauthorized'
-                        ? 'Unlock the phone and tap "Trust" on the "Trust This Computer?" prompt.'
-                        : 'Check the USB connection and keep the phone connected to the server.'}
-                </p>
-            )}
+            <DeviceHeader entry={entry} platform={`iOS ${descriptor.version}`} />
+            <StreamServiceStatus
+                descriptor={{
+                    state: isActive ? DeviceState.DEVICE : descriptor.state,
+                    pid: session === 'ready' ? 1 : -1,
+                }}
+                session={session}
+            />
+            {!isActive && <UnavailableHint info={statusInfo} />}
             {isAsleep && (
                 <div class="device-asleep-banner" role="status">
                     <span aria-hidden="true">☾</span>
-                    <span>Screen is asleep. Open the screen and tap it to wake the phone.</span>
+                    <span>Screen is asleep. Open it to wake.</span>
                 </div>
             )}
             {isActive && developerMode === false && (
                 <div class="device-asleep-banner" role="status">
                     <span aria-hidden="true">⚠</span>
-                    <span>Developer Mode is off. The screen and touch services need it.</span>
+                    <span>Enable Developer Mode to open the screen.</span>
                     <button class="wake-button" onClick={enableDeveloperMode} disabled={enabling}>
                         {enabling ? 'Enabling…' : 'Enable'}
                     </button>
@@ -367,7 +367,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                             key={`${tool.action}_${index}`}
                             className={`desc-block ${index === 0 ? 'stream primary' : ''}`}
                             params={entry.params}
-                            entry={tool}
+                            entry={{ ...tool, title: index === 0 ? 'Open screen' : tool.title }}
                         />
                     ))
                 ) : (
@@ -375,39 +375,41 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         {descriptor.state === 'unauthorized' ? 'Waiting for trust' : 'Device unavailable'}
                     </button>
                 )}
-                {isActive && (session === 'ready' || session === 'starting') && (
-                    <button
-                        class="action-button"
-                        title="Stops the screen stream for every viewer"
-                        onClick={() =>
-                            entry.tracker.sendCommand(ControlCenterCommand.KILL_SERVER, {
-                                udid: descriptor.udid,
-                                pid: 1,
-                            })
-                        }
-                    >
-                        Stop stream
-                    </button>
-                )}
-            </div>
-            <a
-                class="device-notification-history"
-                href={`#!${new URLSearchParams({ action: 'notifications', source: descriptor.udid })}`}
-            >
-                Notification history{' '}
-                <UnreadBadge count={notificationSummary.value.unreadBySource[descriptor.udid] || 0} />
-            </a>
-            <div class="device-debug">
-                <button
-                    type="button"
-                    class="device-debug-toggle"
-                    aria-expanded={debugOpen}
-                    onClick={() => setDebugOpen(!debugOpen)}
+                <a
+                    class="ui-button device-notification-history"
+                    href={`#!${new URLSearchParams({ action: 'notifications', source: descriptor.udid })}`}
                 >
-                    {debugOpen ? '▾' : '▸'} Debug
-                </button>
-                <Presence show={debugOpen} kind="collapse" class="device-debug-body">
+                    Notifications <UnreadBadge count={notificationSummary.value.unreadBySource[descriptor.udid] || 0} />
+                </a>
+            </div>
+            <AnimatedDetails class="device-details">
+                <summary>Connection &amp; tools</summary>
+                <div class="device-details-content device-debug-body">
+                    <div class="device-interface">
+                        <span>Connection</span>
+                        <span class="device-connection-value">Automatic · via server</span>
+                    </div>
+                    <div class="services device-secondary-actions">
+                        {isActive && (session === 'ready' || session === 'starting') && (
+                            <button
+                                class="action-button"
+                                title="Stops the screen stream for every viewer"
+                                onClick={() =>
+                                    entry.tracker.sendCommand(ControlCenterCommand.KILL_SERVER, {
+                                        udid: descriptor.udid,
+                                        pid: 1,
+                                    })
+                                }
+                            >
+                                Stop stream service
+                            </button>
+                        )}
+                    </div>
                     <dl class="device-debug-facts">
+                        <dt>Device</dt>
+                        <dd>{descriptor.model}</dd>
+                        <dt>Serial</dt>
+                        <dd class="device-serial">{descriptor.udid}</dd>
                         <dt>Session</dt>
                         <dd>{session}</dd>
                         <dt>Paired</dt>
@@ -422,8 +424,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         </dd>
                     </dl>
                     <p class="device-unavailable-hint">
-                        Restart services when the picture works but touch, the keyboard or the clipboard do not. Remount
-                        when the phone has rebooted or the screen will not start at all.
+                        Restart services if controls stop responding. Remount if the screen will not start.
                     </p>
                     <div class="device-debug-actions">
                         <button
@@ -466,8 +467,8 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                             Refresh info
                         </button>
                     </div>
-                </Presence>
-            </div>
+                </div>
+            </AnimatedDetails>
         </article>
     );
 }

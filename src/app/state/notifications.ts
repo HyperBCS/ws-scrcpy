@@ -1,5 +1,6 @@
 import { signal } from '@preact/signals';
 import { route } from './router';
+import { requestJson } from '../client/request';
 
 const base = new URL('.', window.location.href);
 export const notificationApi = new URL('api/notifications/', base).href;
@@ -10,23 +11,25 @@ export function notificationKey(): string {
 export function setNotificationKey(key: string): void {
     localStorage.setItem(keyName, key.trim());
 }
-export async function notificationRequest<T>(route: string, method = 'GET', body?: unknown): Promise<T> {
+export async function notificationRequest<T>(
+    route: string,
+    method = 'GET',
+    body?: unknown,
+    signal?: AbortSignal,
+): Promise<T> {
     const key = notificationKey();
-    const response = await fetch(notificationApi + route, {
-        method,
-        headers: {
-            ...(key ? { Authorization: `Bearer ${key}` } : {}),
-            'Content-Type': 'application/json',
+    return requestJson<T>(
+        notificationApi + route,
+        {
+            method,
+            headers: {
+                ...(key ? { Authorization: `Bearer ${key}` } : {}),
+                'Content-Type': 'application/json',
+            },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-    if (!response.ok) {
-        if (response.status === 401)
-            throw Error('Open through the private HTTPS address, or enter the notification setup key.');
-        const reply = await response.json().catch(() => ({}));
-        throw Error(reply.error || `Request failed (${response.status})`);
-    }
-    return response.json();
+        signal,
+    );
 }
 export function registerNotificationWorker(): Promise<ServiceWorkerRegistration> {
     if (!window.isSecureContext || !('serviceWorker' in navigator))
@@ -34,11 +37,8 @@ export function registerNotificationWorker(): Promise<ServiceWorkerRegistration>
     return navigator.serviceWorker.register(new URL('sw.js', base).href, { scope: base.pathname });
 }
 
-export interface NotificationSummary {
-    unread: number;
-    unreadBySource: Record<string, number>;
-    sources: Array<{ id: string; name: string }>;
-}
+import type { NotificationSummary } from '../../common/Notification';
+export type { NotificationSummary } from '../../common/Notification';
 export const notificationSummary = signal<NotificationSummary>({ unread: 0, unreadBySource: {}, sources: [] });
 let summaryVersion = 0;
 

@@ -10,25 +10,12 @@ import {
     registerNotificationWorker,
     applyNotificationSummary,
 } from '../state/notifications';
-import { NotificationHistory, UnreadBadge, HistoryItem } from './NotificationHistory';
+import { NotificationHistory, UnreadBadge } from './NotificationHistory';
 import { route } from '../state/router';
-import type { NotificationSource } from '../../server/notifications/NotificationService';
+import type { NotificationSource } from '../../common/Notification';
 import '../../style/views/Notifications.css';
 
-type Status = {
-    publicKey: string;
-    publicUrl?: string;
-    sources: NotificationSource[];
-    bluetooth: Array<{ address: string; name: string; paired: boolean; connected: boolean }>;
-    statuses: Record<string, string>;
-    pairing: { address: string; code: string } | null;
-    pairingOpen: boolean;
-    error: string;
-    delivery: { sent: number; failed: number; lastError: string };
-    notifications: HistoryItem[];
-    unread: number;
-    unreadBySource: Record<string, number>;
-};
+import type { NotificationStatus as Status } from '../../common/Notification';
 
 function savedSources(): string[] | null {
     try {
@@ -129,6 +116,7 @@ export function NotificationsView() {
     const [address, setAddress] = useState('');
     const [initialized, setInitialized] = useState(false);
     const statusRequest = useRef(0);
+    const pendingStatus = useRef<{ controller: AbortController; promise: Promise<Status> }>();
     const mounted = useRef(true);
     const ios =
         /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -162,28 +150,39 @@ export function NotificationsView() {
     privateApp.hash = '!action=notifications';
     const privateUrl = privateApp.href;
 
-    const refresh = async () => {
+    const refresh = (force = true): Promise<Status> => {
+        if (!force && pendingStatus.current) return pendingStatus.current.promise;
         const request = ++statusRequest.current;
-        try {
-            const result = await api<Status>('status');
-            // A slow poll must not overwrite a source added or removed by a newer refresh.
-            if (mounted.current && request === statusRequest.current) {
-                setStatus(result);
-                applyNotificationSummary(result);
-                setConnectionError('');
+        pendingStatus.current?.controller.abort();
+        const controller = new AbortController();
+        const promise = (async () => {
+            try {
+                const result = await api<Status>('status', 'GET', undefined, controller.signal);
+                // A slow poll must not overwrite a source added or removed by a newer refresh.
+                if (mounted.current && request === statusRequest.current) {
+                    setStatus(result);
+                    applyNotificationSummary(result);
+                    setConnectionError('');
+                }
+                return result;
+            } catch (e) {
+                if (mounted.current && request === statusRequest.current) setConnectionError((e as Error).message);
+                throw e;
+            } finally {
+                if (pendingStatus.current?.controller === controller) pendingStatus.current = undefined;
             }
-            return result;
-        } catch (e) {
-            if (mounted.current && request === statusRequest.current) setConnectionError((e as Error).message);
-            throw e;
-        }
+        })();
+        pendingStatus.current = { controller, promise };
+        return promise;
     };
     useEffect(() => {
         document.body.className = 'list';
         document.title = 'Notifications · ws-scrcpy';
         mounted.current = true;
         let alive = true;
-        const poll = () => refresh().catch(() => undefined);
+        const poll = () => {
+            if (!document.hidden) void refresh(false).catch(() => undefined);
+        };
         void poll();
         const timer = window.setInterval(poll, 5000);
         navigator.serviceWorker?.addEventListener('message', poll);
@@ -205,6 +204,7 @@ export function NotificationsView() {
             alive = false;
             mounted.current = false;
             statusRequest.current++;
+            pendingStatus.current?.controller.abort();
             clearInterval(timer);
             navigator.serviceWorker?.removeEventListener('message', poll);
             document.removeEventListener('visibilitychange', poll);
@@ -282,7 +282,9 @@ export function NotificationsView() {
     return (
         <main class="notifications-page">
             <header class="notification-page-header">
-                <a href="#!">← Devices</a>
+                <a class="ui-button" href="#!">
+                    ← Devices
+                </a>
                 <h1>
                     Notifications{' '}
                     <UnreadBadge count={historySource ? status?.unreadBySource?.[historySource.id] || 0 : 0} />
@@ -591,7 +593,9 @@ export function NotificationsView() {
                                 {!window.isSecureContext ? (
                                     <div class="notification-notice">
                                         <p>Open the secure app with Tailscale connected to receive alerts here.</p>
-                                        <a href={privateUrl}>Open private app →</a>
+                                        <a class="ui-button" href={privateUrl}>
+                                            Open private app
+                                        </a>
                                     </div>
                                 ) : ios && !installed ? (
                                     <div class="notification-notice">

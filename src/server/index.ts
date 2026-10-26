@@ -6,14 +6,15 @@ import { HttpServer } from './services/HttpServer';
 import { WebSocketServer } from './services/WebSocketServer';
 import { Service, ServiceClass } from './services/Service';
 import { MwFactory } from './mw/Mw';
-import { WebsocketProxy } from './mw/WebsocketProxy';
+import { RemoteWebsocketProxy } from './mw/RemoteWebsocketProxy';
 import { HostTracker } from './mw/HostTracker';
 import { WebsocketMultiplexer } from './mw/WebsocketMultiplexer';
+import { startServices } from './services/startServices';
 
 const servicesToStart: ServiceClass[] = [HttpServer, WebSocketServer, NotificationService];
 
 // MWs that accept WebSocket
-const mwList: MwFactory[] = [WebsocketProxy, WebsocketMultiplexer];
+const mwList: MwFactory[] = [RemoteWebsocketProxy, WebsocketMultiplexer];
 
 // MWs that accept Multiplexer
 const mw2List: MwFactory[] = [HostTracker];
@@ -95,13 +96,6 @@ loadPlatformModulesPromises.push(loadApplModules());
 
 Promise.all(loadPlatformModulesPromises)
     .then(() => {
-        return servicesToStart.map((serviceClass: ServiceClass) => {
-            const service = serviceClass.getInstance();
-            runningServices.push(service);
-            return service.start();
-        });
-    })
-    .then(() => {
         const wsService = WebSocketServer.getInstance();
         mwList.forEach((mwFactory: MwFactory) => {
             wsService.registerMw(mwFactory);
@@ -110,29 +104,31 @@ Promise.all(loadPlatformModulesPromises)
         mw2List.forEach((mwFactory: MwFactory) => {
             WebsocketMultiplexer.registerMw(mwFactory);
         });
-
-        if (process.platform === 'win32') {
-            readline
-                .createInterface({
-                    input: process.stdin,
-                    output: process.stdout,
-                })
-                .on('SIGINT', exit);
-        }
-
-        process.on('SIGINT', exit);
-        process.on('SIGTERM', exit);
-        // nodemon restarts use SIGUSR2. Without a handler Node exits before releasing the
-        // iOS listener, leaving one orphan behind on every server rebuild.
-        process.once('SIGUSR2', () => {
-            exit('SIGUSR2');
-            process.kill(process.pid, 'SIGUSR2');
-        });
+        return startServices(servicesToStart, runningServices, () => interrupted);
     })
     .catch((error) => {
         console.error(error.message);
-        exit('1');
+        process.exitCode = 1;
+        exit('startup failure');
     });
+
+if (process.platform === 'win32') {
+    readline
+        .createInterface({
+            input: process.stdin,
+            output: process.stdout,
+        })
+        .on('SIGINT', exit);
+}
+
+process.on('SIGINT', exit);
+process.on('SIGTERM', exit);
+// nodemon restarts use SIGUSR2. Without a handler Node exits before releasing the
+// iOS listener, leaving one orphan behind on every server rebuild.
+process.once('SIGUSR2', () => {
+    exit('SIGUSR2');
+    process.kill(process.pid, 'SIGUSR2');
+});
 
 let interrupted = false;
 function exit(signal: string) {
@@ -143,9 +139,14 @@ function exit(signal: string) {
         return;
     }
     interrupted = true;
-    runningServices.forEach((service: Service) => {
+    [...runningServices].reverse().forEach((service: Service) => {
         const serviceName = service.getName();
         console.log(`Stopping ${serviceName} ...`);
-        service.release();
+        try {
+            service.release();
+        } catch (error) {
+            console.error(`Failed to stop ${serviceName}`, error);
+            process.exitCode = 1;
+        }
     });
 }

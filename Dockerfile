@@ -13,13 +13,16 @@ FROM base AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git python3 python3-venv make g++ ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY python ./python
+RUN npm run setup:ios
 COPY . .
-RUN npm install && npm run dist
+RUN npm run dist && npm prune --omit=dev --ignore-scripts
 # The iOS toolchain: venv + python/patches/pymobiledevice3-raw-audio.py. Stock
 # pymobiledevice3 cannot decode the phone's AAC-ELD audio off macOS; the patch is
 # what makes serve-web hand us raw audio instead. Built at /app so the venv's
 # absolute shebangs stay valid in the runner, which also uses /app.
-RUN npm run setup:ios
 
 FROM base AS runner
 LABEL maintainer="Vitaly Repin <vitaly.repin@gmail.com>"
@@ -29,7 +32,9 @@ LABEL maintainer="Vitaly Repin <vitaly.repin@gmail.com>"
 RUN apt-get update && apt-get install -y --no-install-recommends \
         adb python3 python3-dbus python3-gi ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app /app
+COPY --from=builder /app/dist /app/dist
+COPY --from=builder /app/node_modules /app/node_modules
+COPY --from=builder /app/python /app/python
 # Server dist; `resolveBin()` walks cwd and its parent, finding /app/python/venv.
 WORKDIR /app/dist
-CMD ["npm", "start"]
+CMD ["node", "index.js"]

@@ -41,7 +41,8 @@ export function AnimatedDetails({
         });
     };
     useLayoutEffect(() => {
-        if (open !== undefined && ref.current?.open !== open) toggle(open);
+        if (open !== undefined && (animation.current ? desired.current !== open : ref.current?.open !== open))
+            toggle(open);
     }, [open]);
     useLayoutEffect(() => () => animation.current?.cancel(), []);
     return (

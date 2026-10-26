@@ -378,23 +378,6 @@
     }
 }
 
-/* Collapsible debug group on an iOS card: service restarts plus a small diagnostics readout.
-   Reachable without a stream, which is the point -- the failures it recovers from are the ones
-   that leave no working stream page. */
-.device-debug {
-    margin-top: 6px;
-}
-.device-debug-toggle {
-    display: block;
-    min-height: 36px;
-    padding: 0;
-    border: 0;
-    background: none;
-    color: var(--muted-text-color);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-}
 .device-debug-body {
     display: flex;
     flex-direction: column;
@@ -418,4 +401,23 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+}
+
+#devices .device-connection-value {
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 0.5rem;
+    border: 1px solid var(--device-border-color);
+    border-radius: var(--radius-control);
+    background: var(--main-bg-color);
+    color: var(--text-color);
+}
+#devices .device-notification-history {
+    font-size: 0.82rem;
+}
+.device-debug-facts dd {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }

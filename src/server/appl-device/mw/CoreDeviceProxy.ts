@@ -8,6 +8,9 @@ import {
     CoreDeviceServerMessage,
     clampHid,
     isCoreDeviceButton,
+    isCoreDeviceClientMessage,
+    COREDEVICE_FRAME_DELTA,
+    COREDEVICE_FRAME_RESET_KEY,
     splitStreamFrames,
 } from '../../../common/CoreDeviceProtocol';
 import { AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, AudioPacketKind } from '../../../common/AudioProtocol';
@@ -216,6 +219,7 @@ export class CoreDeviceProxy extends Mw {
         }
         this.stream = response;
         let rest: Uint8Array = new Uint8Array(0);
+        let waitingForKeyframe = false;
         response.on('data', (chunk: Buffer) => {
             if (this.ws.readyState !== this.ws.OPEN) {
                 // A final HID release may still be in flight. Teardown owns the media
@@ -231,12 +235,18 @@ export class CoreDeviceProxy extends Mw {
             const socket = this.ws as WS;
             for (const frame of frames) {
                 if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
-                    // Dropping a delta strands the decoder; drop until the next key instead, and
-                    // ask serve-web for one so the wait is short.
-                    if (frame[0] === 1) {
+                    waitingForKeyframe = true;
+                    this.requestKeyframe();
+                    continue;
+                }
+                if (waitingForKeyframe) {
+                    if (frame[0] === COREDEVICE_FRAME_DELTA) {
                         this.requestKeyframe();
                         continue;
                     }
+                    // Rebuild the browser decoder after dropping any reference picture.
+                    frame[0] = COREDEVICE_FRAME_RESET_KEY;
+                    waitingForKeyframe = false;
                 }
                 socket.send(frame);
             }
@@ -368,12 +378,13 @@ export class CoreDeviceProxy extends Mw {
         if (typeof event.data !== 'string') {
             return;
         }
-        let message: CoreDeviceClientMessage;
+        let message: unknown;
         try {
             message = JSON.parse(event.data);
         } catch {
             return;
         }
+        if (!isCoreDeviceClientMessage(message)) return;
         if (
             message.type === 'touch' ||
             message.type === 'touch-frame' ||

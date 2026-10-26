@@ -27,7 +27,7 @@ to control it using keyboard and mouse.
 
 ## Build and Start
 
-Make sure you have installed [node.js](https://nodejs.org/en/download/),
+Make sure you have installed [Node.js 22 or newer](https://nodejs.org/en/download/),
 [node-gyp](https://github.com/nodejs/node-gyp) and
 [build tools](https://github.com/nodejs/node-gyp#installation)
 ```shell
@@ -38,7 +38,7 @@ cd ws-scrcpy
 # git tag -l
 # git checkout vX.Y.Z
 
-npm install
+npm ci
 npm start
 ```
 
@@ -400,7 +400,7 @@ set `WS_PUSH_SUBJECT` to a real HTTPS URL or `mailto:` address. Placeholder loca
 addresses can cause Apple to reject delivery with `403 BadJwtToken`. Changing
 this contact address preserves the existing keys and receiver subscriptions.
 
-1. Open **Notification history** on the iPhone’s device card. Private Tailscale
+1. Open **Notifications** on the iPhone’s device card. Private Tailscale
    access signs in automatically. Direct API access requires the private setup key in
    `/app/data/notification-setup-key` (Docker) or `data/notification-setup-key` (host).
 2. Open **Setup & delivery**. Under **Send from an iPhone**, choose **Start Bluetooth pairing**, open that
@@ -491,3 +491,39 @@ The iOS toolchain is pinned in `python/requirements.txt`. `npm run setup:ios`
 applies the raw-audio and five-contact HID patches; rerun it after recreating the
 virtual environment. `npm test` includes ANCS fragmentation, touch lifecycle,
 notification policy, persistence, and service-worker regression tests.
+
+
+### LAN access and sign-in
+
+The server continues to listen on port 8000 on the host network. Open
+`http://<server-LAN-IP>:8000` from another device on your LAN. Enter the existing
+setup key once; an HttpOnly cookie remembers this browser for 90 days. Read the
+key on the server with `docker exec ws-scrcpy cat /app/data/notification-setup-key`
+(or `cat data/notification-setup-key` for a host installation). Keep the data
+volume when rebuilding so the key and existing settings survive.
+
+The configured private Tailscale Serve address signs in automatically through
+its authenticated loopback proxy. HTTP APIs, downloads, and WebSocket upgrades
+share the access policy. Native clients can send `Authorization: Bearer <key>`.
+Cross-origin browser requests are rejected even with a valid key or cookie.
+
+For a proxied remote server, put its setup key in that server's `accessKey` entry
+in `remoteHostList`; only configured upstream origins and paths can be proxied.
+Keys stay on the server and are omitted from device-discovery responses.
+
+Large file downloads use the browser's download manager and stream directly from
+ADB. Small downloads retain in-app progress; at most two 16 MiB buffers or pending
+Blob URLs are held by the file browser. Cancelling a download closes its ADB pull.
+
+### Verification
+
+`npm run check` runs TypeScript, lint, unit tests, and the production build.
+`npm run test:browser` then serves the built assets on an isolated ephemeral
+loopback port and runs the browser fixtures. It does not connect to attached
+phones or send push notifications. Install browser dependencies once with
+`npx playwright install --with-deps chromium webkit`. For the WebKit checks, run
+`BROWSER=webkit npm run test:browser -- review-polish notifications motion`.
+The same workflow runs in GitHub Actions.
+
+See [review fixes and validation](docs/REVIEW-FIXES-2026-10-26.md) for the changes
+and remaining upstream dependency advisory.

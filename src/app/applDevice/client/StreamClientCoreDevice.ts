@@ -1,3 +1,4 @@
+import { observeViewport } from '../../client/observeViewport';
 import { BaseClient } from '../../client/BaseClient';
 import { ACTION } from '../../../common/Action';
 import { ParamsStreamCoreDevice } from '../../../types/ParamsStreamCoreDevice';
@@ -82,7 +83,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     private typing = Promise.resolve();
     private typingGeneration = 0;
     private resizeTimer?: ReturnType<typeof setTimeout>;
-    private resizeObserver?: ResizeObserver;
+    private stopObservingViewport?: () => void;
 
     protected constructor(params: ParamsStreamCoreDevice, container: HTMLElement = document.body) {
         super(params);
@@ -115,14 +116,10 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.receiver.on('video', this.onVideo);
         this.receiver.on('clipboard', this.onClipboard);
         this.receiver.on('result', (result) => this.emit('result', result));
-        window.addEventListener('resize', this.onWindowResize);
+        this.stopObservingViewport = observeViewport(this.videoWrapper, this.onWindowResize);
         window.addEventListener('blur', this.onKeyboardBlur);
         window.addEventListener('pagehide', this.onKeyboardBlur);
         document.addEventListener('visibilitychange', this.onVisibilityChange);
-        if (typeof ResizeObserver !== 'undefined') {
-            this.resizeObserver = new ResizeObserver(this.onWindowResize);
-            this.resizeObserver.observe(this.videoWrapper);
-        }
         if (params.captureKeyboard !== false) {
             this.setHandleKeyboardEvents(true);
         }
@@ -560,12 +557,11 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.setHandleKeyboardEvents(false);
         this.touchHandler?.release();
         this.touchHandler = undefined;
-        window.removeEventListener('resize', this.onWindowResize);
+        this.stopObservingViewport?.();
+        this.stopObservingViewport = undefined;
         window.removeEventListener('blur', this.onKeyboardBlur);
         window.removeEventListener('pagehide', this.onKeyboardBlur);
         document.removeEventListener('visibilitychange', this.onVisibilityChange);
-        this.resizeObserver?.disconnect();
-        this.resizeObserver = undefined;
         if (this.resizeTimer !== undefined) {
             clearTimeout(this.resizeTimer);
             this.resizeTimer = undefined;

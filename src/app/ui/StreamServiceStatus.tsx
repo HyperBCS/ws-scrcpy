@@ -8,11 +8,12 @@ interface StreamServiceStatusProps {
     descriptor?: Pick<GoogDeviceDescriptor, 'state' | 'pid'>;
     deviceKey?: string;
     className?: string;
+    session?: 'ready' | 'starting' | 'stopped' | 'error';
 }
 
 /** Process state is separate from the browser's connection or the device's lock/power state. */
-export function StreamServiceStatus({ descriptor, deviceKey, className = '' }: StreamServiceStatusProps) {
-    const info = getStreamServiceStatus(descriptor, isDeviceStarting(deviceKey));
+export function StreamServiceStatus({ descriptor, deviceKey, className = '', session }: StreamServiceStatusProps) {
+    const info = getStreamServiceStatus(descriptor, session === 'starting' || isDeviceStarting(deviceKey));
     useEffect(() => {
         if (deviceKey && ['running', 'offline', 'unauthorized'].includes(info.state)) {
             clearStarting(deviceKey);

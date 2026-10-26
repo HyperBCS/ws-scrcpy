@@ -23,6 +23,7 @@ services:
       dockerfile: Dockerfile
     container_name: ws-scrcpy
     restart: unless-stopped
+    stop_grace_period: 25s
     network_mode: host
     # Load config/apparmor-ws-scrcpy on the host before starting (see README).
     security_opt:
@@ -47,6 +48,7 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     container_name: ws-scrcpy-dev
+    stop_grace_period: 25s
     network_mode: host
     # Load config/apparmor-ws-scrcpy on the host before starting (see README).
     security_opt:

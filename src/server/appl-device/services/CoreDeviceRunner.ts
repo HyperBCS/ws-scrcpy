@@ -70,8 +70,7 @@ interface Session {
  * and the virtual keyboard. This class only manages its lifecycle and exposes its loopback HTTP
  * API to `CoreDeviceProxy`; `serve-web` binds 127.0.0.1 because its endpoints have no auth.
  *
- * Nothing here is verified against hardware yet: the bench iPhone was not reachable while this
- * was written (see docs/HANDOFF.md). `scripts/test-coredevice.js` drives it against a fake CLI.
+ * Hardware observations and platform constraints are recorded in docs/HANDOFF.md.
  */
 export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> implements Service {
     private static instance?: CoreDeviceRunner;
@@ -125,7 +124,7 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
             session = undefined;
         }
         if (!session) {
-            session = await this.createSession(udid);
+            session = this.createSession(udid);
         }
         if (session.releaseTimer) {
             clearTimeout(session.releaseTimer);
@@ -269,11 +268,10 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         });
     }
 
-    private async createSession(udid: string): Promise<Session> {
-        const port = await portfinder.getPortPromise({ port: 18100 });
+    private createSession(udid: string): Session {
         const session: Session = {
             udid,
-            port,
+            port: 0,
             state: 'starting',
             holders: 0,
             stderrTail: '',
@@ -282,14 +280,22 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         };
         this.sessions.set(udid, session);
         this.setState(session, 'starting', 'Preparing the device');
-        session.ready = this.bringUp(session).catch((error: Error) => {
-            if (this.sessions.get(udid) === session) {
-                this.kill(session.child);
-                session.child = undefined;
-                this.setState(session, 'error', error.message);
-            }
-            throw error;
-        });
+        // Publish ownership before any asynchronous work, including port allocation.
+        session.ready = portfinder
+            .getPortPromise({ port: 18100 })
+            .then(async (port) => {
+                if (this.released || this.sessions.get(udid) !== session) throw new Error('Session stopped');
+                session.port = port;
+                await this.bringUp(session);
+            })
+            .catch((error: Error) => {
+                if (this.sessions.get(udid) === session) {
+                    this.kill(session.child);
+                    session.child = undefined;
+                    this.setState(session, 'error', error.message);
+                }
+                throw error;
+            });
         return session;
     }
 

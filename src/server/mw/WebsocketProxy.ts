@@ -1,12 +1,13 @@
-import { Mw, RequestParameters, SocketMessageEvent } from './Mw';
+import { Mw, SocketMessageEvent } from './Mw';
 import WS from 'ws';
-import { ACTION } from '../../common/Action';
 import { Multiplexer } from '../../packages/multiplexer/Multiplexer';
 import { broadcastManager } from '../../common/BroadcastManager';
 import { Broadcast, VideoFrameKind } from '../../common/Broadcast';
 import { ControlMessage } from '../../app/controlMessage/ControlMessage';
 
 type BroadcastListener = (data: Buffer, videoKind?: VideoFrameKind) => void;
+// Allow the bounded 16 MiB bootstrap, then reconnect viewers that cannot keep up.
+const MAX_BUFFERED_BYTES = 20 * 1024 * 1024;
 
 /**
  * Device details used to fill the synthetic `scrcpy_initial` packet. Supplied by the caller
@@ -42,29 +43,6 @@ export class WebsocketProxy extends Mw {
             }
         }
         return;
-    }
-
-    public static processRequest(ws: WS, params: RequestParameters): WebsocketProxy | undefined {
-        const { action, url } = params;
-        if (action !== ACTION.PROXY_WS) {
-            return;
-        }
-        const wsString = url.searchParams.get('ws');
-        if (!wsString) {
-            ws.close(4003, `[${this.TAG}] Invalid value "${wsString}" for "ws" parameter`);
-            return;
-        }
-        return this.createProxy(ws, wsString);
-    }
-
-    public static createProxy(ws: WS | Multiplexer, remoteUrl: string): WebsocketProxy {
-        const service = new WebsocketProxy(ws);
-        service.init(remoteUrl).catch((e) => {
-            const msg = `[${this.TAG}] Failed to start service: ${e.message}`;
-            console.error(msg);
-            ws.close(4005, msg);
-        });
-        return service;
     }
 
     constructor(ws: WS | Multiplexer) {
@@ -113,9 +91,7 @@ export class WebsocketProxy extends Mw {
         // A config-change restart tears this broadcast down without ever telling this proxy
         // directly: without this, an already-attached client's socket would just go silent
         // forever (frozen last frame, no 'close' event, so StreamReceiver never reconnects).
-        // Broadcast.stop() destroy()s the control socket, which is the one teardown signal
-        // available here without adding an event to Broadcast/BroadcastManager themselves -
-        // those are owned by another change in flight.
+        // Broadcast.stop() destroys the control socket, so it also ends this viewer's stream.
         this.controlSocketCloseListener = () => {
             const { OPEN, CONNECTING } = this.ws;
             if (this.ws.readyState === OPEN || this.ws.readyState === CONNECTING) {
@@ -128,18 +104,21 @@ export class WebsocketProxy extends Mw {
         if (this.ws.readyState === this.ws.OPEN) {
             // The magic packet is the only source of ScreenInfo for the player, so it must go out
             // even before the first config/key frame is cached, or the client never leaves PAUSED.
-            this.ws.send(
-                broadcast.craftInitialInfoPacket(meta?.deviceName || udid, meta?.encoders ?? [], this.clientId),
-            );
+            if (
+                !this.sendPacket(
+                    broadcast.craftInitialInfoPacket(meta?.deviceName || udid, meta?.encoders ?? [], this.clientId),
+                )
+            )
+                return;
             for (const packet of broadcast.getAudioBootstrapPackets()) {
-                this.ws.send(packet);
+                if (!this.sendPacket(packet)) return;
             }
 
             // A lone cached IDR is stale and cannot decode future deltas that reference the
             // omitted intervening pictures. Replay the complete current GOP to reach live.
             const videoPackets = broadcast.getVideoBootstrapPackets();
             for (const packet of videoPackets) {
-                this.ws.send(packet);
+                if (!this.sendPacket(packet)) return;
             }
             waitingForKeyframe = !broadcast.hasCompleteVideoBootstrap();
         }
@@ -155,7 +134,7 @@ export class WebsocketProxy extends Mw {
                     // device messages still flow while this viewer waits for a usable picture.
                     return;
                 }
-                this.ws.send(data);
+                this.sendPacket(data);
             } else {
                 broadcast.removeListener(listener);
             }
@@ -163,6 +142,16 @@ export class WebsocketProxy extends Mw {
 
         this.broadcastListener = listener;
         broadcast.addListener(listener);
+    }
+
+    private sendPacket(data: Buffer): boolean {
+        if (this.ws.readyState !== this.ws.OPEN) return false;
+        if (this.ws.bufferedAmount > MAX_BUFFERED_BYTES) {
+            this.ws.close(4009, 'Connection too slow. Reconnecting.');
+            return false;
+        }
+        this.ws.send(data);
+        return true;
     }
 
     protected onSocketMessage(event: SocketMessageEvent): void {

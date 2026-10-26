@@ -3,56 +3,18 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
-import webpush, { PushSubscription } from 'web-push';
+import { PushSubscription } from 'web-push';
 import { Service } from '../services/Service';
 import { NotificationIcons } from './NotificationIcons';
 import { isDismissActionLabel } from '../../common/NotificationActions';
+import { AccessControl } from '../AccessControl';
 
-export interface NotificationSource {
-    id: string;
-    address: string;
-    name: string;
-    apps: string[];
-    preview: boolean;
-}
-interface SubscriptionRecord {
-    id: string;
-    subscription: PushSubscription;
-    sources: string[];
-    receiverSource: string;
-    updated: number;
-}
-interface Store {
-    token: string;
-    vapid: { publicKey: string; privateKey: string };
-    sources: NotificationSource[];
-    subscriptions: SubscriptionRecord[];
-}
-export interface NotificationEvent {
-    source: string;
-    session: string;
-    uid: number;
-    event: 'added' | 'modified' | 'removed';
-    preExisting?: boolean;
-    app?: string;
-    appName?: string;
-    title?: string;
-    subtitle?: string;
-    body?: string;
-    date?: string;
-    canDismiss?: boolean;
-    negativeActionLabel?: string;
-}
-export interface FeedItem extends NotificationEvent {
-    key: string;
-    received: number;
-    read: boolean;
-    dismissed: boolean;
-    active: boolean;
-    // Fingerprints are private reconnect hints, never exposed to the browser.
-    fingerprint?: string;
-    reconnectable: boolean;
-}
+import { NotificationEvent, NotificationSource } from '../../common/Notification';
+import { PushDelivery, PushTarget } from './PushDelivery';
+export type { NotificationEvent, NotificationSource } from '../../common/Notification';
+
+import { NotificationStorage, NotificationStore as Store, SubscriptionRecord, FeedItem } from './NotificationStorage';
+export type { FeedItem } from './NotificationStorage';
 
 export function validateSubscription(value: unknown): PushSubscription {
     const sub = value as PushSubscription;
@@ -90,19 +52,6 @@ export function shouldRelay(event: NotificationEvent, source: NotificationSource
     );
 }
 
-function pushFailure(error: unknown): string {
-    const { statusCode, body } = error as { statusCode?: number; body?: string };
-    if (statusCode === 403 && typeof body === 'string' && body.length < 2048) {
-        try {
-            if (JSON.parse(body)?.reason === 'BadJwtToken')
-                return 'Push provider rejected the server’s sender credentials (403: BadJwtToken). Check WS_PUSH_SUBJECT and the server clock.';
-        } catch {
-            // Provider responses are not always JSON. Never expose their raw body.
-        }
-    }
-    return `Push provider rejected delivery (${statusCode || 'network error'})`;
-}
-
 export class NotificationService implements Service {
     private static instance?: NotificationService;
     static getInstance(): NotificationService {
@@ -112,9 +61,9 @@ export class NotificationService implements Service {
         return !!this.instance;
     }
     private dataDir = path.resolve(process.env.WS_NOTIFICATION_DATA || path.join(process.cwd(), 'data'));
-    private file = path.join(this.dataDir, 'notifications.json');
-    private historyFile = path.join(this.dataDir, 'notification-history.json');
-    private historySave?: NodeJS.Timeout;
+    private storage = new NotificationStorage(this.dataDir, (message) => {
+        this.error = message;
+    });
     private icons = new NotificationIcons(this.dataDir);
     private sessions = new Map<string, string>();
     private bulkSources = new Set<string>();
@@ -136,6 +85,7 @@ export class NotificationService implements Service {
     private restart?: NodeJS.Timeout;
     private closed = false;
     private loaded = false;
+    private accessControl?: AccessControl;
     private feed = new Map<string, FeedItem>();
     private observed = new Map<string, number>();
     private replayCandidates = new Map<
@@ -147,101 +97,63 @@ export class NotificationService implements Service {
     private pairing: { address: string; code: string } | null = null;
     private pairingOpen = false;
     private error = '';
-    private delivery = { sent: 0, failed: 0, lastError: '' };
-    private queues = new Map<string, Array<{ payload: string; key: string; expires: number; generation: number }>>();
-    private deliveryGeneration = 0;
-    private draining = new Set<string>();
+    private push = new PushDelivery(
+        (id, key, testPayload) => this.preparePush(id, key, testPayload),
+        (id, subscription) => {
+            this.store.subscriptions = this.store.subscriptions.filter(
+                (s) => s.id !== id || s.subscription !== subscription,
+            );
+            this.save();
+        },
+    );
+    private get delivery() {
+        return this.push.stats;
+    }
     private attempts = new Map<string, { count: number; reset: number }>();
 
     getName(): string {
         return 'Bluetooth notifications and Web Push';
     }
+    get access(): AccessControl {
+        this.load();
+        return this.accessControl ?? (this.accessControl = new AccessControl(this.store.token));
+    }
     private load(): void {
         if (this.loaded) return;
-        fs.mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
-        if (fs.existsSync(this.file)) this.store = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-        else {
-            this.store = {
-                token: crypto.randomBytes(24).toString('base64url'),
-                vapid: webpush.generateVAPIDKeys(),
-                sources: [],
-                subscriptions: [],
-            };
-            this.save();
-        }
-        fs.writeFileSync(path.join(this.dataDir, 'notification-setup-key'), this.store.token + '\n', { mode: 0o600 });
+        this.store = this.storage.load();
         this.loaded = true;
-        if (fs.existsSync(this.historyFile)) {
-            try {
-                const history = JSON.parse(fs.readFileSync(this.historyFile, 'utf8'));
-                if (!Array.isArray(history.items)) throw Error('Invalid notification history');
-                for (const item of history.items as FeedItem[]) {
-                    const source = this.store.sources.find((s) => s.id === item.source);
-                    if (
-                        !source ||
-                        typeof item.key !== 'string' ||
-                        typeof item.session !== 'string' ||
-                        !Number.isInteger(item.uid) ||
-                        !Number.isFinite(item.received)
-                    )
-                        continue;
-                    item.active = false;
-                    item.read = !!item.read;
-                    item.dismissed = !!item.dismissed;
-                    if (!source.preview) Object.assign(item, { title: '', subtitle: '', body: '' });
-                    this.feed.set(item.key, item);
-                    if (item.reconnectable && item.fingerprint) {
-                        this.replayCandidates.set(`${item.source}:${item.session}:${item.uid}`, {
-                            fingerprint: item.fingerprint,
-                            session: item.session,
-                            received: Date.now(),
-                            historyKey: item.key,
-                        });
-                    }
-                }
-                this.prune();
-            } catch {
-                this.error = 'Notification history could not be loaded';
-            }
+        for (const item of this.storage.loadHistory(this.store.sources)) {
+            this.feed.set(item.key, item);
+            if (item.reconnectable && item.fingerprint)
+                this.replayCandidates.set(`${item.source}:${item.session}:${item.uid}`, {
+                    fingerprint: item.fingerprint,
+                    session: item.session,
+                    received: Date.now(),
+                    historyKey: item.key,
+                });
         }
+        this.prune();
     }
     private saveHistory(immediate = false): void {
-        if (this.historySave) {
-            clearTimeout(this.historySave);
-            this.historySave = undefined;
-        }
-        if (!immediate) {
-            this.historySave = setTimeout(() => {
-                try {
-                    this.saveHistory(true);
-                } catch {
-                    this.error = 'Notification history could not be saved';
-                }
-            }, 200);
-            return;
-        }
-        fs.writeFileSync(this.historyFile + '.tmp', JSON.stringify({ version: 1, items: [...this.feed.values()] }), {
-            mode: 0o600,
-        });
-        fs.renameSync(this.historyFile + '.tmp', this.historyFile);
+        this.storage.saveHistory(() => [...this.feed.values()], immediate);
     }
     private save(): void {
-        fs.writeFileSync(this.file + '.tmp', JSON.stringify(this.store), { mode: 0o600 });
-        fs.renameSync(this.file + '.tmp', this.file);
+        this.storage.save(this.store);
     }
     async start(): Promise<void> {
         this.load();
         this.closed = false;
+        this.push.start();
         this.startCollector();
     }
     release(): void {
         this.closed = true;
         this.invalidateSources();
-        if (this.historySave) this.saveHistory(true);
+        this.storage.flush();
         if (this.restart) clearTimeout(this.restart);
         this.child?.kill();
         this.child = undefined;
-        this.queues.clear();
+        this.push.stop();
     }
     private command(command: object): void {
         if (!this.child?.stdin.writable) throw Error('Bluetooth collector is starting; try again shortly');
@@ -571,21 +483,33 @@ export class NotificationService implements Service {
             });
         this.prune();
         if (replay || event.preExisting) return;
+        for (const sub of this.store.subscriptions) if (shouldRelay(event, source, sub)) this.push.enqueue(sub.id, key);
+    }
+
+    private preparePush(id: string, key: string, testPayload?: string): PushTarget | undefined {
+        const sub = this.store.subscriptions.find((candidate) => candidate.id === id);
+        if (!sub || this.closed) return;
+        if (key === 'test' && testPayload)
+            return { subscription: sub.subscription, payload: testPayload, vapid: this.store.vapid };
+        const item = this.feed.get(key);
+        if (!item || item.read || item.dismissed || !item.reconnectable || item.received < Date.now() - 30 * 86400000)
+            return;
+        const source = this.store.sources.find((candidate) => candidate.id === item.source);
+        if (!source || !shouldRelay({ ...item, event: 'added', preExisting: false }, source, sub)) return;
         const payload = JSON.stringify({
             title: source.preview
-                ? this.pushText(`${event.appName || event.app}: ${event.title || 'Notification'}`, 160)
+                ? this.pushText(`${item.appName || item.app}: ${item.title || 'Notification'}`, 160)
                 : `${source.name}: new notification`,
             body: source.preview
-                ? this.pushText([event.subtitle, event.body].filter(Boolean).join('\n'), 700)
+                ? this.pushText([item.subtitle, item.body].filter(Boolean).join('\n'), 700)
                 : 'Open the device to view it.',
-            tag: crypto.createHash('sha256').update(key).digest('hex').slice(0, 32),
-            url: `#!${new URLSearchParams({ action: 'notifications', source: source.id, notification: key })}`,
+            tag: crypto.createHash('sha256').update(item.key).digest('hex').slice(0, 32),
+            url: `#!${new URLSearchParams({ action: 'notifications', source: source.id, notification: item.key })}`,
             source: source.id,
-            notificationKey: key,
+            notificationKey: item.key,
             unreadCount: this.counts().unread,
         });
-        for (const sub of this.store.subscriptions)
-            if (shouldRelay(event, source, sub)) this.enqueue(sub, payload, key);
+        return { subscription: sub.subscription, payload, vapid: this.store.vapid };
     }
     private pushText(value: string, length: number): string {
         // Strip JSON-expanding control characters and unpaired UTF-16 surrogates.
@@ -600,100 +524,13 @@ export class NotificationService implements Service {
             .slice(0, length)
             .replace(/[\ud800-\udbff]$/, '');
     }
-    private enqueue(sub: SubscriptionRecord, payload: string, key: string): void {
-        const queue = this.queues.get(sub.id) || [];
-        if (queue.length >= 50) queue.shift();
-        queue.push({ payload, key, expires: Date.now() + 300000, generation: this.deliveryGeneration });
-        this.queues.set(sub.id, queue);
-        if (!this.draining.has(sub.id)) void this.drain(sub.id);
-    }
-    private async drain(id: string): Promise<void> {
-        this.draining.add(id);
-        try {
-            const queue = this.queues.get(id)!;
-            while (!this.closed && queue.length) {
-                const job = queue.shift()!;
-                for (let attempt = 0; attempt < 3 && Date.now() < job.expires; attempt++) {
-                    const sub = this.store.subscriptions.find((s) => s.id === id);
-                    if (!sub || this.closed || job.generation !== this.deliveryGeneration) break;
-                    // Apple rejects placeholder local sender addresses. Use the app's
-                    // configured HTTPS address unless an explicit contact URI is set.
-                    const subject = process.env.WS_PUSH_SUBJECT || process.env.WS_PUBLIC_URL;
-                    if (!subject) {
-                        this.delivery.failed++;
-                        this.delivery.lastError = 'Set WS_PUBLIC_URL or WS_PUSH_SUBJECT to configure the push sender.';
-                        break;
-                    }
-                    try {
-                        // Queued delivery may follow a read/dismiss action in the app.
-                        // Send the current count, not the count captured when queued.
-                        const payload = JSON.parse(job.payload);
-                        if (job.key !== 'test') payload.unreadCount = this.counts().unread;
-                        await webpush.sendNotification(sub.subscription, JSON.stringify(payload), {
-                            TTL: Math.max(1, Math.floor((job.expires - Date.now()) / 1000)),
-                            urgency: 'normal',
-                            timeout: 10000,
-                            vapidDetails: {
-                                subject,
-                                ...this.store.vapid,
-                            },
-                        });
-                        this.delivery.sent++;
-                        this.delivery.lastError = '';
-                        break;
-                    } catch (error) {
-                        const status = (error as { statusCode?: number }).statusCode;
-                        if (status === 404 || status === 410) {
-                            this.store.subscriptions = this.store.subscriptions.filter((s) => s.id !== id);
-                            this.save();
-                            break;
-                        }
-                        if ((status === 429 || !status || status >= 500) && attempt < 2) {
-                            const raw = (error as { headers?: Record<string, string> }).headers?.['retry-after'];
-                            const delay = raw
-                                ? Number.isFinite(Number(raw))
-                                    ? Number(raw) * 1000
-                                    : Date.parse(raw) - Date.now()
-                                : 1000 * 2 ** attempt;
-                            await new Promise((resolve) =>
-                                setTimeout(resolve, Math.min(30000, Math.max(1000, delay || 1000))),
-                            );
-                        } else {
-                            this.delivery.failed++;
-                            this.delivery.lastError = pushFailure(error);
-                            break;
-                        }
-                    }
-                }
-            }
-        } finally {
-            this.draining.delete(id);
-            this.queues.delete(id);
-        }
-    }
     mount(app: Express, base: string): void {
         this.load();
         const router = express.Router();
-        router.use(express.json({ limit: '64kb' }));
+        router.use(this.access.requireAccess);
+        router.use(express.json({ limit: '64kb', inflate: false }));
         router.use((req, res, next) => {
             res.setHeader('Cache-Control', 'no-store');
-            const origin = req.get('origin');
-            const expected = process.env.WS_PUBLIC_URL ? new URL(process.env.WS_PUBLIC_URL).origin : '';
-            if (origin && origin !== expected && origin !== `${req.protocol}://${req.get('host')}`) {
-                res.sendStatus(403);
-                return;
-            }
-            const token = req.get('authorization')?.replace(/^Bearer /, '') || '';
-            const actual = Buffer.from(token),
-                wanted = Buffer.from(this.store.token);
-            const localProxy = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '');
-            // Serve strips spoofed identity headers. Accept them only from its local proxy,
-            // never from requests arriving directly over the LAN listener.
-            const tailscale = localProxy && !!req.get('tailscale-user-login') && !!expected;
-            if (!tailscale && (actual.length !== wanted.length || !crypto.timingSafeEqual(actual, wanted))) {
-                res.sendStatus(401);
-                return;
-            }
             const ip = req.socket.remoteAddress || 'unknown';
             let rate = this.attempts.get(ip);
             if (!rate || rate.reset < Date.now()) {
@@ -964,23 +801,23 @@ export class NotificationService implements Service {
                 throw Error('Bluetooth phone is already linked');
             if (this.store.sources.length >= 32 && !this.store.sources.some((s) => s.id === id))
                 throw Error('Source limit reached');
+            const connectionChanged =
+                this.store.sources.find((source) => source.id === id)?.address !== address.toUpperCase();
             this.store.sources = [
                 ...this.store.sources.filter((s) => s.id !== id),
                 { id, address: address.toUpperCase(), name, apps, preview },
             ];
-            this.invalidateSources();
+            if (connectionChanged) this.invalidateSources();
             for (const item of this.feed.values())
                 if (item.source === id && !preview) Object.assign(item, { title: '', subtitle: '', body: '' });
             this.saveHistory(true);
-            this.deliveryGeneration++;
             this.save();
-            this.child?.kill();
+            if (connectionChanged) this.child?.kill();
             res.json({ ok: true });
         });
         route('delete', '/sources/:id', (req, res) => {
             const id = req.params.id;
             this.store.sources = this.store.sources.filter((s) => s.id !== id);
-            this.deliveryGeneration++;
             this.invalidateSources();
             for (const [key, item] of this.feed) if (item.source === id) this.feed.delete(key);
             for (const [key, value] of this.replayCandidates)
@@ -1006,12 +843,10 @@ export class NotificationService implements Service {
                 ...this.store.subscriptions.filter((s) => s.id !== id),
                 { id, subscription, sources, receiverSource, updated: Date.now() },
             ];
-            this.deliveryGeneration++;
             this.save();
             res.json({ id });
         });
         route('delete', '/subscriptions', (req, res) => {
-            this.deliveryGeneration++;
             this.store.subscriptions = this.store.subscriptions.filter(
                 (s) => s.subscription.endpoint !== req.body.endpoint,
             );
@@ -1021,15 +856,15 @@ export class NotificationService implements Service {
         route('post', '/test', (req, res) => {
             const sub = this.store.subscriptions.find((s) => s.subscription.endpoint === req.body.endpoint);
             if (!sub) throw Error('Enable notifications on this device first');
-            this.enqueue(
-                sub,
+            this.push.enqueue(
+                sub.id,
+                'test',
                 JSON.stringify({
                     title: 'ws-scrcpy',
                     body: 'Notifications are ready on this device.',
                     tag: 'ws-scrcpy-test',
                     url: '#!action=notifications',
                 }),
-                'test',
             );
             res.json({ ok: true });
         });

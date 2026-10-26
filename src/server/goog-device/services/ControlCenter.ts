@@ -18,6 +18,7 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     private static instance?: ControlCenter;
 
     private initialized = false;
+    private released = false;
     private client: AdbKitClient = AdbExtended.createClient();
     private tracker?: Tracker;
     private waitAfterError = 1000;
@@ -45,14 +46,14 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     }
 
     private restartTracker = (): void => {
-        if (this.restartTimeoutId) {
+        if (this.released || this.restartTimeoutId) {
             return;
         }
         console.log(`Device tracker is down. Will try to restart in ${this.waitAfterError}ms`);
         this.restartTimeoutId = setTimeout(() => {
             this.restartTimeoutId = undefined;
             this.stopTracker();
-            this.waitAfterError *= 1.2;
+            this.waitAfterError = Math.min(30000, this.waitAfterError * 1.2);
             this.init().catch((e) => {
                 console.error(`Error: Failed to restart "${this.getName()}". ${e.message}`);
                 // Without a tracker there is no 'end'/'error' event to trigger the next attempt
@@ -104,11 +105,12 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     }
 
     public async init(): Promise<void> {
-        if (this.initialized) {
+        if (this.initialized || this.released) {
             return;
         }
         this.tracker = await this.startTracker();
         const list = await this.client.listDevices();
+        if (this.released) return;
         list.forEach((device) => {
             const { id, type } = device;
             this.handleConnected(id, type);
@@ -121,6 +123,10 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
             return this.tracker;
         }
         const tracker = await this.client.trackDevices();
+        if (this.released) {
+            tracker.end();
+            throw new Error('Device tracker stopped');
+        }
         tracker.on('changeSet', this.onChangeSet);
         tracker.on('end', this.restartTracker);
         tracker.on('error', this.restartTracker);
@@ -180,12 +186,15 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     }
 
     public start(): Promise<void> {
+        this.released = false;
         return this.init().catch((e) => {
             console.error(`Error: Failed to init "${this.getName()}". ${e.message}`);
+            this.restartTracker();
         });
     }
 
     public release(): void {
+        this.released = true;
         this.stopTracker();
         this.deviceMap.forEach((device) => {
             device.off('update', this.onDeviceUpdate);

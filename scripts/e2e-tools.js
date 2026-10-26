@@ -1,6 +1,7 @@
 /* eslint-disable */
 // All device sockets are fixtures. No shell commands reach a real device.
 const assert = require('node:assert/strict');
+const { settleMotion } = require('./ui-motion');
 const fs = require('node:fs');
 const { chromium } = require('playwright');
 const { initialStreamPacket } = require('./e2e-sheets');
@@ -56,6 +57,7 @@ async function fixtures(page) {
     return state;
 }
 async function geometry(page) {
+    await settleMotion(page);
     const result = await page.evaluate(() => {
         const view = document.querySelector('.tool-view');
         const terminal = document.querySelector('.terminal-container');
@@ -134,7 +136,7 @@ async function main() {
             await page.getByRole('button',{name:'Back to devices',exact:true}).click();
             await page.locator('#devices').waitFor();
             const card2 = page.locator('.device').filter({hasText:'Phone B'});
-            await card2.getByRole('link',{name:'Open screen →',exact:true}).click();
+            await card2.getByRole('link',{name:'Open screen',exact:true}).click();
             await page.locator('.stream-stage').waitFor();
             await page.getByText('Connected',{exact:true}).waitFor();
             await page.getByRole('button',{name:'Back to devices',exact:true}).click();
