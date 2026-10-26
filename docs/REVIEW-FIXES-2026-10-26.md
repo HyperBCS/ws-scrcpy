@@ -27,7 +27,7 @@ This release addresses the 13 findings in the repository review, preserves LAN a
 - Extracted download resource ownership from the file browser. At most two small download buffers or pending Blob URLs are retained. Files over 16 MiB, additional simultaneous files, and files that grow past the bound stream through authenticated HTTP to the browser's download manager. Configured remote hosts are supported too.
 - Shared dialog focus cycling/restoration across sheets, and focus cycling with file dialogs. Kept platform-specific gesture and input handling where their behavior differs.
 - Shared stream-container resize observation and teardown between Android and iOS clients.
-- Android and iOS cards share a header, status treatment, “Open screen” action and “Connection & tools” disclosure. Serial numbers and recovery details sit inside the disclosure. Platform-specific actions remain available.
+- Android and iOS cards share a header, status treatment, “Open screen” action and “Connection & tools” disclosure. Both platforms share one device grid per host; a single host needs no tracker headings. Serial numbers and recovery details sit inside the disclosure. Platform-specific actions remain available.
 - “Open screen” is a compact button beside notification search. Navigation actions use the same button surface, spacing, focus and press feedback.
 - Production images use `npm ci`, cache dependency layers, prune development packages, and copy runtime assets rather than the whole repository. Node runs directly as the container process, with a 25-second shutdown grace period.
 - Added one local/CI verification workflow and an isolated browser-fixture server. Browser checks cover both Chromium and WebKit without sending commands to real phones.

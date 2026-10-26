@@ -175,6 +175,8 @@
     margin: 0;
 }
 #devices .device-asleep-banner {
+    box-sizing: border-box;
+    min-height: 51px;
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -420,4 +422,8 @@
 .device-debug-facts dd {
     min-width: 0;
     overflow-wrap: anywhere;
+}
+
+#devices .device-primary-actions > :last-child:not(.stream) {
+    flex: 0 0 116px;
 }

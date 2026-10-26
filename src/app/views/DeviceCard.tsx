@@ -344,7 +344,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             {isAsleep && (
                 <div class="device-asleep-banner" role="status">
                     <span aria-hidden="true">☾</span>
-                    <span>Screen is asleep. Open it to wake.</span>
+                    <span>Screen is asleep.</span>
                 </div>
             )}
             {isActive && developerMode === false && (

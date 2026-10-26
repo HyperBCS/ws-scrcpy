@@ -5,19 +5,26 @@ import { DeviceCard } from './DeviceCard';
 import { DeviceIcon } from '../ui/DeviceIcon';
 import '../../style/views/DeviceList.css';
 
-interface TrackerGroup {
-    trackerId: string;
-    trackerName: string;
+interface HostGroup {
+    key: string;
+    name: string;
     entries: DeviceEntry[];
 }
 
-function groupByTracker(list: DeviceEntry[]): TrackerGroup[] {
-    const groups = new Map<string, TrackerGroup>();
+function groupByHost(list: DeviceEntry[]): HostGroup[] {
+    const groups = new Map<string, HostGroup>();
     list.forEach((entry) => {
-        let group = groups.get(entry.trackerId);
+        const {
+            hostname = location.hostname,
+            port = location.port,
+            pathname = location.pathname,
+            secure,
+        } = entry.params;
+        const key = `${secure ? 'https' : 'http'}://${hostname}:${port}${pathname}`;
+        let group = groups.get(key);
         if (!group) {
-            group = { trackerId: entry.trackerId, trackerName: entry.trackerName, entries: [] };
-            groups.set(entry.trackerId, group);
+            group = { key, name: hostname, entries: [] };
+            groups.set(key, group);
         }
         group.entries.push(entry);
     });
@@ -36,7 +43,7 @@ export function DeviceList() {
         (a, b) =>
             Number(isDeviceAvailable(b)) - Number(isDeviceAvailable(a)) || deviceName(a).localeCompare(deviceName(b)),
     );
-    const groups = groupByTracker(entries);
+    const groups = groupByHost(entries);
     const disconnected = hostsStatus.value === 'disconnected' || hostsStatus.value === 'error';
 
     return (
@@ -68,16 +75,18 @@ export function DeviceList() {
                 ) : (
                     groups.map((group) => (
                         <section
-                            key={group.trackerId}
+                            key={group.key}
                             class="tracker-block"
-                            aria-label={group.trackerName || 'Devices'}
+                            aria-label={groups.length > 1 ? group.name : 'Connected devices'}
                         >
-                            <div class="tracker-name">
-                                <span>{group.trackerName || 'Connected devices'}</span>
-                                <span>
-                                    {group.entries.length} device{group.entries.length === 1 ? '' : 's'}
-                                </span>
-                            </div>
+                            {groups.length > 1 && (
+                                <div class="tracker-name">
+                                    <span>{group.name}</span>
+                                    <span>
+                                        {group.entries.length} device{group.entries.length === 1 ? '' : 's'}
+                                    </span>
+                                </div>
+                            )}
                             <div class="device-list">
                                 {group.entries.map((entry) => (
                                     <DeviceCard key={entry.key} entry={entry} />

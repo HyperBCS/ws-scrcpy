@@ -54,6 +54,11 @@ async function main() {
             assert.equal(await page.getByRole('link', { name: 'Open screen', exact: true }).count(), 2);
             assert.equal(await page.locator('.device summary').filter({ hasText: 'Connection & tools' }).count(), 2);
             assert.equal(await page.locator('.device .stream-service-status').count(), 2);
+            assert.equal(await page.locator('.tracker-block').count(), 1, 'one host shares one grid across platforms');
+            if (width > 720) {
+                const cards = await page.locator('.device').all();
+                assert(Math.abs((await cards[0].boundingBox()).y - (await cards[1].boundingBox()).y) < 1, 'platform cards align in one desktop row');
+            }
             assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
             const buttons = await page.locator('.device-primary-actions .stream.primary').evaluateAll(nodes => nodes.map(el => ({ height: el.getBoundingClientRect().height, color: getComputedStyle(el).backgroundColor, radius: getComputedStyle(el).borderRadius })));
             assert.deepEqual(buttons[0], buttons[1], 'platform cards have matching primary controls');
