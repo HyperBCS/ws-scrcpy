@@ -401,7 +401,7 @@ addresses can cause Apple to reject delivery with `403 BadJwtToken`. Changing
 this contact address preserves the existing keys and receiver subscriptions.
 
 1. Open **Notifications** on the iPhone’s device card. Private Tailscale
-   access signs in automatically. Direct API access requires the private setup key in
+   access signs in automatically. API access outside the trusted LAN requires the private setup key in
    `/app/data/notification-setup-key` (Docker) or `data/notification-setup-key` (host).
 2. Open **Setup & delivery**. Under **Send from an iPhone**, choose **Start Bluetooth pairing**, open that
    iPhone's Bluetooth settings, select **ws-scrcpy**, and
@@ -496,11 +496,17 @@ notification policy, persistence, and service-worker regression tests.
 ### LAN access and sign-in
 
 The server continues to listen on port 8000 on the host network. Open
-`http://<server-LAN-IP>:8000` from another device on your LAN. Enter the existing
-setup key once; an HttpOnly cookie remembers this browser for 90 days. Read the
-key on the server with `docker exec ws-scrcpy cat /app/data/notification-setup-key`
-(or `cat data/notification-setup-key` for a host installation). Keep the data
-volume when rebuilding so the key and existing settings survive.
+`http://10.10.10.5:8000` from another device on your LAN. The compose configuration
+trusts `10.10.10.0/24`, so LAN browsers, APIs, downloads and WebSockets need no
+setup key or sign-in. `WS_TRUSTED_NETWORKS` accepts comma-separated IPv4 or IPv6
+subnets and checks the actual connection address, not forwarding headers. Set it
+to your own subnet on another server, or leave it empty to require authentication.
+
+Other connections can still use the existing setup key; an HttpOnly cookie remembers
+browser sign-in for 90 days. Read the key with
+`docker exec ws-scrcpy cat /app/data/notification-setup-key`
+(or `cat data/notification-setup-key` for a host installation). Keep the data volume
+when rebuilding so the key and existing settings survive.
 
 The configured private Tailscale Serve address signs in automatically through
 its authenticated loopback proxy. HTTP APIs, downloads, and WebSocket upgrades

@@ -6,7 +6,7 @@ This release addresses the 13 findings in the repository review, preserves LAN a
 
 | Finding | Change | Verification |
 | --- | --- | --- |
-| Unauthenticated WebSockets | HTTP APIs, downloads and WebSocket upgrades share `AccessControl`. Native clients use a bearer key; browsers use a signed, HttpOnly, SameSite cookie. Origin checks run before middleware or JSON parsing. | Real HTTP/WS tests exercise allowed LAN origins, remembered sessions, bad keys, tampered cookies, cross-origin requests, and the loopback-only Tailscale identity policy. |
+| Unauthenticated WebSockets | HTTP APIs, downloads and WebSocket upgrades share `AccessControl`. The configured trusted LAN needs no credentials; elsewhere native clients use a bearer key and browsers use a signed, HttpOnly, SameSite cookie. Origin checks run before middleware or JSON parsing. | Real HTTP/WS tests exercise allowed LAN origins, remembered sessions, bad keys, tampered cookies, cross-origin requests, and the loopback-only Tailscale identity policy. |
 | File operations overwrite destinations | Copy and move use Android no-clobber options, reject existing files, folders and dangling symlinks, and return a conflict instead of silently succeeding. | Shell regression cases plus real Android Toybox checks in an isolated temporary directory. Successful file copy, move, and empty-folder copy also verified. |
 | Downloads outlive closed channels | A download owns its ADB pull from opening through completion. Closing cancels and destroys it, and late errors are contained. WebSocket backpressure pauses reads with a bounded timeout. | Pending-open cancellation, empty files, late errors, saturation, DONE, and listener cleanup tests. The real-device HTTP check also caught and removed a legacy `readable` listener that prevented streaming pipelines from flowing. |
 | Malformed iOS messages crash the server | Validate parsed JSON and each supported message shape before accessing fields or queuing input. | Null, arrays, primitives, truncated JSON and malformed input messages cannot escape the handler. |
@@ -34,18 +34,18 @@ This release addresses the 13 findings in the repository review, preserves LAN a
 
 ## Access and release
 
-LAN HTTP remains available at `http://10.10.10.5:8000`. A browser signs in once with the existing setup key and remembers access for 90 days. The key remains in the persistent data volume. The configured Tailscale Serve URL continues to sign in automatically.
+LAN HTTP remains available at `http://10.10.10.5:8000`. Per the owner’s preference, `WS_TRUSTED_NETWORKS=10.10.10.0/24` grants automatic access from the trusted LAN; no setup key or browser session is required there. Other connections still require authentication. The key remains in the persistent data volume. The configured Tailscale Serve URL continues to sign in automatically.
 
-Get the key on the server with `docker exec ws-scrcpy cat /app/data/notification-setup-key`. The release does not rotate it or recreate notification subscriptions. Browser downloads and WebSocket connections use the same remembered session.
+Get the key on the server with `docker exec ws-scrcpy cat /app/data/notification-setup-key`. The release does not rotate it or recreate notification subscriptions. Browser downloads and WebSocket connections use the same trusted-network or authenticated access policy.
 
 ## Validation
 
-- `npm run check`: TypeScript, ESLint, 222 JavaScript tests, 29 notification Python tests, 15 patch Python tests, and the production build.
+- `npm run check`: TypeScript, ESLint, 224 JavaScript tests, 29 notification Python tests, 15 patch Python tests, and the production build.
 - Chromium fixtures: review regressions and visual checks, notifications, motion, settings, sheets, device switcher, unlock, tools, files, iOS typing and audio availability.
 - WebKit fixtures: review regressions and visual checks, notifications and motion.
 - Existing 40 lint warnings and three webpack asset-size warnings remain; there are no lint/type/build errors.
 - Real Android file-operation checks use a dedicated temporary directory and remove it afterwards.
-- Live LAN checks cover browser sign-in and reload, Android discovery, rejected unauthenticated WebSockets, notification API access and authenticated downloads.
+- Live LAN checks cover automatic access in a fresh browser, Android discovery, notification API access and downloads without credentials. Connections outside the trusted subnet still require authentication; cross-origin browser requests are rejected.
 - The deployment host does not resolve its private MagicDNS hostname through its normal resolver. The existing Tailscale Serve mapping was checked, and its trusted loopback HTTP/WS access policy was tested. An external tailnet-client check was not available in this environment.
 
 ## Remaining upstream advisory

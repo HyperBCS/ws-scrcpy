@@ -267,3 +267,47 @@ test('ADB pull ownership is returned before bytes arrive and supports an empty f
         assert.deepEqual(channel.sent.map(data => data.toString()), ['DONE']);
     } finally { AdbExtended.createClient = original; transfer.destroy(); }
 });
+
+test('trusted LAN access needs no key and never trusts a forwarded client address', () => {
+    const access = new AccessControl('key', '', '10.10.10.0/24, fd12:3456::/64');
+    const request = address => ({ headers: { host: '10.10.10.5:8000', origin: 'http://10.10.10.5:8000' }, socket: { remoteAddress: address } });
+    for (const address of ['10.10.10.1', '10.10.10.254', '::ffff:10.10.10.9', '::ffff:a0a:a09', 'fd12:3456::8']) {
+        assert.equal(access.authorized(request(address)), true, address);
+    }
+    for (const address of ['10.10.9.9', '10.10.11.1', '192.168.1.5', '203.0.113.8', '127.0.0.1', 'fd12:3457::8', '']) {
+        const incoming = request(address);
+        incoming.headers['x-forwarded-for'] = '10.10.10.8'; incoming.headers.forwarded = 'for=10.10.10.8';
+        assert.equal(access.authorized(incoming), false, address);
+        incoming.headers.authorization = 'Bearer key'; assert.equal(access.authorized(incoming), true);
+    }
+    const crossOrigin = request('10.10.10.8'); crossOrigin.headers.origin = 'https://another.example';
+    assert.equal(access.authorized(crossOrigin), false);
+    const native = request('10.10.10.8'); delete native.headers.origin; assert.equal(access.authorized(native), true);
+    assert.equal(new AccessControl('key', '', '').authorized(request('10.10.10.8')), false);
+    for (const invalid of ['10.10.10.0', '10.10.10.0/33', '10.10.10.0/-1', 'localhost/24', '::1/129', '10.10.10.0/24/extra']) {
+        assert.throws(() => new AccessControl('key', '', invalid), /Invalid trusted network/);
+    }
+});
+
+test('trusted connections bypass browser sign-in, HTTP API auth and WebSocket auth together', async () => {
+    const service = NotificationService.getInstance(), previous = service.accessControl;
+    // Use loopback as this test's trusted subnet; deployment trusts only the configured LAN.
+    const access = new AccessControl(service.store.token, '', '127.0.0.1/32');
+    service.accessControl = access;
+    const app = express(); access.mount(app, '/'); service.mount(app, '/');
+    const server = http.createServer(app), wss = WebSocketServer.getInstance().attachToServer({ server, port: 0 });
+    server.listen(0, '127.0.0.1'); await once(server, 'listening');
+    const base = `http://127.0.0.1:${server.address().port}`;
+    try {
+        const response = await fetch(`${base}/api/access`);
+        assert.deepEqual(await response.json(), { authenticated: true });
+        assert.equal(response.headers.get('set-cookie'), null, 'trusted access does not need a session');
+        assert.equal((await fetch(`${base}/api/notifications/summary`)).status, 200);
+        assert.equal((await fetch(`${base}/api/notifications/summary`, { headers: { Origin: 'https://another.example' } })).status, 403);
+        const socket = new WS(base.replace('http:', 'ws:'), { origin: base });
+        const [data] = await once(socket, 'message'); assert.equal(data.toString(), 'connected'); socket.close();
+    } finally {
+        service.accessControl = previous;
+        for (const client of wss.clients) client.terminate(); wss.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+    }
+});

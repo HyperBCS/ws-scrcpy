@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { IncomingMessage } from 'http';
 import { TLSSocket } from 'tls';
+import { BlockList, isIP } from 'net';
 import express, { Express, RequestHandler } from 'express';
 
 const COOKIE = 'ws_scrcpy_session';
@@ -15,10 +16,31 @@ function equalSecret(actual: string, expected: string): boolean {
 /** One policy for HTTP and WebSockets, with remembered access over either LAN or HTTPS. */
 export class AccessControl {
     private attempts = new Map<string, { failures: number; reset: number }>();
+    private trustedNetworks = new BlockList();
     constructor(
         private readonly key: string,
         private readonly publicUrl = process.env.WS_PUBLIC_URL || '',
-    ) {}
+        networks = process.env.WS_TRUSTED_NETWORKS || '',
+    ) {
+        for (const network of networks
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean)) {
+            const [address, prefix, extra] = network.split('/');
+            const family = isIP(address);
+            if (!family || extra !== undefined || !/^\d+$/.test(prefix) || Number(prefix) > (family === 4 ? 32 : 128)) {
+                throw new Error(`Invalid trusted network: ${network}. Use an IP subnet such as 10.10.10.0/24.`);
+            }
+            this.trustedNetworks.addSubnet(address, Number(prefix), family === 4 ? 'ipv4' : 'ipv6');
+        }
+    }
+
+    private isTrustedNetwork(request: IncomingMessage): boolean {
+        // Trust the actual connection, never client-supplied forwarding headers.
+        const address = request.socket.remoteAddress || '';
+        const family = isIP(address);
+        return !!family && this.trustedNetworks.check(address, family === 4 ? 'ipv4' : 'ipv6');
+    }
 
     private publicOrigin(): string {
         return this.publicUrl ? new URL(this.publicUrl).origin : '';
@@ -26,7 +48,7 @@ export class AccessControl {
 
     allowsOrigin(request: IncomingMessage): boolean {
         const origin = request.headers.origin;
-        if (!origin) return true; // Native clients authenticate with a bearer key.
+        if (!origin) return true; // Native clients do not send a browser origin.
         const protocol = (request.socket as TLSSocket).encrypted ? 'https' : 'http';
         return origin === this.publicOrigin() || origin === `${protocol}://${request.headers.host}`;
     }
@@ -46,7 +68,7 @@ export class AccessControl {
 
     authorized(request: IncomingMessage): boolean {
         if (!this.allowsOrigin(request)) return false;
-        if (this.isLocalProxy(request)) return true;
+        if (this.isTrustedNetwork(request) || this.isLocalProxy(request)) return true;
         const authorization = request.headers.authorization;
         if (authorization?.startsWith('Bearer ') && equalSecret(authorization.slice(7), this.key)) return true;
         const cookie = request.headers.cookie
