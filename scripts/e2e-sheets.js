@@ -170,7 +170,8 @@ async function main() {
             assert(closeBox.width >= 48 && closeBox.height >= 48, 'close has a48px target');
             assert(iconBox.width === 24 && iconBox.height === 24, 'close icon is clearly visible');
             assert.equal(
-                await page.locator('.bottom-sheet-handle').isVisible(),
+                // Scoped to the open sheet: closed sheets (the iPhone settings sheet too) stay mounted, hidden.
+                await page.locator('.bottom-sheet-root.open .bottom-sheet-handle').isVisible(),
                 touch,
                 'only bottom sheets expose the drag affordance',
             );
