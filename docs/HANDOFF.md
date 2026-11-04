@@ -1577,14 +1577,15 @@ back off 30 s up to three times while `CoreDeviceProxy.hasInputOwner` says a vie
 `acquire` (a failure is `failed-session` with the CLI's reason); `/restart` plus 1.5 s only when
 the session was already `ready`, because an input POST that reached that process while the
 screen was dark left its touch surface unauthenticated; Home down/up (250 ms), 1.2 s,
-`readScreen`; if `off`, Lock down/up (300 ms), 1.2 s, `readScreen` again; still `off` is
-`failed-wake` and nothing is ever touched. Then twelve `/touch contact` reports from
+`readScreen` (a failed read, `unknown`, is read once more after 1.2 s; Lock is not pressed for it,
+since it would put an awake phone to sleep); if `off`, Lock down/up (300 ms), 1.2 s, `readScreen`
+again; anything but `on` is `failed-wake` and nothing is ever touched. Then twelve `/touch contact` reports from
 `(0x8000, 0xf800)` upwards in `0x0ccc` steps 25 ms apart and one `release`, 1.2 s, the digits
 as `/key {usages:[u]}` 120 ms `/key {usages:[]}` 180 ms each, `/keyboard/detach`,
 `waitForLock(udid, false, 8 s)` (`false` is `unlocked` with `verifiedAt`, `true` is
 `failed-still-locked`, `'unknown'` is `unverified`), 2 s, Lock down/up, and
-`waitForLock(udid, true, 5 s)` only to append "Locked again" or "Lock not confirmed" to the
-message. `finally` posts the all-fingers-up frame if a touch went out, detaches the keyboard if
+`waitForLock(udid, true, 5 s)` only to append "Locked again" (after an unlock) or "Lock not
+confirmed" (after any outcome) to the message. `finally` posts the all-fingers-up frame if a touch went out, detaches the keyboard if
 it is still attached, and releases the hold; the runner's 15 s grace and SIGTERM path stop
 serve-web. The passcode is read from the thunk the scheduler passes, once, immediately before
 the digit step, converted to usages in a block that ends with the typing; nothing else sees it.

@@ -246,12 +246,53 @@ test('driver: a dark screen that Lock wakes continues normally', async () => {
     });
 });
 
+test('driver: a screen that cannot be read gets no touch and no Lock press; one late reading on is enough', async () => {
+    await withEnv({ FAKE_LOG: logFile }, async () => {
+        const monitor = scriptedMonitor({ screens: ['unknown', 'unknown'] });
+        const { result, lines, runner } = await runDriver('iphone-unreadable-screen', { monitor });
+        assert.equal(result.outcome, 'failed-wake', result.message);
+        assert.equal(result.message, 'The screen state could not be read');
+        assert.equal(monitor.reads, 2, 'read once more before giving up');
+        assert.deepEqual(
+            lines.filter((line) => line.startsWith('post /button')),
+            [button('home', 'down'), button('home', 'up')],
+            'Lock could put an awake phone to sleep, so it is not pressed',
+        );
+        assert(!lines.some((line) => line.startsWith('post /touch')), 'no touch without a reading of on');
+        assert(!lines.some((line) => isKey(line)), 'no digits');
+        runner.stopSession('iphone-unreadable-screen');
+    });
+    await withEnv({ FAKE_LOG: logFile }, async () => {
+        const monitor = scriptedMonitor({ screens: ['unknown', 'on'] });
+        const { result, lines, runner } = await runDriver('iphone-late-screen', { monitor });
+        assert.equal(result.outcome, 'unlocked', result.message);
+        assert.equal(lines.filter(isTouch).length, 13);
+        runner.stopSession('iphone-late-screen');
+    });
+});
+
+test('driver: a phone that does not lock again is reported whatever the outcome', async () => {
+    await withEnv({ FAKE_LOG: logFile }, async () => {
+        const { result, runner } = await runDriver('iphone-stays-awake', { monitor: scriptedMonitor({ relocked: false }) });
+        assert.equal(result.outcome, 'unlocked', result.message);
+        assert.equal(result.message, 'Lock not confirmed');
+        runner.stopSession('iphone-stays-awake');
+    });
+    await withEnv({ FAKE_LOG: logFile }, async () => {
+        const monitor = scriptedMonitor({ locked: true, relocked: false });
+        const { result, runner } = await runDriver('iphone-late-unlock', { monitor });
+        assert.equal(result.outcome, 'failed-still-locked', result.message);
+        assert.equal(result.message, 'Lock not confirmed');
+        runner.stopSession('iphone-late-unlock');
+    });
+});
+
 test('driver: still locked after the digits is failed-still-locked, and Lock is still pressed', async () => {
     await withEnv({ FAKE_LOG: logFile }, async () => {
         const monitor = scriptedMonitor({ locked: true });
         const { result, lines, runner } = await runDriver('iphone-locked', { monitor });
         assert.equal(result.outcome, 'failed-still-locked', result.message);
-        assert.equal(result.message, 'Locked again');
+        assert.equal(result.message, undefined, '"Locked again" is only reported after an unlock');
         assert.equal(result.verifiedAt, undefined);
         const detach = lines.findIndex((line) => line.startsWith('post /keyboard/detach'));
         assert(detach >= 0);

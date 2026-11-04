@@ -156,6 +156,11 @@ export class UnlockDriver {
             await button('home', 'home', HOME_PRESS_MS);
             await pause('wake', WAKE_SETTLE_MS);
             let screen = await monitor.readScreen(udid);
+            if (screen === 'unknown') {
+                // A failed read says nothing about the screen; Lock would put an awake phone to sleep.
+                await pause('wake', WAKE_SETTLE_MS);
+                screen = await monitor.readScreen(udid);
+            }
             if (screen === 'off') {
                 // From a dark lock screen Home may not wake a Face ID phone; Lock does.
                 log('wake with lock');
@@ -163,9 +168,13 @@ export class UnlockDriver {
                 await pause('wake', WAKE_SETTLE_MS);
                 screen = await monitor.readScreen(udid);
             }
-            if (screen === 'off') {
-                // No touch is ever sent to a dark screen.
-                return { outcome: 'failed-wake', message: 'The screen stayed dark after Home and Lock' };
+            if (screen !== 'on') {
+                // No touch is sent before the backlight reads on.
+                const message =
+                    screen === 'off'
+                        ? 'The screen stayed dark after Home and Lock'
+                        : 'The screen state could not be read';
+                return { outcome: 'failed-wake', message };
             }
 
             log('swipe');
@@ -232,8 +241,14 @@ export class UnlockDriver {
             log('lock');
             await button('lock', 'lock', LOCK_TAP_MS);
             const relocked = await monitor.waitForLock(udid, true, RELOCK_TIMEOUT_MS);
-            if (relocked !== 'unknown') {
-                const note = relocked ? 'Locked again' : 'Lock not confirmed';
+            // "Locked again" only matters after an unlock; a phone left unlocked is always reported.
+            const note =
+                relocked === false
+                    ? 'Lock not confirmed'
+                    : relocked === true && result.outcome === 'unlocked'
+                      ? 'Locked again'
+                      : undefined;
+            if (note) {
                 result.message = result.message ? `${result.message}. ${note}` : note;
             }
             return result;
