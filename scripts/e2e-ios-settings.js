@@ -149,7 +149,7 @@ async function panelFlow(browser) {
         assert.equal(await runningButton.isDisabled(), true);
         assert.deepEqual(ofType(commands, 'run_unlock_now').map((command) => command.data), [{ udid: UDID }]);
         release({ result: JSON.stringify({ at: Date.now(), trigger: 'manual', outcome: 'unlocked', message: 'Locked again' }) });
-        await dialog.locator('.sheet-status.success', { hasText: 'Unlocked and locked again. Locked again' }).waitFor();
+        await dialog.locator('.sheet-status.success', { hasText: 'Unlocked. Locked again' }).waitFor();
         await dialog.getByRole('button', { name: 'Run now', exact: true }).waitFor();
 
         // A descriptor broadcast changes Last run and the card line without reopening.
@@ -159,7 +159,7 @@ async function panelFlow(browser) {
         };
         test.sendDevice(iphone(status));
         await dialog.locator('[data-outcome="skipped-recent"]').waitFor();
-        assert.match(await dialog.locator('[data-outcome="skipped-recent"]').textContent(), /Skipped: unlocked in the last 24 hours/);
+        assert.match(await dialog.locator('[data-outcome="skipped-recent"]').textContent(), /Skipped: unlocked in the last 22 hours/);
         await iosCard.locator('.device-unlock-schedule').waitFor({ state: 'attached' });
         assert.equal(await iosCard.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock 03:00 · last 2 h ago');
 
@@ -175,6 +175,18 @@ async function panelFlow(browser) {
         await field.waitFor();
         assert.deepEqual(ofType(commands, 'clear_unlock_passcode').map((command) => command.data), [{ udid: UDID }]);
         assert.equal(await toggle.isDisabled(), true);
+
+        // Removing the passcode leaves the switch on; it can still be turned off, and the card line goes.
+        test.sendDevice(iphone({ ...status, hasPasscode: false, enabled: true, nextRunAt: undefined }));
+        await page.waitForFunction(() => document.querySelector('[role="dialog"] .sheet-switch')?.checked === true);
+        assert.equal(await toggle.isDisabled(), false, 'a switch left on can be turned off without a passcode');
+        assert.equal(await iosCard.locator('.device-unlock-schedule').count(), 0, 'no card line without a passcode');
+        handlers.onCommand = (command) =>
+            command.type === 'update_unlock_schedule' ? { result: JSON.stringify({ ...status, hasPasscode: false, enabled: false, nextRunAt: undefined }) } : undefined;
+        await toggle.click();
+        await dialog.getByText('Scheduled unlock is off.', { exact: true }).waitFor();
+        assert.deepEqual(ofType(commands, 'update_unlock_schedule').at(-1).data, { udid: UDID, schedule: { enabled: false } });
+        assert.equal(await toggle.isDisabled(), true, 'once off, it waits for a passcode again');
 
         // The passcode left the browser exactly once.
         assert.equal(commands.filter((command) => JSON.stringify(command).includes(PASSCODE)).length, 1);

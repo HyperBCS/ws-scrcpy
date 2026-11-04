@@ -1611,8 +1611,11 @@ unlocked days ago.
 after its slot, which is 23 h 59 m before today's tick; a literal "unlocked in the last 24 hours"
 check would therefore skip every other night. `RECENT_WINDOW_MS` is `UNLOCK_RECENT_MS -
 UNLOCK_SLOT_WINDOW_MS`: an unlock more than two hours after yesterday's slot is the user's own
-and counts, the schedule's own never does. The panel copy still says 24 hours, which is close
-enough for the user and simpler than explaining the window.
+and counts, the schedule's own never does. The panel, the outcome text and README say
+22 hours, so a phone unlocked by hand an hour after yesterday's slot being unlocked again tonight
+matches what the user reads. At integration the `unlocked` outcome text also became "Unlocked":
+the message carries "Locked again" or "Lock not confirmed", and the old "Unlocked and locked
+again" contradicted the second.
 
 **Monitor helpers.** `readScreen` is one `probeScreen` call outside the queue that leaves the
 cached state alone. `waitForLock` cannot rely on `state` events alone, because `update` only

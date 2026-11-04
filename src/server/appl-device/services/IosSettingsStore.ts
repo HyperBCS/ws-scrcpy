@@ -167,6 +167,8 @@ export class IosSettingsStore implements UnlockSettingsStore {
 
     private loaded = false;
     private loadedAt = 0;
+    // An unusable `WS_IOS_SETTINGS_KEY` is logged once, not on every status read.
+    private keyEnvReported = false;
     private file: IosSettingsFile = { version: 1, devices: {} };
 
     /** `directory` is a test seam; production uses the data directory. */
@@ -230,13 +232,13 @@ export class IosSettingsStore implements UnlockSettingsStore {
             status.lastRun = { ...record.lastRun };
         }
         if (record.passcode && !this.readKey()) {
-            // Ciphertext without a key: the run would fail, so the panel is told now.
+            // Ciphertext without a key: every run is skipped until the passcode is entered again,
+            // so the panel shows that instead of the outcome of the last run that had a key.
             status.hasPasscode = false;
             status.lastRun = {
-                at: this.loadedAt,
-                trigger: 'schedule',
+                at: Math.max(this.loadedAt, record.lastRun?.at ?? 0),
+                trigger: record.lastRun?.trigger ?? 'schedule',
                 outcome: 'skipped-no-passcode',
-                ...record.lastRun,
                 message: UNREADABLE_KEY_MISSING,
             };
         }
@@ -388,9 +390,12 @@ export class IosSettingsStore implements UnlockSettingsStore {
         const fromEnv = process.env[IOS_SETTINGS_KEY_ENV];
         if (fromEnv !== undefined && fromEnv !== '') {
             if (!KEY_HEX.test(fromEnv)) {
-                console.error(
-                    `${TAG} ${IOS_SETTINGS_KEY_ENV} must be 64 hex characters; stored passcodes are unreadable`,
-                );
+                if (!this.keyEnvReported) {
+                    this.keyEnvReported = true;
+                    console.error(
+                        `${TAG} ${IOS_SETTINGS_KEY_ENV} must be 64 hex characters; stored passcodes are unreadable`,
+                    );
+                }
                 return undefined;
             }
             return Buffer.from(fromEnv, 'hex');

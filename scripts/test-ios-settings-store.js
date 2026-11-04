@@ -200,6 +200,7 @@ test('WS_IOS_SETTINGS_KEY replaces the key file; an unusable value is reported, 
             const store = new IosSettingsStore(dir);
             const status = store.getSchedule('iphone-env');
             assert.equal(status.hasPasscode, false);
+            store.getSchedule('iphone-env');
             assert.throws(
                 () => store.setPasscode('iphone-env', '975310'),
                 (error) => !error.message.includes('975310') && /64 hex/.test(error.message),
@@ -212,7 +213,11 @@ test('WS_IOS_SETTINGS_KEY replaces the key file; an unusable value is reported, 
         } finally {
             console.error = original;
         }
-        assert(errors.some((line) => line.includes(IOS_SETTINGS_KEY_ENV)));
+        assert.equal(
+            errors.filter((line) => line.includes(IOS_SETTINGS_KEY_ENV)).length,
+            1,
+            'reported once, not on every status read',
+        );
         assert.equal(
             errors.some((line) => line.includes('975310')),
             false,
@@ -239,8 +244,9 @@ test('ciphertext without its key is reported through the status and never thrown
         assert.equal(status.time, '05:45');
         assert.equal(status.nextRunAt, undefined, 'no run can happen without the key');
         assert.equal(status.lastRun.message, 'Stored passcode unreadable: key file missing');
-        assert.equal(status.lastRun.outcome, 'unlocked', 'the recorded run is kept, with the message added');
-        assert.equal(status.lastRun.at, 1700000000000);
+        assert.equal(status.lastRun.outcome, 'skipped-no-passcode', 'not the outcome of the run that had a key');
+        assert.equal(status.lastRun.trigger, 'schedule');
+        assert(status.lastRun.at > 1700000000000, 'as of the time the store was read');
         assert.throws(() => candidate.readPasscode('iphone-k'), /key file missing/);
         assert.deepEqual(candidate.listUdids(), ['iphone-k']);
     }

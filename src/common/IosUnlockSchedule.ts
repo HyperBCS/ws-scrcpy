@@ -10,7 +10,11 @@
 
 /** Default daily unlock time, `HH:MM` in server local time. */
 export const DEFAULT_UNLOCK_TIME = '03:00';
-/** A phone unlocked within this window is left alone: iOS restarts after 72 h without an unlock. */
+/**
+ * A phone unlocked within this window is left alone: iOS restarts after 72 h without an unlock.
+ * The scheduler takes `UNLOCK_SLOT_WINDOW_MS` off it (22 h), so its own unlock the night before
+ * does not skip tonight's run; `unlockOutcomeText('skipped-recent')` names the 22 hours.
+ */
 export const UNLOCK_RECENT_MS = 24 * 3600 * 1000;
 /** A slot that passed more than this long ago is skipped, so a server down overnight does not unlock at 09:00. */
 export const UNLOCK_SLOT_WINDOW_MS = 2 * 3600 * 1000;
@@ -123,11 +127,12 @@ export function lastUnlockSlotAt(time: string, now: number): number {
 export function unlockOutcomeText(outcome: UnlockRunOutcome): string {
     switch (outcome) {
         case 'unlocked':
-            return 'Unlocked and locked again';
+            // The message says whether it locked again: "Locked again" or "Lock not confirmed".
+            return 'Unlocked';
         case 'already-unlocked':
             return 'Already unlocked';
         case 'skipped-recent':
-            return 'Skipped: unlocked in the last 24 hours';
+            return 'Skipped: unlocked in the last 22 hours';
         case 'skipped-disabled':
             return 'Skipped: scheduled unlock is off';
         case 'skipped-no-passcode':

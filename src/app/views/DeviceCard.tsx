@@ -335,7 +335,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             data-device-key={entry.key}
         >
             <DeviceHeader entry={entry} platform={`iOS ${descriptor.version}`}>
-                {unlockSchedule?.enabled && (
+                {unlockSchedule?.enabled && unlockSchedule.hasPasscode && (
                     <span class="device-unlock-schedule" title="Scheduled unlock, server local time">
                         Scheduled unlock {unlockSchedule.time}
                         {unlockSchedule.lastUnlockedAt

@@ -239,7 +239,7 @@ export function ApplSettingsSheet() {
 
                 <SheetGroup
                     title="Scheduled unlock"
-                    hint="Unlocks the phone once a day so iOS does not restart it after 72 hours without an unlock, then locks it again. Skipped if the phone was unlocked in the last 24 hours."
+                    hint="Unlocks the phone once a day so iOS does not restart it after 72 hours without an unlock, then locks it again. Skipped if the phone was unlocked in the last 22 hours."
                 >
                     <SheetToggleRow
                         title="Unlock every day"
@@ -249,7 +249,8 @@ export function ApplSettingsSheet() {
                                 : 'Store a passcode below first.'
                         }
                         checked={schedule.enabled}
-                        disabled={locked || !schedule.hasPasscode}
+                        // Turning it off never needs a passcode: a removed one leaves the switch on.
+                        disabled={locked || (!schedule.hasPasscode && !schedule.enabled)}
                         onChange={onToggle}
                     />
                     <SheetRow title="Time" description="Server local time">

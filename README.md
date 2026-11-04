@@ -205,18 +205,25 @@ card, store the passcode, pick a time (default 03:00, server local time) and tur
 **Unlock every day** on. At that time the server opens a screen session, presses
 Home, swipes up, types the passcode, confirms the phone is unlocked, presses Lock
 and closes the session. The run is skipped when the phone was unlocked in the
-last 24 hours by any means. If the phone is not reachable, or the run fails, the
-card and the panel say so, and the server retries once ten minutes later. Push
-subscribers receive a notification for a failed or skipped scheduled run.
-**Run now** starts the same sequence by hand.
+last 22 hours by any means: a day, less two hours, so the server's own unlock the
+night before does not count. A run that is more than two hours late (the server
+was down at that time) is skipped too, and so is a retry that is more than two
+hours late. If the phone is not reachable, or the run fails, **Last run** in the
+panel says so and the server retries once ten minutes later. Push subscribers
+receive a notification for a failed scheduled run or an unreachable phone; for
+an unreachable phone it reads "Phone not reachable. Not connected over USB. If
+the phone restarted, unlock it once on the phone." **Run now** starts the same
+sequence by hand, ignores the 22-hour rule and is never retried.
 
 The passcode is sent to the server once, over the device-list WebSocket, and is
 never sent back to a browser. It is stored AES-256-GCM encrypted in
-`data/ios-settings.json` (the same data directory as the notification relay;
-`WS_NOTIFICATION_DATA` moves it), with the key in `data/ios-settings.key`. Both
-files are written with mode 0600 in a 0700 directory and belong to the user the
-server runs as. When the server runs as root they are root-owned, and moving the
-server to another user means entering the passcode again. Set
+`ios-settings.json` in the server's data directory, with the key in
+`ios-settings.key` next to it. The data directory is `data/` under the directory
+the server runs in (`dist/data` with `npm start`, so `npm run clean` deletes it)
+or the path in `WS_NOTIFICATION_DATA`; the notification relay keeps its files
+there too. Both files are written with mode 0600 in a 0700 directory and belong
+to the user the server runs as. When the server runs as root they are root-owned,
+and moving the server to another user means entering the passcode again. Set
 `WS_IOS_SETTINGS_KEY` to 64 hex characters to supply the key from the environment
 instead of the key file. If the key file is missing, the panel shows the stored
 passcode as unreadable and no run starts until the passcode is entered again.
@@ -286,7 +293,7 @@ machine the setup script says so; pick another with
 | `IOS_LOCK_PROBE` | `0` disables lock detection (direct state on iOS 27.2+, accessibility on older versions) and keeps screen detection |
 | `IOS_STATE_NOTIFICATIONS` | `0` disables the per-device `notification observe` process; state then changes only at the poll interval |
 | `IOS_LOCKED_CAPTIONS` | Comma-separated lock-screen captions for the older accessibility probe (e.g. `Gesperrt,Code eingeben`); not needed on iOS 27.2+ |
-| `WS_IOS_SETTINGS_KEY` | 64 hex characters: the key for the stored unlock passcode, instead of `data/ios-settings.key` |
+| `WS_IOS_SETTINGS_KEY` | 64 hex characters: the key for the stored unlock passcode, instead of `ios-settings.key` in the data directory |
 | `IOS_UNLOCK_FAST` | `1` shortens every pause in the scheduled unlock sequence to 5 ms; for the fixture tests only |
 | `WS_SCRCPY_DEBUG` | Verbose logs, including every `pymobiledevice3` child's output. Reveals the digits of a stored unlock passcode; see [Scheduled unlock](#scheduled-unlock) |
 
