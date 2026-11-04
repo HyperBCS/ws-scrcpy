@@ -295,6 +295,7 @@ machine the setup script says so; pick another with
 | `IOS_LOCKED_CAPTIONS` | Comma-separated lock-screen captions for the older accessibility probe (e.g. `Gesperrt,Code eingeben`); not needed on iOS 27.2+ |
 | `WS_IOS_SETTINGS_KEY` | 64 hex characters: the key for the stored unlock passcode, instead of `ios-settings.key` in the data directory |
 | `IOS_UNLOCK_FAST` | `1` shortens every pause in the scheduled unlock sequence to 5 ms; for the fixture tests only |
+| `IOS_SERVE_WEB_BASE_PORT` | First loopback port tried for each phone's `serve-web` (default 18100). `scripts/test-ios-unlock.js` sets it so it does not share ports with `scripts/test-coredevice.js` |
 | `WS_SCRCPY_DEBUG` | Verbose logs, including every `pymobiledevice3` child's output. Reveals the digits of a stored unlock passcode; see [Scheduled unlock](#scheduled-unlock) |
 
 [pymobiledevice3]: https://github.com/doronz88/pymobiledevice3

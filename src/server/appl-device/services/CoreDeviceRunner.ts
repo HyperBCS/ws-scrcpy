@@ -33,6 +33,8 @@ const RELEASE_GRACE_MS = 15000;
 // shutdown takes well under a second and `close` cancels this, so the long bound costs nothing.
 const SIGKILL_GRACE_MS = 15000;
 const MOUNT_TIMEOUT_MS = 180000;
+// Each session's serve-web gets the first free loopback port from here up.
+const SERVE_WEB_BASE_PORT = 18100;
 const PASTEBOARD_PROBE_SCRIPT = 'pasteboard_restart.py';
 // The probe brings up its own short-lived tunnel, lists the phone's processes and sends one
 // signal; measured end to end at 0.8 s on the bench iPhone over USB.
@@ -282,7 +284,7 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         this.setState(session, 'starting', 'Preparing the device');
         // Publish ownership before any asynchronous work, including port allocation.
         session.ready = portfinder
-            .getPortPromise({ port: 18100 })
+            .getPortPromise({ port: CoreDeviceRunner.serveWebBasePort() })
             .then(async (port) => {
                 if (this.released || this.sessions.get(udid) !== session) throw new Error('Session stopped');
                 session.port = port;
@@ -393,6 +395,13 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         }
         await Promise.race([exitPromise, Promise.resolve()]);
         throw new Error('The screen stream did not become ready in time. Is the phone unlocked?');
+    }
+
+    // Overridable so test files that run in parallel, each with its own fake serve-web, do not
+    // find the same port free at once and answer each other's requests.
+    private static serveWebBasePort(): number {
+        const override = Number(process.env.IOS_SERVE_WEB_BASE_PORT);
+        return Number.isInteger(override) && override > 1024 && override < 65536 ? override : SERVE_WEB_BASE_PORT;
     }
 
     // Overridable so tests do not have to wait the full 25 s for the wedged-display path.

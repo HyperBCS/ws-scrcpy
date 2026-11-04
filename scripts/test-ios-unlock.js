@@ -40,9 +40,7 @@ after(() => {
 // `npm test` runs this file alongside scripts/test-coredevice.js, whose sessions also start at
 // 18100. Both processes can find that port free at once; the fake that loses the race exits with
 // EADDRINUSE while this process's /codec poll is answered by the other's fake. Search elsewhere.
-const portfinder = require('portfinder');
-const getPortPromise = portfinder.getPortPromise.bind(portfinder);
-portfinder.getPortPromise = (options = {}) => getPortPromise({ ...options, port: 18500 });
+process.env.IOS_SERVE_WEB_BASE_PORT = '18500';
 
 const { PyMobileDevice } = require('../src/server/appl-device/services/PyMobileDevice');
 const { CoreDeviceRunner } = require('../src/server/appl-device/services/CoreDeviceRunner');
