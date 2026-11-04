@@ -1,6 +1,7 @@
 import { BaseDeviceDescriptor } from './BaseDeviceDescriptor';
 import { CoreDeviceSessionState } from '../common/CoreDeviceProtocol';
 import { KnownBoolean } from './AndroidLockState';
+import { UnlockScheduleStatus } from '../common/IosUnlockSchedule';
 
 export default interface ApplDeviceDescriptor extends BaseDeviceDescriptor {
     name: string;
@@ -24,4 +25,7 @@ export default interface ApplDeviceDescriptor extends BaseDeviceDescriptor {
     // 27.2+, or accessibility captions on older versions. Absent or 'unknown' until probed.
     'screen.power'?: 'on' | 'off' | 'unknown';
     'device.locked'?: KnownBoolean;
+    // Scheduled unlock state kept by `UnlockScheduler`, mirrored here so the settings panel and
+    // the card read it from the normal device broadcast. Never carries the passcode.
+    unlockSchedule?: UnlockScheduleStatus;
 }

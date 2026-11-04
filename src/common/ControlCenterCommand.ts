@@ -1,4 +1,5 @@
 import { ScrcpyServerConfig } from './Constants';
+import { isValidUnlockPasscode, isValidUnlockSchedulePatch, UnlockSchedulePatch } from './IosUnlockSchedule';
 
 export class ControlCenterCommand {
     public static KILL_SERVER = 'kill_server';
@@ -14,6 +15,13 @@ export class ControlCenterCommand {
     public static LIST_ENCODERS = 'list_encoders';
     public static UPDATE_STREAM_CONFIG = 'update_stream_config';
     public static GET_LOCK_STATE = 'get_lock_state';
+    // Scheduled iPhone unlock (src/common/IosUnlockSchedule.ts). The first three reply with the
+    // `UnlockScheduleStatus` JSON; RUN_UNLOCK_NOW replies with the `UnlockRunResult` once the run
+    // has ended. The passcode is validated here and never echoed in an error.
+    public static UPDATE_UNLOCK_SCHEDULE = 'update_unlock_schedule';
+    public static SET_UNLOCK_PASSCODE = 'set_unlock_passcode';
+    public static CLEAR_UNLOCK_PASSCODE = 'clear_unlock_passcode';
+    public static RUN_UNLOCK_NOW = 'run_unlock_now';
 
     private id = -1;
     private type = '';
@@ -22,6 +30,8 @@ export class ControlCenterCommand {
     private method = '';
     private args?: any;
     private data?: any;
+    private unlockSchedule?: UnlockSchedulePatch;
+    private passcode?: string;
 
     public static fromJSON(json: string): ControlCenterCommand {
         const body = JSON.parse(json);
@@ -71,6 +81,34 @@ export class ControlCenterCommand {
                     throw new Error('Invalid "config" value');
                 }
                 return command;
+            case this.UPDATE_UNLOCK_SCHEDULE:
+                if (!command.udid) {
+                    throw new Error('Missing device id');
+                }
+                if (!isValidUnlockSchedulePatch(data.schedule)) {
+                    throw new Error('Invalid "schedule" value: expected "enabled" (boolean) or "time" (HH:MM)');
+                }
+                command.unlockSchedule = {
+                    ...('enabled' in data.schedule ? { enabled: data.schedule.enabled } : {}),
+                    ...('time' in data.schedule ? { time: data.schedule.time } : {}),
+                };
+                return command;
+            case this.SET_UNLOCK_PASSCODE:
+                if (!command.udid) {
+                    throw new Error('Missing device id');
+                }
+                // The value itself must not reach the message: the tracker logs rejections.
+                if (!isValidUnlockPasscode(data.passcode)) {
+                    throw new Error('Invalid passcode: use 4 to 10 digits');
+                }
+                command.passcode = data.passcode;
+                return command;
+            case this.CLEAR_UNLOCK_PASSCODE:
+            case this.RUN_UNLOCK_NOW:
+                if (!command.udid) {
+                    throw new Error('Missing device id');
+                }
+                return command;
             default:
                 throw new Error(`Unknown command "${body.command}"`);
         }
@@ -99,5 +137,13 @@ export class ControlCenterCommand {
     }
     public getConfig(): Partial<ScrcpyServerConfig> | undefined {
         return this.data?.config;
+    }
+    /** The validated patch of an UPDATE_UNLOCK_SCHEDULE command. */
+    public getUnlockSchedule(): UnlockSchedulePatch | undefined {
+        return this.unlockSchedule;
+    }
+    /** The validated passcode of a SET_UNLOCK_PASSCODE command. Read once, never logged. */
+    public getPasscode(): string | undefined {
+        return this.passcode;
     }
 }

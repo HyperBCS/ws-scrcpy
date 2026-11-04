@@ -247,6 +247,24 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
         }
     }
 
+    /**
+     * One backlight read, now, for the unlock driver: it never touches a dark screen. A wrapper
+     * over `probeScreen` that does not go through the scheduling queue and does not update the
+     * cached state. Owned by W2.
+     */
+    public readScreen(_udid: string): Promise<ScreenPower> {
+        throw new Error('not implemented');
+    }
+
+    /**
+     * Ask for a fresh lock reading (`refresh`) and resolve with `device.locked` as soon as a
+     * reading equal to `locked` arrives, or with the latest known value when `timeoutMs` elapses.
+     * Resolves `'unknown'` when the lock probe is off or the read failed. Owned by W2.
+     */
+    public waitForLock(_udid: string, _locked: boolean, _timeoutMs: number): Promise<KnownBoolean> {
+        throw new Error('not implemented');
+    }
+
     public release(): void {
         for (const udid of Array.from(this.watched.keys())) {
             this.unwatch(udid);

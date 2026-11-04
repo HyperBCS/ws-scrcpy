@@ -75,6 +75,15 @@ export class CoreDeviceProxy extends Mw {
     private acquired = false;
     private onStatus?: (event: { udid: string; state: string; message?: string }) => void;
 
+    /**
+     * Whether a viewer currently owns the touch or keyboard surface of this phone. The unlock
+     * driver backs off while it is true, so a scheduled run does not fight a person typing.
+     * Owned by W2.
+     */
+    public static hasInputOwner(_udid: string): boolean {
+        throw new Error('not implemented');
+    }
+
     public static processRequest(ws: WS, params: RequestParameters): CoreDeviceProxy | undefined {
         if (params.action !== ACTION.PROXY_COREDEVICE) {
             return;

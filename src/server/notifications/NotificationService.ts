@@ -8,6 +8,7 @@ import { Service } from '../services/Service';
 import { NotificationIcons } from './NotificationIcons';
 import { isDismissActionLabel } from '../../common/NotificationActions';
 import { sameOrigin } from '../requestOrigin';
+import { resolveDataDir } from '../dataDir';
 
 import { NotificationEvent, NotificationSource } from '../../common/Notification';
 import { PushDelivery, PushTarget } from './PushDelivery';
@@ -39,6 +40,19 @@ export function validateSubscription(value: unknown): PushSubscription {
     return { endpoint: sub.endpoint, keys: { auth: sub.keys.auth, p256dh: sub.keys.p256dh } };
 }
 
+/**
+ * A push the server sends on its own behalf (a failed scheduled unlock, for example), not a
+ * relayed phone notification. Same fields the service worker reads from a relayed push.
+ */
+export interface SystemPushPayload {
+    title: string;
+    body: string;
+    // Collapses repeats of the same event in the browser, e.g. `ios-unlock-<udid>`.
+    tag: string;
+    // Location hash to open, e.g. `#!action=`.
+    url: string;
+}
+
 export function shouldRelay(event: NotificationEvent, source: NotificationSource, sub: SubscriptionRecord): boolean {
     return (
         event.event === 'added' &&
@@ -60,7 +74,7 @@ export class NotificationService implements Service {
     static hasInstance(): boolean {
         return !!this.instance;
     }
-    private dataDir = path.resolve(process.env.WS_NOTIFICATION_DATA || path.join(process.cwd(), 'data'));
+    private dataDir = resolveDataDir();
     private storage = new NotificationStorage(this.dataDir, (message) => {
         this.error = message;
     });
@@ -479,6 +493,15 @@ export class NotificationService implements Service {
         this.prune();
         if (replay || event.preExisting) return;
         for (const sub of this.store.subscriptions) if (shouldRelay(event, source, sub)) this.push.enqueue(sub.id, key);
+    }
+
+    /**
+     * Queue `payload` for every push subscription as a `system:<nonce>` job. Not stored in the
+     * notification history and not subject to source filters; `preparePush` returns the given
+     * payload for any `system:` key, the way it already does for `test`. Owned by W2.
+     */
+    public notifySystem(_payload: SystemPushPayload): void {
+        throw new Error('not implemented');
     }
 
     private preparePush(id: string, key: string, testPayload?: string): PushTarget | undefined {
