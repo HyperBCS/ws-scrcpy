@@ -178,7 +178,10 @@ test('driver: the full HID sequence in order, one serve-web, and the session sto
         const ys = touches.map(([line]) => JSON.parse(line.slice('post /touch '.length)));
         assert(ys.slice(0, 12).every((body) => body.type === 'contact' && body.x === 0x8000));
         assert.equal(ys[0].y, 0xf800);
-        assert(ys.slice(1, 12).every((body, n) => body.y === ys[n].y - 0x0ccc), 'the swipe moves up in even steps');
+        assert(
+            ys.slice(1, 12).every((body, n) => body.y === ys[n].y - 0x0ccc),
+            'the swipe moves up in even steps',
+        );
         assert.equal(ys[12].type, 'release');
 
         const keys = lines.map((line, n) => [line, n]).filter(([line]) => isKey(line));
@@ -271,7 +274,9 @@ test('driver: a screen that cannot be read gets no touch and no Lock press; one 
 
 test('driver: a phone that does not lock again is reported whatever the outcome', async () => {
     await withEnv({ FAKE_LOG: logFile }, async () => {
-        const { result, runner } = await runDriver('iphone-stays-awake', { monitor: scriptedMonitor({ relocked: false }) });
+        const { result, runner } = await runDriver('iphone-stays-awake', {
+            monitor: scriptedMonitor({ relocked: false }),
+        });
         assert.equal(result.outcome, 'unlocked', result.message);
         assert.equal(result.message, 'Lock not confirmed');
         runner.stopSession('iphone-stays-awake');
@@ -384,7 +389,10 @@ test('driver: the phone dropping the HID channel mid-swipe is failed-session nam
         assert.equal(result.outcome, 'failed-session', result.message);
         assert.match(result.message, /^swipe: /);
         assert(!lines.some(isKey), 'the digits are never typed');
-        assert(lines.some((line) => line.includes('"type":"frame"')), 'the all-fingers-up frame is still attempted');
+        assert(
+            lines.some((line) => line.includes('"type":"frame"')),
+            'the all-fingers-up frame is still attempted',
+        );
         const session = runner.sessions.get('iphone-drop');
         assert.equal(session.holders, 0, 'the driver released its hold');
         runner.stopSession('iphone-drop');
@@ -432,7 +440,10 @@ test('monitor: waitForLock resolves on a matching reading, at timeout otherwise,
             { FAKE_LOG: logFile, FAKE_SCREEN: 'on', FAKE_NOTIFICATION_STATE: '1', IOS_STATE_NOTIFICATIONS: '0' },
             async () => {
                 monitor.watch(udid, { version: '27.2', language: 'en-US' });
-                await waitFor(() => monitor.getState(udid)['device.locked'] === true, 'the first read sees a locked phone');
+                await waitFor(
+                    () => monitor.getState(udid)['device.locked'] === true,
+                    'the first read sees a locked phone',
+                );
 
                 await withEnv({ FAKE_NOTIFICATION_STATE: '0' }, async () => {
                     const started = Date.now();
@@ -530,7 +541,11 @@ test('push: notifySystem queues one job per subscription, preparePush honours sy
         const id = crypto.createHash('sha256').update(endpoints[0]).digest('hex');
         assert.deepEqual(service.preparePush(id, 'system:abc', '{"x":1}').payload, '{"x":1}');
         assert.equal(service.preparePush(id, 'system:abc'), undefined, 'a system job without a payload sends nothing');
-        assert.equal(service.preparePush(id, 'systemless', '{"x":1}'), undefined, 'other keys still go through the feed');
+        assert.equal(
+            service.preparePush(id, 'systemless', '{"x":1}'),
+            undefined,
+            'other keys still go through the feed',
+        );
 
         service.release();
         service.notifySystem(payload);
@@ -745,7 +760,11 @@ test('scheduler: a scheduled run is skipped for disabled, no passcode, disconnec
         const { scheduler, store, driver, monitor, pushes } = ctx2;
         monitor.set(udid, true);
         assert.equal((await scheduler.runNow(udid, 'schedule')).outcome, 'skipped-disabled');
-        assert.equal((await scheduler.runNow(udid, 'manual')).outcome, 'skipped-no-passcode', 'manual ignores disabled');
+        assert.equal(
+            (await scheduler.runNow(udid, 'manual')).outcome,
+            'skipped-no-passcode',
+            'manual ignores disabled',
+        );
         store.setPasscode(udid, PASSCODE);
         assert.equal((await scheduler.runNow(udid, 'schedule')).outcome, 'skipped-disabled');
         store.updateSchedule(udid, { enabled: true });
@@ -798,7 +817,10 @@ test('scheduler: a failed scheduled run is pushed and retried once ten minutes l
     const udid = 'iphone-retry';
     try {
         armed(ctx, udid);
-        ctx.driver.results.push({ outcome: 'failed-still-locked', message: 'Locked again' }, { outcome: 'failed-wake' });
+        ctx.driver.results.push(
+            { outcome: 'failed-still-locked', message: 'Locked again' },
+            { outcome: 'failed-wake' },
+        );
         ctx.tick();
         await ctx.settle();
         assert.equal(ctx.driver.calls.length, 1);
@@ -937,7 +959,11 @@ test('scheduler: getStatus has defaults for an unknown device, the mutating meth
     const ctx = makeScheduler();
     const udid = 'iphone-status';
     try {
-        assert.deepEqual(ctx.scheduler.getStatus(udid), { enabled: false, time: DEFAULT_UNLOCK_TIME, hasPasscode: false });
+        assert.deepEqual(ctx.scheduler.getStatus(udid), {
+            enabled: false,
+            time: DEFAULT_UNLOCK_TIME,
+            hasPasscode: false,
+        });
         const updated = ctx.scheduler.updateSchedule(udid, { enabled: true, time: '04:30' });
         assert.deepEqual(updated, { enabled: true, time: '04:30', hasPasscode: false });
         assert.deepEqual(ctx.statuses.at(-1), { udid, status: updated });
@@ -1061,7 +1087,10 @@ test('scheduler with the real driver: a manual run against the fake phone unlock
             assert(lines.includes(button('lock', 'up')));
             assert(!lines.join('\n').includes(PASSCODE));
             assert(!output.text().includes(PASSCODE));
-            assert.match(output.text(), /\[UnlockScheduler\] \[iphone-end-to-end\] manual unlocked \(Locked again\) in \d+ ms/);
+            assert.match(
+                output.text(),
+                /\[UnlockScheduler\] \[iphone-end-to-end\] manual unlocked \(Locked again\) in \d+ ms/,
+            );
             runner.stopSession(udid);
         });
     } finally {
