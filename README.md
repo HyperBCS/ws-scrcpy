@@ -140,16 +140,23 @@ survive a reboot, and it is not an app.
   one; its timing has not yet been confirmed on an unlocked phone.
 * Screen and lock state, like Android's Asleep/Locked badges. The display backlight is
   read from the phone's IORegistry over lockdown (0 while the screen is off), polled
-  every 4 s while streaming and every 15 s idle. The lock state comes from
-  `python/probes/lockstate.py`, which asks the accessibility daemon what is on screen
+  every 4 s while streaming and every 15 s idle. On **iOS 27.2 and newer**, lock state
+  comes directly from SpringBoard's `com.apple.springboard.lockstate`: 0 unlocked,
+  1 locked. Notification events update it immediately; a direct read over the developer
+  tunnel initializes it and refreshes it alongside the screen poll to recover missed events.
+  This works independently of the phone's language and does not use accessibility.
+  Failed reads or unexpected values report unknown. Verified on an iPhone 13 Pro Max
+  running iOS 27.2 through an unlock/lock cycle, with matching query and event values.
+  On older iOS versions, `python/probes/lockstate.py` asks accessibility what is on screen
   (the lock screen's padlock reads "Locked"/"Unlocked", the keypad "Enter Passcode").
   That probe **never runs on a timer**: only when SpringBoard reports a lock change or
   the screen blanking, when a button or passcode goes through the stream, or when you
   ask (the Unlock button), and never while the phone is known to be awake and unlocked.
   It also turns the accessibility inspector's on-device overlay off first, so the phone
   does not draw a highlight box around what it reads. `IOS_LOCK_PROBE=0` turns the lock
-  half off entirely and leaves sleep detection working. The stream page shows the same
-  sleep overlay (tap to wake) and lock notice as Android. The captions are English; add
+  detection off entirely (including notification-state reads) and leaves sleep detection working.
+  The stream page shows the same sleep overlay (tap to wake) and lock notice as Android.
+  The older probe's captions are English; add
   your phone's with `IOS_LOCKED_CAPTIONS` (a lock screen in another language reads as
   unknown, never as unlocked). Verified on iOS 27 for screen on/off and the locked and
   passcode screens; the unlocked reading follows from the absence of those.
@@ -242,9 +249,9 @@ machine the setup script says so; pick another with
 | `IOS_TUNNEL` | How the iOS 17+ tunnel is reached: `userspace` (default, in-process, no root) or `tunneld` (use a running `sudo pymobiledevice3 remote tunneld`) |
 | `IOS_APP_SWITCHER` | How the App switcher button opens it: `gesture` (Face ID swipe-and-hold) or `home` (Home double press). Default: by product type |
 | `IOS_STATE_PROBE` | `0` turns the screen/lock state monitor off (the badges and the sleep overlay stay silent) |
-| `IOS_LOCK_PROBE` | `0` keeps the screen probe but skips the lock probe, the one that opens a developer tunnel and talks to the accessibility daemon |
+| `IOS_LOCK_PROBE` | `0` disables lock detection (direct state on iOS 27.2+, accessibility on older versions) and keeps screen detection |
 | `IOS_STATE_NOTIFICATIONS` | `0` disables the per-device `notification observe` process; state then changes only at the poll interval |
-| `IOS_LOCKED_CAPTIONS` | Comma-separated lock-screen captions in your phone's language (e.g. `Gesperrt,Code eingeben`) |
+| `IOS_LOCKED_CAPTIONS` | Comma-separated lock-screen captions for the older accessibility probe (e.g. `Gesperrt,Code eingeben`); not needed on iOS 27.2+ |
 | `WS_SCRCPY_DEBUG` | Verbose logs, including every `pymobiledevice3` child's output |
 
 [pymobiledevice3]: https://github.com/doronz88/pymobiledevice3

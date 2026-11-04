@@ -17,18 +17,16 @@ export interface DeviceStateMonitorEvents {
 }
 
 export interface WatchOptions {
+    version?: string;
     // BCP 47 tag from lockdown's `com.apple.international` domain (`en-US`). The lock probe reads
     // localized accessibility captions, so it only trusts a "no padlock seen" result in English.
     language?: string;
 }
 
 // The screen probe is one lockdown request (~0.6 s, no tunnel), cheap enough to keep the device
-// list honest while nobody is streaming. The lock probe is the expensive, intrusive one: it opens
-// a developer tunnel and asks the accessibility daemon what is on screen (~1.3 s), so it never
-// runs on a timer -- only when something that could change the lock happened (a SpringBoard lock
-// notification, the screen blanking or lighting up, a button or passcode sent through the stream,
-// an explicit refresh), and never while the phone is known to be unlocked and awake, which is
-// exactly when somebody is using it.
+// list honest while nobody is streaming. On iOS 27.2+ the lock is a direct notification-state
+// read and can be polled alongside it. Older phones need an accessibility walk, which only runs
+// on possible lock transitions or explicit requests, never on a timer or routine unlocked input.
 const SCREEN_POLL_IDLE_MS = 15000;
 const SCREEN_POLL_ACTIVE_MS = 4000;
 // SpringBoard posts a notification the instant the screen blanks or the lock changes; the state
@@ -41,10 +39,12 @@ const OBSERVER_RETRY_MIN_MS = 5000;
 const OBSERVER_RETRY_MAX_MS = 60000;
 const SCREEN_PROBE_TIMEOUT_MS = 20000;
 const LOCK_PROBE_TIMEOUT_MS = 40000;
+const NOTIFICATION_STATE_TIMEOUT_MS = 10000;
 const LOCK_PROBE_SCRIPT = 'lockstate.py';
 
 const SCREEN_NOTIFICATION = 'com.apple.springboard.hasBlankedScreen';
-const LOCK_NOTIFICATIONS = ['com.apple.springboard.lockstate', 'com.apple.springboard.lockcomplete'];
+const LOCK_STATE_NOTIFICATION = 'com.apple.springboard.lockstate';
+const LOCK_NOTIFICATIONS = [LOCK_STATE_NOTIFICATION, 'com.apple.springboard.lockcomplete'];
 
 // Captions of the lock screen's accessibility elements as iOS 27 reports them in English: the
 // padlock under the clock reads "Locked" or "Unlocked" (Face ID has recognised the owner but the
@@ -58,6 +58,8 @@ type AccessibilityItem = string | { caption?: string | null; spoken_description?
 interface Watched {
     udid: string;
     language?: string;
+    notificationState: boolean;
+    lockRevision: number;
     state: AppleRuntimeState;
     sessionActive: boolean;
     wantScreen: boolean;
@@ -78,14 +80,14 @@ interface Watched {
 /**
  * Screen and lock state for iOS devices, the counterpart of Android's `dumpsys` polling.
  *
- * iOS has no API that answers "is the phone locked" over USB (CoreDevice's `getlockstate` action
- * reports "not implemented" on iOS 27), so the state is assembled from three sources, all through
- * the `pymobiledevice3` CLI and nothing installed on the phone:
+ * State is read through `pymobiledevice3`, with nothing installed on the phone:
  *
  * - **Screen**: the `AppleARMBacklight` IORegistry entry over the lockdown diagnostics relay.
  *   `IODisplayParameters.brightness.value` is 0 exactly while the display is blanked (verified
  *   on an iPhone 13 Pro Max: 1 awake in a dark room, 0 asleep).
- * - **Lock**: `python/probes/lockstate.py` asks the accessibility daemon what is on screen. The
+ * - **Lock, iOS 27.2+**: notification `get-state` reads SpringBoard's lockstate over the RSD
+ *   tunnel: 0 unlocked, 1 locked. The secure notification observer also carries this state.
+ * - **Lock, older iOS**: `python/probes/lockstate.py` asks accessibility what is on screen. The
  *   lock screen carries a padlock captioned "Locked"/"Unlocked" and the passcode keypad "Enter
  *   Passcode"; anything else means the phone is in use. It works with the screen off too (it
  *   reports the lock screen underneath). The probe is ours rather than the CLI's `list-items`
@@ -93,11 +95,10 @@ interface Watched {
  *   around each element on every poll.
  * - **Triggers**: `notification observe` relays SpringBoard's Darwin notifications for screen
  *   blanking and lock changes, so a probe runs within a second of the phone changing instead of
- *   at the next poll. Notifications alone would not do: they carry no payload, so the direction
- *   of a change has to be read from the device.
+ *   at the next poll. On iOS 27.2+, lockstate events update the lock directly; older events
+ *   without a state trigger a probe instead. Periodic direct reads recover missed events.
  *
- * `IOS_STATE_PROBE=0` turns all of this off, `IOS_LOCK_PROBE=0` only the lock probe (it is the
- * one that opens a developer tunnel and touches the accessibility daemon),
+ * `IOS_STATE_PROBE=0` turns all of this off, `IOS_LOCK_PROBE=0` only lock detection,
  * `IOS_STATE_NOTIFICATIONS=0` the observer process.
  */
 export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
@@ -131,11 +132,16 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
         let entry = this.watched.get(udid);
         if (entry) {
             entry.language = options.language ?? entry.language;
+            if (options.version !== undefined) {
+                entry.notificationState = DeviceStateMonitor.supportsNotificationState(options.version);
+            }
             return;
         }
         entry = {
             udid,
             language: options.language,
+            notificationState: DeviceStateMonitor.supportsNotificationState(options.version),
+            lockRevision: 0,
             state: { 'screen.power': 'unknown', 'device.locked': 'unknown' },
             sessionActive: false,
             wantScreen: false,
@@ -177,8 +183,7 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
 
     /**
      * A screen session is up: someone is looking at the phone, so the screen is polled fast. The
-     * lock is read once here and then only on the triggers above -- polling it would drive the
-     * accessibility daemon over whatever the person is doing.
+     * direct lock state is polled too; the older accessibility probe remains event-driven.
      */
     public setSessionActive(udid: string, active: boolean): void {
         const entry = this.watched.get(udid);
@@ -211,7 +216,11 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
     public pokeButton(udid: string): void {
         const entry = this.watched.get(udid);
         if (entry) {
-            this.schedule(entry, { screen: true, lock: this.shouldProbeLock(entry) }, INPUT_SETTLE_MS);
+            this.schedule(
+                entry,
+                { screen: true, lock: entry.notificationState || this.shouldProbeLock(entry) },
+                INPUT_SETTLE_MS,
+            );
         }
     }
 
@@ -285,17 +294,23 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
                 entry.wantLock = false;
                 let screen = entry.state['screen.power'];
                 let locked = entry.state['device.locked'];
+                const lockRevision = entry.lockRevision;
                 if (doScreen && !entry.stopped) {
                     screen = await this.probeScreen(entry.udid);
                     this.armScreenTimer(entry);
                 }
-                if (doLock && !entry.stopped) {
+                if (doLock && !entry.stopped && lockRevision === entry.lockRevision) {
                     locked = await this.probeLock(entry);
                 }
                 if (entry.stopped) {
                     return;
                 }
-                this.update(entry, { 'screen.power': screen, 'device.locked': locked });
+                // A notification can arrive while either probe is in flight. Its value is newer
+                // than that probe's snapshot, including when only the screen was being read.
+                this.update(entry, {
+                    'screen.power': screen,
+                    'device.locked': lockRevision === entry.lockRevision ? locked : entry.state['device.locked'],
+                });
             } while (entry.rerun || entry.wantScreen || entry.wantLock);
         } finally {
             entry.running = false;
@@ -329,7 +344,7 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
         entry.screenTimer = setTimeout(
             () => {
                 entry.screenTimer = undefined;
-                this.schedule(entry, { screen: true }, 0);
+                this.schedule(entry, { screen: true, lock: entry.notificationState }, 0);
             },
             entry.sessionActive ? SCREEN_POLL_ACTIVE_MS : SCREEN_POLL_IDLE_MS,
         );
@@ -370,6 +385,15 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
 
     private async probeLock(entry: Watched): Promise<KnownBoolean> {
         try {
+            if (entry.notificationState) {
+                const result = await PyMobileDevice.runJson<Record<string, unknown> | null>(
+                    ['notification', 'get-state', LOCK_STATE_NOTIFICATION, ...PyMobileDevice.tunnelArgs(entry.udid)],
+                    NOTIFICATION_STATE_TIMEOUT_MS,
+                    undefined,
+                    { PYMOBILEDEVICE3_UDID: entry.udid },
+                );
+                return DeviceStateMonitor.lockedFromNotificationState(result?.[LOCK_STATE_NOTIFICATION]);
+            }
             const result = await PyMobileDevice.runProbeJson<{ locked?: boolean | null; captions?: unknown }>(
                 LOCK_PROBE_SCRIPT,
                 [],
@@ -392,6 +416,16 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
             PyMobileDevice.log(`[${entry.udid}] lock probe failed: ${(error as Error).message}`);
             return 'unknown';
         }
+    }
+
+    public static supportsNotificationState(version?: string): boolean {
+        const match = version?.match(/^(\d+)\.(\d+)(?:\.|$)/);
+        return !!match && (Number(match[1]) > 27 || (Number(match[1]) === 27 && Number(match[2]) >= 2));
+    }
+
+    public static lockedFromNotificationState(state: unknown): KnownBoolean {
+        // Do not coerce missing, unexpected or malformed values into an unlocked result.
+        return state === 0 ? false : state === 1 ? true : 'unknown';
     }
 
     /**
@@ -470,11 +504,27 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
         const lines = entry.observerBuffer.split('\n');
         entry.observerBuffer = lines.pop() ?? '';
         for (const line of lines) {
+            if (entry.stopped) {
+                return;
+            }
             const name = DeviceStateMonitor.notificationName(line);
             if (!name) {
                 continue;
             }
             entry.observerRetryMs = OBSERVER_RETRY_MIN_MS;
+            if (
+                name === LOCK_STATE_NOTIFICATION &&
+                entry.notificationState &&
+                DeviceStateMonitor.isLockProbeEnabled()
+            ) {
+                const locked = DeviceStateMonitor.lockedFromNotificationState(JSON.parse(line).State);
+                if (locked !== 'unknown') {
+                    entry.lockRevision++;
+                    entry.wantLock = false;
+                    this.update(entry, { ...entry.state, 'device.locked': locked });
+                    continue;
+                }
+            }
             if (name === SCREEN_NOTIFICATION) {
                 // The lock is read as well: blanking normally locks a passcode phone, and waking
                 // through Face ID unlocks it.

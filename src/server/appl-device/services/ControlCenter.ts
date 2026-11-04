@@ -241,7 +241,10 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
             item.descriptor.session = CoreDeviceRunner.getInstance().getStatus(udid).state;
             const monitor = DeviceStateMonitor.getInstance();
             if (!monitor.isWatching(udid)) {
-                monitor.watch(udid, { language: await this.fetchLanguage(udid) });
+                monitor.watch(udid, {
+                    version: item.descriptor.version,
+                    language: await this.fetchLanguage(udid),
+                });
             }
             Object.assign(item.descriptor, monitor.getState(udid));
         } catch (error) {

@@ -1937,6 +1937,189 @@ test('browser side: the HEVC player gates deltas on a key frame and rebuilds on 
 
 // ---------------------------------------------------------------- screen / lock state (iOS)
 
+test('direct notification state requires iOS 27.2+ and accepts only numeric 0 or 1', () => {
+    for (const version of ['27.2', '27.2.1', '27.10', '28.0']) {
+        assert.equal(DeviceStateMonitor.supportsNotificationState(version), true, version);
+    }
+    for (const version of [undefined, '', 'unknown', '18.7', '27.0', '27.1', '27.2oops']) {
+        assert.equal(DeviceStateMonitor.supportsNotificationState(version), false, version);
+    }
+    assert.equal(DeviceStateMonitor.lockedFromNotificationState(0), false);
+    assert.equal(DeviceStateMonitor.lockedFromNotificationState(1), true);
+    for (const state of [undefined, null, false, true, '0', '1', 2, -1, {}, []]) {
+        assert.equal(DeviceStateMonitor.lockedFromNotificationState(state), 'unknown');
+    }
+});
+
+test('iOS 27.2 uses direct reads and state events without accessibility, even in another language', async () => {
+    fs.rmSync(logFile, { force: true });
+    const monitor = new DeviceStateMonitor();
+    const udid = 'iphone-direct';
+    const waitFor = async (predicate, what) => {
+        for (let i = 0; i < 200 && !predicate(); i++) await sleep(25);
+        assert(predicate(), what);
+    };
+    try {
+        await withEnv({
+            FAKE_LOG: logFile,
+            FAKE_SCREEN: 'on',
+            FAKE_NOTIFICATION_STATE: '1',
+            FAKE_NOTIFY: 'com.apple.springboard.lockstate',
+            FAKE_NOTIFY_STATE: '0',
+            FAKE_LOCK_FAIL: 'accessibility must never run',
+        }, async () => {
+            monitor.watch(udid, { version: '27.2', language: 'de-DE' });
+            const states = [];
+            monitor.on('state', (event) => states.push(event['device.locked']));
+            await waitFor(() => states.includes(true), 'the startup query detects a locked phone');
+            await waitFor(() => states.includes(false), 'the observer reports unlock from its State payload');
+            assert(calls().includes('notification target ' + udid), 'the query targets the watched phone');
+            assert(calls().some((line) => line.includes('"get-state"') && line.includes('"--userspace"')));
+            assert.equal(calls().filter((line) => line.includes('"get-state"')).length, 1,
+                'a valid event does not need another query');
+            // Simulate a lock event split across stdout chunks, as a real pipe can deliver it.
+            const stdout = monitor.watched.get(udid).observer.stdout;
+            stdout.emit('data', '{"Command":"RelayNotification","Name":"com.apple.springboard.lock');
+            stdout.emit('data', 'state","State":1}\n');
+            assert.equal(monitor.getState(udid)['device.locked'], true);
+
+            for (const [raw, expected] of [['0', false], ['null', 'unknown'], ['2', 'unknown'], ['1', true]]) {
+                await withEnv({ FAKE_NOTIFICATION_STATE: raw }, async () => {
+                    monitor.refresh(udid);
+                    await waitFor(() => !monitor.watched.get(udid).running && !monitor.watched.get(udid).probeTimer,
+                        'the requested read completes');
+                    assert.equal(monitor.getState(udid)['device.locked'], expected);
+                });
+            }
+            await withEnv({ FAKE_NOTIFICATION_FAIL: 'notification service unavailable' }, async () => {
+                monitor.refresh(udid);
+                await waitFor(() => monitor.getState(udid)['device.locked'] === 'unknown', 'failure reports unknown');
+                assert.equal(monitor.getState(udid)['screen.power'], 'on');
+            });
+            await withEnv({ IOS_TUNNEL: 'tunneld', FAKE_NOTIFICATION_STATE: '0' }, async () => {
+                monitor.refresh(udid);
+                await waitFor(() => monitor.getState(udid)['device.locked'] === false, 'a later read recovers');
+                assert(calls().some((line) => line.includes('"get-state"') && line.includes('"--tunnel","' + udid + '"')));
+            });
+            assert(!calls().some((line) => line.includes('lockstate.py') || line.includes('list-items')),
+                'neither a successful direct read nor a failed one walks accessibility');
+        });
+    } finally {
+        monitor.release();
+    }
+});
+
+test('a newer lock event wins over in-flight screen and lock reads', async (t) => {
+    const monitor = new DeviceStateMonitor();
+    const udid = 'iphone-race';
+    let complete;
+    t.mock.method(PyMobileDevice, 'runJson', () => new Promise((resolve) => { complete = resolve; }));
+    const notification = (state) => JSON.stringify({
+        Command: 'RelayNotification', Name: 'com.apple.springboard.lockstate', State: state,
+    }) + '\n';
+    t.mock.method(PyMobileDevice, 'runProbeJson', () => { throw new Error('unexpected accessibility walk'); });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+        await withEnv({ IOS_STATE_NOTIFICATIONS: '0' }, async () => {
+            monitor.watch(udid, { version: '27.2' });
+            const entry = monitor.watched.get(udid);
+            // Hold each kind of probe open while an unlock event arrives. Both used to have a
+            // captured lock value that could overwrite that event when the read completed.
+            for (const readingLock of [false, true]) {
+                entry.state = { 'screen.power': 'on', 'device.locked': true };
+                entry.wantScreen = !readingLock;
+                entry.wantLock = readingLock;
+                const pending = monitor.run(entry);
+                monitor.onObserverOutput(entry, notification(0));
+                assert.equal(monitor.getState(udid)['device.locked'], false);
+                complete(readingLock
+                    ? { 'com.apple.springboard.lockstate': 1 }
+                    : { IODisplayParameters: { brightness: { value: 1 } } });
+                await pending;
+                assert.equal(monitor.getState(udid)['device.locked'], false, 'the stale read cannot restore locked');
+            }
+            monitor.unwatch(udid);
+            const revision = entry.lockRevision;
+            monitor.onObserverOutput(entry, notification(1));
+            assert.equal(entry.lockRevision, revision, 'output after unwatch is ignored');
+        });
+    } finally {
+        monitor.release();
+    }
+});
+
+test('device discovery passes the iOS version through to lock detection', async () => {
+    const { ControlCenter } = require('../src/server/appl-device/services/ControlCenter');
+    const tracker = new ControlCenter();
+    fs.rmSync(logFile, { force: true });
+    try {
+        await withEnv({
+            FAKE_LOG: logFile, FAKE_DEVICES: 'iphone-discovered', FAKE_VERSION: '27.2',
+            FAKE_NOTIFICATION_STATE: '0', IOS_STATE_NOTIFICATIONS: '0',
+        }, async () => {
+            await tracker.init();
+            for (let i = 0; i < 200 && tracker.getDescriptor('iphone-discovered')?.['device.locked'] !== false; i++) {
+                await sleep(25);
+            }
+            assert.equal(tracker.getDescriptor('iphone-discovered')['device.locked'], false);
+            assert(calls().some((line) => line.includes('"get-state"')));
+            assert(!calls().some((line) => line.includes('lockstate.py')));
+        });
+    } finally {
+        tracker.release();
+    }
+});
+
+test('direct lock polling recovers missed events and respects the lock opt-out', async (t) => {
+    const monitor = new DeviceStateMonitor();
+    let raw = 0;
+    let reads = 0;
+    t.mock.method(PyMobileDevice, 'runJson', async (args) => {
+        if (args[0] === 'notification') {
+            reads++;
+            return { 'com.apple.springboard.lockstate': raw };
+        }
+        return { IODisplayParameters: { brightness: { value: 1 } } };
+    });
+    t.mock.method(PyMobileDevice, 'runProbeJson', () => { throw new Error('unexpected accessibility walk'); });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+        await withEnv({ IOS_STATE_NOTIFICATIONS: '0' }, async () => {
+            monitor.watch('poll', { version: '27.2' });
+            t.mock.timers.tick(1);
+            await tick();
+            assert.equal(monitor.getState('poll')['device.locked'], false);
+            raw = 1;
+            t.mock.timers.tick(15001);
+            await tick();
+            assert.equal(monitor.getState('poll')['device.locked'], true, 'idle polling catches a missed lock');
+            monitor.setSessionActive('poll', true);
+            t.mock.timers.tick(1);
+            await tick();
+            raw = 0;
+            t.mock.timers.tick(4001);
+            await tick();
+            assert.equal(monitor.getState('poll')['device.locked'], false, 'active polling catches a missed unlock');
+            monitor.unwatch('poll');
+            const before = reads;
+            await withEnv({ IOS_LOCK_PROBE: '0' }, async () => {
+                monitor.watch('disabled', { version: '27.2' });
+                t.mock.timers.tick(1);
+                await tick();
+                const entry = monitor.watched.get('disabled');
+                monitor.onObserverOutput(entry,
+                    '{"Command":"RelayNotification","Name":"com.apple.springboard.lockstate","State":1}\n');
+                t.mock.timers.tick(15001);
+                await tick();
+                assert.equal(reads, before, 'neither startup nor polling reads the lock when disabled');
+                assert.deepEqual(monitor.getState('disabled'), { 'screen.power': 'on', 'device.locked': 'unknown' });
+            });
+        });
+    } finally {
+        monitor.release();
+    }
+});
+
 test('the state monitor reads the screen from the backlight and the lock from the accessibility captions', () => {
     const backlight = (value) => ({ IOClass: 'AppleARMBacklight', IODisplayParameters: { brightness: { value } } });
     assert.equal(DeviceStateMonitor.screenPowerFromBacklight(backlight(1)), 'on');

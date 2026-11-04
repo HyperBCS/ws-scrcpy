@@ -8,6 +8,7 @@
 //   FAKE_DEVICES        comma-separated UDIDs `usbmux list --simple` reports (default: one)
 //   FAKE_UNPAIRED       comma-separated UDIDs whose `lockdown info` fails with a pairing error
 //   FAKE_DEVMODE        "false" makes `amfi developer-mode-status` report false
+//   FAKE_VERSION        iOS ProductVersion (default: 27.0)
 //   FAKE_MOUNT_FAIL     "devmode" | "other": make `mounter auto-mount` fail that way
 //   FAKE_SERVE_EXIT     exit code for serve-web to die with immediately
 //   FAKE_SERVE_DELAY_MS how long /codec answers 503 before the stream is "ready"
@@ -29,6 +30,9 @@
 //                       kill) or a message to fail with; by default it kills one daemon
 //   FAKE_LANGUAGE       `lockdown get --domain com.apple.international --key Language` (en-US)
 //   FAKE_NOTIFY         `notification observe` relays this notification name once, 200 ms in
+//   FAKE_NOTIFY_STATE   optional JSON State value included in that notification
+//   FAKE_NOTIFICATION_STATE  JSON value returned by notification get-state (default: 1)
+//   FAKE_NOTIFICATION_FAIL   notification get-state exits non-zero with this message
 //   FAKE_LOG            file to append one line per invocation (args + POST bodies)
 //   FAKE_TOUCH_DROP_AFTER  drop the connection on every `/touch` past this many, so a gesture can
 //                       be cut off mid-swipe the way a wedged HID channel cuts one off
@@ -66,7 +70,7 @@ if (command === 'lockdown info') {
             Identifier: udid,
             DeviceName: `Fixture ${udid}`,
             ProductType: 'iPhone14,5',
-            ProductVersion: '27.0',
+            ProductVersion: process.env.FAKE_VERSION || '27.0',
             UniqueDeviceID: udid,
         }) + '\n',
     );
@@ -136,12 +140,25 @@ if (command === 'lockdown get') {
     process.exit(0);
 }
 let longLived = false;
+if (command.startsWith('notification get-state')) {
+    if (process.env.FAKE_NOTIFICATION_FAIL) {
+        process.stderr.write(process.env.FAKE_NOTIFICATION_FAIL + '\n');
+        process.exit(1);
+    }
+    log('notification target ' + udid);
+    process.stdout.write(JSON.stringify({
+        'com.apple.springboard.lockstate': JSON.parse(process.env.FAKE_NOTIFICATION_STATE ?? '1'),
+    }) + '\n');
+    process.exit(0);
+}
 if (command.startsWith('notification observe')) {
     // Long-lived like the real relay: prints one JSON line per notification, exits on SIGTERM.
     longLived = true;
     if (process.env.FAKE_NOTIFY) {
         setTimeout(() => {
-            process.stdout.write(JSON.stringify({ Command: 'RelayNotification', Name: process.env.FAKE_NOTIFY }) + '\n');
+            const event = { Command: 'RelayNotification', Name: process.env.FAKE_NOTIFY };
+            if (process.env.FAKE_NOTIFY_STATE !== undefined) event.State = JSON.parse(process.env.FAKE_NOTIFY_STATE);
+            process.stdout.write(JSON.stringify(event) + '\n');
         }, 200);
     }
     setInterval(() => {}, 60000);

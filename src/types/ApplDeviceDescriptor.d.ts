@@ -20,8 +20,8 @@ export default interface ApplDeviceDescriptor extends BaseDeviceDescriptor {
     sessionMessage?: string;
     // Runtime state read by `DeviceStateMonitor`, named like the Android fields so the shared
     // status/overlay code treats both platforms alike. `screen.power` comes from the display
-    // backlight in the IORegistry; `device.locked` from an accessibility walk of the screen (the
-    // lock screen exposes a "Locked"/"Unlocked" padlock). Absent or 'unknown' until probed.
+    // backlight in the IORegistry; `device.locked` from SpringBoard notification state on iOS
+    // 27.2+, or accessibility captions on older versions. Absent or 'unknown' until probed.
     'screen.power'?: 'on' | 'off' | 'unknown';
     'device.locked'?: KnownBoolean;
 }

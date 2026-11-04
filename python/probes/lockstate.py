@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Reads whether an iPhone is on its lock screen, without drawing anything on its screen.
+Legacy lock detection for iOS before 27.2, without drawing anything on the screen.
 
-iOS exposes no lock-state API over USB (CoreDevice's `getlockstate` action answers "not
-implemented" on iOS 27), so this asks the accessibility audit daemon what is on screen: the lock
+Older iOS has no usable lock-state API over USB (CoreDevice's `getlockstate` action answers "not
+implemented" on iOS 27.0), so this asks the accessibility audit daemon what is on screen: the lock
 screen carries a padlock captioned "Locked"/"Unlocked" and the passcode keypad "Enter Passcode".
+On iOS 27.2+ the server reads notification state directly instead of running this probe.
 
 Why not `pymobiledevice3 developer accessibility list-items`, which reads the same elements:
 
@@ -17,7 +18,7 @@ This turns the overlay off first (`deviceInspectorShowVisuals:` and `deviceEnabl
 never enables app monitoring, and stops at the first caption that settles the question -- on a
 lock screen, usually the first element.
 
-Pinned to pymobiledevice3 11.12.5, like python/patches/: it uses a few private members of
+Uses the pymobiledevice3 version in python/requirements.txt and a few private members of
 `AccessibilityAudit` because the public `iter_elements()` is the thing whose side effects are
 the problem. If a future version breaks this, the caller degrades to "lock state unknown", which
 hides the Locked badge but leaves the screen/sleep detection (a different service) working.
