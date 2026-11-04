@@ -14,6 +14,8 @@ require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'c
 
 const FAKE = path.join(__dirname, 'fixtures', 'fake-pymobiledevice3.js');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-coredevice-'));
+// The tracker tests start the unlock scheduler, whose store creates the data directory.
+process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
 after(() => {
     // A failed assertion skips a test's own `runner.release()`; without this the fake serve-web
     // and its ffmpeg child would outlive the run.
@@ -1605,6 +1607,7 @@ test('browser side: the MSE player feeds init + key frames through a SourceBuffe
     const video = Object.assign(element(), { buffered: { length: 0 }, currentTime: 0, paused: true, videoWidth: 0, videoHeight: 0 });
     const realCreate = global.document.createElement;
     global.document.createElement = (tag) => (tag === 'video' ? video : realCreate(tag));
+    const { setInterval: realSetInterval, clearInterval: realClearInterval } = global;
     global.setInterval = () => 1; global.clearInterval = () => {};
     try {
         const { MseHevcPlayer } = require('../src/app/player/MseHevcPlayer');
@@ -1644,6 +1647,9 @@ test('browser side: the MSE player feeds init + key frames through a SourceBuffe
         player.stop();
     } finally {
         global.document.createElement = realCreate;
+        // Later tests start real timers (the iOS tracker's unlock scheduler among them).
+        global.setInterval = realSetInterval;
+        global.clearInterval = realClearInterval;
     }
 });
 

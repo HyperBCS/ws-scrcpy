@@ -13,6 +13,9 @@ const childProcess = require('node:child_process');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-server-tests-'));
 const previousConfigPath = process.env.WS_SCRCPY_STREAM_CONFIG_PATH;
 process.env.WS_SCRCPY_STREAM_CONFIG_PATH = path.join(temporary, 'stream-config.json');
+// The iOS tracker starts the unlock scheduler, whose store creates the data directory.
+const previousDataDir = process.env.WS_NOTIFICATION_DATA;
+process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
 require('ts-node').register({ transpileOnly: true });
 // Webpack treats these imports as assets. Node only needs the surrounding server classes.
 require.extensions['.jar'] = () => {};
@@ -42,6 +45,8 @@ after(() => {
     fs.rmSync(temporary, { recursive: true, force: true });
     if (previousConfigPath === undefined) delete process.env.WS_SCRCPY_STREAM_CONFIG_PATH;
     else process.env.WS_SCRCPY_STREAM_CONFIG_PATH = previousConfigPath;
+    if (previousDataDir === undefined) delete process.env.WS_NOTIFICATION_DATA;
+    else process.env.WS_NOTIFICATION_DATA = previousDataDir;
 });
 
 function deferred() {

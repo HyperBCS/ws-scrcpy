@@ -1,4 +1,6 @@
 /node_modules
+# `npm run setup:ios` creates it; worktrees link it.
+/python/venv
 /dist
 /build
 /.idea
