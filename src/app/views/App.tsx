@@ -6,6 +6,7 @@ import { DeviceList } from './DeviceList';
 import { StreamView } from './StreamView';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import { SettingsSheet } from './SettingsSheet';
+import { ApplSettingsSheet } from './ApplSettingsSheet';
 import { startHostTracker } from '../state/hosts';
 import { isToolAction, ToolView } from './ToolView';
 import { CoreDeviceStreamView } from './CoreDeviceStreamView';
@@ -58,6 +59,7 @@ export function App() {
                 device-list card (`DeviceCard`) with no stream open at all, see
                 `state/settingsSheet.ts`. */}
             <SettingsSheet />
+            <ApplSettingsSheet />
         </>
     );
 }

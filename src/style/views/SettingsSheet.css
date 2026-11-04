@@ -449,3 +449,17 @@
         transition: none;
     }
 }
+
+/* The iPhone settings sheet (views/ApplSettingsSheet.tsx) is built from ui/SheetControls.css rows;
+   it only needs the device context line spaced from the first group and the facts grid padded
+   when it stands alone in a group card. */
+.appl-settings-sheet {
+    padding-top: 4px;
+    min-width: 0;
+}
+.appl-settings-sheet .settings-device-context {
+    margin-bottom: 20px;
+}
+.appl-settings-sheet .sheet-group-card > .sheet-facts {
+    padding: 12px 14px;
+}

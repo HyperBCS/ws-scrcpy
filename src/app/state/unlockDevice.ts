@@ -83,7 +83,11 @@ function requireLockScreen(state: LockReply): void {
     }
 }
 
-/** Uses the existing control connection; credentials never enter tracker commands or storage. */
+/**
+ * Uses the existing control connection; on this Android path credentials never enter tracker
+ * commands or storage. The iOS scheduled unlock (`state/unlockSchedule.ts`) is the one deliberate
+ * exception: one `SET_UNLOCK_PASSCODE` command, one direction, encrypted at rest on the server.
+ */
 export async function submitDevicePasscode(
     client: StreamClientScrcpy,
     udid: string,

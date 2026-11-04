@@ -23,3 +23,15 @@ export function openSettingsSheet(udid: string, deviceKey?: string): void {
 export function closeSettingsSheet(): void {
     settingsSheetTarget.value = undefined;
 }
+
+// The iPhone card's Settings button opens its own sheet (`views/ApplSettingsSheet.tsx`), mounted
+// next to `SettingsSheet` at the `App` level for the same reason.
+export const applSettingsSheetTarget = signal<SettingsSheetTarget | undefined>(undefined);
+
+export function openApplSettingsSheet(udid: string, deviceKey?: string): void {
+    applSettingsSheetTarget.value = { udid, deviceKey };
+}
+
+export function closeApplSettingsSheet(): void {
+    applSettingsSheetTarget.value = undefined;
+}

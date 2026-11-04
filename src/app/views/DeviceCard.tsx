@@ -22,7 +22,8 @@ import { buildLinkHref, isLocalLink } from '../state/links';
 import { NavigateParams } from '../state/router';
 import { DeviceStatusInfo, getDeviceStatusInfo, isDeviceStarting, markStarting } from '../state/deviceStatus';
 import { sendWakeKey } from '../googDevice/client/wake';
-import { openSettingsSheet } from '../state/settingsSheet';
+import { openApplSettingsSheet, openSettingsSheet } from '../state/settingsSheet';
+import { relativeUnlockTime } from '../state/unlockSchedule';
 import { isToolAction } from './ToolView';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { hasRunningStreamService } from '../state/streamService';
@@ -326,13 +327,23 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     };
 
     const isAsleep = statusInfo.status === 'asleep';
+    const unlockSchedule = descriptor.unlockSchedule;
 
     return (
         <article
             class={`device ${isActive ? 'active' : 'not-active'} ${isAsleep ? 'asleep' : ''}`}
             data-device-key={entry.key}
         >
-            <DeviceHeader entry={entry} platform={`iOS ${descriptor.version}`} />
+            <DeviceHeader entry={entry} platform={`iOS ${descriptor.version}`}>
+                {unlockSchedule?.enabled && (
+                    <span class="device-unlock-schedule" title="Scheduled unlock, server local time">
+                        Scheduled unlock {unlockSchedule.time}
+                        {unlockSchedule.lastUnlockedAt
+                            ? ` · last ${relativeUnlockTime(unlockSchedule.lastUnlockedAt)}`
+                            : ''}
+                    </span>
+                )}
+            </DeviceHeader>
             <StreamServiceStatus
                 descriptor={{
                     state: isActive ? DeviceState.DEVICE : descriptor.state,
@@ -373,6 +384,16 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                 ) : (
                     <button class="desc-block stream unavailable" disabled>
                         {descriptor.state === 'unauthorized' ? 'Waiting for trust' : 'Device unavailable'}
+                    </button>
+                )}
+                {isActive && (
+                    <button
+                        class="action-button stream-settings-button"
+                        title="iPhone settings"
+                        aria-label={`Settings for ${deviceName(entry)}`}
+                        onClick={() => openApplSettingsSheet(descriptor.udid, entry.key)}
+                    >
+                        Settings
                     </button>
                 )}
                 <a
