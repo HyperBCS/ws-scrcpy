@@ -1,7 +1,8 @@
 .notifications-page {
     max-width: 720px;
     margin: auto;
-    padding: 20px 16px 88px;
+    /* No top padding on the scroller: Chromium offsets its sticky children by it. The header carries it. */
+    padding: 0 16px 88px;
     overflow-y: auto;
     overscroll-behavior-y: contain;
     height: 100%;
@@ -9,6 +10,10 @@
     color: var(--text-color);
     background: var(--main-bg-color);
     line-height: 1.5;
+}
+.notification-page-header {
+    padding-top: 20px;
+    margin-bottom: 20px;
 }
 .notification-page-header > a {
     display: inline-flex;
@@ -295,7 +300,10 @@
 }
 @media (max-width: 420px) {
     .notifications-page {
-        padding: 12px 16px 88px;
+        padding: 0 16px 88px;
+    }
+    .notification-page-header {
+        padding-top: 12px;
     }
     .notifications-page .notification-card {
         padding: 16px;
@@ -699,9 +707,6 @@
     flex-shrink: 0;
     margin-left: auto;
     text-decoration: none;
-}
-.notification-page-header {
-    margin-bottom: 20px;
 }
 .notification-history-item {
     border-radius: var(--radius-panel);

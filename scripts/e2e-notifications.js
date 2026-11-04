@@ -9,6 +9,8 @@ const { chromium, webkit } = require('playwright');
 const browserName = process.env.BROWSER || 'chromium';
 const BASE = process.env.BASE || 'http://localhost:8000/';
 const SCREENSHOTS = process.env.SCREENSHOTS || '/tmp';
+// Sticky-bar screenshots after scrolling. Run twice to compare: E2E_OUT=/tmp/ws-scrcpy-notifications/before and /after.
+const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-notifications';
 const subscription = {
     endpoint: 'https://web.push.apple.com/notification-ui-fixture',
     keys: { p256dh: Buffer.alloc(65, 1).toString('base64url'), auth: Buffer.alloc(16, 2).toString('base64url') },
@@ -88,7 +90,7 @@ async function capture(fixture, name) {
 }
 async function fixture(browser, options = {}) {
     const context = await browser.newContext({
-        viewport: { width: options.width || 390, height: 844 },
+        viewport: { width: options.width || 390, height: options.height || 844 },
         ...(options.ios ? {
             isMobile: true, hasTouch: true,
             userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
@@ -701,6 +703,64 @@ async function compactLongNotification(browser) {
     } finally { await f.context.close(); }
 }
 
+// Chromium offsets a sticky child by the scroll container's own padding-top, so the search bar used to stop
+// 12 px (phone) or 20 px (desktop) below the scrollport edge with a strip of list items visible above it.
+const stickyFixtureItems = () => Array.from({ length: 25 }, (_, i) => ({
+    key: `a-sticky-${i}`, source: 'phone-a', app: 'com.example.chat', appName: 'Messages', title: `Message ${i + 1}`,
+    body: 'Long inbox fixture item.', received: Date.now() - i * 60000, read: false, dismissed: false, active: true, canDismiss: true, negativeActionLabel: 'Clear',
+}));
+async function measureSticky(page, selector) {
+    await page.locator('main').evaluate(el => { el.scrollTop = 900; });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    return page.evaluate(selector => {
+        const main = document.querySelector('main.notifications-page');
+        const bar = document.querySelector(selector);
+        const mainTop = main.getBoundingClientRect().top;
+        const barTop = bar.getBoundingClientRect().top;
+        const itemsAbove = [...document.querySelectorAll('.notification-history-item')].filter(item => {
+            const rect = item.getBoundingClientRect();
+            return Math.min(rect.bottom, barTop) - Math.max(rect.top, mainTop) > 1;
+        }).length;
+        return { scrollTop: main.scrollTop, mainTop, barTop, gap: barTop - mainTop, itemsAbove };
+    }, selector);
+}
+async function stickyBarsReachScrollTop(browser) {
+    for (const [width, height] of [[390, 844], [1280, 900]]) {
+        const f = await fixture(browser, { history: true, notifications: stickyFixtureItems(), width, height });
+        try {
+            await article(f.page, 'Message 25').waitFor();
+            const padding = await f.page.evaluate(() => [
+                getComputedStyle(document.querySelector('main.notifications-page')).paddingTop,
+                getComputedStyle(document.querySelector('.notification-page-header')).paddingTop,
+            ]);
+            assert.deepEqual(padding, ['0px', width <= 420 ? '12px' : '20px'], `the header, not the scroller, carries the top padding at ${width} px`);
+            const tools = await measureSticky(f.page, '.notification-history-tools');
+            if (width === 390) {
+                await fs.mkdir(OUT, { recursive: true });
+                await f.page.screenshot({ path: path.join(OUT, 'notifications-sticky-tools-390.png'), animations: 'disabled' });
+            }
+            assert.ok(tools.scrollTop >= 900, `the inbox scrolls by 900 px at ${width} px (got ${tools.scrollTop})`);
+            assert.ok(Math.abs(tools.gap) <= 1, `the search bar sits at the scrollport top at ${width} px (gap ${tools.gap} px)`);
+            assert.equal(tools.itemsAbove, 0, `no list item shows above the search bar at ${width} px`);
+            // A failed action shows the sticky error notice, which sticks to the same edge.
+            f.dismissError = 'Could not dismiss. Try again.';
+            await cardAction(f.page, 'Message 1', 'Dismiss here');
+            const feedback = f.page.locator('.notification-feedback[role="alert"]').filter({ hasText: f.dismissError });
+            await feedback.waitFor();
+            await settleMotion(f.page);
+            const notice = await measureSticky(f.page, '.notification-feedback');
+            if (width === 390) {
+                await f.page.screenshot({ path: path.join(OUT, 'notifications-sticky-feedback-390.png'), animations: 'disabled' });
+            }
+            assert.ok(Math.abs(notice.gap) <= 1, `the error notice sits at the scrollport top at ${width} px (gap ${notice.gap} px)`);
+            assert.equal(notice.itemsAbove, 0, `no list item shows above the error notice at ${width} px`);
+            f.dismissError = '';
+            await assertClean(f);
+            console.log(`PASS sticky search bar and error notice reach the scrollport top at ${width}x${height}`);
+        } finally { await f.context.close(); }
+    }
+}
+
 async function accessibleActionMenus(browser) {
     const f = await fixture(browser, { history: true, notifications: historyItems(), width: 320, ios: true, standalone: true });
     try {
@@ -1235,7 +1295,7 @@ async function main() {
     try {
         const cases = [onboarding, configuredReceiver, receiverChoicesAndUnlink, enablingReceiver, errorsSurvivePolling,
             iosInstallGate, recoverMissingServerSubscription, perDeviceHistory, dismissKeepsHistory, labeledPhoneActions,
-            notificationDeepLink, bulkDismissHere, bulkDismissPhone, compactLongNotification, accessibleActionMenus, richNotificationMedia,
+            notificationDeepLink, bulkDismissHere, bulkDismissPhone, compactLongNotification, stickyBarsReachScrollTop, accessibleActionMenus, richNotificationMedia,
             searchAndFilters, bulkRespectsFilters, swipeAndUndo, swipeMotionAndFailure, delayedActionDoesNotCrossDevices, standaloneTouchNotifications,
             compatibilityPointerEventsDoNotDoubleAct, nativeTouchCancellationAndMultifinger, hangingRegistrationCleanup,
             hangingNotificationCleanup, hangingWorkerDeepLink];
