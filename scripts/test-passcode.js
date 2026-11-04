@@ -10,6 +10,7 @@ const { activeStream, unlockSheetOpen } = require('../src/app/state/stream');
 const { devices } = require('../src/app/state/devices');
 const { findDeviceForStream } = require('../src/app/state/streamDevice');
 const { readSavedPasscode, savePasscode, forgetPasscode } = require('../src/app/state/savedPasscode');
+const { sendUnlockCommand } = require('../src/app/state/unlockSchedule');
 
 test('saved passcodes preserve leading zeros and password mode, stay per device, and can be forgotten', (t) => {
     const previous = Object.getOwnPropertyDescriptor(global, 'localStorage');
@@ -255,4 +256,58 @@ test('lock requests ignore replies for another request or device and have a boun
     t.mock.timers.tick(8000);
     await assert.rejects(pending, /timed out/);
     assert.equal(f.tracker.listenerCount('get_lock_state'), 0);
+});
+
+// The iOS scheduled-unlock commands share the tracker request/reply shape above; `queued` replies
+// arrive on the next microtask with the request's own id, as the real tracker would deliver them.
+function unlockTracker(queued = []) {
+    const tracker = new EventEmitter();
+    const sent = [];
+    let id = 0;
+    tracker.sendCommand = (type, data) => {
+        const requestId = ++id;
+        sent.push({ type, data });
+        const reply = queued.shift();
+        if (reply) queueMicrotask(() => tracker.emit(type, { udid: 'test', requestId, ...reply }));
+        return requestId;
+    };
+    return { tracker, sent };
+}
+
+test('scheduled-unlock commands resolve on the matching reply only, parse the result and reject errors', async () => {
+    const { tracker, sent } = unlockTracker();
+    const pending = sendUnlockCommand(tracker, 'update_unlock_schedule', 'test', { schedule: { enabled: true } }, 1000);
+    assert.deepEqual(sent, [{ type: 'update_unlock_schedule', data: { udid: 'test', schedule: { enabled: true } } }]);
+    tracker.emit('update_unlock_schedule', { udid: 'other', requestId: 1, result: '{"enabled":false}' });
+    tracker.emit('update_unlock_schedule', { udid: 'test', requestId: 2, result: '{"enabled":false}' });
+    tracker.emit('update_unlock_schedule', { udid: 'test', requestId: 1, result: JSON.stringify({ enabled: true, time: '03:00', hasPasscode: true }) });
+    assert.deepEqual(await pending, { enabled: true, time: '03:00', hasPasscode: true }, 'another device or request id is ignored');
+    assert.equal(tracker.listenerCount('update_unlock_schedule'), 0, 'the listener is removed once settled');
+
+    const failing = unlockTracker([{ error: 'Invalid passcode: use 4 to 10 digits' }]);
+    await assert.rejects(sendUnlockCommand(failing.tracker, 'set_unlock_passcode', 'test', { passcode: '12' }, 1000), /Invalid passcode: use 4 to 10 digits/);
+    assert.equal(failing.tracker.listenerCount('set_unlock_passcode'), 0);
+    assert.deepEqual(failing.sent, [{ type: 'set_unlock_passcode', data: { udid: 'test', passcode: '12' } }], 'the passcode travels in the command and nowhere else');
+
+    const unreadable = unlockTracker([{ result: '{not json' }]);
+    await assert.rejects(sendUnlockCommand(unreadable.tracker, 'run_unlock_now', 'test', {}, 1000), /unreadable reply/);
+
+    const closed = unlockTracker();
+    closed.tracker.sendCommand = () => { throw Error('socket closed'); };
+    await assert.rejects(sendUnlockCommand(closed.tracker, 'run_unlock_now', 'test', {}, 1000), /Could not reach the server/);
+    assert.equal(closed.tracker.listenerCount('run_unlock_now'), 0);
+});
+
+test('scheduled-unlock commands time out, clean up, and ignore a late reply', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { tracker } = unlockTracker();
+    let settled = false;
+    const pending = sendUnlockCommand(tracker, 'run_unlock_now', 'test', {}, 180000).finally(() => { settled = true; });
+    t.mock.timers.tick(179999);
+    await Promise.resolve();
+    assert.equal(settled, false, 'still waiting one millisecond before the deadline');
+    t.mock.timers.tick(1);
+    await assert.rejects(pending, /No answer from the server/);
+    assert.equal(tracker.listenerCount('run_unlock_now'), 0, 'the listener is removed on timeout');
+    tracker.emit('run_unlock_now', { udid: 'test', requestId: 1, result: '{"outcome":"unlocked"}' });
 });
