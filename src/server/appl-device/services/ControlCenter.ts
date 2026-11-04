@@ -9,6 +9,7 @@ import { ProductType } from '../../../common/ProductType';
 import { PyMobileDevice } from './PyMobileDevice';
 import { CoreDeviceRunner } from './CoreDeviceRunner';
 import { AppleRuntimeState, DeviceStateMonitor } from './DeviceStateMonitor';
+import { UnlockScheduler, UnlockSchedulerEvents } from './UnlockScheduler';
 
 const TAG = '[ControlCenter]';
 const MOUNT_TIMEOUT_MS = 180000;
@@ -54,6 +55,10 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
     private readonly id: string;
     private onSessionStatus?: (event: { udid: string; state: string; message?: string }) => void;
     private onRuntimeState?: (event: { udid: string } & AppleRuntimeState) => void;
+    // Set only when the scheduler started. Tracking never depends on it: without it the four
+    // unlock commands are refused and `descriptor.unlockSchedule` stays absent.
+    private scheduler?: UnlockScheduler;
+    private onUnlockStatus?: (event: UnlockSchedulerEvents['status']) => void;
 
     protected constructor() {
         super();
@@ -110,8 +115,61 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
             this.emit('device', item.descriptor);
         };
         DeviceStateMonitor.getInstance().on('state', this.onRuntimeState);
+        this.startScheduler();
         await this.poll();
         this.schedulePoll();
+    }
+
+    /**
+     * The scheduled unlock rides on the tracker's lifetime. Its status is mirrored onto the
+     * descriptor so the settings panel reads it from the normal device broadcast. A scheduler
+     * that cannot start is logged once and left out; the phones are tracked all the same.
+     */
+    private startScheduler(): void {
+        try {
+            const scheduler = UnlockScheduler.getInstance();
+            scheduler.start({
+                isConnected: (udid) => this.tracked.get(udid)?.descriptor.state === DeviceState.CONNECTED,
+            });
+            this.onUnlockStatus = (event) => {
+                const item = this.tracked.get(event.udid);
+                if (!item || item.descriptor.state !== DeviceState.CONNECTED) {
+                    return;
+                }
+                item.descriptor.unlockSchedule = { ...event.status };
+                item.descriptor['last.update.timestamp'] = Date.now();
+                this.emit('device', item.descriptor);
+            };
+            scheduler.on('status', this.onUnlockStatus);
+            this.scheduler = scheduler;
+        } catch (error) {
+            this.onUnlockStatus = undefined;
+            console.error(`${TAG} scheduled unlock unavailable: ${(error as Error).message}`);
+        }
+    }
+
+    private stopScheduler(): void {
+        const scheduler = this.scheduler;
+        if (!scheduler) {
+            return;
+        }
+        this.scheduler = undefined;
+        try {
+            if (this.onUnlockStatus) {
+                scheduler.off('status', this.onUnlockStatus);
+            }
+            scheduler.release();
+        } catch (error) {
+            console.error(`${TAG} scheduled unlock did not stop cleanly: ${(error as Error).message}`);
+        }
+        this.onUnlockStatus = undefined;
+    }
+
+    private requireScheduler(): UnlockScheduler {
+        if (!this.scheduler) {
+            throw new Error('Scheduled unlock is not available');
+        }
+        return this.scheduler;
     }
 
     private schedulePoll(): void {
@@ -247,6 +305,7 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
                 });
             }
             Object.assign(item.descriptor, monitor.getState(udid));
+            item.descriptor.unlockSchedule = this.scheduler?.getStatus(udid);
         } catch (error) {
             if (!this.initialized || this.tracked.get(udid) !== item) {
                 return;
@@ -298,6 +357,8 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
             DeviceStateMonitor.getInstance().off('state', this.onRuntimeState);
             this.onRuntimeState = undefined;
         }
+        // Before the monitor: the scheduler holds a listener on it.
+        this.stopScheduler();
         if (DeviceStateMonitor.hasInstance()) {
             DeviceStateMonitor.getInstance().release();
         }
@@ -382,6 +443,16 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
                 // action, reachable when there is no working stream page to ask from.
                 CoreDeviceRunner.getInstance().stopSession(udid, 'Services restarted from the device list');
                 return 'Services restarted. Open the screen again.';
+            // Scheduled unlock: the reply is the scheduler's return value as JSON, nothing else.
+            // The passcode goes straight through to the scheduler; it is not kept or logged here.
+            case ControlCenterCommand.UPDATE_UNLOCK_SCHEDULE:
+                return JSON.stringify(this.requireScheduler().updateSchedule(udid, command.getUnlockSchedule()!));
+            case ControlCenterCommand.SET_UNLOCK_PASSCODE:
+                return JSON.stringify(this.requireScheduler().setPasscode(udid, command.getPasscode()!));
+            case ControlCenterCommand.CLEAR_UNLOCK_PASSCODE:
+                return JSON.stringify(this.requireScheduler().clearPasscode(udid));
+            case ControlCenterCommand.RUN_UNLOCK_NOW:
+                return JSON.stringify(await this.requireScheduler().runNow(udid, 'manual'));
             default:
                 throw new Error(`Unsupported command: "${type}"`);
         }

@@ -70,12 +70,30 @@ export class DeviceTracker extends Mw {
         });
     };
 
+    /**
+     * What a log line may say about a message: its type and device, never its data. The body of
+     * a rejected `set_unlock_passcode` carries the passcode, and the server log is not private.
+     */
+    private static describe(raw: string): string {
+        try {
+            const body = JSON.parse(raw);
+            const type = typeof body?.type === 'string' ? body.type.slice(0, 64) : 'no type';
+            const udid = typeof body?.data?.udid === 'string' ? body.data.udid.slice(0, 64) : 'no device';
+            return `"${type}" for ${udid}`;
+        } catch {
+            return 'unparseable message';
+        }
+    }
+
     protected onSocketMessage(event: WS.MessageEvent): void {
+        const raw = event.data.toString();
         let command: ControlCenterCommand;
         try {
-            command = ControlCenterCommand.fromJSON(event.data.toString());
+            command = ControlCenterCommand.fromJSON(raw);
         } catch (error: any) {
-            console.error(`[${DeviceTracker.TAG}], Received message: ${event.data}. Error: ${error.message}`);
+            // A SyntaxError from JSON.parse quotes the input, so it is not repeated either.
+            const reason = error instanceof SyntaxError ? 'not valid JSON' : error.message;
+            console.error(`[${DeviceTracker.TAG}], Rejected ${DeviceTracker.describe(raw)}. Error: ${reason}`);
             return;
         }
         // Answered like the Android tracker does, so the device card can show the outcome of a
@@ -90,7 +108,10 @@ export class DeviceTracker extends Mw {
                 });
             })
             .catch((error: Error) => {
-                console.error(`[${DeviceTracker.TAG}], Received message: ${event.data}. Error: ${error.message}`);
+                console.error(
+                    `[${DeviceTracker.TAG}], Command "${command.getType()}" for ${command.getUdid()} failed. ` +
+                        `Error: ${error.message}`,
+                );
                 this.sendMessage({
                     id: command.getId(),
                     type: command.getType(),

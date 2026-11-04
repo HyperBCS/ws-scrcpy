@@ -196,6 +196,40 @@ passcode). Once it has been unlocked once, everything works, including locking
 the screen again and unlocking it remotely with the Actions sheet. Also enable
 Developer Mode *before* setting a passcode: a passcode blocks the toggle.
 
+#### Scheduled unlock
+
+iOS restarts a phone that has not been unlocked for 72 hours, and a restarted
+phone with a passcode disappears from USB until someone unlocks it by hand. The
+server can unlock the phone once a day instead. Open **Settings** on the iPhone
+card, store the passcode, pick a time (default 03:00, server local time) and turn
+**Unlock every day** on. At that time the server opens a screen session, presses
+Home, swipes up, types the passcode, confirms the phone is unlocked, presses Lock
+and closes the session. The run is skipped when the phone was unlocked in the
+last 24 hours by any means. If the phone is not reachable, or the run fails, the
+card and the panel say so, and the server retries once ten minutes later. Push
+subscribers receive a notification for a failed or skipped scheduled run.
+**Run now** starts the same sequence by hand.
+
+The passcode is sent to the server once, over the device-list WebSocket, and is
+never sent back to a browser. It is stored AES-256-GCM encrypted in
+`data/ios-settings.json` (the same data directory as the notification relay;
+`WS_NOTIFICATION_DATA` moves it), with the key in `data/ios-settings.key`. Both
+files are written with mode 0600 in a 0700 directory and belong to the user the
+server runs as. When the server runs as root they are root-owned, and moving the
+server to another user means entering the passcode again. Set
+`WS_IOS_SETTINGS_KEY` to 64 hex characters to supply the key from the environment
+instead of the key file. If the key file is missing, the panel shows the stored
+passcode as unreadable and no run starts until the passcode is entered again.
+
+Two things to keep in mind:
+
+* Over plain http the passcode crosses your network once in clear text, like the
+  digits typed in the Unlock panel do today. Use `npm run start:https` if other
+  people share that network.
+* `WS_SCRCPY_DEBUG` relays every `pymobiledevice3` line, and the lines for the
+  passcode step name the HID key usages, which identify the digits. Do not run with
+  `WS_SCRCPY_DEBUG` while a passcode is stored, or treat that log as sensitive.
+
 If touch or the keyboard stop responding while the picture is still live, that session
 has lost the separate connection behind them. A moving picture is not evidence that
 input is getting through -- it travels over a different connection to the phone. (The
@@ -252,7 +286,9 @@ machine the setup script says so; pick another with
 | `IOS_LOCK_PROBE` | `0` disables lock detection (direct state on iOS 27.2+, accessibility on older versions) and keeps screen detection |
 | `IOS_STATE_NOTIFICATIONS` | `0` disables the per-device `notification observe` process; state then changes only at the poll interval |
 | `IOS_LOCKED_CAPTIONS` | Comma-separated lock-screen captions for the older accessibility probe (e.g. `Gesperrt,Code eingeben`); not needed on iOS 27.2+ |
-| `WS_SCRCPY_DEBUG` | Verbose logs, including every `pymobiledevice3` child's output |
+| `WS_IOS_SETTINGS_KEY` | 64 hex characters: the key for the stored unlock passcode, instead of `data/ios-settings.key` |
+| `IOS_UNLOCK_FAST` | `1` shortens every pause in the scheduled unlock sequence to 5 ms; for the fixture tests only |
+| `WS_SCRCPY_DEBUG` | Verbose logs, including every `pymobiledevice3` child's output. Reveals the digits of a stored unlock passcode; see [Scheduled unlock](#scheduled-unlock) |
 
 [pymobiledevice3]: https://github.com/doronz88/pymobiledevice3
 
