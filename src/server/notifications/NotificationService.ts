@@ -498,16 +498,20 @@ export class NotificationService implements Service {
     /**
      * Queue `payload` for every push subscription as a `system:<nonce>` job. Not stored in the
      * notification history and not subject to source filters; `preparePush` returns the given
-     * payload for any `system:` key, the way it already does for `test`. Owned by W2.
+     * payload for any `system:` key, the way it already does for `test`.
      */
-    public notifySystem(_payload: SystemPushPayload): void {
-        throw new Error('not implemented');
+    public notifySystem(payload: SystemPushPayload): void {
+        this.load();
+        if (this.closed) return;
+        const key = `system:${crypto.randomBytes(8).toString('hex')}`;
+        const body = JSON.stringify({ title: payload.title, body: payload.body, tag: payload.tag, url: payload.url });
+        for (const sub of this.store.subscriptions) this.push.enqueue(sub.id, key, body);
     }
 
     private preparePush(id: string, key: string, testPayload?: string): PushTarget | undefined {
         const sub = this.store.subscriptions.find((candidate) => candidate.id === id);
         if (!sub || this.closed) return;
-        if (key === 'test' && testPayload)
+        if ((key === 'test' || key.startsWith('system:')) && testPayload)
             return { subscription: sub.subscription, payload: testPayload, vapid: this.store.vapid };
         const item = this.feed.get(key);
         if (!item || item.read || item.dismissed || !item.reconnectable || item.received < Date.now() - 30 * 86400000)

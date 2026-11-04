@@ -1559,3 +1559,77 @@ happening at 9 s instead of leaving "Reading…" on screen in silence.
 <file>` takes a real PNG screenshot over USB with no display session at all -- much easier than
 decoding `/stream.bin`, and it does not touch the display service that the burst-of-sessions wedge
 (§9) affects. `syslog live` and `send-signal-to-process` are the other two tools that cracked this.
+
+### Scheduled unlock: driver, scheduler, monitor helpers and failure push (2026-11-04, fixture-tested only)
+
+The server can now unlock an iPhone once a day and lock it again, so iOS does not restart it
+after 72 hours without an unlock. This entry covers the server-side mechanics
+(`UnlockDriver.ts`, `UnlockScheduler.ts`, two `DeviceStateMonitor` methods,
+`CoreDeviceProxy.hasInputOwner`, `NotificationService.notifySystem`). The store and the
+commands are in `IosSettingsStore.ts` and `ControlCenter.ts`; the panel is
+`ApplSettingsSheet.tsx`. Nothing here has run against hardware yet; every claim below comes from
+`scripts/test-ios-unlock.js` against `scripts/fixtures/fake-pymobiledevice3.js`.
+
+**Driver (`UnlockDriver.run`).** The sequence is `StreamClientCoreDevice.unlockWithPasscode`
+replayed through serve-web's loopback HTTP, with the session held through
+`CoreDeviceRunner.acquire` and released through `runner.release`, never by signal. In order:
+back off 30 s up to three times while `CoreDeviceProxy.hasInputOwner` says a viewer is typing;
+`acquire` (a failure is `failed-session` with the CLI's reason); `/restart` plus 1.5 s only when
+the session was already `ready`, because an input POST that reached that process while the
+screen was dark left its touch surface unauthenticated; Home down/up (250 ms), 1.2 s,
+`readScreen`; if `off`, Lock down/up (300 ms), 1.2 s, `readScreen` again; still `off` is
+`failed-wake` and nothing is ever touched. Then twelve `/touch contact` reports from
+`(0x8000, 0xf800)` upwards in `0x0ccc` steps 25 ms apart and one `release`, 1.2 s, the digits
+as `/key {usages:[u]}` 120 ms `/key {usages:[]}` 180 ms each, `/keyboard/detach`,
+`waitForLock(udid, false, 8 s)` (`false` is `unlocked` with `verifiedAt`, `true` is
+`failed-still-locked`, `'unknown'` is `unverified`), 2 s, Lock down/up, and
+`waitForLock(udid, true, 5 s)` only to append "Locked again" or "Lock not confirmed" to the
+message. `finally` posts the all-fingers-up frame if a touch went out, detaches the keyboard if
+it is still attached, and releases the hold; the runner's 15 s grace and SIGTERM path stop
+serve-web. The passcode is read from the thunk the scheduler passes, once, immediately before
+the digit step, converted to usages in a block that ends with the typing; nothing else sees it.
+Logs are step names only. A thunk that throws (key file missing) types nothing, still presses
+Lock, and reports `failed-still-locked` with "Passcode not entered: <reason>".
+
+**Scheduler (`UnlockScheduler`).** `start` loads the store, subscribes to monitor `state`
+events, and ticks every 60 s (unref'd; first after 5 s). A tick runs a device when its retry is
+due, or when today's slot has passed, is less than two hours old and `lastSlotAt` is older than
+it; `lastSlotAt` is written before the run starts. Runs go through one promise chain for the
+whole process, so two phones never hold display sessions at once and a manual run during a
+scheduled one waits; `running` is set from the moment a run is queued. Skip order: disabled
+(manual ignores), no passcode, not connected (`skipped-disconnected`), recent (manual
+ignores), `device.locked === false` in the monitor's cache (`already-unlocked`, records
+`lastUnlockedAt`). A scheduled run ending `failed-*`, `unverified` or `skipped-disconnected` is
+pushed to every subscription (`notifySystem`, tag `ios-unlock-<udid>`) and retried once ten
+minutes later; the retry is not retried, and a retry older than two hours (server was down) is
+dropped like a missed slot. `lastUnlockedAt` is also recorded on a monitor `true -> false`
+transition; `unknown -> false` does not count because at server start the phone may have been
+unlocked days ago.
+
+**The 24 h rule is measured as 22 h.** Yesterday's own scheduled unlock finished a few seconds
+after its slot, which is 23 h 59 m before today's tick; a literal "unlocked in the last 24 hours"
+check would therefore skip every other night. `RECENT_WINDOW_MS` is `UNLOCK_RECENT_MS -
+UNLOCK_SLOT_WINDOW_MS`: an unlock more than two hours after yesterday's slot is the user's own
+and counts, the schedule's own never does. The panel copy still says 24 hours, which is close
+enough for the user and simpler than explaining the window.
+
+**Monitor helpers.** `readScreen` is one `probeScreen` call outside the queue that leaves the
+cached state alone. `waitForLock` cannot rely on `state` events alone, because `update` only
+emits on a change and a reading that confirms the current value makes no event; it watches the
+requested probe to completion (no timer, not running, no pending lock flag) and resolves then if
+the value matches or is `'unknown'`, resolves early on a matching `state` event, and otherwise
+returns the latest known value at the timeout.
+
+**Testing notes.** `IOS_UNLOCK_FAST=1` makes every driver pause 5 ms, so the whole sequence runs
+in ~0.6 s against the fake. The one slow test waits out the runner's real 15 s grace to prove the
+session reaches `stopped` with a single serve-web. `FAKE_TOUCH_DROP_AFTER` costs two 4 s HID
+timeouts (the swipe and the cleanup frame) in the mid-swipe failure test. The scheduler tests use
+an in-memory `UnlockSettingsStore`, a scripted driver that asserts runs never overlap, a fake
+monitor and an injected clock; the slot tests derive their times from `lastUnlockSlotAt('03:00',
+Date.now())` so they pass in any time zone and across DST.
+
+**Not verified on hardware.** Whether Home wakes a dark, locked Face ID phone (the Lock fallback
+covers it), whether the swipe-then-digits path works from the server the way it does from a
+browser (same requests, same timings), and whether a Face ID unlock resets the iOS inactivity
+timer. The integrator's hardware sequence is in the plan; the first real run should be a manual
+one with someone watching the phone.

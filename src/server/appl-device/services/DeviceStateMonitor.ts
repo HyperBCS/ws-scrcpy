@@ -40,6 +40,8 @@ const OBSERVER_RETRY_MAX_MS = 60000;
 const SCREEN_PROBE_TIMEOUT_MS = 20000;
 const LOCK_PROBE_TIMEOUT_MS = 40000;
 const NOTIFICATION_STATE_TIMEOUT_MS = 10000;
+// How often `waitForLock` checks whether the read it asked for has completed.
+const LOCK_WAIT_POLL_MS = 50;
 const LOCK_PROBE_SCRIPT = 'lockstate.py';
 
 const SCREEN_NOTIFICATION = 'com.apple.springboard.hasBlankedScreen';
@@ -250,19 +252,58 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
     /**
      * One backlight read, now, for the unlock driver: it never touches a dark screen. A wrapper
      * over `probeScreen` that does not go through the scheduling queue and does not update the
-     * cached state. Owned by W2.
+     * cached state.
      */
-    public readScreen(_udid: string): Promise<ScreenPower> {
-        throw new Error('not implemented');
+    public readScreen(udid: string): Promise<ScreenPower> {
+        return this.probeScreen(udid);
     }
 
     /**
      * Ask for a fresh lock reading (`refresh`) and resolve with `device.locked` as soon as a
      * reading equal to `locked` arrives, or with the latest known value when `timeoutMs` elapses.
-     * Resolves `'unknown'` when the lock probe is off or the read failed. Owned by W2.
+     * Resolves `'unknown'` when the lock probe is off or the read failed.
+     *
+     * `update` only emits on a change, so a reading that confirms the current value makes no
+     * event; the requested probe is watched to completion instead, and a later `state` event
+     * (SpringBoard's lockstate notification arriving after the probe) still resolves early.
      */
-    public waitForLock(_udid: string, _locked: boolean, _timeoutMs: number): Promise<KnownBoolean> {
-        throw new Error('not implemented');
+    public waitForLock(udid: string, locked: boolean, timeoutMs: number): Promise<KnownBoolean> {
+        const entry = this.watched.get(udid);
+        if (!entry || !DeviceStateMonitor.isLockProbeEnabled()) {
+            return Promise.resolve('unknown');
+        }
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (value: KnownBoolean) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                clearTimeout(deadline);
+                clearInterval(poll);
+                this.off('state', onState);
+                resolve(value);
+            };
+            const onState = (event: DeviceStateMonitorEvents['state']) => {
+                if (event.udid === udid && event['device.locked'] === locked) {
+                    finish(locked);
+                }
+            };
+            this.on('state', onState);
+            const deadline = setTimeout(() => finish(entry.state['device.locked']), timeoutMs);
+            // The requested read is done once nothing is pending or running for the entry.
+            const poll = setInterval(() => {
+                if (entry.stopped) {
+                    finish('unknown');
+                } else if (!entry.probeTimer && !entry.running && !entry.wantLock) {
+                    const value = entry.state['device.locked'];
+                    if (value === locked || value === 'unknown') {
+                        finish(value);
+                    }
+                }
+            }, LOCK_WAIT_POLL_MS);
+            this.refresh(udid);
+        });
     }
 
     public release(): void {
