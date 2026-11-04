@@ -115,7 +115,8 @@ export class UnlockDriver {
             } catch (error) {
                 throw new StepError(step, (error as Error).message);
             }
-            if (reply.status !== 200) {
+            // Input endpoints answer 200; `/restart` answers 202 and restarts in the background.
+            if (reply.status < 200 || reply.status > 299) {
                 throw new StepError(step, `${path} answered ${reply.status}`);
             }
         };

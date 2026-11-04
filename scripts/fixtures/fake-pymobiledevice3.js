@@ -322,8 +322,13 @@ if (command === 'developer core-device display serve-web') {
                     return;
                 }
             }
-            if (['/touch', '/key', '/keyboard/detach', '/button', '/pli', '/restart'].includes(path)) {
+            if (['/touch', '/key', '/keyboard/detach', '/button'].includes(path)) {
                 response.writeHead(200).end('ok');
+                return;
+            }
+            // The real serve-web accepts these and does the work in the background.
+            if (['/pli', '/restart'].includes(path)) {
+                response.writeHead(202).end('ok');
                 return;
             }
             response.writeHead(404).end();
