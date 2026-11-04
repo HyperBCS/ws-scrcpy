@@ -30,7 +30,7 @@ const REPORTED_OUTCOMES = new Set<UnlockRunOutcome>([
     'unverified',
     'skipped-disconnected',
 ]);
-// "Unlocked in the last 24 hours" is measured from the slot, with the slot window taken off:
+// The recent-unlock skip is a day minus the slot window, 22 hours, and the panel says so:
 // yesterday's own scheduled unlock happened a few seconds after its slot, which is 23 h 59 m
 // before today's tick, and a literal 24 h check would skip every other night. An unlock more
 // than two hours after yesterday's slot is the user's own and does count.
@@ -121,26 +121,40 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
      * Load the store, subscribe to `DeviceStateMonitor` `state` events (a `true -> false`
      * transition of `device.locked` records `lastUnlockedAt`; `unknown -> false` does not), start
      * an unref'd 60 s interval and run `tick()` once after 5 s. Synchronous; failures to read the
-     * store are reported through `getStatus`, not thrown.
+     * store are reported through `getStatus`, not thrown. A start that throws leaves no timer or
+     * listener behind, so the next `start` begins from scratch.
      */
     public start(options: UnlockSchedulerStartOptions): void {
         if (this.options) {
             return;
         }
-        this.options = options;
         this.released = false;
-        this.store.load();
-        this.onState = (event) => this.handleState(event);
-        this.monitor.on('state', this.onState);
-        this.interval = setInterval(() => this.tick(), TICK_MS);
-        this.interval.unref();
-        this.firstTick = setTimeout(() => this.tick(), FIRST_TICK_MS);
-        this.firstTick.unref();
+        try {
+            this.store.load();
+            this.onState = (event) => this.handleState(event);
+            this.monitor.on('state', this.onState);
+            this.interval = setInterval(() => this.tick(), TICK_MS);
+            this.interval.unref();
+            this.firstTick = setTimeout(() => this.tick(), FIRST_TICK_MS);
+            this.firstTick.unref();
+        } catch (error) {
+            this.stop();
+            throw error;
+        }
+        this.options = options;
     }
 
     /** Stop timers and listeners, release the store, drop the singleton. A run in progress finishes on its own. */
     public release(): void {
         this.released = true;
+        this.stop();
+        this.deps.store?.release();
+        if (UnlockScheduler.instance === this) {
+            UnlockScheduler.instance = undefined;
+        }
+    }
+
+    private stop(): void {
         if (this.interval) {
             clearInterval(this.interval);
             this.interval = undefined;
@@ -155,10 +169,6 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
         }
         this.options = undefined;
         this.lastLocked.clear();
-        this.deps.store?.release();
-        if (UnlockScheduler.instance === this) {
-            UnlockScheduler.instance = undefined;
-        }
     }
 
     public getStatus(udid: string): UnlockScheduleStatus {
@@ -243,6 +253,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
      * passed, is less than two hours old and has not been used. `lastSlotAt` is set before the
      * run starts so a crash cannot loop. A retry older than the slot window is dropped the same
      * way a missed slot is, so a server that was down does not unlock the phone in the morning.
+     * Runs from a timer, so a store that cannot be written is logged here and never thrown.
      */
     private tick(): void {
         if (this.released) {
@@ -250,28 +261,36 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
         }
         const now = this.now();
         for (const udid of this.store.listUdids()) {
-            const schedule = this.store.getSchedule(udid);
-            if (!schedule.enabled || !schedule.hasPasscode) {
-                continue;
+            try {
+                this.tickDevice(udid, now);
+            } catch (error) {
+                console.error(`${TAG} [${udid}] schedule check failed: ${(error as Error).message}`);
             }
-            const state = this.store.getRunState(udid);
-            if (state.retryAt !== undefined) {
-                if (state.retryAt > now) {
-                    continue;
-                }
-                this.store.setRetryAt(udid, undefined);
-                if (now - state.retryAt < UNLOCK_SLOT_WINDOW_MS) {
-                    this.schedule(udid, true);
-                } else {
-                    this.emitStatus(udid);
-                }
-                continue;
+        }
+    }
+
+    private tickDevice(udid: string, now: number): void {
+        const schedule = this.store.getSchedule(udid);
+        if (!schedule.enabled || !schedule.hasPasscode) {
+            return;
+        }
+        const state = this.store.getRunState(udid);
+        if (state.retryAt !== undefined) {
+            if (state.retryAt > now) {
+                return;
             }
-            const slotStart = lastUnlockSlotAt(schedule.time, now);
-            if (now - slotStart < UNLOCK_SLOT_WINDOW_MS && (state.lastSlotAt ?? -Infinity) < slotStart) {
-                this.store.setLastSlotAt(udid, slotStart);
-                this.schedule(udid, false);
+            this.store.setRetryAt(udid, undefined);
+            if (now - state.retryAt < UNLOCK_SLOT_WINDOW_MS) {
+                this.schedule(udid, true);
+            } else {
+                this.emitStatus(udid);
             }
+            return;
+        }
+        const slotStart = lastUnlockSlotAt(schedule.time, now);
+        if (now - slotStart < UNLOCK_SLOT_WINDOW_MS && (state.lastSlotAt ?? -Infinity) < slotStart) {
+            this.store.setLastSlotAt(udid, slotStart);
+            this.schedule(udid, false);
         }
     }
 
@@ -287,8 +306,20 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
         this.lastLocked.set(event.udid, locked);
         // `unknown -> false` does not count: at server start the phone may have been unlocked days ago.
         if (previous === true && locked === false) {
-            this.store.recordUnlockedAt(event.udid, this.now());
+            this.recordUnlockedAt(event.udid, this.now());
             this.emitStatus(event.udid);
+        }
+    }
+
+    /**
+     * Persist `lastUnlockedAt`. A failed write is logged, not thrown: it is called from the
+     * monitor's emit and from the end of a run that did unlock the phone.
+     */
+    private recordUnlockedAt(udid: string, at: number): void {
+        try {
+            this.store.recordUnlockedAt(udid, at);
+        } catch (error) {
+            console.error(`${TAG} [${udid}] could not record the unlock: ${(error as Error).message}`);
         }
     }
 
@@ -317,11 +348,16 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             console.error(`${TAG} [${udid}] ${trigger} run threw: ${(error as Error).message}`);
             result = { at, trigger, outcome: 'failed-session', message: (error as Error).message };
         }
-        this.store.recordRun(udid, result);
-        if (trigger === 'schedule' && REPORTED_OUTCOMES.has(result.outcome)) {
-            if (!retry) {
+        try {
+            this.store.recordRun(udid, result);
+            if (trigger === 'schedule' && REPORTED_OUTCOMES.has(result.outcome) && !retry) {
                 this.store.setRetryAt(udid, this.now() + UNLOCK_RETRY_MS);
             }
+        } catch (error) {
+            // The run itself is over; the panel must not stay on "running" because a write failed.
+            console.error(`${TAG} [${udid}] could not record the run: ${(error as Error).message}`);
+        }
+        if (trigger === 'schedule' && REPORTED_OUTCOMES.has(result.outcome)) {
             this.notify({
                 title: PUSH_TITLE,
                 body: result.message
@@ -365,13 +401,13 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             return skip('skipped-recent');
         }
         if (this.monitor.getState(udid)['device.locked'] === false) {
-            this.store.recordUnlockedAt(udid, at);
+            this.recordUnlockedAt(udid, at);
             return skip('already-unlocked');
         }
         // The passcode is decrypted inside the thunk only, by the driver, right before typing.
         const outcome = await this.driver.run(udid, () => this.store.readPasscode(udid));
         if (outcome.outcome === 'unlocked') {
-            this.store.recordUnlockedAt(udid, outcome.verifiedAt ?? this.now());
+            this.recordUnlockedAt(udid, outcome.verifiedAt ?? this.now());
         }
         return { at, trigger, outcome: outcome.outcome, message: outcome.message };
     }

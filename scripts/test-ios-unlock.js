@@ -952,6 +952,45 @@ test('scheduler: start throws when the store cannot load, and the singleton drop
     assert.equal(UnlockScheduler.hasInstance(), false);
 });
 
+test('scheduler: a failed start leaves no listener behind, and a store that cannot write never sticks or throws', async () => {
+    const monitor = new FakeMonitor();
+    const broken = new UnlockScheduler({ store: { load() {} }, monitor });
+    // The interval is created after the state listener; a timer without `unref` fails the start there.
+    const realSetInterval = global.setInterval;
+    global.setInterval = () => 1;
+    try {
+        assert.throws(() => broken.start({ isConnected: () => true }), /unref/);
+    } finally {
+        global.setInterval = realSetInterval;
+    }
+    assert.equal(monitor.emitter.listenerCount('state'), 0, 'the state listener is removed again');
+
+    const ctx = makeScheduler();
+    const udid = 'iphone-readonly';
+    const output = captureConsole();
+    try {
+        armed(ctx, udid);
+        const fail = () => {
+            throw new Error('EROFS: read-only file system');
+        };
+        ctx.store.recordRun = fail;
+        ctx.store.recordUnlockedAt = fail;
+        ctx.store.setLastSlotAt = fail;
+        const result = await ctx.scheduler.runNow(udid, 'manual');
+        assert.equal(result.outcome, 'unlocked', 'the run result is still returned');
+        assert.equal(ctx.scheduler.getStatus(udid).running, undefined, 'the panel does not stay on running');
+        assert.doesNotThrow(() => ctx.monitor.set(udid, false), 'a lock transition does not throw into the monitor');
+        ctx.setClock(lastUnlockSlotAt('03:00', Date.now()) + MINUTE);
+        assert.doesNotThrow(() => ctx.tick(), 'the timer callback does not throw');
+        assert.match(output.text(), /could not record the run: EROFS/);
+        assert.match(output.text(), /could not record the unlock: EROFS/);
+        assert.match(output.text(), /schedule check failed: EROFS/);
+    } finally {
+        output.restore();
+        ctx.scheduler.release();
+    }
+});
+
 test('scheduler with the real driver: a manual run against the fake phone unlocks, records and logs no digits', async () => {
     fs.rmSync(logFile, { force: true });
     const output = captureConsole();
