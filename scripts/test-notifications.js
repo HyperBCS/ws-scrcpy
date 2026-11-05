@@ -47,6 +47,33 @@ test('push destinations reject arbitrary servers, credentials, insecure transpor
     assert.throws(() => validateSubscription({ ...subscription, keys: { ...subscription.keys, auth: 'bad' } }));
 });
 
+test('pairing window outlives collector restarts and a request outside it is reported', async () => {
+    const service = freshService();
+    const app = express(); service.mount(app, '/');
+    const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
+    const base = `http://127.0.0.1:${server.address().port}/api/notifications`;
+    const status = async () => (await fetch(base + '/status')).json();
+    const commands = [];
+    service.command = command => commands.push(command);
+    try {
+        assert.deepEqual(service.startCommands().map(command => command.type), ['configure']);
+        service.handleCollector({ kind: 'pairing-rejected', address: 'AA:BB:CC:DD:EE:FF' });
+        assert.equal((await status()).pairingRejected, true);
+        const pair = await fetch(base + '/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+        assert.equal(pair.status, 200);
+        assert.deepEqual(commands, [{ type: 'pair' }]);
+        assert.equal((await status()).pairingRejected, false);
+        const reopen = service.startCommands()[1];
+        assert.equal(reopen.type, 'pair');
+        assert.ok(reopen.seconds > 115 && reopen.seconds <= 120, `${reopen.seconds} s left`);
+        service.handleCollector({ kind: 'pairing-rejected', address: 'AA:BB:CC:DD:EE:FF' });
+        service.handleCollector({ kind: 'pairing', address: 'AA:BB:CC:DD:EE:FF', code: '699933' });
+        assert.equal((await status()).pairingRejected, false, 'a request inside the window clears the notice');
+        service.pairUntil = Date.now() - 1;
+        assert.deepEqual(service.startCommands().map(command => command.type), ['configure']);
+    } finally { service.release(); await new Promise(r => server.close(r)); }
+});
+
 test('relay policy excludes old alerts, modifications, unselected sources and the receiving source phone', () => {
     assert.equal(shouldRelay(event, source, sub), true);
     for (const patch of [{ preExisting: true }, { event: 'modified' }, { event: 'removed' }, { app: 'com.apple.WebKit.PushBundle.123' }]) assert.equal(shouldRelay({ ...event, ...patch }, source, sub), false);

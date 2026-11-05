@@ -26,6 +26,10 @@ class CollectorTests(unittest.TestCase):
             Dictionary = staticmethod(lambda value, **kwargs: value)
             DBusException = Exception
 
+            class service:
+                Object = object
+                method = staticmethod(lambda *args, **kwargs: lambda function: function)
+
         class Interface:
             def WriteValue(self, payload, options, reply_handler, error_handler):
                 test.writes.append(payload)
@@ -43,7 +47,8 @@ class CollectorTests(unittest.TestCase):
         tree = ast.parse(Path(__file__).with_name('collector.py').read_text())
         declarations = [node for node in tree.body if
                         isinstance(node, (ast.ClassDef, ast.FunctionDef)) and
-                        node.name in ('Client', 'property_changed', 'handle_command', 'refresh_advert')]
+                        node.name in ('Client', 'property_changed', 'handle_command', 'refresh_advert',
+                                      'Rejected', 'Agent')]
         self.scope = {
             'time': time, 'uuid': uuid, 'struct': struct, 'deque': deque, 'json': json,
             'ANCS': ANCS, 'SOURCE': SOURCE, 'DATA': DATA, 'CONTROL': CONTROL,
@@ -52,6 +57,7 @@ class CollectorTests(unittest.TestCase):
             'clients': {}, 'sources': {'AA:BB:CC:DD:EE:FF': 'phone'}, 'dbus': DBus,
             'objects': {}, 'owned_notifications': set(),
             'advert_ready': False, 'advert_since': 0, 'ADVERT_REFRESH': 120, 'ADAPTER': '/hci0', 'ADVERT': '/advert',
+            'pair_until': 0, 'confirmation': None,
             'emit': lambda kind, **fields: self.events.append(dict(kind=kind, **fields)),
             'iface': lambda *args: Interface(),
         }
@@ -112,6 +118,28 @@ class CollectorTests(unittest.TestCase):
         self.assertFalse(self.scope['advert_ready'])
         refresh()
         self.assertEqual(self.unregistered, ['/advert'])
+
+    def confirm_pairing(self):
+        errors = []
+        self.scope['objects'] = {'/dev': {'org.bluez.Device1': {'Address': 'AA:BB:CC:DD:EE:FF'}}}
+        self.scope['Agent']().RequestConfirmation('/dev', 699933, lambda: None, errors.append)
+        return errors
+
+    def test_pairing_request_with_no_open_window_is_rejected_and_reported(self):
+        errors = self.confirm_pairing()
+        self.assertEqual([str(error) for error in errors], ['Pairing window closed'])
+        self.assertEqual(self.events[-1], dict(kind='pairing-rejected', address='AA:BB:CC:DD:EE:FF'))
+        self.assertIsNone(self.scope['confirmation'])
+
+    def test_pair_command_reopens_the_remaining_window(self):
+        self.scope['handle_command'](json.dumps(dict(type='pair', seconds=30)))
+        self.assertAlmostEqual(self.scope['pair_until'] - time.monotonic(), 30, delta=1)
+        self.assertEqual(self.confirm_pairing(), [])
+        self.assertEqual(self.events[-1], dict(kind='pairing', address='AA:BB:CC:DD:EE:FF', code='699933'))
+        for seconds in (0, 121, '30', True):
+            self.events.clear()
+            self.scope['handle_command'](json.dumps(dict(type='pair', seconds=seconds)))
+            self.assertEqual(self.events, [dict(kind='error', message='Invalid collector command')])
 
     def test_added_then_modified_during_fetch_publishes_latest_once_as_added(self):
         self.source(0)

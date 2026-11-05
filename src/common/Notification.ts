@@ -44,6 +44,8 @@ export interface NotificationStatus extends NotificationSummary {
     statuses: Record<string, string>;
     pairing: { address: string; code: string } | null;
     pairingOpen: boolean;
+    // An iPhone asked to pair in the last 10 minutes while no pairing window was open.
+    pairingRejected?: boolean;
     error: string;
     delivery: { sent: number; failed: number; lastError: string };
     notifications: NotificationHistoryItem[];

@@ -54,9 +54,13 @@ class Agent(dbus.service.Object):
     @dbus.service.method('org.bluez.Agent1', in_signature='ou', out_signature='', async_callbacks=('reply', 'error'))
     def RequestConfirmation(self, device, passkey, reply, error):
         global confirmation
-        if time.monotonic() > pair_until or confirmation:
-            error(Rejected('Pairing window closed')); return
         address = str(objects.get(str(device), {}).get('org.bluez.Device1', {}).get('Address', ''))
+        if time.monotonic() > pair_until:
+            # The iPhone only says "Pairing unsuccessful"; tell the setup page why.
+            emit('pairing-rejected', address=address)
+            error(Rejected('Pairing window closed')); return
+        if confirmation:
+            error(Rejected('Another pairing is waiting for confirmation')); return
         confirmation = (address, f'{int(passkey):06d}', reply, error, time.monotonic() + 40)
         emit('pairing', address=address, code=confirmation[1])
 
@@ -396,7 +400,11 @@ def handle_command(line):
                 if key not in sources.values():
                     clients[key].fail_actions('This iPhone was removed from notification setup')
                     clients.pop(key, None)
-        elif command['type'] == 'pair': pair_until = time.monotonic() + 120
+        elif command['type'] == 'pair':
+            # The server sends what is left of an open window when it restarts this process.
+            seconds = command.get('seconds', 120)
+            if type(seconds) is not int or not 0 < seconds <= 120: raise ValueError('Invalid pairing window')
+            pair_until = time.monotonic() + seconds
         elif command['type'] == 'confirm' and confirmation:
             if (command.get('address'), command.get('code')) == confirmation[:2]:
                 confirmation[2](); confirmation = None

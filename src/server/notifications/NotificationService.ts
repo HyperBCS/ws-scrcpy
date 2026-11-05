@@ -17,6 +17,11 @@ export type { NotificationEvent, NotificationSource } from '../../common/Notific
 import { NotificationStorage, NotificationStore as Store, SubscriptionRecord, FeedItem } from './NotificationStorage';
 export type { FeedItem } from './NotificationStorage';
 
+// The collector's pairing window (`pair_until` in collector.py).
+const PAIRING_WINDOW_MS = 120000;
+// How long the setup page explains a pairing request that arrived with no window open.
+const PAIRING_REJECTED_NOTICE_MS = 10 * 60000;
+
 export function validateSubscription(value: unknown): PushSubscription {
     const sub = value as PushSubscription;
     if (!sub || typeof sub.endpoint !== 'string' || sub.endpoint.length > 2048)
@@ -109,6 +114,9 @@ export class NotificationService implements Service {
     private bluetooth: unknown[] = [];
     private pairing: { address: string; code: string } | null = null;
     private pairingOpen = false;
+    // When the window opened by Start Bluetooth pairing ends; outlives collector restarts.
+    private pairUntil = 0;
+    private pairingRejectedAt = 0;
     private error = '';
     private push = new PushDelivery(
         (id, key, testPayload) => this.preparePush(id, key, testPayload),
@@ -218,7 +226,14 @@ export class NotificationService implements Service {
             this.pairingOpen = false;
             if (!this.closed) this.restart = setTimeout(() => this.startCollector(), 3000);
         });
-        child.stdin.write(JSON.stringify({ type: 'configure', sources: this.store.sources }) + '\n');
+        for (const command of this.startCommands()) child.stdin.write(JSON.stringify(command) + '\n');
+    }
+    // Removing or relinking a source restarts the collector; reopen a pairing window it would close.
+    private startCommands(): object[] {
+        const commands: object[] = [{ type: 'configure', sources: this.store.sources }];
+        const seconds = Math.ceil((this.pairUntil - Date.now()) / 1000);
+        if (seconds > 0) commands.push({ type: 'pair', seconds });
+        return commands;
     }
     private invalidateSources(source?: string): void {
         for (const item of this.feed.values()) {
@@ -277,6 +292,10 @@ export class NotificationService implements Service {
                 break;
             case 'pairing':
                 this.pairing = message.code ? { address: String(message.address), code: String(message.code) } : null;
+                if (message.code) this.pairingRejectedAt = 0;
+                break;
+            case 'pairing-rejected':
+                this.pairingRejectedAt = Date.now();
                 break;
             case 'notification':
                 this.receive(message as unknown as NotificationEvent);
@@ -587,6 +606,7 @@ export class NotificationService implements Service {
                 statuses: this.statuses,
                 pairing: this.pairing,
                 pairingOpen: this.pairingOpen,
+                pairingRejected: Date.now() - this.pairingRejectedAt < PAIRING_REJECTED_NOTICE_MS,
                 error: this.error,
                 delivery: this.delivery,
                 notifications: [...this.feed.values()]
@@ -795,6 +815,8 @@ export class NotificationService implements Service {
         });
         route('post', '/pair', (_req, res) => {
             this.command({ type: 'pair' });
+            this.pairUntil = Date.now() + PAIRING_WINDOW_MS;
+            this.pairingRejectedAt = 0;
             res.json({ ok: true });
         });
         route('post', '/confirm', (req, res) => {

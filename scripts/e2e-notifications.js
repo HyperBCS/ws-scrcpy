@@ -159,7 +159,7 @@ async function fixture(browser, options = {}) {
     if (options.clock) await page.clock.install();
     const state = {
         context, page, sources: options.sources ?? phones(), errors: [], saved: [], tests: [], removed: [],
-        disabled: 0, statusPolls: 0, pairingOpen: false, subscriptionError: '',
+        disabled: 0, statusPolls: 0, pairingOpen: false, pairingRejected: !!options.pairingRejected, subscriptionError: '',
         missingSubscription: !!options.missingSubscription, testError: '', operations: [],
         notifications: structuredClone(options.notifications || []), readRequests: [], dismissed: [], actions: [], iconRequests: [], actionError: '', dismissError: '', summaryPolls: 0, bulkDismissed: [], bulkActions: [], bulkActionResult: null, restored: [], holdNextMutation: false, releaseMutation: null,
     };
@@ -199,7 +199,7 @@ async function fixture(browser, options = {}) {
             reply = {
                 publicKey: subscription.keys.p256dh, sources: state.sources, bluetooth: [],
                 statuses: Object.fromEntries(state.sources.map(s => [s.id, 'Receiving notifications'])), pairing: null,
-                pairingOpen: state.pairingOpen, error: '', delivery: { sent: 0, failed: 0, lastError: '' },
+                pairingOpen: state.pairingOpen, pairingRejected: state.pairingRejected, error: '', delivery: { sent: 0, failed: 0, lastError: '' },
                 notifications: state.notifications, unread, unreadBySource, retentionDays: 30, publicUrl: 'https://phone.example',
             };
         } else if (pathname.endsWith('/summary')) {
@@ -258,7 +258,7 @@ async function fixture(browser, options = {}) {
                 reply = { error: state.testError || 'Enable notifications on this device first' };
             }
         }
-        else if (pathname.endsWith('/pair') && request.method() === 'POST') state.pairingOpen = true;
+        else if (pathname.endsWith('/pair') && request.method() === 'POST') Object.assign(state, { pairingOpen: true, pairingRejected: false });
         else if (pathname.includes('/sources/') && request.method() === 'DELETE') {
             const id = decodeURIComponent(pathname.split('/').pop());
             state.removed.push(id);
@@ -309,6 +309,19 @@ async function onboarding(browser) {
         assert.deepEqual(f.saved, []);
         await assertClean(f);
         console.log('PASS notification onboarding guides pairing before receiver activation');
+    } finally { await f.context.close(); }
+}
+
+async function missedPairingRequest(browser) {
+    const f = await fixture(browser, { pairingRejected: true });
+    try {
+        const notice = f.page.getByRole('alert').filter({ hasText: 'An iPhone tried to pair while pairing was not open.' });
+        await notice.waitFor();
+        await f.page.getByRole('button', { name: 'Start Bluetooth pairing', exact: true }).click();
+        await until(() => f.pairingOpen, 'pairing starts from the notice');
+        await notice.waitFor({ state: 'detached' });
+        await assertClean(f);
+        console.log('PASS a pairing request outside the window is explained until pairing starts');
     } finally { await f.context.close(); }
 }
 
@@ -1293,7 +1306,7 @@ async function hangingWorkerDeepLink(browser) {
 async function main() {
     const browser = await ({ chromium, webkit }[browserName] || chromium).launch({ headless: true });
     try {
-        const cases = [onboarding, configuredReceiver, receiverChoicesAndUnlink, enablingReceiver, errorsSurvivePolling,
+        const cases = [onboarding, missedPairingRequest, configuredReceiver, receiverChoicesAndUnlink, enablingReceiver, errorsSurvivePolling,
             iosInstallGate, recoverMissingServerSubscription, perDeviceHistory, dismissKeepsHistory, labeledPhoneActions,
             notificationDeepLink, bulkDismissHere, bulkDismissPhone, compactLongNotification, stickyBarsReachScrollTop, accessibleActionMenus, richNotificationMedia,
             searchAndFilters, bulkRespectsFilters, swipeAndUndo, swipeMotionAndFailure, delayedActionDoesNotCrossDevices, standaloneTouchNotifications,

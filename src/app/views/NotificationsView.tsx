@@ -407,7 +407,12 @@ export function NotificationsView() {
                                 })}
                                 <AnimatedDetails
                                     class="notification-details notification-pairing"
-                                    open={!status.sources.length || status.pairingOpen || !!status.pairing}
+                                    open={
+                                        !status.sources.length ||
+                                        status.pairingOpen ||
+                                        !!status.pairing ||
+                                        !!status.pairingRejected
+                                    }
                                 >
                                     <summary>
                                         {status.sources.length ? 'Add another iPhone' : 'Connect your first iPhone'}
@@ -425,6 +430,13 @@ export function NotificationsView() {
                                                 <strong>Share System Notifications</strong>.
                                             </li>
                                         </ol>
+                                        {status.pairingRejected && (
+                                            <p role="alert" class="notification-notice notification-error">
+                                                An iPhone tried to pair while pairing was not open. Tap{' '}
+                                                <strong>Start Bluetooth pairing</strong>, then choose ws-scrcpy on the
+                                                iPhone again.
+                                            </p>
+                                        )}
                                         <button
                                             disabled={busy || status.pairingOpen}
                                             onClick={() =>
