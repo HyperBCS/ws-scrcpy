@@ -30,12 +30,14 @@ confirmation = None
 advert_ready = False
 advert_pending = False
 advert_since = 0
+holdoff = {}
 owned_notifications = set()
 input_buffer = bytearray()
 AGENT = '/org/wsscrcpy/agent'
 ADVERT = '/org/wsscrcpy/advert'
 ADAPTER = '/org/bluez/hci0'
 ADVERT_REFRESH = 120
+RESET_HOLDOFF = 35
 
 
 def emit(kind, **values):
@@ -118,12 +120,14 @@ class Client:
 
     def reset(self, reason):
         if not self.alive(): return
-        self.fail_actions('Bluetooth disconnected before the iPhone confirmed the action')
+        self.fail_actions('The iPhone did not answer in time; the action was not confirmed')
         self.status(reason)
         clients.pop(self.source, None)
-        # A timed-out fragmented response has no cancellation command. Reconnect to
-        # establish a new session instead of mixing late fragments into the next request.
-        iface(self.path, 'org.bluez.Device1').Disconnect(reply_handler=lambda: None, error_handler=lambda e: None)
+        # A timed-out fragmented response has no cancellation command, so the next request must
+        # not share its session. Start a new one on the same link once the ATT timeout (30 s) has
+        # passed instead of disconnecting: on 2026-11-05 the iPhone did not reconnect on its own
+        # after being dropped.
+        holdoff[self.source] = time.monotonic() + RESET_HOLDOFF
 
     def fail_actions(self, reason):
         for complete in list(self.action_requests.values()): complete(False, reason)
@@ -162,7 +166,7 @@ class Client:
     def enqueue(self, request, done, failed=None, valid=None, action_failed=None):
         if len(self.queue) >= 128:
             if action_failed: action_failed('Bluetooth is busy; the action was not sent')
-            self.reset('Notification queue overflow; reconnecting'); return
+            self.reset('Notification queue overflow; retrying'); return
         self.queue.append(dict(request=request, done=done, failed=failed, valid=valid, attempts=0,
                                action_failed=action_failed, expires=time.monotonic() + 10))
         self.pump()
@@ -233,7 +237,7 @@ class Client:
                 self.queue.remove(job)
                 job['action_failed']('Bluetooth was busy; the action was not sent')
         if self.current and now > self.current[2]:
-            self.reset('Notification response timed out; reconnecting'); return
+            self.reset('Notification response timed out; retrying'); return
         if now < self.retry_at: return
         for characteristic in [DATA, SOURCE]:
             if characteristic == SOURCE and DATA not in self.ready: break
@@ -263,7 +267,7 @@ class Client:
             if not self.current or self.current[0] is None: return
             try: values = self.current[0].feed(value)
             except ValueError:
-                self.reset('Invalid notification response; reconnecting'); return
+                self.reset('Invalid notification response; retrying'); return
             if values is not None:
                 done = self.current[1]; self.current = None
                 self.authorized = True; self.status('Receiving notifications')
@@ -375,7 +379,7 @@ def tick():
             chars = {str(v['org.bluez.GattCharacteristic1']['UUID']): str(p) for p, v in objects.items()
                      if str(p).startswith(str(path) + '/') and 'org.bluez.GattCharacteristic1' in v}
             if not all(c in chars for c in (DATA, SOURCE, CONTROL)): continue
-            if source not in clients:
+            if source not in clients and time.monotonic() >= holdoff.get(source, 0):
                 clients[source] = Client(str(path), source, chars)
                 clients[source].status('Authorizing notifications')
         emit('devices', devices=devices, pairingOpen=time.monotonic() < pair_until)

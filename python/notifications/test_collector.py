@@ -57,7 +57,7 @@ class CollectorTests(unittest.TestCase):
             'clients': {}, 'sources': {'AA:BB:CC:DD:EE:FF': 'phone'}, 'dbus': DBus,
             'objects': {}, 'owned_notifications': set(),
             'advert_ready': False, 'advert_since': 0, 'ADVERT_REFRESH': 120, 'ADAPTER': '/hci0', 'ADVERT': '/advert',
-            'pair_until': 0, 'confirmation': None,
+            'pair_until': 0, 'confirmation': None, 'holdoff': {}, 'RESET_HOLDOFF': 35,
             'emit': lambda kind, **fields: self.events.append(dict(kind=kind, **fields)),
             'iface': lambda *args: Interface(),
         }
@@ -372,14 +372,16 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(len(self.action_results()), 2)
         self.assertEqual(sum(payload[0] == 2 for payload in self.writes), 1)
 
-    def test_action_timeout_reconnects_and_late_ack_cannot_succeed(self):
+    def test_action_timeout_starts_a_new_session_later_and_late_ack_cannot_succeed(self):
         self.source(0, flags=16)
         self.reply(action='Clear')
         self.dismiss()
         parser, done, _, job = self.client.current
         self.client.current = (parser, done, 0, job)
         self.client.tick()
-        self.assertEqual(self.disconnections, [True])
+        self.assertEqual(self.disconnections, [], 'the iPhone does not reconnect after we drop it')
+        self.assertNotIn('phone', self.scope['clients'])
+        self.assertGreater(self.scope['holdoff']['phone'], time.monotonic() + 30)
         self.assertFalse(self.action_results()[0]['ok'])
         self.write_replies[-1]()
         self.assertEqual(len(self.action_results()), 1)
