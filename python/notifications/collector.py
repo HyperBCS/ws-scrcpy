@@ -29,11 +29,13 @@ pair_attempts = {}
 confirmation = None
 advert_ready = False
 advert_pending = False
+advert_since = 0
 owned_notifications = set()
 input_buffer = bytearray()
 AGENT = '/org/wsscrcpy/agent'
 ADVERT = '/org/wsscrcpy/advert'
 ADAPTER = '/org/bluez/hci0'
+ADVERT_REFRESH = 120
 
 
 def emit(kind, **values):
@@ -323,16 +325,27 @@ def property_changed(interface, changes, invalidated, path=None):
                 clients.pop(source, None)
 
 
+def refresh_advert():
+    # The controller can stop advertising while BlueZ still lists the instance as active (after
+    # "ACL packet for unknown connection handle", 2026-11-05); the iPhone then never reconnects.
+    # Registering again re-enables it, so do that periodically while an iPhone is disconnected.
+    global advert_ready
+    if advert_ready and set(sources.values()) - set(clients) and time.monotonic() - advert_since > ADVERT_REFRESH:
+        iface(ADAPTER, 'org.bluez.LEAdvertisingManager1').UnregisterAdvertisement(ADVERT)
+        advert_ready = False
+
+
 def tick():
     global objects, advert_ready, advert_pending, confirmation
     try:
         objects = iface('/', 'org.freedesktop.DBus.ObjectManager').GetManagedObjects(timeout=5)
         desired_advert = bool(sources) or time.monotonic() < pair_until
+        refresh_advert()
         if desired_advert and not advert_ready and not advert_pending:
             advert_pending = True
             def ready():
-                global advert_ready, advert_pending
-                advert_ready = True; advert_pending = False
+                global advert_ready, advert_pending, advert_since
+                advert_ready = True; advert_pending = False; advert_since = time.monotonic()
             def failed(error):
                 global advert_pending
                 advert_pending = False

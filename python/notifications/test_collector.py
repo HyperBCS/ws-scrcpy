@@ -18,6 +18,7 @@ class CollectorTests(unittest.TestCase):
         self.disconnections = []
         self.write_errors = []
         self.write_replies = []
+        self.unregistered = []
         test = self
 
         class DBus:
@@ -34,12 +35,15 @@ class CollectorTests(unittest.TestCase):
             def Disconnect(self, **kwargs):
                 test.disconnections.append(True)
 
+            def UnregisterAdvertisement(self, path):
+                test.unregistered.append(path)
+
         # Import only Client: the module's executable section owns a live system
         # bus and GLib loop. The class itself runs against these controlled stubs.
         tree = ast.parse(Path(__file__).with_name('collector.py').read_text())
         declarations = [node for node in tree.body if
                         isinstance(node, (ast.ClassDef, ast.FunctionDef)) and
-                        node.name in ('Client', 'property_changed', 'handle_command')]
+                        node.name in ('Client', 'property_changed', 'handle_command', 'refresh_advert')]
         self.scope = {
             'time': time, 'uuid': uuid, 'struct': struct, 'deque': deque, 'json': json,
             'ANCS': ANCS, 'SOURCE': SOURCE, 'DATA': DATA, 'CONTROL': CONTROL,
@@ -47,6 +51,7 @@ class CollectorTests(unittest.TestCase):
             'app_request': app_request, 'negative_action_request': negative_action_request,
             'clients': {}, 'sources': {'AA:BB:CC:DD:EE:FF': 'phone'}, 'dbus': DBus,
             'objects': {}, 'owned_notifications': set(),
+            'advert_ready': False, 'advert_since': 0, 'ADVERT_REFRESH': 120, 'ADAPTER': '/hci0', 'ADVERT': '/advert',
             'emit': lambda kind, **fields: self.events.append(dict(kind=kind, **fields)),
             'iface': lambda *args: Interface(),
         }
@@ -91,6 +96,22 @@ class CollectorTests(unittest.TestCase):
 
     def action_results(self):
         return [event for event in self.events if event['kind'] == 'action-result']
+
+    def test_advert_is_registered_again_only_while_a_source_is_disconnected(self):
+        refresh, now = self.scope['refresh_advert'], time.monotonic()
+        self.scope.update(advert_ready=True, advert_since=now - 121)
+        refresh()
+        self.assertEqual(self.unregistered, [])
+        self.scope['clients'].clear()
+        self.scope['advert_since'] = now - 60
+        refresh()
+        self.assertEqual(self.unregistered, [])
+        self.scope['advert_since'] = now - 121
+        refresh()
+        self.assertEqual(self.unregistered, ['/advert'])
+        self.assertFalse(self.scope['advert_ready'])
+        refresh()
+        self.assertEqual(self.unregistered, ['/advert'])
 
     def test_added_then_modified_during_fetch_publishes_latest_once_as_added(self):
         self.source(0)
