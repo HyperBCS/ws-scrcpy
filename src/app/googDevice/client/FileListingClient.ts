@@ -1745,7 +1745,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     /**
      * Asks what to do with one name that is already in this folder. Closing the dialog skips the
-     * item, and the keyboard starts on "Keep both", so nothing is replaced by accident.
+     * item, the keyboard starts on "Keep both", and Replace ignores presses for its first
+     * `CONFIRM_GUARD_MS`, so nothing is replaced by accident.
      */
     private askConflict(
         name: string,
@@ -1779,7 +1780,15 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             </div>
         </form>`;
         const all = this.dialog.querySelector<HTMLInputElement>('input[name="all"]');
-        return this.showDialog(() => this.dialog.querySelector<HTMLButtonElement>('[value="keep"]')?.focus()).then(
+        return this.showDialog(() => {
+            this.dialog.querySelector<HTMLButtonElement>('[value="keep"]')?.focus();
+            // Replace waits out a double tap on whatever opened the dialog, as Delete does.
+            const replace = this.dialog.querySelector<HTMLButtonElement>('[value="replace"]');
+            if (replace) {
+                replace.disabled = true;
+                setTimeout(() => (replace.disabled = false), CONFIRM_GUARD_MS);
+            }
+        }).then(
             (result) => ({
                 choice: (result === 'replace' || result === 'keep' ? result : 'skip') as ConflictChoice,
                 // Closing the dialog answers for this one item only.

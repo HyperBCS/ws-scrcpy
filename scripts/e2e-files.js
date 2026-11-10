@@ -325,6 +325,9 @@ async function conflict(page, title, answers) {
         'Keep both',
         'the keyboard starts on the answer that loses nothing',
     );
+    if (answers.includes('Replace')) {
+        assert.equal(await dialog.locator('[value="replace"]').isDisabled(), true, 'Replace starts guarded');
+    }
     return dialog;
 }
 async function answer(page, name) {
