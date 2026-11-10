@@ -8,6 +8,7 @@ import {
     isValidUnlockTimeZone,
     localTimeZone,
     nextUnlockRunAt,
+    UNLOCK_NOT_TYPED_MESSAGE,
     UnlockRunResult,
     UnlockSchedulePatch,
     UnlockScheduleStatus,
@@ -177,6 +178,19 @@ function sanitizeUnlock(value: unknown): StoredUnlockSettings | undefined {
         const at = optionalNumber(value[field]);
         if (at !== undefined) {
             unlock[field] = at;
+        }
+    }
+    // Before the 2026-11-10 review a run that typed the passcode and found the phone still locked
+    // was also `failed-still-locked`, and the passcode was typed again at the retry and every night
+    // after. A record left that way is read as `failed-rejected`, which marks the passcode rejected.
+    const last = unlock.lastRun;
+    if (
+        last?.outcome === 'failed-still-locked' &&
+        !(typeof last.message === 'string' && last.message.startsWith(UNLOCK_NOT_TYPED_MESSAGE))
+    ) {
+        last.outcome = 'failed-rejected';
+        if (unlock.passcode && unlock.passcodeRejectedAt === undefined) {
+            unlock.passcodeRejectedAt = optionalNumber(last.at) ?? Date.now();
         }
     }
     return unlock;

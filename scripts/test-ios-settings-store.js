@@ -330,6 +330,31 @@ test('a rejected passcode is marked in the status, stops nextRunAt, and is clear
     assert.deepEqual(store.getRunState('iphone-r'), {});
 });
 
+test('a last run saved as still locked after typing, before the review, is read as a rejected passcode', () => {
+    const dir = freshDir();
+    const store = new IosSettingsStore(dir);
+    store.setPasscode('iphone-old', '4321');
+    store.setPasscode('iphone-unread', '4321');
+    store.updateSchedule('iphone-old', { enabled: true });
+    store.updateSchedule('iphone-unread', { enabled: true });
+    const file = readJson(dir);
+    // The old driver wrote this outcome for digits that left the phone locked, with or without a note.
+    file.devices['iphone-old'].unlock.lastRun = { at: 1700000000000, trigger: 'schedule', outcome: 'failed-still-locked', message: 'Lock not confirmed' };
+    // And for a passcode it could not read, which typed nothing.
+    file.devices['iphone-unread'].unlock.lastRun = { at: 1700000000000, trigger: 'schedule', outcome: 'failed-still-locked', message: 'Passcode not entered: No passcode stored' };
+    writeJson(dir, file);
+    const reloaded = new IosSettingsStore(dir);
+    const old = reloaded.getSchedule('iphone-old');
+    assert.equal(old.passcodeRejected, true, 'nothing types it again until it is saved again');
+    assert.equal(old.nextRunAt, undefined);
+    assert.equal(old.lastRun.outcome, 'failed-rejected');
+    assert.equal(reloaded.getRunState('iphone-old').passcodeRejectedAt, 1700000000000);
+    assert.equal(reloaded.getSchedule('iphone-unread').passcodeRejected, undefined, 'nothing was typed');
+    assert.equal(reloaded.getSchedule('iphone-unread').lastRun.outcome, 'failed-still-locked');
+    assert.equal(reloaded.setPasscode('iphone-old', '4321').passcodeRejected, undefined, 'saving it again resumes');
+    assert.equal(new IosSettingsStore(dir).getSchedule('iphone-old').passcodeRejected, undefined, 'and stays resumed');
+});
+
 test('defaults, schedule patches, nextRunAt and the scheduler bookkeeping survive a reload', () => {
     const dir = freshDir();
     const store = new IosSettingsStore(dir);
@@ -360,7 +385,8 @@ test('defaults, schedule patches, nextRunAt and the scheduler bookkeeping surviv
     assert.equal(store.updateSchedule('iphone-s', { enabled: true, time: '06:00' }).time, '06:00');
     assert.equal(store.getSchedule('iphone-s').running, undefined, 'the store never claims a run is in progress');
 
-    const run = { at: 1700000001000, trigger: 'manual', outcome: 'failed-still-locked', message: 'Lock not confirmed' };
+    // A legacy "still locked" record would be read back as rejected; see the test above.
+    const run = { at: 1700000001000, trigger: 'manual', outcome: 'unverified', message: 'Lock not confirmed' };
     store.recordUnlockedAt('iphone-s', 1700000000000);
     store.recordRun('iphone-s', run);
     store.setRetryAt('iphone-s', 1700000600000);

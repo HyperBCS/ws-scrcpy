@@ -40,6 +40,9 @@ export const UNLOCK_URGENT_INTERVAL_MS = 2 * 3600 * 1000;
  */
 export const UNLOCK_UNCONFIRMED_LIMIT = 2;
 
+/** Start of the message of a `failed-still-locked` run, the only kind that typed nothing. */
+export const UNLOCK_NOT_TYPED_MESSAGE = 'Passcode not entered';
+
 export type UnlockRunTrigger = 'schedule' | 'manual';
 
 export type UnlockRunOutcome =

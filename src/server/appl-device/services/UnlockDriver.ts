@@ -1,4 +1,4 @@
-import { UnlockRunOutcome } from '../../../common/IosUnlockSchedule';
+import { UNLOCK_NOT_TYPED_MESSAGE, UnlockRunOutcome } from '../../../common/IosUnlockSchedule';
 import { clampHid } from '../../../common/CoreDeviceProtocol';
 import { hidUsageForCode } from '../../../app/applDevice/hidKeyboard';
 import { CoreDeviceRunner, HttpReply } from './CoreDeviceRunner';
@@ -283,7 +283,7 @@ export class UnlockDriver {
                 }
             }
             if (readError) {
-                return { outcome: 'failed-still-locked', message: `Passcode not entered: ${readError}` };
+                return { outcome: 'failed-still-locked', message: `${UNLOCK_NOT_TYPED_MESSAGE}: ${readError}` };
             }
             await post('digits', '/keyboard/detach', undefined, INPUT_COMPLETION_TIMEOUT_MS);
             keyboardAttached = false;
