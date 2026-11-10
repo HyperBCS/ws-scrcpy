@@ -849,6 +849,18 @@ async function main() {
             assert.equal(files.get(ROOT + '/notes.txt').toString(), original);
             assert.equal(files.get(ROOT + '/mobile-upload.txt').toString(), 'Picker upload bytes');
 
+            // Without the checkbox, each conflict gets its own question in turn.
+            await pick(['notes.txt', 'Fourth copy'], ['empty-file.txt', 'No longer empty']);
+            await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
+            await page.locator('.fx-dialog[open]').getByRole('button', { name: 'Skip', exact: true }).click();
+            await conflict(page, 'Replace “empty-file.txt”?', ['Skip', 'Keep both', 'Replace']);
+            await answer(page, 'Keep both');
+            await uploaded('empty-file (1).txt');
+            assert.equal(files.get(ROOT + '/empty-file (1).txt').toString(), 'No longer empty');
+            assert.equal(files.get(ROOT + '/empty-file.txt').length, 0);
+            assert.equal(files.get(ROOT + '/notes.txt').toString(), original);
+            await settled(page);
+
             // Replace is an explicit answer, and the only upload that carries the overwrite flag.
             await pick(['notes.txt', 'Replacement']);
             await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
