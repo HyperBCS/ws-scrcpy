@@ -799,6 +799,7 @@ class MemoryStore {
             passcodeRejectedAt: record.passcodeRejectedAt,
             unconfirmedAttempts: record.unconfirmedAttempts,
             deadlineWarnedFor: record.deadlineWarnedFor,
+            lastTimerRunAt: record.lastTimerRunAt,
         };
     }
     updateSchedule(udid, patch) {
@@ -1640,6 +1641,27 @@ test('scheduler: the 72-hour deadline is pushed once at 36 hours and runs outsid
             await ctx.settle();
         }
         assert.equal(ctx.driver.calls.length, 1, 'not again within two hours');
+        assert.equal(record.lastTimerRunAt, urgent, 'stored before the run started');
+
+        // A server that restarts, for example after a crash during the run, does not start
+        // another session at its first tick: the spacing is read from the store.
+        const restarted = new UnlockScheduler({
+            store: ctx.store,
+            driver: ctx.driver,
+            monitor: ctx.monitor,
+            notify: (payload) => ctx.pushes.push(payload),
+            now: ctx.now,
+        });
+        restarted.start({ isConnected: () => true });
+        try {
+            ctx.setClock(urgent + 30 * MINUTE);
+            restarted.tick();
+            await restarted.chain;
+            await tick();
+            assert.equal(ctx.driver.calls.length, 1, 'no run at the first tick after a restart');
+        } finally {
+            restarted.stop();
+        }
 
         // An unplugged phone is not tried, and neither is one that reads unlocked.
         ctx.setClock(urgent + UNLOCK_URGENT_INTERVAL_MS);

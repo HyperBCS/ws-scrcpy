@@ -58,6 +58,9 @@ export interface StoredUnlockSettings {
     unconfirmedAttempts?: number;
     // The `lastUnlockedAt` value the 72-hour warning was pushed for.
     deadlineWarnedFor?: number;
+    // When the timer last started a run. Spaces the runs outside the slot window, and is set
+    // before the run starts so a server that keeps restarting does not open a session each time.
+    lastTimerRunAt?: number;
 }
 
 const RUN_STATE_FIELDS = [
@@ -67,6 +70,7 @@ const RUN_STATE_FIELDS = [
     'passcodeRejectedAt',
     'unconfirmedAttempts',
     'deadlineWarnedFor',
+    'lastTimerRunAt',
 ] as const;
 
 export interface IosSettingsFile {
@@ -82,6 +86,7 @@ export interface UnlockRunState {
     passcodeRejectedAt?: number;
     unconfirmedAttempts?: number;
     deadlineWarnedFor?: number;
+    lastTimerRunAt?: number;
 }
 
 /**

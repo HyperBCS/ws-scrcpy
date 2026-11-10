@@ -143,8 +143,6 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
     private readonly inflight = new Map<string, Promise<UnlockRunResult>>();
     // When each recent run that opened a display session ended, per device, oldest first.
     private readonly sessionRuns = new Map<string, number[]>();
-    // When the timer last started a run per device; spaces the runs outside the slot window.
-    private readonly lastTimerRunAt = new Map<string, number>();
     private storeChecked = false;
     private released = false;
 
@@ -445,7 +443,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             age >= UNLOCK_DEADLINE_URGENT_MS &&
             age < UNLOCK_DEADLINE_MS &&
             (this.pending.get(udid) ?? 0) === 0 &&
-            now - (this.lastTimerRunAt.get(udid) ?? -Infinity) >= UNLOCK_URGENT_INTERVAL_MS &&
+            now - (state.lastTimerRunAt ?? -Infinity) >= UNLOCK_URGENT_INTERVAL_MS &&
             this.options?.isConnected(udid)
         ) {
             // Its own spacing replaces the ten-minute retry.
@@ -453,8 +451,9 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
         }
     }
 
+    /** Start a timer run. The time is stored first, like `lastSlotAt`: a write that fails starts nothing. */
     private schedule(udid: string, retry: boolean, now: number): void {
-        this.lastTimerRunAt.set(udid, now);
+        this.store.setRunState(udid, { lastTimerRunAt: now });
         this.enqueue(udid, 'schedule', retry).catch((error: Error) =>
             console.error(`${TAG} [${udid}] scheduled run failed: ${error.message}`),
         );
