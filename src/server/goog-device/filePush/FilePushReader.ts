@@ -4,10 +4,12 @@ import { FilePushResponseStatus } from '../../../app/googDevice/filePush/FilePus
 import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
 import { ReadStream } from './ReadStream';
 import { AdbExtended } from '../adb';
+import { AdbUtils } from '../AdbUtils';
 
 enum State {
     INITIAL,
     NEW,
+    CHECK,
     START,
     APPEND,
     FINISH,
@@ -41,6 +43,14 @@ export class FilePushReader {
     public readStream?: ReadStream;
     private pushTransfer?: PushTransfer;
     private fileName = '';
+    /**
+     * adbd unlinks the destination before it writes and again when a transfer fails, so pushing
+     * straight to the final name loses the old file as soon as an upload starts. The bytes go to
+     * this hidden name in the same folder and are renamed into place once adb reports success.
+     */
+    private partialName = '';
+    private partialPending = false;
+    private overwrite = false;
     private fileSize = 0;
     private pushId = -1;
     private state: State = State.INITIAL;
@@ -80,8 +90,37 @@ export class FilePushReader {
         if (this.disposed) return;
         this.channel.removeEventListener('message', this.onMessage);
         this.channel.removeEventListener('close', this.onClose);
-        this.channel.close(4000 - code, message);
+        // A close reason may not exceed 123 bytes, and a device message can carry a long path.
+        this.channel.close(4000 - code, message && Buffer.from(message).subarray(0, 120).toString());
         this.release();
+    }
+
+    /**
+     * Refuses a name that is already taken unless the client asked to replace it, before any
+     * bytes are sent. The rename at the end repeats the check, so a file that appears during
+     * the transfer is kept as well.
+     */
+    private async checkTarget(): Promise<void> {
+        let kind: 'missing' | 'item' | 'folder';
+        try {
+            kind = await AdbUtils.targetKind(this.serial, this.fileName);
+        } catch (error) {
+            if (this.disposed) return;
+            const message = error instanceof Error ? error.message : String(error);
+            this.closeWithError(FilePushResponseStatus.ERROR_OTHER, message);
+            return;
+        }
+        if (this.disposed || this.state !== State.CHECK) return;
+        if (kind === 'folder') {
+            this.closeWithError(FilePushResponseStatus.ERROR_FILE_EXISTS, 'A folder with this name already exists.');
+            return;
+        }
+        if (kind === 'item' && !this.overwrite) {
+            this.closeWithError(FilePushResponseStatus.ERROR_FILE_EXISTS, 'An item with this name already exists.');
+            return;
+        }
+        this.state = State.START;
+        this.sendResponse(FilePushResponseStatus.NO_ERROR);
     }
 
     private onMessage = async (event: MessageEvent): Promise<void> => {
@@ -108,19 +147,30 @@ export class FilePushReader {
                         this.closeWithError(FilePushResponseStatus.ERROR_INVALID_STATE);
                         return;
                     }
-                    const { fileName, fileSize } = command;
+                    const { fileName, fileSize, overwrite } = command;
                     if (!fileName) {
                         this.closeWithError(FilePushResponseStatus.ERROR_INVALID_NAME);
+                        return;
+                    }
+                    let target: string;
+                    try {
+                        // The name reaches `adb shell` when the upload is renamed into place.
+                        target = AdbUtils.checkDevicePath(fileName);
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : undefined;
+                        this.closeWithError(FilePushResponseStatus.ERROR_INVALID_NAME, message);
                         return;
                     }
                     if (typeof fileSize !== 'number' || !Number.isInteger(fileSize) || fileSize < 0) {
                         this.closeWithError(FilePushResponseStatus.ERROR_INCORRECT_SIZE);
                         return;
                     }
-                    this.fileName = fileName;
+                    this.fileName = target;
+                    this.partialName = AdbUtils.partialPath(target);
+                    this.overwrite = !!overwrite;
                     this.fileSize = fileSize;
-                    this.state = State.START;
-                    this.sendResponse(FilePushResponseStatus.NO_ERROR);
+                    this.state = State.CHECK;
+                    await this.checkTarget();
                     break;
                 }
                 case FilePushState.APPEND: {
@@ -200,8 +250,7 @@ export class FilePushReader {
             // awaited anywhere, so a throw here would become a fatal unhandled rejection.
             const message = error instanceof Error ? error.message : String(error);
             console.error(`Failed to handle file push message (${this.serial}):`, message);
-            // A close reason may not exceed 123 bytes.
-            this.closeWithError(FilePushResponseStatus.ERROR_OTHER, message.substring(0, 120));
+            this.closeWithError(FilePushResponseStatus.ERROR_OTHER, message);
         }
     };
 
@@ -228,11 +277,15 @@ export class FilePushReader {
             console.error(`Client error (${this.serial} | ${this.fileName}):`, error.message);
             this.closeWithError(FilePushResponseStatus.ERROR_OTHER, error.message);
         });
-        const transfer = await client.push(this.serial, this.readStream, this.fileName);
+        this.partialPending = true;
+        const transfer = await client.push(this.serial, this.readStream, this.partialName);
         if (this.disposed || this.state === State.CANCEL) {
             // Navigation/cancellation may win while adb is opening the sync connection.
             transfer.on('error', FilePushReader.ignoreTransferError);
             transfer.cancel();
+            // `release` ran before adb had opened the file, so its removal found nothing.
+            this.partialPending = false;
+            this.removePartial();
             return;
         }
         this.pushTransfer = transfer;
@@ -253,12 +306,40 @@ export class FilePushReader {
         if (this.disposed) return;
         this.transferComplete = true;
         if (this.state === State.FINISH) {
-            this.sendResponse(FilePushResponseStatus.NO_ERROR);
-            this.release();
+            void this.commit();
         } else {
             this.closeWithError(FilePushResponseStatus.ERROR_INVALID_STATE);
         }
     };
+
+    /** Renames the finished upload into place. Success is reported only after that. */
+    private async commit(): Promise<void> {
+        // From here the rename owns the hidden file; `release` must not delete it underneath.
+        this.partialPending = false;
+        try {
+            await AdbUtils.move(this.serial, this.partialName, this.fileName, this.overwrite);
+        } catch (error) {
+            this.removePartial();
+            if (this.disposed) return;
+            const message = error instanceof Error ? error.message : String(error);
+            this.closeWithError(
+                /already exists/.test(message)
+                    ? FilePushResponseStatus.ERROR_FILE_EXISTS
+                    : FilePushResponseStatus.ERROR_FAILED_TO_CREATE,
+                message,
+            );
+            return;
+        }
+        if (this.disposed) return;
+        this.sendResponse(FilePushResponseStatus.NO_ERROR);
+        this.release();
+    }
+
+    private removePartial(): void {
+        AdbUtils.remove(this.serial, [this.partialName]).catch((error: Error) => {
+            console.error(`Failed to remove partial upload (${this.serial} | ${this.partialName}):`, error.message);
+        });
+    }
 
     private onPushCancel = () => {
         if (this.disposed) return;
@@ -291,6 +372,11 @@ export class FilePushReader {
                 this.pushTransfer.cancel();
             }
             this.pushTransfer = undefined;
+        }
+        if (this.partialPending) {
+            // adbd removes a file it was still writing, but not one it had already finished.
+            this.partialPending = false;
+            this.removePartial();
         }
         this.channel.removeEventListener('message', this.onMessage);
         this.channel.removeEventListener('close', this.onClose);

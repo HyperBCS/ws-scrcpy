@@ -1,5 +1,6 @@
 import * as portfinder from 'portfinder';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import { AdbExtended } from './adb';
 import { Forward } from '@dead50f7/adbkit/lib/Forward';
 import Entry from '@dead50f7/adbkit/lib/adb/sync/entry';
@@ -234,9 +235,65 @@ export class AdbUtils {
         );
     }
 
-    public static async move(serial: string, from: string, to: string): Promise<void> {
+    /**
+     * A plain absolute device path with no control characters, normalised. Anything that reaches
+     * `adb shell` goes through here first: a newline would also break the exit-status marker
+     * `shellExec` appends, and a rejected command is far better than a misread one.
+     */
+    public static checkDevicePath(pathString: string): string {
+        if (!pathString.startsWith('/')) {
+            throw Error('Only absolute device paths are allowed.');
+        }
+        // eslint-disable-next-line no-control-regex
+        if (/[\x00-\x1f\x7f]/.test(pathString)) {
+            throw Error('This name contains characters that cannot be used on the device.');
+        }
+        const normalized = path.posix.normalize(pathString).replace(/\/+$/, '') || '/';
+        if (normalized === '/') {
+            throw Error('The device root cannot be changed.');
+        }
+        return normalized;
+    }
+
+    /** What an upload or a replacing paste would land on. */
+    public static async targetKind(serial: string, target: string): Promise<'missing' | 'item' | 'folder'> {
+        const item = AdbUtils.quote(target);
+        const { code, output } = await AdbUtils.shellExec(
+            serial,
+            `if [ -d ${item} ] && [ ! -L ${item} ]; then echo folder; ` +
+                `elif [ -e ${item} ] || [ -L ${item} ]; then echo item; else echo missing; fi`,
+        );
+        if (code !== 0 || (output !== 'missing' && output !== 'item' && output !== 'folder')) {
+            throw Error(output || 'The device did not say whether this name is in use.');
+        }
+        return output;
+    }
+
+    /**
+     * The guards every replacing operation shares: only a file may be replaced, and only by a
+     * file. `mv -f` and `cp` would otherwise merge into, or move inside, an existing folder.
+     */
+    private static replaceGuards(source: string, destination: string): string {
+        return (
+            `if [ -d ${destination} ] && [ ! -L ${destination} ]; then ` +
+            `printf '%s\\n' 'A folder with this name already exists. Folders are not replaced.'; false; ` +
+            `elif [ -d ${source} ] && [ ! -L ${source} ]; then ` +
+            `printf '%s\\n' 'A folder cannot replace a file.'; false; `
+        );
+    }
+
+    /** `replace` swaps an existing file for the source in one rename; the default never does. */
+    public static async move(serial: string, from: string, to: string, replace = false): Promise<void> {
         const source = AdbUtils.quote(from);
         const destination = AdbUtils.quote(to);
+        if (replace) {
+            return AdbUtils.runFileOperation(
+                serial,
+                `${AdbUtils.replaceGuards(source, destination)}else mv -fT -- ${source} ${destination}; fi`,
+                'The device refused to replace this item.',
+                FILE_OPERATION_TIMEOUT,
+            );
+        }
         const conflict = "printf '%s\\n' 'An item with this name already exists.'; false";
         return AdbUtils.runFileOperation(
             serial,
@@ -248,9 +305,21 @@ export class AdbUtils {
         );
     }
 
-    public static async copy(serial: string, from: string, to: string): Promise<void> {
+    public static async copy(serial: string, from: string, to: string, replace = false): Promise<void> {
         const source = AdbUtils.quote(from);
         const destination = AdbUtils.quote(to);
+        if (replace) {
+            // Copy beside the target first, so the old file stays until the new one is complete.
+            const partial = AdbUtils.quote(AdbUtils.partialPath(to));
+            return AdbUtils.runFileOperation(
+                serial,
+                `${AdbUtils.replaceGuards(source, destination)}` +
+                    `elif cp -T -- ${source} ${partial} && mv -fT -- ${partial} ${destination}; then true; ` +
+                    `else rm -f -- ${partial}; false; fi`,
+                'The device refused to replace this item.',
+                FILE_OPERATION_TIMEOUT,
+            );
+        }
         const conflict = "printf '%s\\n' 'An item with this name already exists.'; false";
         return AdbUtils.runFileOperation(
             serial,
@@ -263,6 +332,14 @@ export class AdbUtils {
             'The device refused to copy this item.',
             FILE_OPERATION_TIMEOUT,
         );
+    }
+
+    /**
+     * A hidden name in the target's own folder, so finishing is a rename on one filesystem. The
+     * name is not derived from the target, which may already be as long as a name can be.
+     */
+    public static partialPath(target: string): string {
+        return path.posix.join(path.posix.dirname(target), `.partial-${randomBytes(6).toString('hex')}`);
     }
 
     public static async remove(serial: string, paths: string[]): Promise<void> {

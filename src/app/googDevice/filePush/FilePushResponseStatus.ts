@@ -13,4 +13,5 @@ export enum FilePushResponseStatus {
     ERROR_NO_FREE_ID = -10,
     ERROR_INCORRECT_SIZE = -11,
     ERROR_OTHER = -12,
+    ERROR_FILE_EXISTS = -13,
 }
