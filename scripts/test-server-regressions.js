@@ -375,7 +375,10 @@ test('strict process discovery propagates adb failures instead of claiming no se
     await assert.rejects(device.getPidOf('app_process', true), /capability probe/);
 });
 
-function uploadFixture(t, push) {
+const PARTIAL_UPLOAD = /^\/sdcard\/\.partial-[0-9a-f]{12}$/;
+
+// `device` stands in for the phone's shell: what the target name holds, and what a rename does.
+function uploadFixture(t, push, device = {}) {
     class UploadChannel extends EventEmitter {
         OPEN = 1;
         CLOSING = 2;
@@ -383,6 +386,7 @@ function uploadFixture(t, push) {
         readyState = 1;
         responses = [];
         closes = [];
+        reasons = [];
         addEventListener(name, listener) {
             this.on(name, listener);
         }
@@ -392,15 +396,31 @@ function uploadFixture(t, push) {
         send(data) {
             this.responses.push(Buffer.from(data));
         }
-        close(code = 1000) {
+        close(code = 1000, reason) {
             this.closes.push(code);
+            this.reasons.push(reason);
             this.readyState = this.CLOSED;
             this.emit('close');
         }
     }
     const client = new EventEmitter();
     client.push = push;
+    // Some tests build several fixtures. Mocking a mocked method again would restore to the
+    // earlier mock, not the original, and leak it into the tests that follow.
+    t.mock.reset();
     t.mock.method(AdbExtended, 'createClient', () => client);
+    Object.assign(device, { kind: 'missing', checks: [], moves: [], removed: [], ...device });
+    t.mock.method(AdbUtils, 'targetKind', async (_serial, target) => {
+        device.checks.push(target);
+        return device.kind;
+    });
+    t.mock.method(AdbUtils, 'move', async (_serial, from, to, replace) => {
+        device.moves.push({ from, to, replace });
+        if (device.move) await device.move();
+    });
+    t.mock.method(AdbUtils, 'remove', async (_serial, paths) => {
+        device.removed.push(...paths);
+    });
     const channel = new UploadChannel();
     const reader = new FilePushReader('upload-fixture', channel);
     const send = (state, fields = {}) =>
@@ -411,7 +431,7 @@ function uploadFixture(t, push) {
                 ...fields,
             }).toBuffer(),
         });
-    return { reader, channel, send };
+    return { reader, channel, send, device };
 }
 
 test('empty and regular uploads drain EOF and wait for adb completion before acknowledging FINISH', async (t) => {
@@ -420,9 +440,12 @@ test('empty and regular uploads drain EOF and wait for adb completion before ack
         transfer.cancel = () => assert.fail('Successful uploads must not be cancelled');
         let input;
         let ended = false;
+        let pushedTo;
         const received = [];
-        const { reader, channel, send } = uploadFixture(t, async (_serial, stream, destination) => {
-            assert.equal(destination, '/sdcard/upload.txt');
+        const { reader, channel, send, device } = uploadFixture(t, async (_serial, stream, destination) => {
+            // adbd unlinks whatever it is told to write, so the final name is never pushed to.
+            assert.match(destination, PARTIAL_UPLOAD);
+            pushedTo = destination;
             input = stream;
             stream.on('data', (chunk) => received.push(chunk));
             stream.on('end', () => {
@@ -443,21 +466,364 @@ test('empty and regular uploads drain EOF and wait for adb completion before ack
         await tick();
         assert.equal(ended, true, 'adb receives a real end event even for an empty file');
         assert.deepEqual(Buffer.concat(received), contents);
+        assert.deepEqual(device.moves, [], 'nothing is renamed before adb reports success');
+        const renamed = deferred();
+        device.move = () => renamed.promise;
         transfer.emit('end');
+        await tick();
+        assert.deepEqual(device.moves, [{ from: pushedTo, to: '/sdcard/upload.txt', replace: false }]);
+        assert.equal(channel.responses.length, responsesBeforeFinish, 'No success until the rename has finished');
+        renamed.resolve();
+        await tick();
         assert.equal(channel.responses.length, responsesBeforeFinish + 1);
         assert.equal(channel.responses.at(-1).readInt8(2), FilePushResponseStatus.NO_ERROR);
         assert.deepEqual(channel.closes, [1000]);
+        assert.deepEqual(device.removed, [], 'a renamed upload leaves nothing to clean up');
         assert.equal(reader.disposed, true);
         assert.equal(channel.listenerCount('message'), 0);
     }
+});
+
+test('an upload is refused before any bytes are sent when its name is taken', async (t) => {
+    const refused = [
+        // A client that sends no flag (an older page) must not replace anything.
+        { kind: 'item', fields: {}, reason: /An item with this name already exists/ },
+        { kind: 'item', fields: { overwrite: false }, reason: /An item with this name already exists/ },
+        // A folder is never replaced, whatever the client asks for.
+        { kind: 'folder', fields: { overwrite: true }, reason: /A folder with this name already exists/ },
+    ];
+    for (const { kind, fields, reason } of refused) {
+        const { reader, channel, send, device } = uploadFixture(
+            t,
+            () => assert.fail('A refused upload must not open an adb transfer'),
+            { kind },
+        );
+        await send(FilePushState.NEW);
+        const responses = channel.responses.length;
+        await send(FilePushState.START, { fileName: '/sdcard/notes.txt', fileSize: 3, ...fields });
+        assert.deepEqual(device.checks, ['/sdcard/notes.txt']);
+        assert.equal(channel.responses.length, responses, 'START is not acknowledged');
+        assert.deepEqual(channel.closes, [4000 - FilePushResponseStatus.ERROR_FILE_EXISTS]);
+        assert.match(channel.reasons[0], reason);
+        assert.equal(reader.disposed, true);
+        assert.deepEqual(device.moves, []);
+        assert.deepEqual(device.removed, [], 'nothing was written, so nothing is removed');
+    }
+});
+
+test('an upload replaces a file only when the client asks, and only by renaming a finished copy', async (t) => {
+    const transfer = new EventEmitter();
+    transfer.cancel = () => assert.fail('Successful uploads must not be cancelled');
+    let pushedTo;
+    const { channel, send, device } = uploadFixture(
+        t,
+        async (_serial, _stream, destination) => {
+            pushedTo = destination;
+            return transfer;
+        },
+        { kind: 'item' },
+    );
+    await send(FilePushState.NEW);
+    await send(FilePushState.START, { fileName: '/sdcard/notes.txt', fileSize: 3, overwrite: true });
+    assert.equal(channel.responses.at(-1).readInt8(2), FilePushResponseStatus.NO_ERROR);
+    await send(FilePushState.APPEND, { chunk: Buffer.from('new') });
+    await send(FilePushState.FINISH);
+    assert.match(pushedTo, PARTIAL_UPLOAD, 'the existing file is not touched while bytes arrive');
+    transfer.emit('end');
+    await tick();
+    assert.deepEqual(device.moves, [{ from: pushedTo, to: '/sdcard/notes.txt', replace: true }]);
+    assert.deepEqual(channel.closes, [1000]);
+});
+
+test('a name taken during the upload is kept, and the finished copy is removed', async (t) => {
+    const transfer = new EventEmitter();
+    transfer.cancel = () => assert.fail('The transfer had already finished');
+    let pushedTo;
+    const { reader, channel, send, device } = uploadFixture(
+        t,
+        async (_serial, _stream, destination) => {
+            pushedTo = destination;
+            return transfer;
+        },
+        {
+            move: async () => {
+                throw Error('An item with this name already exists.');
+            },
+        },
+    );
+    await send(FilePushState.NEW);
+    await send(FilePushState.START, { fileName: '/sdcard/notes.txt', fileSize: 3 });
+    await send(FilePushState.APPEND, { chunk: Buffer.from('new') });
+    await send(FilePushState.FINISH);
+    const responses = channel.responses.length;
+    transfer.emit('end');
+    await tick();
+    assert.equal(channel.responses.length, responses, 'no success is reported');
+    assert.deepEqual(channel.closes, [4000 - FilePushResponseStatus.ERROR_FILE_EXISTS]);
+    assert.match(channel.reasons[0], /already exists/);
+    assert.deepEqual(device.removed, [pushedTo]);
+    assert.equal(reader.disposed, true);
+});
+
+test('an upload name must be a plain absolute device path before it reaches the shell', async (t) => {
+    for (const fileName of ['notes.txt', '/sdcard/a\nb.txt', '/']) {
+        const { channel, send, device } = uploadFixture(t, () => assert.fail('No transfer for a rejected name'));
+        await send(FilePushState.NEW);
+        await send(FilePushState.START, { fileName, fileSize: 3, overwrite: true });
+        assert.deepEqual(channel.closes, [4000 - FilePushResponseStatus.ERROR_INVALID_NAME]);
+        assert.deepEqual(device.checks, [], 'the name never reaches the device');
+    }
+});
+
+test('the upload START message carries the replace choice only when one is stated', () => {
+    const start = (fields) =>
+        CommandControlMessage.createPushFileCommand({
+            id: 7,
+            state: FilePushState.START,
+            fileName: '/sdcard/notes.txt',
+            fileSize: 3,
+            ...fields,
+        }).toBuffer();
+    const plain = start({});
+    assert.equal(plain.length, 1 + 2 + 1 + 4 + 2 + '/sdcard/notes.txt'.length, 'the original layout is unchanged');
+    assert.equal(CommandControlMessage.pushFileCommandFromBuffer(plain).overwrite, false);
+    for (const overwrite of [true, false]) {
+        const buffer = start({ overwrite });
+        assert.equal(buffer.length, plain.length + 1);
+        const parsed = CommandControlMessage.pushFileCommandFromBuffer(buffer);
+        assert.equal(parsed.overwrite, overwrite);
+        assert.equal(parsed.fileName, '/sdcard/notes.txt');
+        assert.equal(parsed.fileSize, 3);
+    }
+});
+
+// Runs the generated command with the local /bin/sh in place of `adb shell`.
+function localShell(t) {
+    t.mock.method(AdbUtils, 'shellExec', async (_serial, command) => {
+        const result = childProcess.spawnSync('/bin/sh', ['-c', `{ ${command}\n} 2>&1`], { encoding: 'utf8' });
+        return { code: result.status, output: result.stdout.trim() };
+    });
+    const directory = fs.mkdtempSync(path.join(temporary, 'replace-'));
+    const file = (name, contents) => {
+        const target = path.join(directory, name);
+        if (contents !== undefined) fs.writeFileSync(target, contents);
+        return target;
+    };
+    return { directory, file };
+}
+
+test('the device reports whether a name is free, an item or a folder', async (t) => {
+    const { directory, file } = localShell(t);
+    fs.mkdirSync(file('folder'));
+    fs.symlinkSync('missing', file('dangling'));
+    fs.symlinkSync(file('folder'), file('link-to-folder'));
+    assert.equal(await AdbUtils.targetKind('fake', file('free')), 'missing');
+    assert.equal(await AdbUtils.targetKind('fake', file("it's here.txt", 'x')), 'item');
+    assert.equal(await AdbUtils.targetKind('fake', file('folder')), 'folder');
+    assert.equal(await AdbUtils.targetKind('fake', file('dangling')), 'item');
+    assert.equal(await AdbUtils.targetKind('fake', file('link-to-folder')), 'item');
+    assert.equal(path.dirname(AdbUtils.partialPath(file('free'))), directory, 'a partial file sits beside its target');
+});
+
+test('a replacing move or copy swaps in a whole file and never touches a folder', async (t) => {
+    const { directory, file } = localShell(t);
+    const leftovers = () => fs.readdirSync(directory).filter((name) => name.startsWith('.partial-'));
+
+    // Move: the rename replaces the old file and the source is gone.
+    await AdbUtils.move('fake', file('move-source', 'new'), file('move-target', 'old'), true);
+    assert.equal(fs.readFileSync(file('move-target'), 'utf8'), 'new');
+    assert.equal(fs.existsSync(file('move-source')), false);
+    // The same call lands on a free name too, which is how a replacing upload ends when the
+    // old file was deleted meanwhile.
+    await AdbUtils.move('fake', file('move-again', 'new'), file('move-free'), true);
+    assert.equal(fs.readFileSync(file('move-free'), 'utf8'), 'new');
+
+    // Copy: the source stays, and no partial file is left beside the target.
+    await AdbUtils.copy('fake', file('copy-source', 'new'), file('copy-target', 'old'), true);
+    assert.equal(fs.readFileSync(file('copy-target'), 'utf8'), 'new');
+    assert.equal(fs.readFileSync(file('copy-source'), 'utf8'), 'new');
+    assert.deepEqual(leftovers(), []);
+
+    for (const method of ['move', 'copy']) {
+        // A folder is not replaced, and it does not swallow the source either.
+        fs.mkdirSync(file(`${method}-folder`));
+        await assert.rejects(
+            AdbUtils[method]('fake', file(`${method}-file`, 'new'), file(`${method}-folder`), true),
+            /Folders are not replaced/,
+        );
+        assert.deepEqual(fs.readdirSync(file(`${method}-folder`)), []);
+        assert.equal(fs.readFileSync(file(`${method}-file`), 'utf8'), 'new');
+
+        // A folder does not replace a file.
+        fs.mkdirSync(file(`${method}-source-folder`));
+        await assert.rejects(
+            AdbUtils[method]('fake', file(`${method}-source-folder`), file(`${method}-kept`, 'old'), true),
+            /A folder cannot replace a file/,
+        );
+        assert.equal(fs.readFileSync(file(`${method}-kept`), 'utf8'), 'old');
+        assert.equal(fs.statSync(file(`${method}-source-folder`)).isDirectory(), true);
+
+        // A source that is not there leaves the old file alone.
+        await assert.rejects(AdbUtils[method]('fake', file(`${method}-absent`), file(`${method}-kept`), true));
+        assert.equal(fs.readFileSync(file(`${method}-kept`), 'utf8'), 'old');
+        assert.deepEqual(leftovers(), []);
+    }
+});
+
+test('the Files channel replaces on move and copy only when the request says so', async (t) => {
+    const calls = [];
+    for (const method of ['move', 'copy']) {
+        t.mock.method(AdbUtils, method, async (_serial, from, to, replace) => {
+            calls.push({ method, from, to, replace });
+        });
+    }
+    const request = (command, from, to, replace) => {
+        const field = (value) => {
+            const length = Buffer.alloc(4);
+            length.writeUInt32LE(Buffer.byteLength(value));
+            return Buffer.concat([length, Buffer.from(value)]);
+        };
+        const payload = Buffer.concat([Buffer.from(command), field(from), field(to), Buffer.from(replace)]);
+        const channel = { OPEN: 1, readyState: 1, send() {}, close() {} };
+        FileListing.handleNewChannel('fake', channel, payload);
+    };
+    request('MOVE', '/sdcard/a.txt', '/sdcard/b.txt', []);
+    request('COPY', '/sdcard/a.txt', '/sdcard/b.txt', [0]);
+    request('MOVE', '/sdcard/a.txt', '/sdcard/b.txt', [1]);
+    request('COPY', '/sdcard/a.txt', '/sdcard/b.txt', [1]);
+    await tick();
+    assert.deepEqual(
+        calls.map(({ method, replace }) => [method, replace]),
+        [
+            ['move', false],
+            ['copy', false],
+            ['move', true],
+            ['copy', true],
+        ],
+    );
+});
+
+test('name conflicts are put to the owner, and nothing is replaced without that answer', async () => {
+    const { freeName, resolveNameConflicts } = require('../src/app/googDevice/filePush/nameConflicts');
+    assert.equal(freeName('notes.txt', new Set(['notes.txt'])), 'notes (1).txt');
+    assert.equal(freeName('notes.txt', new Set(['notes.txt', 'notes (1).txt'])), 'notes (2).txt');
+    assert.equal(freeName('backup.tar.gz', new Set()), 'backup (1).tar.gz');
+    assert.equal(freeName('.bashrc', new Set()), '.bashrc (1)');
+    assert.equal(freeName('README', new Set()), 'README (1)');
+    assert.equal(freeName('photos.2026', new Set(), true), 'photos.2026 (1)');
+
+    const existing = new Map([
+        ['notes.txt', { isFolder: false }],
+        ['notes (1).txt', { isFolder: false }],
+        ['photo.png', { isFolder: false }],
+        ['archive', { isFolder: true }],
+    ]);
+    const asked = [];
+    const answers = (list) => async (name, _item, canReplace, remaining) => {
+        asked.push({ name, canReplace, remaining });
+        return list.shift();
+    };
+
+    // A free name needs no question.
+    assert.deepEqual(
+        await resolveNameConflicts(['new.txt'], existing, true, () => assert.fail('no conflict to ask about')),
+        [{ name: 'new.txt', target: 'new.txt', replace: false }],
+    );
+
+    // Each answer applies to its own item; "keep" avoids every name in the folder and the batch.
+    assert.deepEqual(
+        await resolveNameConflicts(
+            ['notes.txt', 'new.txt', 'photo.png', 'archive', 'notes (2).txt'],
+            existing,
+            true,
+            answers([
+                { choice: 'keep', all: false },
+                { choice: 'replace', all: false },
+                { choice: 'skip', all: false },
+            ]),
+        ),
+        [
+            { name: 'notes.txt', target: 'notes (3).txt', replace: false },
+            { name: 'new.txt', target: 'new.txt', replace: false },
+            { name: 'photo.png', target: 'photo.png', replace: true },
+            { name: 'notes (2).txt', target: 'notes (2).txt', replace: false },
+        ],
+    );
+    assert.deepEqual(asked, [
+        { name: 'notes.txt', canReplace: true, remaining: 2 },
+        { name: 'photo.png', canReplace: true, remaining: 1 },
+        { name: 'archive', canReplace: false, remaining: 0 },
+    ]);
+
+    // "Replace" for all still stops at a folder, and a forced "replace" there replaces nothing.
+    asked.length = 0;
+    assert.deepEqual(
+        await resolveNameConflicts(
+            ['notes.txt', 'archive', 'photo.png'],
+            existing,
+            true,
+            answers([
+                { choice: 'replace', all: true },
+                { choice: 'replace', all: false },
+            ]),
+        ),
+        [
+            { name: 'notes.txt', target: 'notes.txt', replace: true },
+            { name: 'photo.png', target: 'photo.png', replace: true },
+        ],
+    );
+    assert.deepEqual(
+        asked.map(({ name }) => name),
+        ['notes.txt', 'archive'],
+    );
+
+    // Where replacing is not on offer (a copy pasted into its own folder), it never happens.
+    assert.deepEqual(
+        await resolveNameConflicts(['notes.txt'], existing, false, async (_name, _item, canReplace) => {
+            assert.equal(canReplace, false);
+            return { choice: 'replace', all: false };
+        }),
+        [],
+    );
+
+    // An answer that no longer applies drops the whole batch, including the free names.
+    assert.deepEqual(await resolveNameConflicts(['new.txt', 'notes.txt'], existing, true, async () => undefined), []);
+
+    // The kind of the incoming item decides: a folder never replaces a file and keeps its whole
+    // name, and a file keeps its extension even where a folder holds the name.
+    asked.length = 0;
+    assert.deepEqual(
+        await resolveNameConflicts(
+            ['photo.png', 'archive', 'bundle.zip'],
+            new Map([...existing, ['bundle.zip', { isFolder: true }]]),
+            true,
+            answers([
+                { choice: 'replace', all: false },
+                { choice: 'keep', all: false },
+                { choice: 'keep', all: false },
+            ]),
+            (name) => name === 'photo.png' || name === 'archive',
+        ),
+        [
+            { name: 'archive', target: 'archive (1)', replace: false },
+            { name: 'bundle.zip', target: 'bundle (1).zip', replace: false },
+        ],
+    );
+    assert.deepEqual(asked, [
+        { name: 'photo.png', canReplace: false, remaining: 2 },
+        { name: 'archive', canReplace: false, remaining: 1 },
+        { name: 'bundle.zip', canReplace: false, remaining: 0 },
+    ]);
 });
 
 test('leaving or cancelling while upload setup is pending cancels the late adb transfer without reviving it', async (t) => {
     for (const cancel of [false, true]) {
         const pending = deferred();
         let input;
-        const { reader, channel, send } = uploadFixture(t, (_serial, stream) => {
+        let pushedTo;
+        const { reader, channel, send, device } = uploadFixture(t, (_serial, stream, destination) => {
             input = stream;
+            pushedTo = destination;
             return pending.promise;
         });
         await send(FilePushState.NEW);
@@ -484,6 +850,8 @@ test('leaving or cancelling while upload setup is pending cancels the late adb t
         transfer.emit('error', Error('late cancelled transfer error'));
         assert.equal(channel.responses.length, responseCount);
         assert.equal(channel.closes.length, 1);
+        assert.deepEqual(device.moves, [], 'an abandoned upload is never renamed into place');
+        assert.equal(device.removed.at(-1), pushedTo, 'the partial file is removed after the late transfer too');
     }
 });
 
@@ -494,7 +862,11 @@ test('closing an active upload cancels its adb transfer and ignores late events'
         cancels++;
         transfer.emit('cancel');
     };
-    const { reader, channel, send } = uploadFixture(t, async () => transfer);
+    let pushedTo;
+    const { reader, channel, send, device } = uploadFixture(t, async (_serial, _stream, destination) => {
+        pushedTo = destination;
+        return transfer;
+    });
     await send(FilePushState.NEW);
     await send(FilePushState.START, { fileName: '/sdcard/upload.txt', fileSize: 3 });
     await send(FilePushState.APPEND, { chunk: Buffer.from('abc') });
@@ -504,8 +876,13 @@ test('closing an active upload cancels its adb transfer and ignores late events'
     assert.equal(reader.pushTransfer, undefined);
     transfer.emit('end');
     transfer.emit('error', Error('cancelled transfer'));
+    await tick();
     assert.equal(channel.responses.length, responseCount);
     assert.equal(channel.closes.length, 1);
+    // The existing file was never the push target, so an interrupted upload cannot lose it.
+    assert.match(pushedTo, PARTIAL_UPLOAD);
+    assert.deepEqual(device.moves, []);
+    assert.deepEqual(device.removed, [pushedTo]);
 });
 
 test('stream config rejects invalid values before changing stored settings', () => {

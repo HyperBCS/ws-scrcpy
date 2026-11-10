@@ -16,8 +16,9 @@ import { html } from '../../ui/HtmlTag';
 import * as path from 'path';
 import { ChannelCode } from '../../../common/ChannelCode';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
-import FilePushHandler, { DragAndPushListener, PushUpdateParams } from '../filePush/FilePushHandler';
+import FilePushHandler, { DragAndPushListener, PlannedUpload, PushUpdateParams } from '../filePush/FilePushHandler';
 import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
+import { ConflictAnswer, ConflictChoice, Resolution, resolveNameConflicts } from '../filePush/nameConflicts';
 import { fileListingTool } from './deviceTools';
 import { pushRoute } from '../../state/router';
 import { formatMode, formatModified, formatSize, iconMarkup, kindOf, typeLabel } from './fileTypes';
@@ -51,7 +52,8 @@ type Command =
     | 'refresh'
     | 'select-all';
 
-type Clipboard = { mode: 'cut' | 'copy'; dir: string; names: string[] };
+/** `folders` lists which of `names` are folders. */
+type Clipboard = { mode: 'cut' | 'copy'; dir: string; names: string[]; folders: string[] };
 
 type Preferences = {
     view: ViewMode;
@@ -154,7 +156,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     private filePushHandler?: FilePushHandler;
     private readonly requests = new Map<Multiplexer, Request>();
-    private readonly uploads = new Map<string, HTMLElement>();
+    /** Progress rows by upload key: two uploads may carry the same file name. */
+    private readonly uploads = new Map<number, HTMLElement>();
+    /** Failures in the current batch of uploads, shown together when the last one ends. */
+    private uploadErrors: string[] = [];
+    /** True while the owner is answering name conflicts; nothing else may start meanwhile. */
+    private resolving = false;
     private readonly fileDownloads = new FileDownloads((destination) => {
         const direct = this.buildDirectWebSocketUrl();
         const endpoint = new URL('api/files/download', new URL('.', location.href));
@@ -466,7 +473,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         this.openNewConnection();
         if (this.ws instanceof Multiplexer) {
-            this.filePushHandler = new FilePushHandler(this.wrapper, new AdbkitFilePushStream(this.ws, this));
+            this.filePushHandler = new FilePushHandler(
+                this.wrapper,
+                new AdbkitFilePushStream(this.ws, this),
+                this.planUploads,
+            );
             this.filePushHandler.addEventListener(this);
         }
     }
@@ -697,7 +708,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private canModify(): boolean {
-        return !this.stopped && this.hasConnection() && !this.loading && !this.uploads.size && !this.operations;
+        return (
+            !this.stopped &&
+            this.hasConnection() &&
+            !this.loading &&
+            !this.uploads.size &&
+            !this.operations &&
+            !this.resolving
+        );
     }
 
     private updateControls(): void {
@@ -1382,17 +1400,19 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             }
             case 'cut':
             case 'copy': {
-                const names = this.selectedEntries().map((entry) => entry.name);
+                const selected = this.selectedEntries();
+                const names = selected.map((entry) => entry.name);
                 if (!names.length) {
                     return;
                 }
-                this.clipboard = { mode: command as Clipboard['mode'], dir: this.path, names };
+                const folders = selected.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+                this.clipboard = { mode: command as Clipboard['mode'], dir: this.path, names, folders };
                 this.report(`${names.length} item${names.length === 1 ? '' : 's'} ready to paste.`);
                 this.paintSelection();
                 return;
             }
             case 'paste':
-                this.paste();
+                void this.paste();
                 return;
             case 'new-folder':
                 void this.createFolder();
@@ -1518,7 +1538,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.mutate(payload, `Deleting ${label}…`, `Deleted ${label}.`);
     }
 
-    private paste(): void {
+    private async paste(): Promise<void> {
         const clipboard = this.clipboard;
         if (!clipboard?.names.length) {
             return;
@@ -1527,10 +1547,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             this.report('These items are already in this folder.');
             return;
         }
-        const existing = new Set(this.entries.map((entry) => entry.name));
-        const collision = clipboard.names.find((name) => existing.has(name));
-        if (collision) {
-            this.report(`“${collision}” already exists in this folder. Rename it first.`, true);
+        // A copy made in its own folder has nothing to replace: the source is the existing item.
+        const items = await this.resolveNames(clipboard.names, clipboard.dir !== this.path, clipboard.folders);
+        if (!items.length) {
             return;
         }
         // One channel per item keeps each failure reportable on its own, and `mutate` reloads once
@@ -1538,17 +1557,88 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const command = clipboard.mode === 'cut' ? FileCommand.MOVE : FileCommand.COPY;
         const verb = clipboard.mode === 'cut' ? 'Moving' : 'Copying';
         const done = clipboard.mode === 'cut' ? 'Moved' : 'Copied';
-        clipboard.names.forEach((name) => {
+        items.forEach(({ name, target, replace }) => {
             this.mutate(
-                this.pairCommand(command, path.join(clipboard.dir, name), path.join(this.path, name)),
+                this.pairCommand(command, path.join(clipboard.dir, name), path.join(this.path, target), replace),
                 `${verb} ${name}…`,
-                `${done} ${name}.`,
+                target === name ? `${done} ${name}.` : `${done} ${name} as ${target}.`,
             );
         });
         if (clipboard.mode === 'cut') {
             this.clipboard = undefined;
         }
     }
+
+    /**
+     * Upload and Paste both come through here, so a name that is already in this folder is
+     * handled the same way for each. Returns nothing when every item was skipped, or when the
+     * explorer closed or changed folder while a question was open.
+     */
+    private async resolveNames(names: string[], replaceable: boolean, folders: string[] = []): Promise<Resolution[]> {
+        if (!names.length) {
+            return [];
+        }
+        const folder = this.path;
+        const incomingFolders = new Set(folders);
+        const existing = new Map(this.entries.map((entry) => [entry.name, { isFolder: entry.isDirectory() }]));
+        this.resolving = true;
+        this.updateControls();
+        try {
+            const resolved = await resolveNameConflicts(
+                names,
+                existing,
+                replaceable,
+                async (name, item, canReplace, remaining) => {
+                    const answer = await this.askConflict(name, item.isFolder, canReplace, remaining);
+                    return this.stopped || this.path !== folder ? undefined : answer;
+                },
+                (name) => incomingFolders.has(name),
+            );
+            if (!resolved.length && !this.stopped && this.path === folder) {
+                this.report(names.length === 1 ? `Skipped ${names[0]}.` : `Skipped ${names.length} items.`);
+            }
+            return resolved;
+        } finally {
+            this.resolving = false;
+            this.updateControls();
+        }
+    }
+
+    private planUploads = async (files: File[]): Promise<PlannedUpload[]> => {
+        // The answers are about this folder's listing, so the files go to this folder even if
+        // the explorer has moved on by the time they start.
+        const folder = this.path;
+        const chosen = new Map<string, File>();
+        const repeated = new Set<string>();
+        files.forEach((file) => {
+            if (chosen.has(file.name)) {
+                repeated.add(file.name);
+            } else {
+                chosen.set(file.name, file);
+            }
+        });
+        const plan = (await this.resolveNames([...chosen.keys()], true)).map(({ name, target, replace }) => ({
+            file: chosen.get(name) as File,
+            folder,
+            name: target,
+            overwrite: replace,
+        }));
+        if (repeated.size) {
+            // Two files with one name cannot both land in this folder.
+            const [first] = repeated;
+            const message =
+                repeated.size === 1
+                    ? `“${first}” was added more than once. Only the first one is uploaded.`
+                    : `${repeated.size} names were added more than once. Only the first file of each is uploaded.`;
+            if (plan.length) {
+                // The uploads that follow refresh the folder; show this once that has settled.
+                this.operationError = message;
+            } else {
+                this.report(message, true);
+            }
+        }
+        return plan;
+    };
 
     private checkName(name: string): string {
         if (name.includes('/')) {
@@ -1653,6 +1743,51 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }).then((result) => result === 'confirm');
     }
 
+    /**
+     * Asks what to do with one name that is already in this folder. Closing the dialog skips the
+     * item, and the keyboard starts on "Keep both", so nothing is replaced by accident.
+     */
+    private askConflict(
+        name: string,
+        folder: boolean,
+        canReplace: boolean,
+        remaining: number,
+    ): Promise<ConflictAnswer> {
+        const title = canReplace ? `Replace “${name}”?` : `“${name}” already exists`;
+        const message = canReplace
+            ? 'This folder already has a file with this name. Replacing it cannot be undone.'
+            : folder
+              ? 'This folder already has a folder with this name. Folders are not replaced.'
+              : 'This folder already has an item with this name.';
+        const others = remaining === 1 ? 'the other conflict' : `the other ${remaining} conflicts`;
+        this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form fx-conflict">
+            <h2>${esc(title)}</h2>
+            <p class="fx-dialog-message">${esc(message)}</p>
+            ${
+                remaining > 0
+                    ? `<label class="fx-dialog-check"><input type="checkbox" name="all" /><span>Do the same for ${others}</span></label>`
+                    : ''
+            }
+            <div class="fx-dialog-actions">
+                <button type="submit" class="fx-button" value="skip">Skip</button>
+                <button type="submit" class="fx-button" value="keep">Keep both</button>
+                ${
+                    canReplace
+                        ? '<button type="submit" class="fx-button fx-danger-solid" value="replace">Replace</button>'
+                        : ''
+                }
+            </div>
+        </form>`;
+        const all = this.dialog.querySelector<HTMLInputElement>('input[name="all"]');
+        return this.showDialog(() => this.dialog.querySelector<HTMLButtonElement>('[value="keep"]')?.focus()).then(
+            (result) => ({
+                choice: (result === 'replace' || result === 'keep' ? result : 'skip') as ConflictChoice,
+                // Closing the dialog answers for this one item only.
+                all: !!all?.checked && result !== '',
+            }),
+        );
+    }
+
     private presentDialog(): void {
         transitionVisibility(this.dialog, true);
         this.dialog.showModal();
@@ -1703,15 +1838,19 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         return payload;
     }
 
-    private pairCommand(command: FileCommand, from: string, to: string): Buffer {
+    /** `replace` adds a trailing 1: without it the device refuses a destination that exists. */
+    private pairCommand(command: FileCommand, from: string, to: string, replace = false): Buffer {
         const fromLength = Buffer.byteLength(from, 'utf-8');
         const toLength = Buffer.byteLength(to, 'utf-8');
-        const payload = Buffer.alloc(12 + fromLength + toLength);
+        const payload = Buffer.alloc(12 + fromLength + toLength + (replace ? 1 : 0));
         payload.write(command, 0, 'ascii');
         payload.writeUInt32LE(fromLength, 4);
         payload.write(from, 8, 'utf-8');
         payload.writeUInt32LE(toLength, 8 + fromLength);
         payload.write(to, 12 + fromLength, 'utf-8');
+        if (replace) {
+            payload.writeUInt8(1, 12 + fromLength + toLength);
+        }
         return payload;
     }
 
@@ -2075,25 +2214,39 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (this.stopped) {
             return;
         }
-        let row = this.uploads.get(data.fileName);
+        let row = this.uploads.get(data.key);
         if (!row) {
             row = document.createElement('div');
             row.className = 'file-listing-upload-progress';
             this.transfers.appendChild(row);
             this.transfers.hidden = false;
-            this.uploads.set(data.fileName, row);
+            this.uploads.set(data.key, row);
         }
         row.textContent = `${data.fileName} · ${data.message}`;
         row.classList.toggle('error', data.error);
         if (data.finished) {
             row.remove();
-            this.uploads.delete(data.fileName);
+            this.uploads.delete(data.key);
             this.transfers.hidden = !this.transfers.childElementCount;
-            this.report(data.error ? `${data.fileName}: ${data.message}` : `Uploaded ${data.fileName}.`, data.error);
+            const outcome = data.error ? `${data.fileName}: ${data.message}` : `Uploaded ${data.fileName}.`;
+            if (data.error) {
+                this.uploadErrors.push(outcome);
+            }
+            this.report(outcome, data.error);
             if (!this.uploads.size) {
+                // A later success must not hide an earlier failure, so the failures are shown
+                // again once the folder is listed. The folder is listed even after a failure: a
+                // refused name means the listing was out of date, and a second try must see it.
+                const failures = this.uploadErrors;
+                this.uploadErrors = [];
+                if (failures.length) {
+                    const summary =
+                        failures.length === 1 ? failures[0] : `${failures.length} uploads failed. ${failures[0]}`;
+                    this.operationError = this.operationError ? `${this.operationError} ${summary}` : summary;
+                }
                 if (this.pendingPath) {
                     this.load(this.pendingPath);
-                } else if (!data.error) {
+                } else {
                     this.reload();
                 }
             }

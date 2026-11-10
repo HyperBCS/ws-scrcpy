@@ -1,4 +1,3 @@
-import * as path from 'path';
 import { Mw } from '../../mw/Mw';
 import { AdbUtils } from '../AdbUtils';
 import Util from '../../../app/Util';
@@ -66,18 +65,7 @@ export class FileListing extends Mw {
      * `AdbUtils.shellExec` appends, and a rejected command is far better than a misread one.
      */
     private static checkPath(pathString: string): string {
-        if (!pathString.startsWith('/')) {
-            throw Error('Only absolute device paths are allowed.');
-        }
-        // eslint-disable-next-line no-control-regex
-        if (/[\x00-\x1f\x7f]/.test(pathString)) {
-            throw Error('This name contains characters that cannot be used on the device.');
-        }
-        const normalized = path.posix.normalize(pathString).replace(/\/+$/, '') || '/';
-        if (normalized === '/') {
-            throw Error('The device root cannot be changed.');
-        }
-        return normalized;
+        return AdbUtils.checkDevicePath(pathString);
     }
 
     private static handleNewChannel(serial: string, channel: Multiplexer, arrayBuffer: ArrayBuffer): void {
@@ -112,10 +100,12 @@ export class FileListing extends Mw {
                     const to = FileListing.readString(data, from.offset);
                     const source = FileListing.checkPath(from.value);
                     const target = FileListing.checkPath(to.value);
+                    // An optional trailing byte: 1 lets the operation replace an existing file.
+                    const replace = data.length > to.offset && data.readUInt8(to.offset) === 1;
                     FileListing.complete(
                         cmd === FileCommand.MOVE
-                            ? AdbUtils.move(serial, source, target)
-                            : AdbUtils.copy(serial, source, target),
+                            ? AdbUtils.move(serial, source, target, replace)
+                            : AdbUtils.copy(serial, source, target, replace),
                         channel,
                     );
                     break;

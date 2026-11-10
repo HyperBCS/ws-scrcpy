@@ -23,6 +23,8 @@ type FilePushParams = {
     chunk?: Uint8Array;
     fileName?: string;
     fileSize?: number;
+    /** START only. Left out, the server refuses a name that already exists. */
+    overwrite?: boolean;
 };
 
 export class CommandControlMessage extends ControlMessage {
@@ -103,10 +105,10 @@ export class CommandControlMessage extends ControlMessage {
     }
 
     public static createPushFileCommand(params: FilePushParams): CommandControlMessage {
-        const { id, fileName, fileSize, chunk, state } = params;
+        const { id, fileName, fileSize, chunk, state, overwrite } = params;
 
         if (state === FilePushState.START) {
-            return this.createPushFileStartCommand(id, fileName as string, fileSize as number);
+            return this.createPushFileStartCommand(id, fileName as string, fileSize as number, overwrite);
         }
         if (state === FilePushState.APPEND) {
             if (!chunk) {
@@ -121,7 +123,17 @@ export class CommandControlMessage extends ControlMessage {
         throw TypeError(`Unsupported state: "${state}"`);
     }
 
-    private static createPushFileStartCommand(id: number, fileName: string, fileSize: number): CommandControlMessage {
+    /**
+     * Wire format: type(1) id(2) state(1) size(u32) nameLength(u16) name [overwrite(1)].
+     * The trailing byte is sent only when the caller states a choice, so the scrcpy variant of
+     * this message keeps its original length.
+     */
+    private static createPushFileStartCommand(
+        id: number,
+        fileName: string,
+        fileSize: number,
+        overwrite?: boolean,
+    ): CommandControlMessage {
         const event = new CommandControlMessage(ControlMessage.TYPE_PUSH_FILE);
         const text = Util.stringToUtf8ByteArray(fileName);
         const typeField = 1;
@@ -130,10 +142,11 @@ export class CommandControlMessage extends ControlMessage {
         const sizeField = 4;
         const textLengthField = 2;
         const textLength = text.length;
+        const overwriteField = overwrite === undefined ? 0 : 1;
         let offset = CommandControlMessage.PAYLOAD_LENGTH;
 
         const buffer = Buffer.alloc(
-            offset + typeField + idField + stateField + sizeField + textLengthField + textLength,
+            offset + typeField + idField + stateField + sizeField + textLengthField + textLength + overwriteField,
         );
         buffer.writeUInt8(event.type, offset);
         offset += typeField;
@@ -148,6 +161,9 @@ export class CommandControlMessage extends ControlMessage {
         text.forEach((byte, index) => {
             buffer.writeUInt8(byte, index + offset);
         });
+        if (overwriteField) {
+            buffer.writeUInt8(overwrite ? 1 : 0, offset + textLength);
+        }
         event.buffer = buffer;
         return event;
     }
@@ -199,6 +215,7 @@ export class CommandControlMessage extends ControlMessage {
         chunk?: Buffer;
         fileSize?: number;
         fileName?: string;
+        overwrite?: boolean;
     } {
         let offset = 0;
         const type = buffer.readUInt8(offset);
@@ -213,6 +230,7 @@ export class CommandControlMessage extends ControlMessage {
         let chunk: Buffer | undefined;
         let fileSize: number | undefined;
         let fileName: string | undefined;
+        let overwrite: boolean | undefined;
         if (state === FilePushState.APPEND) {
             const chunkLength = buffer.readUInt32BE(offset);
             offset += 4;
@@ -223,8 +241,10 @@ export class CommandControlMessage extends ControlMessage {
             const textLength = buffer.readUInt16BE(offset);
             offset += 2;
             fileName = Util.utf8ByteArrayToString(buffer.slice(offset, offset + textLength));
+            offset += textLength;
+            overwrite = buffer.length > offset && buffer.readUInt8(offset) === 1;
         }
-        return { id, state, chunk, fileName, fileSize };
+        return { id, state, chunk, fileName, fileSize, overwrite };
     }
 
     private buffer?: Buffer;

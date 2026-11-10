@@ -5,6 +5,11 @@ import { FilePushResponseStatus } from './FilePushResponseStatus';
 type Resolve = (response: PushResponse) => void;
 
 export type PushUpdateParams = {
+    /**
+     * Stays the same for one upload from its first update to its last. The push id does not
+     * (it is 0 until the server allocates one), and two uploads may share a file name.
+     */
+    key: number;
     pushId: number;
     fileName: string;
     message: string;
@@ -12,6 +17,19 @@ export type PushUpdateParams = {
     error: boolean;
     finished: boolean;
 };
+
+/**
+ * One file to send: the name it gets on the device and whether it may replace that name.
+ * `folder` is the folder whose listing the name was checked against. Left out, the file goes to
+ * the folder that is open when the upload starts.
+ */
+export type PlannedUpload = { file: File; name: string; overwrite: boolean; folder?: string };
+
+/**
+ * Decides what happens to each chosen file before anything is sent: a name that is already
+ * taken is replaced, renamed or left out. Files missing from the result are not uploaded.
+ */
+export type UploadPlanner = (files: File[]) => Promise<PlannedUpload[]>;
 
 export interface DragAndPushListener {
     onDragEnter: () => boolean;
@@ -28,13 +46,17 @@ export default class FilePushHandler implements DragEventListener {
 
     private responseWaiter: Map<number, Resolve | Resolve[]> = new Map();
     private listeners: Set<DragAndPushListener> = new Set();
-    private pushIdFileNameMap: Map<number, string> = new Map();
+    private pushIdFileNameMap: Map<number, { key: number; fileName: string }> = new Map();
+    private nextKey = 1;
+    /** Uploads that already reported their outcome. A closed channel reports once more. */
+    private settled = new Set<number>();
     private released = false;
     private readers = new Set<ReadableStreamDefaultReader<Uint8Array>>();
 
     constructor(
         private readonly element: HTMLElement,
         private readonly filePushStream: FilePushStream,
+        private readonly planUploads?: UploadPlanner,
     ) {
         DragAndDropHandler.addEventListener(this);
         filePushStream.on('response', this.onStreamResponse);
@@ -46,14 +68,26 @@ export default class FilePushHandler implements DragEventListener {
         if (params.error) {
             this.pushIdFileNameMap.delete(params.pushId);
         }
+        // The server explains a refusal in the close reason. The generic code that the same
+        // close then hands to the waiting step must not replace that explanation.
+        if (this.settled.has(params.key)) return;
+        if (params.finished) this.settled.add(params.key);
         this.listeners.forEach((listener) => {
             listener.onFilePushUpdate(params);
         });
     }
 
-    private logError(pushId: number, fileName: string, code: number): void {
+    private logError(key: number, pushId: number, fileName: string, code: number): void {
         const msg = RESPONSE_CODES.get(code) || `Unknown error (${code})`;
-        this.sendUpdate({ pushId, fileName, message: `error: "${msg}"`, progress: -1, error: true, finished: true });
+        this.sendUpdate({
+            key,
+            pushId,
+            fileName,
+            message: `error: "${msg}"`,
+            progress: -1,
+            error: true,
+            finished: true,
+        });
     }
 
     private static async getStreamReader(file: File): Promise<{
@@ -65,10 +99,10 @@ export default class FilePushHandler implements DragEventListener {
         return { reader, result };
     }
 
-    private async pushFile(file: File): Promise<void> {
+    private async pushFile(key: number, { file, name: fileName, overwrite, folder }: PlannedUpload): Promise<void> {
         if (this.released) return;
         const start = Date.now();
-        const { name: fileName, size: fileSize } = file;
+        const fileSize = file.size;
         if (!this.filePushStream.hasConnection()) {
             this.listeners.forEach((listener) => {
                 listener.onError('WebSocket is not ready');
@@ -76,18 +110,26 @@ export default class FilePushHandler implements DragEventListener {
             return;
         }
         const id = FilePushHandler.REQUEST_NEW_PUSH_ID;
-        this.sendUpdate({ pushId: id, fileName, message: 'begins...', progress: 0, error: false, finished: false });
+        this.sendUpdate({
+            key,
+            pushId: id,
+            fileName,
+            message: 'begins...',
+            progress: 0,
+            error: false,
+            finished: false,
+        });
         const allocation = this.waitForResponse(id);
         this.filePushStream.sendEventNew({ id });
         const { code: pushId } = await allocation;
         if (this.released) return;
         if (pushId <= 0) {
-            return this.logError(pushId, fileName, pushId);
+            return this.logError(key, pushId, fileName, pushId);
         }
 
-        this.pushIdFileNameMap.set(pushId, fileName);
+        this.pushIdFileNameMap.set(pushId, { key, fileName });
         const waitPromise = this.waitForResponse(pushId);
-        this.filePushStream.sendEventStart({ id: pushId, fileName, fileSize });
+        this.filePushStream.sendEventStart({ id: pushId, fileName, fileSize, overwrite, folder });
         const [{ code: startResponseCode }, { reader, result }] = await Promise.all([
             waitPromise,
             FilePushHandler.getStreamReader(file),
@@ -99,7 +141,7 @@ export default class FilePushHandler implements DragEventListener {
             return;
         }
         if (startResponseCode !== FilePushResponseStatus.NO_ERROR) {
-            this.logError(pushId, fileName, startResponseCode);
+            this.logError(key, pushId, fileName, startResponseCode);
             await reader.cancel();
             this.readers.delete(reader);
             return;
@@ -114,9 +156,10 @@ export default class FilePushHandler implements DragEventListener {
                 const { code: finishResponseCode } = await finish;
                 if (this.released) return;
                 if (finishResponseCode !== 0) {
-                    this.logError(pushId, fileName, finishResponseCode);
+                    this.logError(key, pushId, fileName, finishResponseCode);
                 } else {
                     this.sendUpdate({
+                        key,
                         pushId,
                         fileName,
                         message: 'success!',
@@ -135,12 +178,12 @@ export default class FilePushHandler implements DragEventListener {
 
             const [{ code: appendResponseCode }, result] = await Promise.all([append, reader.read()]);
             if (appendResponseCode !== 0) {
-                this.logError(pushId, fileName, appendResponseCode);
+                this.logError(key, pushId, fileName, appendResponseCode);
                 return;
             }
             const progress = (receivedBytes * 100) / fileSize;
             const message = `${progress.toFixed(2)}%`;
-            this.sendUpdate({ pushId, fileName, message, progress, error: false, finished: false });
+            this.sendUpdate({ key, pushId, fileName, message, progress, error: false, finished: false });
             return processData(result);
         };
         try {
@@ -169,8 +212,20 @@ export default class FilePushHandler implements DragEventListener {
     }
 
     onStreamError = ({ id: pushId, error }: { id: number; error: Error }): void => {
-        const fileName = this.pushIdFileNameMap.get(pushId) || 'Unknown file';
-        this.sendUpdate({ pushId, fileName, message: error.message, progress: -1, error: true, finished: true });
+        const known = this.pushIdFileNameMap.get(pushId);
+        if (known) {
+            const { key, fileName } = known;
+            this.sendUpdate({
+                key,
+                pushId,
+                fileName,
+                message: error.message,
+                progress: -1,
+                error: true,
+                finished: true,
+            });
+        }
+        // An upload with no push id yet is not in the map; the step waiting below reports it.
         this.onStreamResponse({ id: pushId, code: FilePushResponseStatus.ERROR_OTHER });
     };
 
@@ -207,22 +262,14 @@ export default class FilePushHandler implements DragEventListener {
             if (!listener.onDrop()) accepted = false;
         });
         if (!accepted) return true;
+        const allowed: File[] = [];
         files.forEach((file: File) => {
             const { type, name } = file;
             if (this.filePushStream.isAllowedFile(file)) {
-                void this.pushFile(file).catch((error) => {
-                    if (!this.released)
-                        this.sendUpdate({
-                            pushId: 0,
-                            fileName: file.name,
-                            message: error instanceof Error ? error.message : 'Upload failed.',
-                            progress: -1,
-                            error: true,
-                            finished: true,
-                        });
-                });
+                allowed.push(file);
             } else {
                 const errorParams: PushUpdateParams = {
+                    key: this.nextKey++,
                     pushId: FilePushHandler.REQUEST_NEW_PUSH_ID,
                     fileName: name,
                     message: `Unsupported type "${type}"`,
@@ -233,7 +280,42 @@ export default class FilePushHandler implements DragEventListener {
                 this.sendUpdate(errorParams);
             }
         });
+        if (!allowed.length) {
+            return true;
+        }
+        if (!this.planUploads) {
+            // No listing to compare with: send each file under its own name. The server
+            // refuses a name that is already taken.
+            allowed.forEach((file) => this.startUpload({ file, name: file.name, overwrite: false }));
+            return true;
+        }
+        void this.planUploads(allowed)
+            .then((plan) => plan.forEach((upload) => this.startUpload(upload)))
+            .catch((error) => {
+                if (this.released) return;
+                this.listeners.forEach((listener) => {
+                    listener.onError(error instanceof Error ? error : String(error));
+                });
+            });
         return true;
+    }
+
+    private startUpload(upload: PlannedUpload): void {
+        if (this.released) return;
+        const key = this.nextKey++;
+        void this.pushFile(key, upload)
+            .catch((error) => {
+                this.sendUpdate({
+                    key,
+                    pushId: 0,
+                    fileName: upload.name,
+                    message: error instanceof Error ? error.message : 'Upload failed.',
+                    progress: -1,
+                    error: true,
+                    finished: true,
+                });
+            })
+            .finally(() => this.settled.delete(key));
     }
 
     public static getErrorMessage(code: number, message?: string): string {
@@ -303,4 +385,6 @@ const RESPONSE_CODES = new Map([
     [FilePushResponseStatus.ERROR_UNKNOWN_ID, 'Unknown id'],
     [FilePushResponseStatus.ERROR_NO_FREE_ID, 'No free id'],
     [FilePushResponseStatus.ERROR_INCORRECT_SIZE, 'Incorrect size'],
+    [FilePushResponseStatus.ERROR_OTHER, 'The upload did not finish'],
+    [FilePushResponseStatus.ERROR_FILE_EXISTS, 'An item with this name already exists'],
 ]);
