@@ -168,8 +168,17 @@
 }
 .notifications-page .notification-danger {
     color: var(--status-unauthorized-color);
+    border-color: var(--status-unauthorized-color);
     background: transparent;
     margin-top: 12px;
+}
+/* Removal sits apart from the ordinary settings above it. */
+.notification-remove-source {
+    margin-top: 16px;
+    border-top: 1px solid var(--device-border-color);
+}
+.notification-remove-source .notification-danger {
+    margin-top: 4px;
 }
 .notifications-page fieldset {
     min-width: 0;

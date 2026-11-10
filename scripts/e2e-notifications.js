@@ -38,6 +38,14 @@ async function cardAction(page, title, name) {
     await sheet.getByRole('button', { name, exact: true }).click();
     await sheet.waitFor({ state: 'detached' });
 }
+// The shared confirm prompt ignores presses until its guard has passed.
+async function confirmPrompt(scope, question, button) {
+    const prompt = scope.getByRole('alertdialog', { name: question, exact: true });
+    await prompt.waitFor();
+    await prompt.locator('.confirm-prompt-button:not([aria-disabled])').first().waitFor();
+    await prompt.getByRole('button', { name: button, exact: true }).click();
+    return prompt;
+}
 async function openToolbar(page) {
     await page.getByRole('button', { name: 'Notification actions', exact: true }).click();
     const sheet = page.getByRole('dialog');
@@ -350,7 +358,7 @@ async function configuredReceiver(browser) {
 }
 
 async function receiverChoicesAndUnlink(browser) {
-    const f = await fixture(browser, { storedSources: ['phone-a', 'removed-phone'], storedReceiver: 'removed-phone' });
+    const f = await fixture(browser, { storedSources: ['phone-a', 'removed-phone'], storedReceiver: 'removed-phone', notifications: historyItems() });
     try {
         await openDetails(f.page, 'Choose phones and delivery options');
         const receiver = f.page.getByRole('combobox', { name: 'This app is open on', exact: true });
@@ -368,8 +376,43 @@ async function receiverChoicesAndUnlink(browser) {
 
         await openDetails(f.page, 'Settings for Phone B');
         const settings = f.page.locator('details').filter({ has: f.page.locator('summary').filter({ hasText: 'Settings for Phone B' }) });
-        await settings.getByRole('button', { name: 'Remove iPhone', exact: true }).click();
+        // Turning text off erases stored text, so the box stays ticked until it is confirmed.
+        const text = settings.getByRole('checkbox', { name: 'Include notification text', exact: true });
+        await text.click();
+        const erase = settings.getByRole('alertdialog', { name: 'Stop storing notification text from Phone B?', exact: true });
+        await erase.waitFor();
+        assert.match(await erase.textContent(), /The text of its 1 stored notification is erased from the server and cannot be restored\./);
+        assert.equal(await text.isChecked(), true, 'the box stays ticked while the prompt is open');
+        assert.ok(!f.operations.includes('POST sources'), 'unticking sends nothing by itself');
+        await erase.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await erase.waitFor({ state: 'detached' });
+        assert.ok(!f.operations.includes('POST sources'), 'Cancel sends nothing');
+        assert.equal(await text.isChecked(), true);
+        await text.click();
+        await confirmPrompt(settings, 'Stop storing notification text from Phone B?', 'Erase text');
+        await until(() => f.sources.find(s => s.id === 'phone-b')?.preview === false, 'the confirmed change reaches the API');
+        await f.page.getByText('iPhone settings saved.', { exact: true }).waitFor();
+        await f.page.waitForFunction(() => ![...document.querySelectorAll('.notification-check input')].every(input => input.checked));
+        // Turning it back on loses nothing and applies at once.
+        await text.click();
+        await until(() => f.sources.find(s => s.id === 'phone-b')?.preview === true, 'ticking the box applies at once');
+
+        // Remove iPhone sits apart from the settings, says what is lost and needs a confirming press.
+        const remove = settings.locator('.notification-remove-source').getByRole('button', { name: 'Remove iPhone', exact: true }).and(f.page.locator('.notification-danger'));
+        await remove.waitFor();
+        assert.match(await settings.locator('.notification-remove-source').textContent(), /deletes its link and its 1 stored notification from the server/);
+        await remove.click();
+        const removal = settings.getByRole('alertdialog', { name: 'Remove Phone B and delete its 1 stored notification?', exact: true });
+        await removal.waitFor();
+        await f.page.waitForTimeout(300);
+        assert.deepEqual(f.removed, [], 'one tap on Remove iPhone sends no request');
+        await removal.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await removal.waitFor({ state: 'detached' });
+        assert.deepEqual(f.removed, [], 'Cancel removes nothing');
+        await remove.click();
+        await confirmPrompt(settings, 'Remove Phone B and delete its 1 stored notification?', 'Remove iPhone');
         await until(() => f.removed.includes('phone-b'), 'source removal reaches the API');
+        assert.deepEqual(f.removed, ['phone-b'], 'the confirmed removal is sent once');
         await f.page.locator('summary').filter({ hasText: 'Settings for Phone B' }).waitFor({ state: 'detached' });
         await openDetails(f.page, 'Choose phones and delivery options');
         assert.equal(await receiver.locator('option:checked').textContent(), 'A different phone, tablet or computer', 'removing the selected receiver restores a visible default option');
