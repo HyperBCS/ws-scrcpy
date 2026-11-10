@@ -52,7 +52,8 @@ function summarize(schedule: UnlockScheduleStatus, running: boolean, moment: (at
         return {
             state: 'running',
             title: 'Running now',
-            text: 'Unlocking the phone, then locking it.',
+            // The stream page's Unlock runs here too, and that one does not lock the phone after.
+            text: 'An unlock run is in progress.',
             tone: 'neutral',
         };
     }
