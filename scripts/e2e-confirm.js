@@ -437,7 +437,7 @@ async function removePasscode(browser, mobile) {
     }
 }
 
-// U-stream-2 on a live-shaped Android stream. The
+// U-stream-2 and the Disconnect button from U-system-1, on a live-shaped Android stream. The
 // iPhone stream page uses the same FloatingToolbar, and its touch handler also acts only on
 // events whose target is the touch layer, so the shield covers it the same way.
 async function controlsPanelShield(browser) {
@@ -504,8 +504,13 @@ async function controlsPanelShield(browser) {
         await panel.waitFor({ state: 'visible' });
         await settleMotion(page);
 
+        // Disconnect only returns to the list, so it is not styled as a danger.
+        await page.locator('.control-buttons-list [title="Actions"]').click();
+        const sheet = page.getByRole('dialog', { name: 'Actions', exact: true });
+        await sheet.waitFor();
+        assert.doesNotMatch(await sheet.getByRole('button', { name: 'Disconnect', exact: true }).getAttribute('class'), /danger/);
         assert.deepEqual(errors, []);
-        console.log('PASS controls panel: the dismissing tap stays off the phone, the next tap reaches it, the header stays direct');
+        console.log('PASS controls panel: the dismissing tap stays off the phone, the next tap reaches it, Disconnect is neutral');
     } finally {
         await context.close();
     }

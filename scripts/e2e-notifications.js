@@ -429,6 +429,8 @@ async function receiverChoicesAndUnlink(browser) {
         assert.equal(f.saved.at(-1).receiverSource, '', 'unlinking the receiver clears the persisted identity');
         await f.page.getByRole('button', { name: 'Send test notification', exact: true }).waitFor();
         assert.equal(await f.page.getByRole('button', { name: 'Save changes', exact: true }).count(), 0);
+        // Turning delivery off is undone with one tap, so it is not styled as a danger.
+        assert.doesNotMatch(await f.page.getByRole('button', { name: 'Turn off on this device', exact: true }).getAttribute('class'), /danger/);
         await f.page.getByRole('button', { name: 'Turn off on this device', exact: true }).click();
         await f.page.getByRole('button', { name: 'Enable on this device', exact: true }).waitFor();
         assert.equal(f.disabled, 1);

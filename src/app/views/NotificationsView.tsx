@@ -722,7 +722,7 @@ export function NotificationsView() {
                                         {subscription && (
                                             <button
                                                 disabled={busy}
-                                                class="notification-danger"
+                                                class="notification-turn-off"
                                                 onClick={() =>
                                                     void run(async () => {
                                                         await api('subscriptions', 'DELETE', {

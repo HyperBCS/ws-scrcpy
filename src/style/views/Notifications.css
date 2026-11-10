@@ -172,6 +172,9 @@
     background: transparent;
     margin-top: 12px;
 }
+.notifications-page .notification-turn-off {
+    margin-top: 12px;
+}
 /* Removal sits apart from the ordinary settings above it. */
 .notification-remove-source {
     margin-top: 16px;
