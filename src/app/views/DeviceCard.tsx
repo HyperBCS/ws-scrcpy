@@ -23,7 +23,7 @@ import { NavigateParams } from '../state/router';
 import { DeviceStatusInfo, getDeviceStatusInfo, isDeviceStarting, markStarting } from '../state/deviceStatus';
 import { sendWakeKey } from '../googDevice/client/wake';
 import { openApplSettingsSheet, openSettingsSheet } from '../state/settingsSheet';
-import { relativeUnlockTime } from '../state/unlockSchedule';
+import { unlockCardLine } from '../state/unlockSchedule';
 import { isToolAction } from './ToolView';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { hasRunningStreamService } from '../state/streamService';
@@ -327,7 +327,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     };
 
     const isAsleep = statusInfo.status === 'asleep';
-    const unlockSchedule = descriptor.unlockSchedule;
+    const unlockLine = descriptor.unlockSchedule && unlockCardLine(descriptor.unlockSchedule);
 
     return (
         <article
@@ -335,12 +335,12 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             data-device-key={entry.key}
         >
             <DeviceHeader entry={entry} platform={`iOS ${descriptor.version}`}>
-                {unlockSchedule?.enabled && unlockSchedule.hasPasscode && (
-                    <span class="device-unlock-schedule" title="Scheduled unlock, server local time">
-                        Scheduled unlock {unlockSchedule.time}
-                        {unlockSchedule.lastUnlockedAt
-                            ? ` · last ${relativeUnlockTime(unlockSchedule.lastUnlockedAt)}`
-                            : ''}
+                {unlockLine && (
+                    <span
+                        class={`device-unlock-schedule ${unlockLine.problem ? 'problem' : ''}`}
+                        title={unlockLine.title}
+                    >
+                        {unlockLine.text}
                     </span>
                 )}
             </DeviceHeader>
