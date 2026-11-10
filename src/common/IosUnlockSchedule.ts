@@ -196,8 +196,9 @@ function wallClock(at: number, format: Intl.DateTimeFormat): number {
 
 /**
  * The instant at which the zone shows the wall-clock time `wall` (given as the UTC instant with
- * the same fields). A time skipped by a daylight-saving change resolves to the instant one hour
- * earlier on the clock; a time that occurs twice resolves to the first.
+ * the same fields). A time skipped by a daylight-saving change resolves to an instant one hour
+ * from it on the clock, and a time that occurs twice to one of the two; which one depends on the
+ * side of UTC the zone is on. Either way the slot happens once that day.
  */
 function zonedInstant(wall: number, format: Intl.DateTimeFormat): number {
     const first = wall - (wallClock(wall, format) - wall);
