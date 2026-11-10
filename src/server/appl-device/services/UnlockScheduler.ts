@@ -140,7 +140,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
     // One run at a time across the process: two phones never open display sessions together.
     private chain: Promise<unknown> = Promise.resolve();
     // The run queued or in progress per device; a manual run that arrives meanwhile joins it.
-    private readonly inflight = new Map<string, Promise<UnlockRunResult>>();
+    private readonly inflight = new Map<string, { run: Promise<UnlockRunResult>; keepUnlocked: boolean }>();
     // When each recent run that opened a display session ended, per device, oldest first.
     private readonly sessionRuns = new Map<string, number[]>();
     private storeChecked = false;
@@ -260,15 +260,22 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
      * `skipped-recent` and never schedule a retry.
      *
      * A manual run that arrives while a run for the same phone is queued or in progress resolves
-     * with that run's result instead of starting another. A manual run too soon after a run that
-     * opened a display session is refused: the promise rejects with a message that says when it
-     * can run. Bursts of short display sessions wedge the phone's display service.
+     * with that run's result instead of starting another; a `keepUnlocked` run is refused instead
+     * when that run will press Lock afterwards. A manual run too soon after a run that opened a
+     * display session is refused: the promise rejects with a message that says when it can run.
+     * Bursts of short display sessions wedge the phone's display service.
      */
     public runNow(udid: string, trigger: UnlockRunTrigger, options: UnlockRunOptions = {}): Promise<UnlockRunResult> {
         if (trigger === 'manual') {
             const current = this.inflight.get(udid);
+            if (current && options.keepUnlocked && !current.keepUnlocked) {
+                // Its "unlocked" would be reported to a viewer who then finds the phone locked.
+                return Promise.reject(
+                    new Error('Another unlock run is in progress and will lock the phone again. Try again when it ends.'),
+                );
+            }
             if (current) {
-                return current;
+                return current.run;
             }
             const waitMs = this.manualWaitMs(udid);
             if (waitMs > 0) {
@@ -497,9 +504,9 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             () => undefined,
             () => undefined,
         );
-        this.inflight.set(udid, run);
+        this.inflight.set(udid, { run, keepUnlocked: !!options.keepUnlocked });
         const done = () => {
-            if (this.inflight.get(udid) === run) {
+            if (this.inflight.get(udid)?.run === run) {
                 this.inflight.delete(udid);
             }
         };

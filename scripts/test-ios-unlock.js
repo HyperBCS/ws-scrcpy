@@ -1420,8 +1420,26 @@ test('scheduler: Run now joins a run in progress, cools down after a session-ope
         ctx.driver.results.push({ outcome: 'unlocked', verifiedAt: ctx.now(), openedSession: false });
         await ctx.scheduler.runNow(other, 'manual', { keepUnlocked: true });
         assert.deepEqual(ctx.driver.options.at(-1), { keepUnlocked: true }, 'the option reaches the driver');
+        ctx.driver.results.push({ outcome: 'unlocked', verifiedAt: ctx.now(), openedSession: false });
         await ctx.scheduler.runNow(other, 'manual');
         assert.deepEqual(ctx.driver.options.at(-1), { keepUnlocked: false });
+
+        // The stream page's Unlock does not join a run that locks the phone again afterwards: its
+        // "unlocked" would be shown to a viewer looking at a locked phone. The reverse joins.
+        ctx.store.recordUnlockedAt(other, ctx.now() - 30 * HOUR);
+        ctx.driver.results.push({ outcome: 'unlocked', verifiedAt: ctx.now(), openedSession: false });
+        const relocking = ctx.scheduler.runNow(other, 'schedule');
+        await assert.rejects(
+            ctx.scheduler.runNow(other, 'manual', { keepUnlocked: true }),
+            /will lock the phone again\. Try again when it ends\.$/,
+        );
+        await relocking;
+        ctx.driver.results.push({ outcome: 'unlocked', verifiedAt: ctx.now(), openedSession: false });
+        const kept = ctx.scheduler.runNow(other, 'manual', { keepUnlocked: true });
+        assert.equal(ctx.scheduler.runNow(other, 'manual'), kept);
+        assert.equal(ctx.scheduler.runNow(other, 'manual', { keepUnlocked: true }), kept);
+        await kept;
+        assert.equal(ctx.driver.calls.filter((id) => id === other).length, 4, 'one run each, none for a refused or joined press');
         // Nor does a run that was skipped before the driver.
         const idle = 'iphone-run-now-open';
         armed(ctx, idle);
