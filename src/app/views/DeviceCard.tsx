@@ -30,6 +30,7 @@ import { hasRunningStreamService } from '../state/streamService';
 import { notificationSummary } from '../state/notifications';
 import { UnreadBadge } from './NotificationHistory';
 import { DeviceIcon } from '../ui/DeviceIcon';
+import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 
 function collectTools(tools: Set<Tool>, descriptor: GoogDeviceDescriptor | ApplDeviceDescriptor): ToolEntry[] {
     const result: ToolEntry[] = [];
@@ -122,6 +123,27 @@ function UnavailableHint({ info }: { info: DeviceStatusInfo }) {
     );
 }
 
+/** A recovery action: what it costs is written beside the button, not in a tooltip. */
+function TroubleRow({
+    title,
+    description,
+    children,
+}: {
+    title: string;
+    description: string;
+    children: ComponentChildren;
+}) {
+    return (
+        <div class="device-trouble-row">
+            <div class="device-trouble-text">
+                <span class="device-trouble-title">{title}</span>
+                <span class="device-trouble-desc">{description}</span>
+            </div>
+            {children}
+        </div>
+    );
+}
+
 function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor: GoogDeviceDescriptor }) {
     const { params, tracker } = entry;
     const isActive = descriptor.state === DeviceState.DEVICE;
@@ -141,6 +163,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
         action: ACTION.STREAM_SCRCPY,
         params: { udid: descriptor.udid, player: player.playerCodeName, ws: selected?.url, fitToScreen: 'true' },
     });
+    const confirm = useArmedAction<'stop'>();
     const onAction = () => {
         if (!isActive || isStarting) {
             return;
@@ -238,14 +261,6 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                             >
                                 Refresh connection
                             </button>
-                            <button
-                                class="action-button kill-server-button"
-                                onClick={onAction}
-                                disabled={isStarting}
-                                title={hasPid ? 'Stops the stream for every viewer' : 'Start the streaming service'}
-                            >
-                                {hasPid ? 'Stop stream service' : isStarting ? 'Starting…' : 'Start stream service'}
-                            </button>
                             {selected &&
                                 players
                                     .filter((player) => player !== primaryPlayer)
@@ -266,6 +281,40 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                                 />
                             ))}
                         </div>
+                        <div class="device-trouble" role="group" aria-label="Troubleshooting">
+                            <h4 class="device-trouble-heading">Troubleshooting</h4>
+                            <TroubleRow
+                                title="Stream service"
+                                description={
+                                    hasPid
+                                        ? 'Running. Stopping it ends the stream for every viewer.'
+                                        : isStarting
+                                          ? 'Starting.'
+                                          : 'Stopped. Start it to open the screen.'
+                                }
+                            >
+                                <button
+                                    class={`action-button kill-server-button ${hasPid ? 'danger' : ''}`}
+                                    aria-label={hasPid ? 'Stop stream service' : 'Start stream service'}
+                                    disabled={isStarting}
+                                    onClick={(event) =>
+                                        hasPid ? confirm.arm('stop', event.currentTarget) : onAction()
+                                    }
+                                >
+                                    {hasPid ? 'Stop' : isStarting ? 'Starting…' : 'Start'}
+                                </button>
+                            </TroubleRow>
+                            {confirm.armed && hasPid && (
+                                <ConfirmPrompt
+                                    action={confirm}
+                                    question={`Stop the stream service on ${deviceName(entry)}?`}
+                                    consequence="The stream ends for every viewer until the service is started again."
+                                    confirmLabel="Stop stream service"
+                                    danger
+                                    onConfirm={onAction}
+                                />
+                            )}
+                        </div>
                     </div>
                 </AnimatedDetails>
             )}
@@ -280,6 +329,8 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const [enabling, setEnabling] = useState(false);
     const [feedback, setFeedback] = useState('');
     const [busy, setBusy] = useState('');
+    const confirm = useArmedAction<'developer-mode' | 'stop' | 'restart' | 'remount'>();
+    const name = deviceName(entry);
     const developerMode = descriptor.developerMode;
     const session = descriptor.session ?? 'stopped';
 
@@ -362,10 +413,24 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                 <div class="device-asleep-banner" role="status">
                     <span aria-hidden="true">⚠</span>
                     <span>Enable Developer Mode to open the screen.</span>
-                    <button class="wake-button" onClick={enableDeveloperMode} disabled={enabling}>
-                        {enabling ? 'Enabling…' : 'Enable'}
+                    <button
+                        class="wake-button"
+                        onClick={(event) => confirm.arm('developer-mode', event.currentTarget)}
+                        disabled={enabling}
+                    >
+                        {enabling ? 'Enabling…' : 'Enable and restart'}
                     </button>
                 </div>
+            )}
+            {confirm.armed === 'developer-mode' && isActive && developerMode === false && (
+                <ConfirmPrompt
+                    action={confirm}
+                    question={`Enable Developer Mode on ${name}?`}
+                    consequence="The phone restarts, then asks you to confirm on its screen."
+                    confirmLabel="Enable and restart"
+                    danger
+                    onConfirm={enableDeveloperMode}
+                />
             )}
             {isActive && session === 'error' && descriptor.sessionMessage && (
                 <p class="device-unavailable-hint">{descriptor.sessionMessage}</p>
@@ -410,22 +475,6 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         <span>Connection</span>
                         <span class="device-connection-value">Automatic · via server</span>
                     </div>
-                    <div class="services device-secondary-actions">
-                        {isActive && (session === 'ready' || session === 'starting') && (
-                            <button
-                                class="action-button"
-                                title="Stops the screen stream for every viewer"
-                                onClick={() =>
-                                    entry.tracker.sendCommand(ControlCenterCommand.KILL_SERVER, {
-                                        udid: descriptor.udid,
-                                        pid: 1,
-                                    })
-                                }
-                            >
-                                Stop stream service
-                            </button>
-                        )}
-                    </div>
                     <dl class="device-debug-facts">
                         <dt>Device</dt>
                         <dd>{descriptor.model}</dd>
@@ -444,39 +493,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                                   : 'off'}
                         </dd>
                     </dl>
-                    <p class="device-unavailable-hint">
-                        Restart services if controls stop responding. Remount if the screen will not start.
-                    </p>
                     <div class="device-debug-actions">
-                        <button
-                            type="button"
-                            class="action-button"
-                            disabled={!!busy || !isActive}
-                            title="Ends the phone session so the next viewer gets a fresh one"
-                            onClick={() =>
-                                runCommand(
-                                    ControlCenterCommand.RESTART_SESSION,
-                                    'Restarting services',
-                                    'Services restarted. Open the screen again.',
-                                )
-                            }
-                        >
-                            Restart services
-                        </button>
-                        <button
-                            type="button"
-                            class="action-button"
-                            disabled={!!busy || !isActive}
-                            onClick={() =>
-                                runCommand(
-                                    ControlCenterCommand.REMOUNT_DDI,
-                                    'Remounting the developer image',
-                                    'Developer image mounted.',
-                                )
-                            }
-                        >
-                            Remount developer image
-                        </button>
                         <button
                             type="button"
                             class="action-button"
@@ -487,6 +504,99 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         >
                             Refresh info
                         </button>
+                    </div>
+                    <div class="device-trouble" role="group" aria-label="Troubleshooting">
+                        <h4 class="device-trouble-heading">Troubleshooting</h4>
+                        {isActive && (session === 'ready' || session === 'starting') && (
+                            <TroubleRow
+                                title="Stop stream service"
+                                description="Ends the screen stream for every viewer."
+                            >
+                                <button
+                                    type="button"
+                                    class="action-button danger"
+                                    aria-label="Stop stream service"
+                                    onClick={(event) => confirm.arm('stop', event.currentTarget)}
+                                >
+                                    Stop
+                                </button>
+                            </TroubleRow>
+                        )}
+                        <TroubleRow
+                            title="Restart services"
+                            description="Use if controls stop responding. Ends the phone session for every viewer."
+                        >
+                            <button
+                                type="button"
+                                class="action-button danger"
+                                aria-label="Restart services"
+                                disabled={!!busy || !isActive}
+                                onClick={(event) => confirm.arm('restart', event.currentTarget)}
+                            >
+                                Restart
+                            </button>
+                        </TroubleRow>
+                        <TroubleRow
+                            title="Remount developer image"
+                            description="Use if the screen will not start. Ends the phone session first."
+                        >
+                            <button
+                                type="button"
+                                class="action-button danger"
+                                aria-label="Remount developer image"
+                                disabled={!!busy || !isActive}
+                                onClick={(event) => confirm.arm('remount', event.currentTarget)}
+                            >
+                                Remount
+                            </button>
+                        </TroubleRow>
+                        {confirm.armed === 'stop' && (
+                            <ConfirmPrompt
+                                action={confirm}
+                                question={`Stop the stream service on ${name}?`}
+                                consequence="The screen stream ends for every viewer. Open the screen to start it again."
+                                confirmLabel="Stop stream service"
+                                danger
+                                onConfirm={() =>
+                                    entry.tracker.sendCommand(ControlCenterCommand.KILL_SERVER, {
+                                        udid: descriptor.udid,
+                                        pid: 1,
+                                    })
+                                }
+                            />
+                        )}
+                        {confirm.armed === 'restart' && (
+                            <ConfirmPrompt
+                                action={confirm}
+                                question={`Restart services on ${name}?`}
+                                consequence="The phone session ends for every viewer. The next viewer gets a new one."
+                                confirmLabel="Restart services"
+                                danger
+                                onConfirm={() =>
+                                    runCommand(
+                                        ControlCenterCommand.RESTART_SESSION,
+                                        'Restarting services',
+                                        'Services restarted. Open the screen again.',
+                                    )
+                                }
+                            />
+                        )}
+                        {confirm.armed === 'remount' && (
+                            <ConfirmPrompt
+                                action={confirm}
+                                question={`Remount the developer image on ${name}?`}
+                                consequence="The phone session ends for every viewer while the image is reloaded."
+                                confirmLabel="Remount"
+                                danger
+                                onConfirm={() =>
+                                    runCommand(
+                                        ControlCenterCommand.REMOUNT_DDI,
+                                        'Remounting the developer image',
+                                        'Developer image mounted.',
+                                    )
+                                }
+                            />
+                        )}
                     </div>
                 </div>
             </AnimatedDetails>

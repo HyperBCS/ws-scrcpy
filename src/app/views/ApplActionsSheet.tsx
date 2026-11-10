@@ -33,9 +33,10 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
     const [reading, setReading] = useState(false);
     const [pending, setPending] = useState<PendingRequest>();
     const [keyboard, setKeyboard] = useState(client.isHandlingKeyboardEvents());
-    // Reboot and shut down are hard to undo from here, so each is confirmed in a separate prompt.
-    // The armed state ends when the sheet closes, so reopening never shows a waiting confirm.
-    const confirm = useArmedAction<'reboot' | 'shutdown'>(toolsSheetOpen.value);
+    // Reboot and shut down are hard to undo from here, and the two service actions end the phone
+    // session for every viewer, so each is confirmed in a separate prompt. The armed state ends
+    // when the sheet closes, so reopening never shows a waiting confirm.
+    const confirm = useArmedAction<'reboot' | 'shutdown' | 'restart' | 'remount'>(toolsSheetOpen.value);
     const [power, setPower] = useState('');
     const [debugBusy, setDebugBusy] = useState(false);
     const [debugNote, setDebugNote] = useState('');
@@ -426,37 +427,30 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                                   : 'unknown'}
                         </dd>
                     </dl>
-                    <SheetRow title="Restart services" description="Restart unresponsive touch, keyboard or clipboard.">
+                    <SheetRow
+                        title="Restart services"
+                        description="Use if touch, keyboard or clipboard stop responding. Ends the phone session for every viewer."
+                    >
                         <button
                             type="button"
-                            class="sheet-button"
+                            class="sheet-button danger"
+                            aria-label="Restart services"
                             disabled={debugBusy}
-                            onClick={() =>
-                                onServiceCommand(
-                                    ControlCenterCommand.RESTART_SESSION,
-                                    'Restarting services',
-                                    'Services restarted. Open the screen again.',
-                                )
-                            }
+                            onClick={(event) => confirm.arm('restart', event.currentTarget)}
                         >
                             Restart
                         </button>
                     </SheetRow>
                     <SheetRow
                         title="Remount developer image"
-                        description="Reload developer services if the screen won’t start."
+                        description="Use if the screen will not start. Ends the phone session first."
                     >
                         <button
                             type="button"
-                            class="sheet-button"
+                            class="sheet-button danger"
+                            aria-label="Remount developer image"
                             disabled={debugBusy}
-                            onClick={() =>
-                                onServiceCommand(
-                                    ControlCenterCommand.REMOUNT_DDI,
-                                    'Remounting the developer image',
-                                    'Developer image mounted. Open the screen again.',
-                                )
-                            }
+                            onClick={(event) => confirm.arm('remount', event.currentTarget)}
                         >
                             Remount
                         </button>
@@ -477,6 +471,38 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             Refresh
                         </button>
                     </SheetRow>
+                    {confirm.armed === 'restart' && (
+                        <ConfirmPrompt
+                            action={confirm}
+                            question={`Restart services on ${phoneName}?`}
+                            consequence="The phone session ends for every viewer. The next viewer gets a new one."
+                            confirmLabel="Restart services"
+                            danger
+                            onConfirm={() =>
+                                onServiceCommand(
+                                    ControlCenterCommand.RESTART_SESSION,
+                                    'Restarting services',
+                                    'Services restarted. Open the screen again.',
+                                )
+                            }
+                        />
+                    )}
+                    {confirm.armed === 'remount' && (
+                        <ConfirmPrompt
+                            action={confirm}
+                            question={`Remount the developer image on ${phoneName}?`}
+                            consequence="The phone session ends for every viewer while the image is reloaded."
+                            confirmLabel="Remount"
+                            danger
+                            onConfirm={() =>
+                                onServiceCommand(
+                                    ControlCenterCommand.REMOUNT_DDI,
+                                    'Remounting the developer image',
+                                    'Developer image mounted. Open the screen again.',
+                                )
+                            }
+                        />
+                    )}
                     {debugNote && <SheetStatus>{debugNote}</SheetStatus>}
                 </AnimatedDetails>
 

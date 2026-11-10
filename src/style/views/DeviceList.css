@@ -427,3 +427,58 @@
 #devices .device-primary-actions > :last-child:not(.stream) {
     flex: 0 0 116px;
 }
+
+/* Recovery actions: each row says what the action ends before it is pressed. */
+#devices .device-trouble {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--device-border-color);
+}
+#devices .device-trouble-heading {
+    margin: 0;
+    color: var(--text-color-light);
+    font-size: 0.76rem;
+    font-weight: 600;
+}
+#devices .device-trouble-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+#devices .device-trouble-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+#devices .device-trouble-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+#devices .device-trouble-desc {
+    color: var(--text-color-light);
+    font-size: 0.76rem;
+    line-height: 1.35;
+}
+#devices .device-trouble-row .action-button {
+    flex: 0 0 auto;
+    min-width: 84px;
+    font-size: 0.78rem;
+}
+#devices .action-button.danger {
+    border-color: var(--status-unauthorized-color);
+    color: var(--status-unauthorized-color);
+}
+#devices .action-button.danger:disabled {
+    border-color: var(--device-border-color);
+    color: var(--text-color-light);
+}
+#devices .confirm-prompt {
+    margin: 0;
+}
+#devices .device-secondary-actions + .device-trouble {
+    margin-top: 10px;
+}

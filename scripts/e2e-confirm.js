@@ -236,6 +236,30 @@ async function powerActions(browser, mobile) {
         assert.ok(Date.now() - armedAt >= TIMEOUT_MS - 500, 'the prompt stays for the whole timeout');
         assert.equal(power(), 0, 'the timeout sends nothing');
 
+        // The two service actions under Troubleshooting end the session for every viewer, so
+        // they use the same prompt here as on the device card.
+        await sheet.locator('summary').filter({ hasText: 'Troubleshooting' }).click();
+        await settleMotion(page);
+        test.handlers.onCommand = (command) => (command.type === 'restart_session' ? { result: 'Fixture done.' } : undefined);
+        const restart = trigger(sheet, 'Restart services');
+        assert.match(await restart.getAttribute('class'), /danger/);
+        dialog = await armAndCheck(test, {
+            trigger: restart, scope: sheet, question: `Restart services on ${NAME}?`, consequence: /The phone session ends for every viewer/,
+            confirmLabel: 'Restart services', sentCount: () => ofType('restart_session').length,
+        });
+        await shot(page, `actions-restart-services-armed-${label}-light`);
+        if (!(await dialog.count())) await restart.click();
+        await confirmAfterGuard(dialog, 'Restart services');
+        await sheet.getByText('Fixture done.', { exact: true }).waitFor();
+        assert.equal(ofType('restart_session').length, 1);
+        dialog = await armAndCheck(test, {
+            trigger: trigger(sheet, 'Remount developer image'), scope: sheet, question: `Remount the developer image on ${NAME}?`,
+            consequence: /while the image is reloaded/, confirmLabel: 'Remount', sentCount: () => ofType('remount_ddi').length,
+        });
+        await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await dialog.waitFor({ state: 'detached' });
+        assert.equal(ofType('remount_ddi').length, 0, 'Cancel sends no remount');
+
         // Shut down: the prompt names the phone and the consequence; confirming sends it once.
         test.handlers.onCommand = (command) => (command.type === 'shutdown_device' ? { result: 'ok' } : undefined);
         await shutDown.scrollIntoViewIfNeeded();
@@ -261,11 +285,103 @@ async function powerActions(browser, mobile) {
     }
 }
 
+// U-home-4, U-system-1
+async function deviceCards(browser, mobile) {
+    const test = await start(browser, {
+        mobile,
+        device: iphone({ developerMode: false, unlockSchedule: { enabled: true, time: '03:00', hasPasscode: false } }),
+    });
+    const { page, ofType } = test;
+    const label = mobile ? 'phone' : 'desktop';
+    try {
+        const card = page.locator(`[data-device-key="ios:${UDID}"]`);
+        await card.waitFor();
+        // Developer Mode: the button says it restarts the phone and needs a confirming press.
+        const enable = trigger(card, 'Enable and restart');
+        let dialog = await armAndCheck(test, {
+            trigger: enable, scope: card, question: `Enable Developer Mode on ${NAME}?`, consequence: /The phone restarts/,
+            confirmLabel: 'Enable and restart', sentCount: () => ofType('enable_developer_mode').length,
+        });
+        await shot(page, `card-developer-mode-armed-${label}-light`);
+        if (!(await dialog.count())) await enable.click();
+        await confirmAfterGuard(dialog, 'Enable and restart');
+        await card.getByText(/Enabling Developer Mode/).waitFor();
+        assert.deepEqual(ofType('enable_developer_mode').map((command) => command.data), [{ udid: UDID }]);
+
+        // Recovery actions: own group, danger style, the consequence as visible text, confirmed.
+        await card.locator('summary').click();
+        await settleMotion(page);
+        const trouble = card.getByRole('group', { name: 'Troubleshooting', exact: true });
+        await trouble.getByRole('heading', { name: 'Troubleshooting', exact: true }).waitFor();
+        const rows = [
+            ['Stop stream service', /Ends the screen stream for every viewer\./, `Stop the stream service on ${NAME}?`, 'Stop stream service', 'kill_server'],
+            ['Restart services', /Ends the phone session for every viewer\./, `Restart services on ${NAME}?`, 'Restart services', 'restart_session'],
+            ['Remount developer image', /Ends the phone session first\./, `Remount the developer image on ${NAME}?`, 'Remount', 'remount_ddi'],
+        ];
+        for (const [name, visible] of rows) {
+            const button = trigger(trouble, name);
+            assert.match(await button.getAttribute('class'), /danger/, `${name} is a danger button`);
+            assert.equal(await button.getAttribute('title'), null, `${name} does not hide its warning in a tooltip`);
+            assert.match(await button.locator('xpath=..').textContent(), visible, `${name} shows what it ends`);
+        }
+        assert.equal(await trouble.getByRole('button', { name: 'Refresh info' }).count(), 0, 'Refresh info is not a troubleshooting action');
+        await shot(page, `card-iphone-troubleshooting-${label}-light`);
+        await page.emulateMedia({ colorScheme: 'dark' });
+        await shot(page, `card-iphone-troubleshooting-${label}-dark`);
+        await page.emulateMedia({ colorScheme: 'light' });
+        test.handlers.onCommand = (command) =>
+            ['restart_session', 'remount_ddi'].includes(command.type) ? { result: 'Fixture done.' } : undefined;
+        for (const [name, , question, confirmLabel, type] of rows) {
+            dialog = await armAndCheck(test, {
+                trigger: trigger(trouble, name), scope: trouble, question, consequence: /every viewer/,
+                confirmLabel, sentCount: () => ofType(type).length,
+            });
+            if (name === 'Restart services') await shot(page, `card-iphone-restart-armed-${label}-light`);
+            if (!(await dialog.count())) await trigger(trouble, name).click();
+            await confirmAfterGuard(dialog, confirmLabel);
+            await dialog.waitFor({ state: 'detached' });
+            assert.equal(ofType(type).length, 1, `${name} is sent once after confirming`);
+            if (type !== 'kill_server') await card.getByText('Fixture done.', { exact: true }).waitFor();
+        }
+        assert.deepEqual(ofType('kill_server')[0].data, { udid: UDID, pid: 1 });
+
+        // Android: Stop stream service leaves the Files and Shell row and is confirmed.
+        const androidCard = page.locator(`[data-device-key="android:${android.udid}"]`);
+        await androidCard.locator('summary').click();
+        await settleMotion(page);
+        const androidTrouble = androidCard.getByRole('group', { name: 'Troubleshooting', exact: true });
+        const stop = trigger(androidTrouble, 'Stop stream service');
+        assert.equal(await androidCard.locator('.device-secondary-actions').getByRole('button', { name: /stream service/ }).count(), 0);
+        assert.match(await stop.getAttribute('class'), /danger/);
+        assert.match(await androidTrouble.textContent(), /Stopping it ends the stream for every viewer\./);
+        const killed = () => ofType('kill_server').filter((command) => command.data.udid === android.udid);
+        dialog = await armAndCheck(test, {
+            trigger: stop, scope: androidTrouble, question: 'Stop the stream service on Fixture Pixel fixture?', consequence: /every viewer/,
+            confirmLabel: 'Stop stream service', sentCount: () => killed().length,
+        });
+        await shot(page, `card-android-stop-armed-${label}-light`);
+        if (!(await dialog.count())) await stop.click();
+        await confirmAfterGuard(dialog, 'Stop stream service');
+        await dialog.waitFor({ state: 'detached' });
+        assert.deepEqual(killed().map((command) => command.data), [{ udid: android.udid, pid: 123 }]);
+        assert.equal(
+            await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),
+            false,
+            'the cards do not overflow the page',
+        );
+        assert.deepEqual(test.errors, []);
+        console.log(`PASS ${label} device cards: Developer Mode, stop, restart and remount are grouped, explained and confirmed`);
+    } finally {
+        await test.context.close();
+    }
+}
+
 (async () => {
     const browser = await chromium.launch({ headless: true });
     try {
         for (const mobile of [true, false]) {
             await powerActions(browser, mobile);
+            await deviceCards(browser, mobile);
         }
     } finally {
         await browser.close();
