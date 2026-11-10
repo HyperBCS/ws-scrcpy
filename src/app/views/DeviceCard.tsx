@@ -394,6 +394,9 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                             : ''}
                     </span>
                 )}
+                {unlockSchedule?.enabled && !unlockSchedule.hasPasscode && (
+                    <span class="device-unlock-warning">Scheduled unlock is on but has no passcode</span>
+                )}
             </DeviceHeader>
             <StreamServiceStatus
                 descriptor={{

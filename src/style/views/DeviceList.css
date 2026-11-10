@@ -479,6 +479,9 @@
 #devices .confirm-prompt {
     margin: 0;
 }
+#devices .device-unlock-warning {
+    color: var(--status-starting-color);
+}
 #devices .device-secondary-actions + .device-trouble {
     margin-top: 10px;
 }

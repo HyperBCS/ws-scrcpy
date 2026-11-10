@@ -172,6 +172,11 @@ async function panelFlow(browser) {
         // Remove brings the field back.
         handlers.onCommand = (command) => (command.type === 'clear_unlock_passcode' ? { result: JSON.stringify({ ...status, hasPasscode: false, enabled: false }) } : undefined);
         await dialog.getByRole('button', { name: 'Remove', exact: true }).click();
+        // Remove only arms a confirm prompt; its button ignores presses for the first 500 ms.
+        const removal = dialog.getByRole('alertdialog');
+        await removal.locator('.confirm-prompt-button:not([aria-disabled])').first().waitFor();
+        assert.equal(ofType(commands, 'clear_unlock_passcode').length, 0, 'Remove alone sends nothing');
+        await removal.getByRole('button', { name: 'Remove passcode', exact: true }).click();
         await field.waitFor();
         assert.deepEqual(ofType(commands, 'clear_unlock_passcode').map((command) => command.data), [{ udid: UDID }]);
         assert.equal(await toggle.isDisabled(), true);

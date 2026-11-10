@@ -285,7 +285,7 @@ async function powerActions(browser, mobile) {
     }
 }
 
-// U-home-4, U-system-1
+// U-home-4, U-system-1, U-settings-1 (card warning)
 async function deviceCards(browser, mobile) {
     const test = await start(browser, {
         mobile,
@@ -296,6 +296,12 @@ async function deviceCards(browser, mobile) {
     try {
         const card = page.locator(`[data-device-key="ios:${UDID}"]`);
         await card.waitFor();
+        assert.equal(
+            await card.locator('.device-unlock-warning').textContent(),
+            'Scheduled unlock is on but has no passcode',
+            'the card says when scheduled unlock cannot run',
+        );
+
         // Developer Mode: the button says it restarts the phone and needs a confirming press.
         const enable = trigger(card, 'Enable and restart');
         let dialog = await armAndCheck(test, {
@@ -376,12 +382,66 @@ async function deviceCards(browser, mobile) {
     }
 }
 
+// U-settings-1, U-system-1
+async function removePasscode(browser, mobile) {
+    const status = { enabled: true, time: '03:00', hasPasscode: true, nextRunAt: Date.now() + 3600000 };
+    const test = await start(browser, { mobile, device: iphone({ session: 'stopped', unlockSchedule: status }) });
+    const { page, ofType } = test;
+    const label = mobile ? 'phone' : 'desktop';
+    try {
+        const settings = page.locator(`[data-device-key="ios:${UDID}"]`).getByRole('button', { name: `Settings for ${NAME}`, exact: true });
+        const open = async () => {
+            await settings.click();
+            const sheet = page.getByRole('dialog', { name: 'Settings', exact: true });
+            await sheet.waitFor();
+            await settleMotion(page);
+            return sheet;
+        };
+        let sheet = await open();
+        const remove = sheet.getByRole('button', { name: 'Remove', exact: true });
+        const cleared = () => ofType('clear_unlock_passcode').length;
+        assert.match(await remove.getAttribute('class'), /danger/, 'Remove is a danger button');
+        assert.doesNotMatch(await sheet.getByRole('button', { name: 'Replace', exact: true }).getAttribute('class'), /danger/);
+        let dialog = await armAndCheck(test, {
+            trigger: remove, scope: sheet, question: `Remove the stored passcode for ${NAME}?`,
+            consequence: /Scheduled unlock stops\. iOS restarts the phone after 72 hours without an unlock\./,
+            confirmLabel: 'Remove passcode', sentCount: cleared,
+        });
+        await shot(page, `passcode-remove-armed-${label}-light`);
+        await page.emulateMedia({ colorScheme: 'dark' });
+        await shot(page, `passcode-remove-armed-${label}-dark`);
+        await page.emulateMedia({ colorScheme: 'light' });
+
+        // Closing the sheet disarms it.
+        if (!(await dialog.count())) await remove.click();
+        await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
+        await sheet.waitFor({ state: 'hidden' });
+        sheet = await open();
+        assert.equal(await sheet.getByRole('alertdialog').count(), 0, 'closing the sheet disarms Remove');
+        assert.equal(cleared(), 0);
+
+        // Confirming sends it once and says that the schedule can no longer run.
+        test.handlers.onCommand = (command) =>
+            command.type === 'clear_unlock_passcode' ? { result: JSON.stringify({ ...status, hasPasscode: false, nextRunAt: undefined }) } : undefined;
+        await remove.click();
+        await confirmAfterGuard(dialog, 'Remove passcode');
+        await sheet.locator('.sheet-status.warning', { hasText: 'Scheduled unlock is on but cannot run until a passcode is stored.' }).waitFor();
+        assert.deepEqual(ofType('clear_unlock_passcode').map((command) => command.data), [{ udid: UDID }]);
+        await sheet.getByLabel('Passcode for scheduled unlock').waitFor();
+        assert.deepEqual(test.errors, []);
+        console.log(`PASS ${label} passcode Remove: danger style, confirm prompt, disarmed by closing, warning after removal`);
+    } finally {
+        await test.context.close();
+    }
+}
+
 (async () => {
     const browser = await chromium.launch({ headless: true });
     try {
         for (const mobile of [true, false]) {
             await powerActions(browser, mobile);
             await deviceCards(browser, mobile);
+            await removePasscode(browser, mobile);
         }
     } finally {
         await browser.close();

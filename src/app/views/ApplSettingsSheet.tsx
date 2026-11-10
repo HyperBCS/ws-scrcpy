@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { SheetGroup, SheetRow, SheetStatus, SheetToggleRow } from '../ui/SheetControls';
+import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { applSettingsSheetTarget, closeApplSettingsSheet } from '../state/settingsSheet';
 import { devices, deviceName, findDeviceByUdid } from '../state/devices';
 import { readSavedPasscode } from '../state/savedPasscode';
@@ -71,6 +72,8 @@ export function ApplSettingsSheet() {
     const [browserSaved, setBrowserSaved] = useState(false);
     const [note, setNote] = useState<Note>();
     const [runNote, setRunNote] = useState<Note>();
+    // Removing the passcode stops the scheduled unlock, so it is confirmed. Closing the sheet disarms it.
+    const confirmRemove = useArmedAction<'passcode'>(!!target);
     // A reply that lands after the sheet closed, or reopened for another phone, is dropped.
     const generation = useRef(0);
 
@@ -190,7 +193,14 @@ export function ApplSettingsSheet() {
             () => clearUnlockPasscode(tracker, renderTarget.udid),
             (status) => {
                 setReplyStatus(status);
-                setNote({ text: 'Passcode removed from the server.', tone: 'neutral' });
+                setNote(
+                    status.enabled
+                        ? {
+                              text: 'Passcode removed. Scheduled unlock is on but cannot run until a passcode is stored.',
+                              tone: 'warning',
+                          }
+                        : { text: 'Passcode removed from the server.', tone: 'neutral' },
+                );
             },
             (message) => setNote({ text: message, tone: 'error' }),
         );
@@ -336,12 +346,31 @@ export function ApplSettingsSheet() {
                             >
                                 Replace
                             </button>
-                            <button type="button" class="sheet-button" disabled={locked} onClick={onClearPasscode}>
+                            <button
+                                type="button"
+                                class="sheet-button danger"
+                                disabled={locked}
+                                onClick={(event) => confirmRemove.arm('passcode', event.currentTarget)}
+                            >
                                 Remove
                             </button>
                         </SheetRow>
                     )}
                 </SheetGroup>
+                {confirmRemove.armed && (
+                    <ConfirmPrompt
+                        action={confirmRemove}
+                        question={`Remove the stored passcode for ${entry ? deviceName(entry) : 'this iPhone'}?`}
+                        consequence={
+                            schedule.enabled
+                                ? 'Scheduled unlock stops. iOS restarts the phone after 72 hours without an unlock.'
+                                : 'Scheduled unlock cannot run without it.'
+                        }
+                        confirmLabel="Remove passcode"
+                        danger
+                        onConfirm={onClearPasscode}
+                    />
+                )}
                 {note && <SheetStatus tone={note.tone}>{note.text}</SheetStatus>}
 
                 <SheetGroup title="Status">
