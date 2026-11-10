@@ -44,6 +44,9 @@ const SIGNAL_READY_PATTERN = /Open https?:\/\//;
 // After a failed session the phone may still hold what serve-web started (a start that fails on
 // "camera in use" exits before its cleanup), and the RTCP timeout takes ~20 s to reclaim it.
 const ERROR_COOLDOWN_MS = 30000;
+// `/restart` stops and starts the phone's video inside serve-web. Each one is a display session
+// on the phone, and a burst of those is what wedges its display service (docs/HANDOFF.md).
+const VIDEO_RESTART_INTERVAL_MS = 30000;
 const MOUNT_TIMEOUT_MS = 180000;
 // Each session's serve-web gets the first free loopback port from here up.
 const SERVE_WEB_BASE_PORT = 18100;
@@ -160,6 +163,8 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
     private readonly budget = new StartBudget();
     // Per phone: no new start before `until`, after a session that failed once serve-web ran.
     private readonly cooldowns = new Map<string, { until: number; message: string }>();
+    // Per phone, shared by every viewer and the unlock driver: when `/restart` last reached serve-web.
+    private readonly videoRestarts = new Map<string, number>();
     private readonly agent = new http.Agent({ keepAlive: true, maxSockets: 8 });
     // One in-flight pasteboard-daemon restart per device (see restartPasteboardDaemon).
     private readonly pasteboardRestarts = new Map<string, Promise<boolean>>();
@@ -342,6 +347,17 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
             CoreDeviceRunner.freePort(session);
         }
         this.setState(session, 'stopped', message);
+    }
+
+    /** Milliseconds until a `/restart` may reach this phone's serve-web again; 0 when it may now. */
+    public videoRestartWaitMs(udid: string, now = Date.now()): number {
+        const last = this.videoRestarts.get(udid);
+        return last === undefined ? 0 : Math.max(0, last + VIDEO_RESTART_INTERVAL_MS - now);
+    }
+
+    /** Call right before sending `/restart`, so the next one keeps its distance. */
+    public noteVideoRestart(udid: string, now = Date.now()): void {
+        this.videoRestarts.set(udid, now);
     }
 
     /** One loopback HTTP request against the device's serve-web (`/touch`, `/clipboard`, ...). */

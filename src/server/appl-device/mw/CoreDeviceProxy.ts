@@ -53,9 +53,6 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 const INPUT_TIMEOUT_MS = 4000;
 // Button edges and keyboard detach wait for native completion, bounded at 8 s by serve-web.
 const INPUT_COMPLETION_TIMEOUT_MS = 10000;
-// `restart` stops and starts the phone's video inside serve-web. Each one is a display session
-// on the phone, and a burst of those is what wedges its display service (docs/HANDOFF.md).
-const VIDEO_RESTART_INTERVAL_MS = 30000;
 // Close codes `CoreDeviceReceiver` tells apart. 4009: serve-web was started and the session failed.
 // 4010: nothing was started on the phone (a refusal, or a failure before serve-web ran, such as the
 // mount), so asking again later is fine. 4011: the phone's start budget is used up, so the viewer
@@ -80,8 +77,6 @@ export class CoreDeviceProxy extends Mw {
     public static readonly TAG = TAG;
     private static touchOwners = new Map<string, CoreDeviceProxy>();
     private static keyboardOwners = new Map<string, CoreDeviceProxy>();
-    // Per phone, shared by every viewer: when `restart` last reached serve-web.
-    private static videoRestarts = new Map<string, number>();
     private contacts: CoreDeviceContact[] = [];
     private keyboardPressed = false;
     private keyboardBusy = false;
@@ -678,12 +673,12 @@ export class CoreDeviceProxy extends Mw {
                 this.requestKeyframe();
                 return;
             case 'restart': {
-                const last = CoreDeviceProxy.videoRestarts.get(this.udid) ?? 0;
-                if (Date.now() - last < VIDEO_RESTART_INTERVAL_MS) {
+                // At most one video restart per phone every 30 s, counting the unlock driver's.
+                if (this.runner.videoRestartWaitMs(this.udid) > 0) {
                     console.log(`${this.name} restart ignored: the video was restarted a moment ago`);
                     return;
                 }
-                CoreDeviceProxy.videoRestarts.set(this.udid, Date.now());
+                this.runner.noteVideoRestart(this.udid);
                 await this.runner.request(this.udid, 'POST', '/restart');
                 return;
             }

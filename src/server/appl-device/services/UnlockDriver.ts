@@ -1,7 +1,7 @@
 import { UNLOCK_NOT_TYPED_MESSAGE, UnlockRunOutcome } from '../../../common/IosUnlockSchedule';
 import { clampHid } from '../../../common/CoreDeviceProtocol';
 import { hidUsageForCode } from '../../../app/applDevice/hidKeyboard';
-import { CoreDeviceRunner, HttpReply, SessionHold } from './CoreDeviceRunner';
+import { CoreDeviceRunner, HttpReply, SessionHold, SessionStartError, StartRefusedError } from './CoreDeviceRunner';
 import { DeviceStateMonitor } from './DeviceStateMonitor';
 import { CoreDeviceProxy } from '../mw/CoreDeviceProxy';
 import { PyMobileDevice } from './PyMobileDevice';
@@ -184,8 +184,16 @@ export class UnlockDriver {
         try {
             hold = await runner.acquire(udid);
         } catch (error) {
-            // `acquire` has already dropped its hold on failure.
-            return { outcome: 'failed-session', message: (error as Error).message, openedSession: !reused };
+            // `acquire` has already dropped its hold on failure. A start it refused (budget,
+            // cooldown, phone not attached) or one that failed before serve-web ran put no display
+            // session on the phone, so it does not count toward the Run now cooldown.
+            const nothingStarted =
+                error instanceof StartRefusedError || (error instanceof SessionStartError && !error.serveWebStarted);
+            return {
+                outcome: 'failed-session',
+                message: (error as Error).message,
+                openedSession: !reused && !nothingStarted,
+            };
         }
         let touched = false;
         let keyboardAttached = false;
@@ -197,8 +205,15 @@ export class UnlockDriver {
         const sequence = async (): Promise<UnlockDriverResult> => {
             if (reused) {
                 // An input POST that reached this process while the screen was dark left its
-                // touch surface unauthenticated; reopen it against the live stream.
+                // touch surface unauthenticated; reopen it against the live stream. The restart
+                // is needed, so a recent one from a viewer is waited out rather than skipped.
+                const waitMs = runner.videoRestartWaitMs(udid);
+                if (waitMs > 0) {
+                    log('restart wait');
+                    await pause('restart wait', waitMs);
+                }
                 log('restart');
+                runner.noteVideoRestart(udid);
                 await post('restart', '/restart');
                 await pause('restart', RESTART_SETTLE_MS);
             }

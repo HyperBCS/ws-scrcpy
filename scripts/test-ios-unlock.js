@@ -504,11 +504,19 @@ test('driver: a session that is already ready gets /restart before any input', a
         const runner = CoreDeviceRunner.getInstance();
         await runner.acquire('iphone-viewer');
         try {
-            const { result, lines } = await runDriver('iphone-viewer');
+            // A viewer restarted the video 29 s ago: the driver waits out the rest of the 30 s.
+            runner.noteVideoRestart('iphone-viewer', Date.now() - 29000);
+            const { result, lines, output } = await runDriver('iphone-viewer');
             assert.equal(result.outcome, 'unlocked', result.message);
             assert.equal(result.openedSession, false, 'a shared session is not a new one');
+            assert(output.includes('[iphone-viewer] restart wait'), 'a recent viewer restart is waited out');
+            assert(
+                runner.videoRestartWaitMs('iphone-viewer') > 25000,
+                "the driver's restart counts toward the viewers' 30 s spacing",
+            );
             const restart = lines.findIndex((line) => line.startsWith('post /restart'));
             assert(restart >= 0, '/restart is sent');
+            assert.equal(lines.filter((line) => line.startsWith('post /restart')).length, 1);
             indexAfter(lines, restart, (line) => line === button('home', 'down'), 'Home after /restart');
             assert(!lines.some((line) => line.includes('"serve-web"')), 'the viewer session is shared, not restarted');
             assert.equal(runner.getStatus('iphone-viewer').state, 'ready', 'the viewer keeps its session');
@@ -525,12 +533,44 @@ test('driver: a session that fails to start is failed-session with the CLI reaso
         assert.equal(result.outcome, 'failed-session', result.message);
         assert.match(result.message, /Developer Disk Image/);
         assert(!lines.some((line) => line.startsWith('post ')), 'nothing is posted');
+        assert.equal(result.openedSession, false, 'a failed mount put no display session on the phone');
     });
     await withEnv({ FAKE_LOG: logFile, FAKE_SERVE_EXIT: '3' }, async () => {
         const { result, runner } = await runDriver('iphone-noserve');
         assert.equal(result.outcome, 'failed-session', result.message);
         assert.match(result.message, /displayservice unavailable/);
+        assert.equal(result.openedSession, true, 'serve-web ran, so the phone may have had a session');
         assert.equal(runner.getStatus('iphone-noserve').state, 'error');
+    });
+});
+
+test('driver: a start the runner refuses is failed-session with its reason and opens nothing', async () => {
+    // A phone the tracker does not list as attached.
+    await withEnv({ FAKE_LOG: logFile }, async () => {
+        CoreDeviceRunner.setDeviceCheck(() => false);
+        try {
+            const { result, lines } = await runDriver('iphone-detached');
+            assert.equal(result.outcome, 'failed-session', result.message);
+            assert.match(result.message, /not connected/);
+            assert.equal(result.openedSession, false, 'a refused start does not count toward the Run now cooldown');
+            assert(!result.typed, 'nothing was typed');
+            assert.deepEqual(lines, [], 'no mount, no serve-web, no input');
+        } finally {
+            CoreDeviceRunner.setDeviceCheck(undefined);
+        }
+    });
+    // The phone's start budget is used up: the run waits for it like a viewer does.
+    await withEnv({ FAKE_LOG: logFile, IOS_SESSION_START_LIMIT: '1' }, async () => {
+        const first = await runDriver('iphone-budget');
+        assert.equal(first.result.outcome, 'unlocked', first.result.message);
+        assert.equal(first.result.openedSession, true);
+        first.runner.stopSession('iphone-budget');
+        await CoreDeviceRunner.childrenClosed();
+        const second = await runDriver('iphone-budget');
+        assert.equal(second.result.outcome, 'failed-session', second.result.message);
+        assert.match(second.result.message, /screen session was started .* The next start is allowed in/);
+        assert.equal(second.result.openedSession, false);
+        assert(!second.lines.some((line) => line.includes('"serve-web"')), 'no second serve-web');
     });
 });
 
