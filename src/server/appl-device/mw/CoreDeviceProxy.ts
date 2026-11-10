@@ -14,7 +14,13 @@ import {
     splitStreamFrames,
 } from '../../../common/CoreDeviceProtocol';
 import { AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, AudioPacketKind } from '../../../common/AudioProtocol';
-import { CoreDeviceRunner, HttpReply, SessionHold, StartRefusedError } from '../services/CoreDeviceRunner';
+import {
+    CoreDeviceRunner,
+    HttpReply,
+    SessionHold,
+    SessionStartError,
+    StartRefusedError,
+} from '../services/CoreDeviceRunner';
 import { CoreDeviceAudioRelay } from '../services/CoreDeviceAudio';
 import { DeviceStateMonitor } from '../services/DeviceStateMonitor';
 
@@ -50,9 +56,10 @@ const INPUT_COMPLETION_TIMEOUT_MS = 10000;
 // `restart` stops and starts the phone's video inside serve-web. Each one is a display session
 // on the phone, and a burst of those is what wedges its display service (docs/HANDOFF.md).
 const VIDEO_RESTART_INTERVAL_MS = 30000;
-// Close codes `CoreDeviceReceiver` tells apart. 4009: a start was tried and failed. 4010: nothing
-// was started and asking again later is fine. 4011: the phone's start budget is used up, so the
-// viewer must not retry on its own.
+// Close codes `CoreDeviceReceiver` tells apart. 4009: serve-web was started and the session failed.
+// 4010: nothing was started on the phone (a refusal, or a failure before serve-web ran, such as the
+// mount), so asking again later is fine. 4011: the phone's start budget is used up, so the viewer
+// must not retry on its own.
 const CLOSE_START_FAILED = 4009;
 const CLOSE_START_REFUSED = 4010;
 const CLOSE_START_BUDGET = 4011;
@@ -105,14 +112,21 @@ export class CoreDeviceProxy extends Mw {
             return;
         }
         const proxy = new CoreDeviceProxy(ws, udid);
-        proxy.init().catch((error: Error) => {
-            const refused = error instanceof StartRefusedError ? error.reason : undefined;
-            proxy.failSession(
-                error.message,
-                refused === 'budget' ? CLOSE_START_BUDGET : refused ? CLOSE_START_REFUSED : CLOSE_START_FAILED,
-            );
-        });
+        proxy.init().catch((error: Error) => proxy.failSession(error.message, CoreDeviceProxy.closeCodeFor(error)));
         return proxy;
+    }
+
+    /** The close code for a failed `init()`; see CLOSE_START_FAILED and the two after it. */
+    private static closeCodeFor(error: Error): number {
+        if (error instanceof StartRefusedError) {
+            return error.reason === 'budget' ? CLOSE_START_BUDGET : CLOSE_START_REFUSED;
+        }
+        // A mount that failed, or a phone that went away before serve-web ran: the viewer keeps
+        // trying, so a phone that is rebooting or was just plugged in comes back without Retry.
+        if (error instanceof SessionStartError && !error.serveWebStarted) {
+            return CLOSE_START_REFUSED;
+        }
+        return CLOSE_START_FAILED;
     }
 
     constructor(ws: WS, udid: string) {

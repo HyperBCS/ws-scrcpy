@@ -1696,9 +1696,13 @@ once. The proxy's `restart` (video restart inside serve-web) reaches the phone a
 is installed in `src/server/index.ts` and lets everything through until the tracker has seen at
 least one phone, so a tracker that failed its first poll cannot lock every phone out.
 
-**The viewer's half.** The proxy closes with 4009 when a start was tried and failed, 4010 when
-nothing was started and asking again is fine (cooldown, phone not attached), and 4011 when the
-budget is used up. `CoreDeviceReceiver` used to reset its retry counter on socket open, and the
+**The viewer's half.** The proxy closes with 4009 when serve-web was started and the session
+failed, 4010 when nothing was started on the phone and asking again is fine (cooldown, phone not
+attached, or a failure before serve-web ran, such as the mount), and 4011 when the budget is used
+up. A failed mount is a 4010 so that a page left open on a rebooting or replugged phone still comes
+back without Retry, as the September reboot test recorded; it puts no display session on the
+phone. The tracker now reads a replugged phone again at once instead of at its next regular
+refresh (up to a minute later), because `acquire()` refuses a phone it reports as disconnected. `CoreDeviceReceiver` used to reset its retry counter on socket open, and the
 server opens every socket before it starts the session, so the delay was always 1 s. The counter
 now resets when the codec arrives; the delay doubles to 60 s; three 4009 closes in a row, or one
 4011, stop the retries until someone presses Retry. Retry used to send `restart` down a socket

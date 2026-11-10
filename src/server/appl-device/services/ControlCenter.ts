@@ -231,9 +231,14 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
                     this.tracked.set(udid, item);
                     this.emit('device', item.descriptor);
                 }
-                const stale = item.descriptor.paired
-                    ? now - item.detailsAt > DETAILS_REFRESH_MS
-                    : now - item.detailsAt > UNPAIRED_RETRY_MS;
+                // A phone plugged back in is read again now, not when the next regular refresh
+                // comes round up to a minute later. Until then it reads as disconnected, and the
+                // runner starts no screen session for a disconnected phone.
+                const stale =
+                    item.descriptor.state === DeviceState.DISCONNECTED ||
+                    (item.descriptor.paired
+                        ? now - item.detailsAt > DETAILS_REFRESH_MS
+                        : now - item.detailsAt > UNPAIRED_RETRY_MS);
                 if (stale && !item.detailsPending) {
                     item.detailsPending = this.refreshDetails(item).finally(() => (item!.detailsPending = undefined));
                 }

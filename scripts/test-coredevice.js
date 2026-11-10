@@ -338,9 +338,10 @@ test('a proxy whose start fails reports it, closes the socket so the viewer retr
         assert.equal(last.type, 'status');
         assert.equal(last.state, 'error');
         assert.match(last.message, /Developer Mode is off/);
+        // 4010: the mount failed before serve-web ran, so the viewer retries without counting it.
         assert.deepEqual(
             socket.closes,
-            [{ code: 4009, reason: 'Stream unavailable' }],
+            [{ code: 4010, reason: 'Stream unavailable' }],
             'the socket is closed so the viewer reconnects instead of sitting on the error',
         );
         // A released proxy must not keep relaying another viewer's session status.
@@ -552,7 +553,7 @@ test('a failed session holds off the next start, so a second tab cannot restart 
     });
 });
 
-test('the proxy tells the viewer whether a start failed, was put off, or is out of budget', async () => {
+test('the proxy tells the viewer whether a start failed, was put off, never reached serve-web, or is out of budget', async () => {
     await withEnv({ IOS_SESSION_COOLDOWN_MS: '60000', IOS_SESSION_START_LIMIT: '1' }, async () => {
         const runner = CoreDeviceRunner.getInstance();
         const closed = async (udid) => {
@@ -566,6 +567,13 @@ test('the proxy tells the viewer whether a start failed, was put off, or is out 
         const waiting = await closed('iphone-codes');
         assert.equal(waiting.code, 4010, 'nothing was started; asking again later is fine');
         assert.match(waiting.message, /The next start is allowed in/);
+        // A start that failed before serve-web ran put nothing on the phone. The viewer keeps
+        // trying, so a phone that is rebooting or was just plugged in comes back on its own.
+        await withEnv({ FAKE_MOUNT_FAIL: 'devmode' }, async () => {
+            const mount = await closed('iphone-codes-mount');
+            assert.equal(mount.code, 4010, 'a failed mount is not a failed screen session');
+            assert.match(mount.message, /Developer Mode is off/);
+        });
         // Budget: one start is allowed, the second is refused for good.
         await runner.acquire('iphone-codes-budget');
         runner.stopSession('iphone-codes-budget', 'test');
@@ -2579,6 +2587,35 @@ test('device discovery passes the iOS version through to lock detection', async 
             assert.equal(tracker.getDescriptor('iphone-discovered')['device.locked'], false);
             assert(calls().some((line) => line.includes('"get-state"')));
             assert(!calls().some((line) => line.includes('lockstate.py')));
+        });
+    } finally {
+        tracker.release();
+    }
+});
+
+test('a phone plugged back in is read again at once, so its screen can be started', async () => {
+    // `acquire()` refuses a phone the tracker reports as disconnected (the check is installed in
+    // src/server/index.ts), so a replugged phone must not keep that state until the next regular
+    // details refresh, which can be a minute away.
+    const { ControlCenter } = require('../src/server/appl-device/services/ControlCenter');
+    const tracker = new ControlCenter();
+    const udid = 'iphone-replugged';
+    const stateIs = (state) => tracker.getDescriptor(udid)?.state === state;
+    const pollUntil = async (check) => {
+        for (const end = Date.now() + 5000; Date.now() < end && !check(); ) {
+            await tracker.poll();
+            await sleep(20);
+        }
+        return check();
+    };
+    try {
+        await withEnv({ FAKE_DEVICES: udid, FAKE_NOTIFICATION_STATE: '0', IOS_STATE_NOTIFICATIONS: '0' }, async () => {
+            await tracker.init();
+            assert(await pollUntil(() => stateIs('Connected')));
+            await withEnv({ FAKE_DEVICES: '' }, async () => {
+                assert(await pollUntil(() => stateIs('disconnected')));
+            });
+            assert(await pollUntil(() => stateIs('Connected')), 'the returned phone is connected again');
         });
     } finally {
         tracker.release();

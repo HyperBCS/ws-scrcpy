@@ -32,8 +32,9 @@ const RECONNECT_MAX_MS = 60000;
 // display service until a reboot. The server spaces and limits starts as well; this is the
 // viewer's share: stop asking after a few and leave the next try to the person.
 const MAX_FAILED_STARTS = 3;
-// `CoreDeviceProxy` close codes. 4009: a start was tried and failed. 4011: the phone's start
-// budget is used up. Any other close (4010 "not now", a dropped connection) is retried.
+// `CoreDeviceProxy` close codes. 4009: serve-web was started and the session failed. 4011: the
+// phone's start budget is used up. Any other close (4010 "nothing was started, try later", a
+// dropped connection) is retried.
 const CLOSE_START_FAILED = 4009;
 const CLOSE_START_BUDGET = 4011;
 

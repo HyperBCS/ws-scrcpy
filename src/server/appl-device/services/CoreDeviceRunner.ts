@@ -82,6 +82,21 @@ export class StartRefusedError extends Error {
     }
 }
 
+/**
+ * A start that was tried and failed. `serveWebStarted` says whether serve-web had been spawned,
+ * so whether the phone may have had a display session. A failure before that (the mount, a phone
+ * that went away) left nothing on the phone.
+ */
+export class SessionStartError extends Error {
+    constructor(
+        message: string,
+        public readonly serveWebStarted: boolean,
+    ) {
+        super(message);
+        this.name = 'SessionStartError';
+    }
+}
+
 interface Session {
     udid: string;
     // Unique per session; see `SessionHold`.
@@ -427,7 +442,7 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
                     this.stopChild(session);
                     this.fail(session, error.message);
                 }
-                throw error;
+                throw new SessionStartError(error.message, session.spawned);
             });
         return session;
     }
