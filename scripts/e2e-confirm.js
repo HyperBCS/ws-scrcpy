@@ -52,7 +52,7 @@ async function start(browser, { mobile = true, dark = false, device = iphone(), 
     const errors = [];
     const commands = [];
     const sent = [];
-    const handlers = { onCommand: undefined };
+    const handlers = { onCommand: undefined, iphone: undefined };
     page.on('pageerror', (error) => errors.push(error.message));
     await page.route('**/api/notifications/**', (route) => route.fulfill({ status: 200, json: { sources: [], unread: 0, unreadBySource: {} } }));
     await page.routeWebSocket('**', (socket) => {
@@ -71,7 +71,11 @@ async function start(browser, { mobile = true, dark = false, device = iphone(), 
             if (frame[0] === 4) {
                 const code = frame.subarray(5).toString();
                 if (code === 'HSTS') reply({ id: -1, type: 'hosts', data: { local: [{ type: 'ios' }, { type: 'android' }] } });
-                if (code === 'ATRC') reply({ id: -1, type: 'devicelist', data: { id: 'ios', name: 'Devices', list: [device] } });
+                if (code === 'ATRC') {
+                    // A later device list, as the tracker sends when the phone's state changes.
+                    handlers.iphone = (next) => reply({ id: -1, type: 'devicelist', data: { id: 'ios', name: 'Devices', list: [next] } });
+                    handlers.iphone(device);
+                }
                 if (code === 'GTRC') reply({ id: -1, type: 'devicelist', data: { id: 'android', name: 'Devices', list: [android] } });
             } else if (frame[0] === 32) {
                 const command = JSON.parse(frame.subarray(5).toString());
@@ -289,10 +293,8 @@ async function powerActions(browser, mobile) {
 
 // U-home-4, U-system-1, U-settings-1 (card warning)
 async function deviceCards(browser, mobile) {
-    const test = await start(browser, {
-        mobile,
-        device: iphone({ developerMode: false, unlockSchedule: { enabled: true, time: '03:00', hasPasscode: false } }),
-    });
+    const device = iphone({ developerMode: false, unlockSchedule: { enabled: true, time: '03:00', hasPasscode: false } });
+    const test = await start(browser, { mobile, device });
     const { page, ofType } = test;
     const label = mobile ? 'phone' : 'desktop';
     try {
@@ -352,6 +354,23 @@ async function deviceCards(browser, mobile) {
             if (type !== 'kill_server') await card.getByText('Fixture done.', { exact: true }).waitFor();
         }
         assert.deepEqual(ofType('kill_server')[0].data, { udid: UDID, pid: 1 });
+
+        // A waiting prompt goes away once its action no longer applies: the session stops
+        // elsewhere, or the phone disconnects.
+        await trigger(trouble, 'Stop stream service').click();
+        const stopPrompt = prompt(trouble, `Stop the stream service on ${NAME}?`);
+        await stopPrompt.waitFor();
+        test.handlers.iphone({ ...device, session: 'stopped' });
+        // Well inside the timeout, so it is the state change that removes it.
+        await stopPrompt.waitFor({ state: 'detached', timeout: 2000 });
+        await trigger(trouble, 'Restart services').click();
+        const restartPrompt = prompt(trouble, `Restart services on ${NAME}?`);
+        await restartPrompt.waitFor();
+        test.handlers.iphone({ ...device, state: 'Disconnected', session: 'stopped' });
+        await restartPrompt.waitFor({ state: 'detached', timeout: 2000 });
+        assert.equal(ofType('kill_server').length, 1, 'no second stop was sent');
+        assert.equal(ofType('restart_session').length, 1, 'no second restart was sent');
+        test.handlers.iphone(device);
 
         // Android: Stop stream service leaves the Files and Shell row and is confirmed.
         const androidCard = page.locator(`[data-device-key="android:${android.udid}"]`);

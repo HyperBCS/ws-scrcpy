@@ -333,6 +333,10 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const name = deviceName(entry);
     const developerMode = descriptor.developerMode;
     const session = descriptor.session ?? 'stopped';
+    // A prompt shows only while its button can be used, so a session that stops or a phone that
+    // disconnects in the meantime does not leave a confirm for an action that no longer applies.
+    const canStop = isActive && (session === 'ready' || session === 'starting');
+    const canRecover = isActive && !busy;
 
     /**
      * Debug actions live here as well as in the stream page's Actions sheet, because the failures
@@ -510,7 +514,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                     </div>
                     <div class="device-trouble" role="group" aria-label="Troubleshooting">
                         <h4 class="device-trouble-heading">Troubleshooting</h4>
-                        {isActive && (session === 'ready' || session === 'starting') && (
+                        {canStop && (
                             <TroubleRow
                                 title="Stop stream service"
                                 description="Ends the screen stream for every viewer."
@@ -533,7 +537,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                                 type="button"
                                 class="action-button danger"
                                 aria-label="Restart services"
-                                disabled={!!busy || !isActive}
+                                disabled={!canRecover}
                                 onClick={(event) => confirm.arm('restart', event.currentTarget)}
                             >
                                 Restart
@@ -547,13 +551,13 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                                 type="button"
                                 class="action-button danger"
                                 aria-label="Remount developer image"
-                                disabled={!!busy || !isActive}
+                                disabled={!canRecover}
                                 onClick={(event) => confirm.arm('remount', event.currentTarget)}
                             >
                                 Remount
                             </button>
                         </TroubleRow>
-                        {confirm.armed === 'stop' && (
+                        {confirm.armed === 'stop' && canStop && (
                             <ConfirmPrompt
                                 action={confirm}
                                 question={`Stop the stream service on ${name}?`}
@@ -568,7 +572,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                                 }
                             />
                         )}
-                        {confirm.armed === 'restart' && (
+                        {confirm.armed === 'restart' && canRecover && (
                             <ConfirmPrompt
                                 action={confirm}
                                 question={`Restart services on ${name}?`}
@@ -584,7 +588,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                                 }
                             />
                         )}
-                        {confirm.armed === 'remount' && (
+                        {confirm.armed === 'remount' && canRecover && (
                             <ConfirmPrompt
                                 action={confirm}
                                 question={`Remount the developer image on ${name}?`}
