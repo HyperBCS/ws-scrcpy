@@ -586,6 +586,10 @@ async function main() {
             await select(page, 'notes.txt');
             await command(page, 'Delete');
             await page.getByText('This cannot be undone.', { exact: false }).waitFor();
+            // Cancel is the default, and the red button ignores presses for the first 500 ms.
+            assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Cancel', 'Cancel is focused');
+            assert.equal(await page.locator('.fx-dialog [value="confirm"]').isDisabled(), true, 'Delete starts guarded');
+            assert.equal(traffic.operations.at(-1).cmd, 'COPY', 'opening the dialog deletes nothing');
             await page.getByRole('button', { name: 'Delete', exact: true }).last().click();
             await page.getByText('This folder is empty.', { exact: true }).first().waitFor();
             assert.deepEqual(traffic.operations.at(-1), { cmd: 'DELE', paths: [ROOT + '/archive/notes.txt'] });
