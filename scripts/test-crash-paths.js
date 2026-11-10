@@ -288,3 +288,138 @@ test('a shell that exits by itself still delivers its last output before closing
     assert.equal(received.find((message) => message.type === MessageType.CloseChannel).toCloseEvent().code, 1000);
     socket.close();
 });
+
+// ------------------------------------------------------------------ notification settings
+
+async function mounted(directory) {
+    process.env.WS_NOTIFICATION_DATA = directory;
+    const service = new NotificationService();
+    const app = express();
+    service.mount(app, '/');
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const base = `http://127.0.0.1:${server.address().port}/api/notifications`;
+    const api = (url, body) =>
+        fetch(base + url, {
+            method: body ? 'POST' : 'GET',
+            headers: { 'content-type': 'application/json' },
+            body: body && JSON.stringify(body),
+        });
+    const close = async () => {
+        service.release();
+        server.closeAllConnections();
+        await new Promise((resolve) => server.close(resolve));
+    };
+    return { service, api, close };
+}
+const source = { id: 'iphone', address: 'AA:BB:CC:DD:EE:FF', name: 'iPhone', apps: [], preview: true };
+const subscription = (name) => ({
+    endpoint: `https://web.push.apple.com/${name}`,
+    keys: { p256dh: Buffer.alloc(65, 1).toString('base64url'), auth: Buffer.alloc(16, 2).toString('base64url') },
+});
+
+for (const [label, content] of [
+    ['truncated', '{"vapid":'],
+    ['empty', ''],
+    ['of the wrong shape', '[]'],
+]) {
+    test(`a notifications.json that is ${label} turns notifications off and leaves the server running`, async (t) => {
+        t.mock.method(console, 'error', () => undefined);
+        const directory = fs.mkdtempSync(path.join(temporary, 'settings-'));
+        fs.writeFileSync(path.join(directory, 'notifications.json'), content);
+        fs.writeFileSync(path.join(directory, 'notification-history.json'), '{"version":1,"items":[]}');
+        const { service, api, close } = await mounted(directory);
+        try {
+            await service.start();
+            const kept = fs.readdirSync(directory).filter((name) => name.startsWith('notifications.json.corrupt-'));
+            assert.equal(kept.length, 1, 'the damaged file is kept under a new name');
+            assert.equal(fs.readFileSync(path.join(directory, kept[0]), 'utf8'), content);
+            const status = await (await api('/status')).json();
+            assert.match(status.error, /^Notifications are off: notifications\.json is damaged and was kept as /);
+            assert.ok(status.error.includes(kept[0]), 'the Setup page names the kept file');
+            assert.equal(status.publicKey, '', 'no new push keys are made up');
+            assert.deepEqual(status.sources, []);
+            const refused = await api('/sources', source);
+            assert.equal(refused.status, 503);
+            assert.equal((await refused.json()).error, status.error);
+            assert.equal((await api('/subscriptions', { subscription: subscription('x'), sources: [] })).status, 503);
+            assert.doesNotThrow(() => service.notifySystem({ title: 'a', body: 'b', tag: 'c', url: '#!' }));
+            service.release();
+            assert.deepEqual(
+                fs.readdirSync(directory).sort(),
+                [kept[0], 'notification-history.json'].sort(),
+                'nothing is written while notifications are off',
+            );
+        } finally {
+            await close();
+        }
+        // The next start finds no settings file and begins again, as a first run does.
+        const next = await mounted(directory);
+        try {
+            const status = await (await next.api('/status')).json();
+            assert.equal(status.error, '');
+            assert.ok(status.publicKey.length > 20);
+            assert.equal((await next.api('/sources', source)).status, 200);
+        } finally {
+            await next.close();
+        }
+    });
+}
+
+test('a settings file that cannot be saved turns notifications off instead of failing startup', async (t) => {
+    t.mock.method(console, 'error', () => undefined);
+    const directory = fs.mkdtempSync(path.join(temporary, 'settings-'));
+    // A first run on a read-only data directory: the new keys cannot be stored.
+    t.mock.method(NotificationStorage.prototype, 'save', () => {
+        throw Object.assign(Error('EROFS: read-only file system'), { code: 'EROFS' });
+    });
+    const { service, api, close } = await mounted(directory);
+    try {
+        await service.start();
+        const status = await (await api('/status')).json();
+        assert.match(status.error, /^Notifications are off: the notification settings could not be loaded or saved/);
+        assert.equal((await api('/sources', source)).status, 503);
+    } finally {
+        await close();
+    }
+});
+
+test('valid settings load unchanged and every save reaches the disk before and after the rename', async (t) => {
+    const directory = fs.mkdtempSync(path.join(temporary, 'settings-'));
+    const first = await mounted(directory);
+    let publicKey;
+    try {
+        publicKey = (await (await first.api('/status')).json()).publicKey;
+        const steps = [];
+        const { fsyncSync, renameSync } = fs;
+        const fsync = t.mock.method(fs, 'fsyncSync', (descriptor) => {
+            steps.push(fs.fstatSync(descriptor).isDirectory() ? 'sync directory' : 'sync file');
+            return fsyncSync(descriptor);
+        });
+        const rename = t.mock.method(fs, 'renameSync', (...paths) => {
+            steps.push('rename');
+            return renameSync(...paths);
+        });
+        assert.equal((await first.api('/sources', source)).status, 200);
+        fsync.mock.restore();
+        rename.mock.restore();
+        // Adding a phone saves the settings and the history, each in the same three steps.
+        const save = ['sync file', 'rename', 'sync directory'];
+        assert.deepEqual(steps, [...save, ...save]);
+    } finally {
+        await first.close();
+    }
+    assert.deepEqual(
+        fs.readdirSync(directory).filter((name) => name.includes('corrupt') || name.endsWith('.tmp')),
+        [],
+    );
+    const second = await mounted(directory);
+    try {
+        const status = await (await second.api('/status')).json();
+        assert.equal(status.error, '');
+        assert.equal(status.publicKey, publicKey, 'the push keys survive a restart');
+        assert.deepEqual(status.sources, [source]);
+    } finally {
+        await second.close();
+    }
+});

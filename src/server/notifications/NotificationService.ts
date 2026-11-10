@@ -14,7 +14,13 @@ import { NotificationEvent, NotificationSource } from '../../common/Notification
 import { PushDelivery, PushTarget } from './PushDelivery';
 export type { NotificationEvent, NotificationSource } from '../../common/Notification';
 
-import { NotificationStorage, NotificationStore as Store, SubscriptionRecord, FeedItem } from './NotificationStorage';
+import {
+    NotificationStorage,
+    NotificationStore as Store,
+    NotificationStoreError,
+    SubscriptionRecord,
+    FeedItem,
+} from './NotificationStorage';
 export type { FeedItem } from './NotificationStorage';
 
 // The collector's pairing window (`pair_until` in collector.py).
@@ -118,6 +124,9 @@ export class NotificationService implements Service {
     private pairUntil = 0;
     private pairingRejectedAt = 0;
     private error = '';
+    // Set when the settings file cannot be used. The service then keeps an empty store in memory,
+    // reads and writes nothing, and answers every change with this text.
+    private disabled = '';
     private push = new PushDelivery(
         (id, key, testPayload) => this.preparePush(id, key, testPayload),
         (id, subscription) => {
@@ -137,8 +146,20 @@ export class NotificationService implements Service {
     }
     private load(): void {
         if (this.loaded) return;
-        this.store = this.storage.load();
         this.loaded = true;
+        try {
+            this.store = this.storage.load();
+        } catch (error) {
+            // One optional settings file must not stop the server: HttpServer mounts this
+            // service before it listens, so a throw here used to fail the whole startup.
+            this.disabled =
+                error instanceof NotificationStoreError
+                    ? error.message
+                    : 'Notifications are off: the notification settings could not be loaded or saved. Check the data directory, then restart the server.';
+            this.store = { vapid: { publicKey: '', privateKey: '' }, sources: [], subscriptions: [] };
+            console.error(`[NotificationService] ${this.disabled}`);
+            return;
+        }
         for (const item of this.storage.loadHistory(this.store.sources)) {
             this.feed.set(item.key, item);
             if (item.reconnectable && item.fingerprint)
@@ -152,13 +173,16 @@ export class NotificationService implements Service {
         this.prune();
     }
     private saveHistory(immediate = false): void {
+        if (this.disabled) return;
         this.storage.saveHistory(() => [...this.feed.values()], immediate);
     }
     private save(): void {
+        if (this.disabled) return;
         this.storage.save(this.store);
     }
     async start(): Promise<void> {
         this.load();
+        if (this.disabled) return;
         this.closed = false;
         this.push.start();
         this.startCollector();
@@ -166,7 +190,12 @@ export class NotificationService implements Service {
     release(): void {
         this.closed = true;
         this.invalidateSources();
-        this.storage.flush();
+        try {
+            this.storage.flush();
+        } catch {
+            // A full or read-only disk must not keep the collector and the push queue running.
+            this.error = 'Notification history could not be saved';
+        }
         if (this.restart) clearTimeout(this.restart);
         this.child?.kill();
         this.child = undefined;
@@ -582,6 +611,10 @@ export class NotificationService implements Service {
                 res.sendStatus(429);
                 return;
             }
+            if (this.disabled && req.method !== 'GET') {
+                res.status(503).json({ error: this.disabled });
+                return;
+            }
             next();
         });
         const route = (
@@ -607,7 +640,7 @@ export class NotificationService implements Service {
                 pairing: this.pairing,
                 pairingOpen: this.pairingOpen,
                 pairingRejected: Date.now() - this.pairingRejectedAt < PAIRING_REJECTED_NOTICE_MS,
-                error: this.error,
+                error: this.disabled || this.error,
                 delivery: this.delivery,
                 notifications: [...this.feed.values()]
                     .reverse()
