@@ -6,6 +6,7 @@ import { CoreDeviceSessionState } from '../../../common/CoreDeviceProtocol';
 import { Service } from '../../services/Service';
 import { PyMobileDevice } from './PyMobileDevice';
 import { CoreDeviceAudioRelay } from './CoreDeviceAudio';
+import { StartBudget } from './StartBudget';
 
 const TAG = '[CoreDeviceRunner]';
 
@@ -24,14 +25,25 @@ const DISPLAY_WEDGED_TIMEOUT_MS = 25000;
 const RELEASE_GRACE_MS = 15000;
 // How long SIGTERM gets before SIGKILL. serve-web's orderly shutdown is what returns the device's
 // media-stream sessions -- it stops HID, the video stream, the audio stream and the accessibility
-// channel, each bounded at 3 s of its own, so a phone that is answering slowly can legitimately
-// need ~15 s. SIGKILL skips all of it and leaves the sessions allocated on the phone, streaming
-// into a tunnel that no longer exists (confirmed against the bench iPhone: `display
+// channel, in bounded steps of 2+2+3+3+3+6 s (11.44.0), so a phone that is answering slowly can
+// legitimately need ~19 s. SIGKILL skips all of it and leaves the sessions allocated on the phone,
+// streaming into a tunnel that no longer exists (confirmed against the bench iPhone: `display
 // get-media-stream-server-status` still reported `running: true` with two live sessions after a
 // SIGKILL, and only an RTCP timeout ~20 s later reclaimed them). One of those is survivable; a
 // burst of them is how the display daemon ends up wedged, which only a reboot clears. A healthy
 // shutdown takes well under a second and `close` cancels this, so the long bound costs nothing.
-const SIGKILL_GRACE_MS = 15000;
+const SIGKILL_GRACE_MS = 30000;
+// serve-web installs its SIGTERM handler only after its preflight (which starts the phone's video
+// and audio, bounded at 25 s) and the HTTP bind. A SIGTERM before that kills it with no cleanup,
+// exactly like SIGKILL. So a stop waits until the process is known to handle the signal, but no
+// longer than this after it was spawned. python/patches/pymobiledevice3-serve-signals.py installs
+// the handlers before the preflight; the wait stays for a venv that does not have that patch yet.
+const SIGNAL_READY_TIMEOUT_MS = 35000;
+// Logged by serve-web once it serves HTTP; its signal handlers are installed just before.
+const SIGNAL_READY_PATTERN = /Open https?:\/\//;
+// After a failed session the phone may still hold what serve-web started (a start that fails on
+// "camera in use" exits before its cleanup), and the RTCP timeout takes ~20 s to reclaim it.
+const ERROR_COOLDOWN_MS = 30000;
 const MOUNT_TIMEOUT_MS = 180000;
 // Each session's serve-web gets the first free loopback port from here up.
 const SERVE_WEB_BASE_PORT = 18100;
@@ -48,19 +60,77 @@ export interface CoreDeviceRunnerEvents {
 
 export type HttpReply = { status: number; body: string };
 
+/**
+ * What `acquire()` hands out. `release()` and `stopSession()` take it back and do nothing when
+ * the phone's session has been replaced since, so a slow teardown cannot act on a newer session.
+ */
+export interface SessionHold {
+    readonly udid: string;
+    readonly port: number;
+    readonly token: number;
+}
+
+export type StartRefusal = 'not-connected' | 'cooldown' | 'budget';
+
+/** `acquire()` declined to start serve-web. Nothing was spawned, so asking again is harmless. */
+export class StartRefusedError extends Error {
+    constructor(
+        message: string,
+        public readonly reason: StartRefusal,
+    ) {
+        super(message);
+        this.name = 'StartRefusedError';
+    }
+}
+
+/**
+ * A start that was tried and failed. `serveWebStarted` says whether serve-web had been spawned,
+ * so whether the phone may have had a display session. A failure before that (the mount, a phone
+ * that went away) left nothing on the phone.
+ */
+export class SessionStartError extends Error {
+    constructor(
+        message: string,
+        public readonly serveWebStarted: boolean,
+    ) {
+        super(message);
+        this.name = 'SessionStartError';
+    }
+}
+
 interface Session {
     udid: string;
+    // Unique per session; see `SessionHold`.
+    token: number;
     port: number;
     child?: ChildProcess;
+    // Set once serve-web has been spawned: from here the phone may hold a display session.
+    spawned: boolean;
     state: CoreDeviceSessionState;
     message?: string;
     holders: number;
     stderrTail: string;
     ready: Promise<void>;
     releaseTimer?: NodeJS.Timeout;
-    generation: number;
     // Created by the first viewer that wants sound; decodes once, fans out to every viewer.
     audio?: CoreDeviceAudioRelay;
+}
+
+/** One spawned serve-web, tracked from spawn until its `close`, whether or not a session still owns it. */
+interface ChildInfo {
+    spawnedAt: number;
+    // Set, and the promise resolved, once the process handles SIGTERM in an orderly way (or has gone).
+    handlesSignals: boolean;
+    signalReady: Promise<void>;
+    markSignalReady: () => void;
+    closed: Promise<void>;
+    stopRequested: boolean;
+    signalled: boolean;
+}
+
+function formatWait(ms: number): string {
+    const seconds = Math.max(1, Math.ceil(ms / 1000));
+    return seconds < 90 ? `${seconds} s` : `${Math.ceil(seconds / 60)} min`;
 }
 
 /**
@@ -76,7 +146,20 @@ interface Session {
  */
 export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> implements Service {
     private static instance?: CoreDeviceRunner;
+    // The static state below describes processes and ports, which outlive a released instance.
+    private static readonly children = new Map<ChildProcess, ChildInfo>();
+    // Per phone: resolves when every serve-web that was told to stop has closed.
+    private static readonly stopping = new Map<string, Promise<void>>();
+    // Ports given to sessions whose serve-web has not closed yet. serve-web binds late (after its
+    // preflight), so a free-port probe alone would hand the same port to two phones.
+    private static readonly ports = new Map<number, Session>();
+    private static lastToken = 0;
+    private static exitHooked = false;
+    private static deviceCheck?: (udid: string) => boolean;
     private readonly sessions = new Map<string, Session>();
+    private readonly budget = new StartBudget();
+    // Per phone: no new start before `until`, after a session that failed once serve-web ran.
+    private readonly cooldowns = new Map<string, { until: number; message: string }>();
     private readonly agent = new http.Agent({ keepAlive: true, maxSockets: 8 });
     // One in-flight pasteboard-daemon restart per device (see restartPasteboardDaemon).
     private readonly pasteboardRestarts = new Map<string, Promise<boolean>>();
@@ -93,9 +176,35 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         return !!this.instance;
     }
 
+    /**
+     * Lets the device tracker say which phones are attached. `acquire()` then refuses any other
+     * udid before it runs a command for it. Without a check (unit tests) every udid is accepted.
+     */
+    public static setDeviceCheck(check?: (udid: string) => boolean): void {
+        CoreDeviceRunner.deviceCheck = check;
+    }
+
+    /** Whether any serve-web process is still running, including ones that are shutting down. */
+    public static hasChildren(): boolean {
+        return CoreDeviceRunner.children.size > 0;
+    }
+
+    /** Resolves when every serve-web process running now has closed. */
+    public static childrenClosed(): Promise<void> {
+        return Promise.all(Array.from(CoreDeviceRunner.children.values(), (info) => info.closed)).then(() => undefined);
+    }
+
+    /** The longest a stop can take: the wait for the signal handler, the grace, and a margin. */
+    public static shutdownBudgetMs(): number {
+        return CoreDeviceRunner.signalReadyTimeoutMs() + SIGKILL_GRACE_MS + 5000;
+    }
+
     protected constructor() {
         super();
-        process.once('exit', this.onProcessExit);
+        if (!CoreDeviceRunner.exitHooked) {
+            CoreDeviceRunner.exitHooked = true;
+            process.on('exit', CoreDeviceRunner.onProcessExit);
+        }
     }
 
     public getName(): string {
@@ -114,18 +223,19 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         return { state: session.state, message: session.message, port: session.port };
     }
 
-    /** Starts (or joins) the device session and holds it until `release()`. Resolves when ready. */
-    public async acquire(udid: string): Promise<number> {
+    /**
+     * Starts (or joins) the device session and holds it until `release()`. Resolves when ready.
+     * Throws `StartRefusedError` when a new serve-web may not be started for this phone now.
+     */
+    public async acquire(udid: string): Promise<SessionHold> {
         if (this.released) {
             throw new Error('Server is shutting down');
         }
         let session = this.sessions.get(udid);
-        if (session && session.state === 'error') {
+        if (!session || session.state === 'error') {
+            this.checkStart(udid);
             // A failed start is not sticky: the next viewer retries with a fresh process.
             this.stopSession(udid);
-            session = undefined;
-        }
-        if (!session) {
             session = this.createSession(udid);
         }
         if (session.releaseTimer) {
@@ -139,23 +249,54 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
             session.holders--;
             throw error;
         }
-        return session.port;
+        return { udid, port: session.port, token: session.token };
     }
 
-    public release(udid?: string): void {
+    /**
+     * Refuses a start that would add to a burst of display sessions, which is what wedges the
+     * phone's display service until a reboot (docs/HANDOFF.md). Throws before anything is spawned.
+     */
+    private checkStart(udid: string): void {
+        if (CoreDeviceRunner.deviceCheck && !CoreDeviceRunner.deviceCheck(udid)) {
+            throw new StartRefusedError('This iPhone is not connected.', 'not-connected');
+        }
+        const now = Date.now();
+        const cooldown = this.cooldowns.get(udid);
+        if (cooldown && cooldown.until > now) {
+            const reason = cooldown.message.replace(/\.?$/, '.');
+            throw new StartRefusedError(
+                `${reason} The next start is allowed in ${formatWait(cooldown.until - now)}.`,
+                'cooldown',
+            );
+        }
+        const wait = this.budget.waitMs(udid, now);
+        if (wait > 0) {
+            throw new StartRefusedError(
+                `This phone's screen session was started ${StartBudget.limit()} times in the last ` +
+                    `${formatWait(StartBudget.windowMs())}. The next start is allowed in ${formatWait(wait)}.`,
+                'budget',
+            );
+        }
+    }
+
+    /**
+     * With a udid: gives back one hold. With a `hold` it only counts against the session that hold
+     * came from. Without arguments: service shutdown, which stops every session.
+     */
+    public release(udid?: string, hold?: SessionHold): void {
         if (udid === undefined) {
-            // Service shutdown.
+            // Service shutdown. The exit hook stays: it covers a serve-web that is still waiting
+            // for its signal handler when Node exits.
             this.released = true;
             for (const key of Array.from(this.sessions.keys())) {
                 this.stopSession(key);
             }
             this.agent.destroy();
-            process.off('exit', this.onProcessExit);
             CoreDeviceRunner.instance = undefined;
             return;
         }
         const session = this.sessions.get(udid);
-        if (!session) {
+        if (!session || (hold && hold.token !== session.token)) {
             return;
         }
         session.holders = Math.max(0, session.holders - 1);
@@ -184,9 +325,10 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         return session.audio;
     }
 
-    public stopSession(udid: string, message?: string): void {
+    /** Stops the phone's session. With a `hold`, only if it is still the session that hold came from. */
+    public stopSession(udid: string, message?: string, hold?: SessionHold): void {
         const session = this.sessions.get(udid);
-        if (!session) {
+        if (!session || (hold && hold.token !== session.token)) {
             return;
         }
         this.sessions.delete(udid);
@@ -195,8 +337,10 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         if (session.releaseTimer) {
             clearTimeout(session.releaseTimer);
         }
-        this.kill(session.child);
-        session.child = undefined;
+        this.stopChild(session);
+        if (!session.spawned) {
+            CoreDeviceRunner.freePort(session);
+        }
         this.setState(session, 'stopped', message);
     }
 
@@ -273,32 +417,85 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
     private createSession(udid: string): Session {
         const session: Session = {
             udid,
+            token: ++CoreDeviceRunner.lastToken,
             port: 0,
+            spawned: false,
             state: 'starting',
             holders: 0,
             stderrTail: '',
             ready: Promise.resolve(),
-            generation: 0,
         };
         this.sessions.set(udid, session);
-        this.setState(session, 'starting', 'Preparing the device');
+        const previous = CoreDeviceRunner.stopping.get(udid);
+        this.setState(
+            session,
+            'starting',
+            previous ? 'Waiting for the previous session to stop' : 'Preparing the device',
+        );
         // Publish ownership before any asynchronous work, including port allocation.
-        session.ready = portfinder
-            .getPortPromise({ port: CoreDeviceRunner.serveWebBasePort() })
-            .then(async (port) => {
-                if (this.released || this.sessions.get(udid) !== session) throw new Error('Session stopped');
-                session.port = port;
-                await this.bringUp(session);
-            })
+        session.ready = this.prepare(session, previous)
+            .then(() => this.bringUp(session))
             .catch((error: Error) => {
-                if (this.sessions.get(udid) === session) {
-                    this.kill(session.child);
-                    session.child = undefined;
-                    this.setState(session, 'error', error.message);
+                if (!session.spawned) {
+                    CoreDeviceRunner.freePort(session);
                 }
-                throw error;
+                if (this.sessions.get(udid) === session) {
+                    this.stopChild(session);
+                    this.fail(session, error.message);
+                }
+                throw new SessionStartError(error.message, session.spawned);
             });
         return session;
+    }
+
+    /**
+     * Waits for the phone's previous serve-web to close, then reserves a port. Two serve-web
+     * processes on one phone at once are part of the measured wedge recipe (docs/HANDOFF.md), and
+     * an orderly shutdown can take many seconds on a slow phone.
+     */
+    private async prepare(session: Session, previous?: Promise<void>): Promise<void> {
+        const { udid } = session;
+        if (previous) {
+            // `kill()` bounds the old process itself; the timer only covers a close that never comes.
+            let timer: NodeJS.Timeout | undefined;
+            await Promise.race([
+                previous,
+                new Promise((resolve) => (timer = setTimeout(resolve, CoreDeviceRunner.shutdownBudgetMs()))),
+            ]);
+            clearTimeout(timer);
+            if (this.sessions.get(udid) !== session) throw new Error('Session stopped');
+            this.setState(session, 'starting', 'Preparing the device');
+        }
+        const port = await CoreDeviceRunner.reservePort(session);
+        session.port = port;
+        if (this.sessions.get(udid) !== session) throw new Error('Session stopped');
+    }
+
+    /** The first port from the base up that is free now and not promised to another session. */
+    private static async reservePort(session: Session): Promise<number> {
+        let from = CoreDeviceRunner.serveWebBasePort();
+        for (;;) {
+            const port = await portfinder.getPortPromise({ port: from });
+            if (!CoreDeviceRunner.ports.has(port)) {
+                CoreDeviceRunner.ports.set(port, session);
+                return port;
+            }
+            from = port + 1;
+        }
+    }
+
+    private static freePort(session: Session): void {
+        if (CoreDeviceRunner.ports.get(session.port) === session) {
+            CoreDeviceRunner.ports.delete(session.port);
+        }
+    }
+
+    /** Marks the session failed and holds off the next start if the phone may need to recover. */
+    private fail(session: Session, message: string): void {
+        if (session.spawned) {
+            this.cooldowns.set(session.udid, { until: Date.now() + CoreDeviceRunner.errorCooldownMs(), message });
+        }
+        this.setState(session, 'error', message);
     }
 
     private async bringUp(session: Session): Promise<void> {
@@ -336,6 +533,12 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
             { PYMOBILEDEVICE3_UDID: udid },
         );
         session.child = child;
+        const info = CoreDeviceRunner.track(child, session);
+        if (child.pid !== undefined) {
+            // The process exists, so the phone is about to get a display session: count it.
+            session.spawned = true;
+            this.budget.record(udid);
+        }
         child.stdout?.on('data', (data) => PyMobileDevice.log(`[${udid}] ${data}`));
         child.stderr?.on('data', (data) => {
             session.stderrTail = (session.stderrTail + data).slice(-4096);
@@ -354,7 +557,7 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
                     // next `acquire()` replaces it with a fresh process.
                     session.child = undefined;
                     const reason = PyMobileDevice.explain(session.stderrTail);
-                    this.setState(session, 'error', reason || `The screen stream exited (${signal || code})`);
+                    this.fail(session, reason || `The screen stream exited (${signal || code})`);
                 }
                 reject(
                     new Error(
@@ -363,6 +566,8 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
                 );
             });
         });
+        // A session stopped between two polls is nobody's to await; its exit is not an error.
+        exitPromise.catch(() => undefined);
         const deadline = Date.now() + READY_TIMEOUT_MS;
         // Set once serve-web's HTTP first answers (any status): from there a stalled /codec means
         // the display daemon is wedged, not that the server is still starting.
@@ -377,6 +582,14 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
                 ),
                 exitPromise,
             ]);
+            if (reply) {
+                // serve-web installs its handlers straight after the bind, before it serves a request.
+                info.markSignalReady();
+            }
+            if (this.sessions.get(udid) !== session) {
+                // Stopped while the request was out; a stop can now wait a while for serve-web.
+                throw new Error('Session stopped');
+            }
             if (reply && reply.status === 200) {
                 this.setState(session, 'ready');
                 return;
@@ -410,6 +623,20 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         return Number.isFinite(override) && override > 0 ? override : DISPLAY_WEDGED_TIMEOUT_MS;
     }
 
+    // Overridable so a test can see the bound without a 35 s preflight.
+    private static signalReadyTimeoutMs(): number {
+        const override = Number(process.env.IOS_SIGNAL_READY_TIMEOUT_MS);
+        return Number.isFinite(override) && override > 0 ? override : SIGNAL_READY_TIMEOUT_MS;
+    }
+
+    // `IOS_SESSION_COOLDOWN_MS`: 0 turns the wait after a failed session off.
+    private static errorCooldownMs(): number {
+        const override = Number(process.env.IOS_SESSION_COOLDOWN_MS);
+        return process.env.IOS_SESSION_COOLDOWN_MS && Number.isFinite(override) && override >= 0
+            ? override
+            : ERROR_COOLDOWN_MS;
+    }
+
     private setState(session: Session, state: CoreDeviceSessionState, message?: string): void {
         session.state = state;
         session.message = message;
@@ -419,43 +646,136 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         this.emit('status', { udid: session.udid, state, message });
     }
 
-    private kill(child?: ChildProcess): void {
-        if (!child || child.exitCode !== null || child.signalCode !== null) {
+    /** Follows one serve-web from spawn to `close`. */
+    private static track(child: ChildProcess, session: Session): ChildInfo {
+        let resolveSignalReady: () => void = () => undefined;
+        const signalReady = new Promise<void>((resolve) => (resolveSignalReady = resolve));
+        let markClosed: () => void = () => undefined;
+        const closed = new Promise<void>((resolve) => (markClosed = resolve));
+        const markSignalReady = () => {
+            info.handlesSignals = true;
+            resolveSignalReady();
+        };
+        const info: ChildInfo = {
+            spawnedAt: Date.now(),
+            handlesSignals: false,
+            signalReady,
+            markSignalReady,
+            closed,
+            stopRequested: false,
+            signalled: false,
+        };
+        CoreDeviceRunner.children.set(child, info);
+        let logTail = '';
+        const watch = (data: Buffer | string) => {
+            logTail = (logTail + data).slice(-256);
+            if (SIGNAL_READY_PATTERN.test(logTail)) {
+                markSignalReady();
+            }
+        };
+        child.stdout?.on('data', watch);
+        child.stderr?.on('data', watch);
+        const gone = () => {
+            CoreDeviceRunner.children.delete(child);
+            // The port stays reserved until here: a serve-web that is shutting down still holds it.
+            CoreDeviceRunner.freePort(session);
+            markSignalReady();
+            markClosed();
+        };
+        child.once('close', gone);
+        child.once('error', () => {
+            // A process that never started has no `close` to wait for.
+            if (child.pid === undefined) {
+                gone();
+            }
+        });
+        return info;
+    }
+
+    /** Stops the session's serve-web and makes the phone's next start wait for it to close. */
+    private stopChild(session: Session): void {
+        const child = session.child;
+        session.child = undefined;
+        if (!child || !CoreDeviceRunner.children.has(child)) {
+            return;
+        }
+        const { udid } = session;
+        const closed = Promise.all([CoreDeviceRunner.stopping.get(udid), CoreDeviceRunner.kill(child)]).then(
+            () => undefined,
+        );
+        CoreDeviceRunner.stopping.set(udid, closed);
+        void closed.then(() => {
+            if (CoreDeviceRunner.stopping.get(udid) === closed) {
+                CoreDeviceRunner.stopping.delete(udid);
+            }
+        });
+    }
+
+    private static signal(child: ChildProcess, name: 'SIGTERM' | 'SIGKILL'): void {
+        if (child.exitCode !== null || child.signalCode !== null) {
             return;
         }
         const pid = child.pid;
         try {
             if (pid && process.platform !== 'win32') {
-                process.kill(-pid, 'SIGTERM');
+                process.kill(-pid, name);
             } else {
-                child.kill('SIGTERM');
+                child.kill(name);
             }
         } catch {
             // Already gone.
         }
-        const force = setTimeout(() => {
-            try {
-                if (pid && process.platform !== 'win32') {
-                    process.kill(-pid, 'SIGKILL');
-                } else {
-                    child.kill('SIGKILL');
-                }
-            } catch {
-                // Already gone.
-            }
-        }, SIGKILL_GRACE_MS);
-        child.once('close', () => clearTimeout(force));
     }
 
-    private onProcessExit = (): void => {
-        for (const session of this.sessions.values()) {
-            const pid = session.child?.pid;
-            if (pid) {
-                try {
-                    process.kill(process.platform === 'win32' ? pid : -pid, 'SIGKILL');
-                } catch {
-                    // Already gone.
-                }
+    /**
+     * Asks serve-web to shut down and resolves when it has closed. SIGTERM is held back until the
+     * process handles it (see SIGNAL_READY_TIMEOUT_MS); SIGKILL follows only after the grace.
+     */
+    private static kill(child: ChildProcess): Promise<void> {
+        const info = CoreDeviceRunner.children.get(child);
+        if (!info) {
+            return Promise.resolve();
+        }
+        if (info.stopRequested) {
+            return info.closed;
+        }
+        info.stopRequested = true;
+        let wait: NodeJS.Timeout | undefined;
+        let force: NodeJS.Timeout | undefined;
+        const terminate = () => {
+            clearTimeout(wait);
+            if (info.signalled || !CoreDeviceRunner.children.has(child)) {
+                return;
+            }
+            info.signalled = true;
+            CoreDeviceRunner.signal(child, 'SIGTERM');
+            force = setTimeout(() => CoreDeviceRunner.signal(child, 'SIGKILL'), SIGKILL_GRACE_MS);
+        };
+        if (info.handlesSignals) {
+            terminate();
+        } else {
+            wait = setTimeout(
+                terminate,
+                Math.max(0, info.spawnedAt + CoreDeviceRunner.signalReadyTimeoutMs() - Date.now()),
+            );
+            void info.signalReady.then(terminate);
+        }
+        void info.closed.then(() => {
+            clearTimeout(wait);
+            clearTimeout(force);
+        });
+        return info.closed;
+    }
+
+    /**
+     * Node is exiting with serve-web still running: a crash, or the shutdown deadline. SIGTERM
+     * lets each one return the phone's sessions on its own; SIGKILL here would leak them all.
+     */
+    private static onProcessExit = (): void => {
+        for (const [child, info] of CoreDeviceRunner.children) {
+            if (!info.signalled) {
+                info.signalled = true;
+                CoreDeviceRunner.signal(child, 'SIGTERM');
             }
         }
     };

@@ -20,7 +20,8 @@ import Util from '../../Util';
 const TAG = '[StreamClientCoreDevice]';
 
 export interface CoreDeviceClientEvents {
-    session: { state: CoreDeviceSessionState; message?: string };
+    // `retrying: false` marks an error the receiver will not retry by itself; see `retry()`.
+    session: { state: CoreDeviceSessionState; message?: string; retrying?: boolean };
     result: { id: number; ok: boolean; error?: string; data?: unknown };
     decoder: { kind: DecoderKind };
 }
@@ -352,6 +353,11 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.receiver.send({ type: 'restart-session' });
     }
 
+    /** Connects again after a failed start, also once the receiver has stopped retrying by itself. */
+    public retry(): void {
+        this.receiver.retry();
+    }
+
     public setHandleKeyboardEvents(enabled: boolean): void {
         if (enabled === this.keyboardAttached) {
             return;
@@ -423,12 +429,11 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.releaseAllKeys();
     };
 
-    private onStatus = (status: { state: CoreDeviceSessionState; message?: string }): void => {
+    private onStatus = (status: { state: CoreDeviceSessionState; message?: string; retrying?: boolean }): void => {
         this.sessionState = status.state;
+        // The view shows a session error in its own notice, with Retry. It is not copied to the
+        // dismissible notice as well: that one sits in the same place and covered the button.
         this.emit('session', status);
-        if (status.state === 'error' && status.message) {
-            streamNotice.value = status.message;
-        }
     };
 
     private onCodec = async ({ codec, description }: { codec: string; description: Uint8Array }): Promise<void> => {
