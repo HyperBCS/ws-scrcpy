@@ -184,8 +184,9 @@ survive a reboot, and it is not an app.
 * Device power: Reboot and Shut down (each needs a second press to confirm). A
   reboot also clears a phone whose screen capture has stopped responding.
 * Lock screen: **Unlock** opens the unlock panel directly. For an iPhone the
-  server types the passcode stored for the scheduled unlock (see below); the
-  browser never holds an iPhone passcode. For Android you type the PIN or
+  server types the passcode stored for the scheduled unlock (see below) and
+  leaves the phone unlocked; while a scheduled run or **Run now** is in progress
+  it is refused until that run ends. The browser never holds an iPhone passcode. For Android you type the PIN or
   password, and it is kept in this browser only if you tick **Remember in this
   browser**, as plain text in local storage, and only after the device confirms
   the unlock. Clearing the box forgets it. Passcodes saved by earlier versions
@@ -227,7 +228,9 @@ A run that typed the passcode is never retried. If the phone is still locked
 after the digits, the stored passcode is treated as rejected: the schedule is
 paused, nothing types it again, and the panel, the device card and a push say
 so until the passcode is saved again. Repeated wrong passcodes disable an
-iPhone, so the server allows one. If the phone was unlocked and does not read
+iPhone, so the server allows one. A schedule whose last run under an earlier
+version ended "Failed: the phone is still locked" after typing is paused the
+same way. If the phone was unlocked and does not read
 as locked after Lock was pressed twice, the run ends as "Unlocked, but the phone
 did not lock again" and is pushed. With the schedule on, a push is also sent
 when the phone has not been unlocked for 36 hours, and past 48 hours the server

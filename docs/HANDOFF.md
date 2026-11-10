@@ -1701,3 +1701,17 @@ the saved copy when a send ends unconfirmed.
 own save. Headless Chromium's time field is 12-hour whatever the locale, so the browser test
 types `0430`. The passcode is entered twice. The group opens with a summary row; failed runs and
 a paused or blocked schedule use the error tone there, in Last run and on the device card.
+
+**Review follow-up (same day).** Four changes after review of the above. (1) `typed` is set when
+the last digit's key-down is sent, not after the loop: a post that fails or times out may still
+have reached the phone, and that digit submits the passcode, so such a run is not retried. A
+failure on an earlier digit submits nothing and is still retried. (2) The two-hour spacing of the
+runs past 48 hours is stored as `lastTimerRunAt` with the run state, before the run starts. It
+was in memory, so a server that kept restarting (a crash during a run, Docker restarting it)
+opened a display session at every first tick. (3) The stream page's Unlock (`keepUnlocked`) is
+refused, not joined, while a run that will press Lock is queued or running for the phone; joining
+it reported "Unlocked" to a viewer looking at a relocked phone. A plain Run now still joins either
+kind. (4) On load, a stored `lastRun` of `failed-still-locked` whose message does not start with
+"Passcode not entered" was written by the old driver for typed digits that left the phone
+locked. It is read as `failed-rejected` and marks the passcode rejected, so a server upgraded
+after such a night stays paused until the passcode is saved again.
