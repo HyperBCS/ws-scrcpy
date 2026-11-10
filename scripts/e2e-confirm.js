@@ -9,6 +9,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const { settleMotion } = require('./ui-motion');
+const { fixture: androidFixture, UDID: ANDROID_UDID } = require('./e2e-settings');
+const { initialStreamPacket } = require('./e2e-sheets');
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-confirm';
 const UDID = 'fixture-iphone-confirm';
@@ -435,6 +437,80 @@ async function removePasscode(browser, mobile) {
     }
 }
 
+// U-stream-2 on a live-shaped Android stream. The
+// iPhone stream page uses the same FloatingToolbar, and its touch handler also acts only on
+// events whose target is the touch layer, so the shield covers it the same way.
+async function controlsPanelShield(browser) {
+    const context = await browser.newContext({ viewport: PHONE, hasTouch: true, isMobile: true });
+    const page = await context.newPage();
+    const errors = [];
+    const packets = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    try {
+        await androidFixture(page, {
+            initialPacket: initialStreamPacket(),
+            onStreamMessage: (packet) => packets.push(Buffer.from(packet)),
+            onStreamReady: () => undefined,
+        });
+        const socket = new URL('/__settings_fixture__', BASE);
+        socket.protocol = socket.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = new URL(BASE);
+        url.hash = `!${new URLSearchParams({ action: 'stream', udid: ANDROID_UDID, player: 'webcodecs', ws: socket.toString(), captureKeyboard: '0', fitToScreen: '1' })}`;
+        await page.goto(url.toString());
+        await page.getByText('Connected', { exact: true }).waitFor();
+        const canvas = page.locator('.touch-layer');
+        await canvas.waitFor({ state: 'visible' });
+        const touches = () => packets.filter((packet) => packet.length === 32 && packet[0] === 2).length;
+        const fab = page.locator('.floating-toolbar-fab');
+        const panel = page.locator('.floating-toolbar-panel');
+        const picture = await canvas.boundingBox();
+        // A point on the picture that the panel and the button do not cover.
+        const point = { x: picture.x + 40, y: picture.y + 60 };
+
+        await fab.click();
+        await panel.waitFor({ state: 'visible' });
+        await settleMotion(page);
+        const panelBox = await panel.boundingBox();
+        assert.ok(point.x < panelBox.x || point.y < panelBox.y, 'the test point is outside the panel');
+        await page.touchscreen.tap(point.x, point.y);
+        await panel.waitFor({ state: 'hidden' });
+        await pause(100);
+        assert.equal(touches(), 0, 'the tap that closes the controls panel is not sent to the phone');
+        assert.equal(await fab.getAttribute('aria-expanded'), 'false');
+
+        // Once the panel is closed and the shield has gone, the same point is a normal tap.
+        await page.locator('.floating-toolbar-shield').waitFor({ state: 'detached' });
+        await page.touchscreen.tap(point.x, point.y);
+        await pause(100);
+        assert.ok(touches() >= 2, 'positive control: the next tap reaches the phone as touch down and up');
+
+        // The panel still stays open for repeated key presses.
+        await fab.click();
+        await panel.waitFor({ state: 'visible' });
+        await settleMotion(page);
+        const before = packets.length;
+        await page.locator('.control-buttons-list [title="Back"]').click();
+        await pause(100);
+        assert.ok(packets.length > before, 'a control in the panel still works');
+        assert.equal(await fab.getAttribute('aria-expanded'), 'true', 'the panel stays open after a key press');
+
+        // The shield covers the stage only: the header above it takes a press directly.
+        await page.locator('.stream-header-switch').tap();
+        const switcher = page.getByRole('dialog', { name: 'Switch device', exact: true });
+        await switcher.waitFor();
+        await page.getByRole('button', { name: 'Close Switch device', exact: true }).click();
+        await switcher.waitFor({ state: 'hidden' });
+        await fab.click();
+        await panel.waitFor({ state: 'visible' });
+        await settleMotion(page);
+
+        assert.deepEqual(errors, []);
+        console.log('PASS controls panel: the dismissing tap stays off the phone, the next tap reaches it, the header stays direct');
+    } finally {
+        await context.close();
+    }
+}
+
 (async () => {
     const browser = await chromium.launch({ headless: true });
     try {
@@ -443,6 +519,7 @@ async function removePasscode(browser, mobile) {
             await deviceCards(browser, mobile);
             await removePasscode(browser, mobile);
         }
+        await controlsPanelShield(browser);
     } finally {
         await browser.close();
     }

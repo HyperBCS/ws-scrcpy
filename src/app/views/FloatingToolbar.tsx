@@ -10,6 +10,19 @@ const FAB_SIZE = 56;
 const EDGE_MARGIN = 12;
 // Width alone misclassifies both wide iPads and narrow desktop browser windows.
 const MOBILE_CONTROLS_QUERY = '(hover: none) and (pointer: coarse)';
+// After a touch ends the browser may still send mouse events and a click for it.
+const SHIELD_RELEASE_MS = 400;
+// The remote input handlers listen on document.body.
+const SHIELD_EVENTS = [
+    'touchstart',
+    'touchmove',
+    'touchend',
+    'touchcancel',
+    'mousedown',
+    'mousemove',
+    'mouseup',
+    'click',
+];
 
 interface Position {
     x: number;
@@ -65,6 +78,11 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
     const [pos, setPos] = useState<Position>(loadPosition);
     const [open, setOpen] = useState(false);
     const [dragging, setDragging] = useState(false);
+    // The press that closes the panel must not reach the phone. The shield covers the stage
+    // while the panel is open and stays until that press, and the events that follow it, end.
+    const [shieldHeld, setShieldHeld] = useState(false);
+    const shieldRef = useRef<HTMLDivElement>(null);
+    const shieldTimer = useRef<ReturnType<typeof setTimeout>>();
     const [panelStyle, setPanelStyle] = useState({
         left: '12px',
         top: '12px',
@@ -216,6 +234,33 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
         });
     }, [mobile, open, pos]);
 
+    const shieldShown = mobile && (open || shieldHeld);
+    useEffect(() => {
+        const shield = shieldRef.current;
+        if (!shieldShown || !shield) {
+            return;
+        }
+        const consume = (event: Event) => {
+            event.stopPropagation();
+            if (event.cancelable) {
+                event.preventDefault();
+            }
+        };
+        SHIELD_EVENTS.forEach((name) => shield.addEventListener(name, consume, { passive: false }));
+        return () => SHIELD_EVENTS.forEach((name) => shield.removeEventListener(name, consume));
+    }, [shieldShown]);
+    useEffect(() => () => clearTimeout(shieldTimer.current), []);
+
+    const onShieldDown = () => {
+        clearTimeout(shieldTimer.current);
+        setShieldHeld(true);
+        setOpen(false);
+    };
+    const onShieldUp = () => {
+        clearTimeout(shieldTimer.current);
+        shieldTimer.current = setTimeout(() => setShieldHeld(false), SHIELD_RELEASE_MS);
+    };
+
     useEffect(() => {
         if (!mobile || !open) {
             return;
@@ -296,87 +341,104 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
     };
 
     return (
-        <div
-            ref={rootRef}
-            class={`floating-toolbar ${mobile ? 'mobile' : 'desktop'} ${open ? 'open' : ''} ${dragging ? 'dragging' : ''}`}
-            style={mobile ? { left: `${pos.x}px`, top: `${pos.y}px` } : undefined}
-        >
-            <div class="floating-toolbar-safearea" aria-hidden="true" />
+        <>
             <div
-                id="stream-controls"
-                class="floating-toolbar-panel"
-                ref={panelRef}
-                hidden={!panelPresent}
-                aria-hidden={mobile && !open}
-                data-exiting={(mobile && !open) || undefined}
-                style={mobile ? panelStyle : undefined}
-                role="group"
-                aria-label="Device controls"
+                key="toolbar"
+                ref={rootRef}
+                class={`floating-toolbar ${mobile ? 'mobile' : 'desktop'} ${open ? 'open' : ''} ${dragging ? 'dragging' : ''}`}
+                style={mobile ? { left: `${pos.x}px`, top: `${pos.y}px` } : undefined}
             >
-                {mobile && (
-                    <div class="floating-toolbar-heading">
-                        <div>
-                            <strong>Device controls</strong>
-                        </div>
-                    </div>
-                )}
-                <div ref={hostRef} />
-            </div>
-            {mobile && (
-                <button
-                    ref={fabRef}
-                    type="button"
-                    class="floating-toolbar-fab"
-                    onPointerDown={onPointerDown}
-                    onPointerMove={onPointerMove}
-                    onPointerUp={endDrag}
-                    onPointerCancel={endDrag}
-                    onLostPointerCapture={() => {
-                        if (dragState.current) {
-                            suppressClick.current = true;
-                            dragState.current = undefined;
-                            setDragging(false);
-                        }
-                    }}
-                    onClick={(event) => {
-                        if (suppressClick.current && event.detail !== 0) {
-                            suppressClick.current = false;
-                            return;
-                        }
-                        setOpen((v) => !v);
-                        if (event.detail === 0 && !open) {
-                            requestAnimationFrame(() =>
-                                panelRef.current?.querySelector<HTMLButtonElement>('button')?.focus(),
-                            );
-                        }
-                    }}
-                    aria-expanded={open}
-                    aria-controls="stream-controls"
-                    aria-label={open ? 'Hide controls' : 'Show controls'}
-                    title="Drag to move, tap for controls"
+                <div class="floating-toolbar-safearea" aria-hidden="true" />
+                <div
+                    id="stream-controls"
+                    class="floating-toolbar-panel"
+                    ref={panelRef}
+                    hidden={!panelPresent}
+                    aria-hidden={mobile && !open}
+                    data-exiting={(mobile && !open) || undefined}
+                    style={mobile ? panelStyle : undefined}
+                    role="group"
+                    aria-label="Device controls"
                 >
-                    <svg
-                        class="floating-toolbar-glyph"
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        aria-hidden="true"
+                    {mobile && (
+                        <div class="floating-toolbar-heading">
+                            <div>
+                                <strong>Device controls</strong>
+                            </div>
+                        </div>
+                    )}
+                    <div ref={hostRef} />
+                </div>
+                {mobile && (
+                    <button
+                        ref={fabRef}
+                        type="button"
+                        class="floating-toolbar-fab"
+                        onPointerDown={onPointerDown}
+                        onPointerMove={onPointerMove}
+                        onPointerUp={endDrag}
+                        onPointerCancel={endDrag}
+                        onLostPointerCapture={() => {
+                            if (dragState.current) {
+                                suppressClick.current = true;
+                                dragState.current = undefined;
+                                setDragging(false);
+                            }
+                        }}
+                        onClick={(event) => {
+                            if (suppressClick.current && event.detail !== 0) {
+                                suppressClick.current = false;
+                                return;
+                            }
+                            setOpen((v) => !v);
+                            if (event.detail === 0 && !open) {
+                                requestAnimationFrame(() =>
+                                    panelRef.current?.querySelector<HTMLButtonElement>('button')?.focus(),
+                                );
+                            }
+                        }}
+                        aria-expanded={open}
+                        aria-controls="stream-controls"
+                        aria-label={open ? 'Hide controls' : 'Show controls'}
+                        title="Drag to move, tap for controls"
                     >
-                        <g class="toolbar-close-glyph">
-                            <path d="m6 6 12 12M6 18 18 6" />
-                        </g>
-                        <g class="toolbar-controls-glyph">
-                            <path d="M4 6h16M4 12h16M4 18h16" />
-                            <circle cx="9" cy="6" r="2" />
-                            <circle cx="15" cy="12" r="2" />
-                            <circle cx="9" cy="18" r="2" />
-                        </g>
-                    </svg>
-                </button>
+                        <svg
+                            class="floating-toolbar-glyph"
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            aria-hidden="true"
+                        >
+                            <g class="toolbar-close-glyph">
+                                <path d="m6 6 12 12M6 18 18 6" />
+                            </g>
+                            <g class="toolbar-controls-glyph">
+                                <path d="M4 6h16M4 12h16M4 18h16" />
+                                <circle cx="9" cy="6" r="2" />
+                                <circle cx="15" cy="12" r="2" />
+                                <circle cx="9" cy="18" r="2" />
+                            </g>
+                        </svg>
+                    </button>
+                )}
+            </div>
+            {/* A sibling of the toolbar, not a child: it is sized by the stage (`.stream-stage`), so the
+                header and the notices above the stage still take a press directly. */}
+            {shieldShown && (
+                <div
+                    key="shield"
+                    ref={shieldRef}
+                    class="floating-toolbar-shield"
+                    aria-hidden="true"
+                    onPointerDown={onShieldDown}
+                    onPointerUp={onShieldUp}
+                    onPointerCancel={onShieldUp}
+                    onLostPointerCapture={onShieldUp}
+                />
             )}
-        </div>
+        </>
     );
 }
