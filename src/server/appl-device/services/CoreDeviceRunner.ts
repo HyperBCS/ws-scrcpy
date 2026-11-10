@@ -36,7 +36,8 @@ const SIGKILL_GRACE_MS = 30000;
 // serve-web installs its SIGTERM handler only after its preflight (which starts the phone's video
 // and audio, bounded at 25 s) and the HTTP bind. A SIGTERM before that kills it with no cleanup,
 // exactly like SIGKILL. So a stop waits until the process is known to handle the signal, but no
-// longer than this after it was spawned.
+// longer than this after it was spawned. python/patches/pymobiledevice3-serve-signals.py installs
+// the handlers before the preflight; the wait stays for a venv that does not have that patch yet.
 const SIGNAL_READY_TIMEOUT_MS = 35000;
 // Logged by serve-web once it serves HTTP; its signal handlers are installed just before.
 const SIGNAL_READY_PATTERN = /Open https?:\/\//;

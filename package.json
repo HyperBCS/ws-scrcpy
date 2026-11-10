@@ -28,7 +28,7 @@
         "test:ios-typing": "node scripts/e2e-ios-typing.js",
         "test:ios-settings": "node scripts/e2e-ios-settings.js",
         "setup:ios": "python3 -m venv python/venv && python/venv/bin/pip install -r python/requirements.txt && npm run patch:ios",
-        "patch:ios": "python/venv/bin/python python/patches/pymobiledevice3-raw-audio.py && python/venv/bin/python python/patches/pymobiledevice3-multitouch.py && python/venv/bin/python python/patches/pymobiledevice3-keyboard.py",
+        "patch:ios": "python/venv/bin/python python/patches/pymobiledevice3-raw-audio.py && python/venv/bin/python python/patches/pymobiledevice3-multitouch.py && python/venv/bin/python python/patches/pymobiledevice3-keyboard.py && python/venv/bin/python python/patches/pymobiledevice3-serve-signals.py",
         "dev": "concurrently --kill-others --raw \"webpack --config webpack/ws-scrcpy.dev.ts --watch\" \"until [ -f dist/index.js ]; do echo 'Waiting for Webpack...'; sleep 2; done && nodemon -L --config nodemon.dev.json --exec \\\"node --enable-source-maps dist/index.js\\\"\"",
         "setup:https": "node scripts/setup-https.js",
         "start:https": "WS_SCRCPY_CONFIG=$PWD/config.https.yaml npm start",

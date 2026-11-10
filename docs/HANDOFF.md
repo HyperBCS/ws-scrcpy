@@ -1662,8 +1662,13 @@ SIGTERM before that ends the process with no `stop_all_streams`, which is a SIGK
 phone is concerned. `kill()` therefore waits until the process is known to handle the signal:
 its "Open http://" log line, or any HTTP reply (the handlers are installed between the bind and
 the first served request). The wait ends 35 s after the spawn at the latest
-(`SIGNAL_READY_TIMEOUT_MS`). The better fix is a patch that installs the handlers at the top of
-`serve()`; it has not been written, because it cannot be tried without the phone.
+(`SIGNAL_READY_TIMEOUT_MS`). `python/patches/pymobiledevice3-serve-signals.py` (run by
+`npm run patch:ios`) installs the handlers at the top of `serve()` instead: a SIGTERM during the
+preflight then sets the stop event, the preflight finishes, and the normal shutdown in `serve()`'s
+`finally` returns the phone's sessions. `python/patches/test_serve_signals_patch.py` runs the
+patched and the stock `serve()` against stubs with a real SIGTERM. Not yet run against the phone.
+The runner's wait stays for a venv without the patch. With the patch, the SIGTERM that the exit
+hook sends when Node exits is safe during the preflight as well.
 
 **One serve-web per phone at a time.** `stopSession()` used to forget the child as soon as it had
 signalled it, and the next `acquire()` mounted and spawned while the old process was still in its
@@ -1726,8 +1731,9 @@ shutdown-harness.js` runs one fake session under the real `Shutdown` so the cras
 exit paths can be tested in a child process. test-coredevice.js turns the budget and the cooldown
 off for its other tests and uses port base 18300, clear of a server running on the same machine.
 
-**Still open.** The serve-web patch for early signal handlers. A test that the installed
-`screen_stream.py` carries every patch marker: on this machine's `python/venv` it would fail,
-because the file has no "ws-scrcpy button completion" marker: `/button` is still answered when
-the request is queued, not when the phone has the edge. Running `npm run patch:ios` there would
-add it. The Docker image builds its own venv from the Dockerfile and was not checked.
+**Still open.** A hardware check of the early-signal patch, which this machine's `python/venv`
+does not have yet. A test that the installed `screen_stream.py` carries every patch marker: on
+this machine's `python/venv` it would fail, because the file has neither the early-stop marker nor
+"ws-scrcpy button completion": `/button` is still answered when the request is queued, not when
+the phone has the edge. Running `npm run patch:ios` there would add both. The Docker image builds
+its own venv from the Dockerfile, which runs every patch, and was not checked.
