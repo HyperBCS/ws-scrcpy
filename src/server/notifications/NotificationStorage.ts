@@ -78,12 +78,17 @@ export class NotificationStorage {
         try {
             const value = JSON.parse(text) as Partial<NotificationStore> | null;
             const { vapid, sources = [], subscriptions = [] } = value || {};
+            // Startup reads every record's id outside any error handling, so check each one.
+            const hasId = (record: unknown) =>
+                !!record && typeof record === 'object' && typeof (record as { id?: unknown }).id === 'string';
             if (
                 !value ||
                 typeof value !== 'object' ||
                 Array.isArray(value) ||
                 !Array.isArray(sources) ||
                 !Array.isArray(subscriptions) ||
+                !sources.every(hasId) ||
+                !subscriptions.every(hasId) ||
                 (vapid !== undefined && (typeof vapid?.publicKey !== 'string' || typeof vapid.privateKey !== 'string'))
             )
                 throw Error('Invalid settings');

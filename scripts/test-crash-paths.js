@@ -322,6 +322,7 @@ for (const [label, content] of [
     ['truncated', '{"vapid":'],
     ['empty', ''],
     ['of the wrong shape', '[]'],
+    ['damaged inside', '{"sources":[null],"subscriptions":[]}'],
 ]) {
     test(`a notifications.json that is ${label} turns notifications off and leaves the server running`, async (t) => {
         t.mock.method(console, 'error', () => undefined);
