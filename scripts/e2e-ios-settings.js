@@ -261,6 +261,16 @@ async function panelFlow(browser) {
         assert.deepEqual(ofType(commands, 'update_unlock_schedule').at(-1).data, { udid: UDID, schedule: { time: '04:30', timeZone: ZONE } });
         assert.equal(await dialog.getByLabel('Unlock time').inputValue(), '03:00', 'a time the server refused is not left in the field');
 
+        // A waiting Remove prompt goes away when the passcode is removed from another browser.
+        await dialog.getByRole('button', { name: 'Remove', exact: true }).click();
+        await dialog.getByRole('alertdialog').waitFor();
+        test.sendDevice(iphone({ ...status, hasPasscode: false, nextRunAt: undefined }));
+        await dialog.getByRole('alertdialog').waitFor({ state: 'detached', timeout: 2000 });
+        assert.equal(ofType(commands, 'clear_unlock_passcode').length, 0, 'nothing was sent');
+        test.sendDevice(iphone(status));
+        await dialog.getByRole('button', { name: 'Remove', exact: true }).waitFor();
+        assert.equal(await dialog.getByRole('alertdialog').count(), 0, 'the withdrawn prompt does not come back');
+
         // Remove brings the fields back.
         handlers.onCommand = (command) => (command.type === 'clear_unlock_passcode' ? { result: JSON.stringify({ ...status, hasPasscode: false, enabled: false }) } : undefined);
         await dialog.getByRole('button', { name: 'Remove', exact: true }).click();

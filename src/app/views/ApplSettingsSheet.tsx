@@ -174,6 +174,13 @@ export function ApplSettingsSheet() {
     }, [broadcast]);
 
     const schedule = replyStatus ?? broadcast ?? DEFAULT_STATUS;
+    // A passcode removed from another browser takes the Remove button, and its waiting prompt, with it.
+    const removable = schedule.hasPasscode && !replacing;
+    useEffect(() => {
+        if (!removable) {
+            confirmRemove.disarm();
+        }
+    }, [removable]);
     const connected = descriptor?.state === DeviceState.CONNECTED;
     const locked = pending !== undefined || !tracker;
     const browserZone = localTimeZone();
@@ -569,7 +576,7 @@ export function ApplSettingsSheet() {
                         </SheetRow>
                     )}
                 </SheetGroup>
-                {confirmRemove.armed && (
+                {confirmRemove.armed && removable && (
                     <ConfirmPrompt
                         action={confirmRemove}
                         question={`Remove the stored passcode for ${entry ? deviceName(entry) : 'this iPhone'}?`}
