@@ -224,3 +224,67 @@ test('clipboard text is capped below the frame limit in both clients', () => {
     assert.equal(clipboardTextTooLong('€'.repeat(wide)), false);
     assert.equal(clipboardTextTooLong('€'.repeat(wide + 1)), true);
 });
+
+// ------------------------------------------------------------------ Shell tool
+
+async function openShell() {
+    const socket = await connect('multiplex');
+    takeUncaught();
+    const received = [];
+    socket.on('message', (data) => received.push(Message.parse(new Uint8Array(data).buffer)));
+    const before = terminals.length;
+    socket.send(Message.createBuffer(MessageType.CreateChannel, 7, Buffer.from('SHEL')));
+    const start = JSON.stringify({
+        id: 1,
+        type: 'shell',
+        data: { type: 'start', udid: 'fixture', rows: 24, cols: 80 },
+    });
+    socket.send(Message.createBuffer(MessageType.RawStringData, 7, Buffer.from(start)));
+    await waitFor(() => terminals.length === before + 1, 'the shell starts its terminal');
+    const output = () =>
+        received
+            .filter((message) => message.type === MessageType.RawBinaryData)
+            .map((message) => Buffer.from(message.data).toString())
+            .join('');
+    return { socket, terminal: terminals.at(-1), output, received };
+}
+
+test('shell output that arrives after the tool closed is dropped', async () => {
+    const { socket, terminal, output } = await openShell();
+    terminal.emitData('first');
+    await waitFor(() => output() === 'first', 'output reaches the browser');
+    // The flush timer is idle now. Close the channel the way the Shell tool does.
+    socket.send(Message.fromCloseEvent(7, 1000, 'closed').toBuffer());
+    await waitFor(() => terminal.killed === 1, 'closing the tool stops adb');
+    // adb writes once more before the signal reaches it. A throw from the flush timer would
+    // be an uncaught exception, which stops a real server.
+    const lateListeners = [...terminal.listeners.data];
+    terminal.emitData('late');
+    await pause(40);
+    assert.equal(output(), 'first');
+    await assertStillServing();
+    assert.deepEqual(lateListeners, [], 'the output listener is removed');
+    assert.equal(terminal.listeners.exit.size, 0, 'the exit listener is removed');
+    socket.close();
+});
+
+test('shell output that is waiting to be sent when the connection drops is dropped', async () => {
+    const { socket, terminal, output } = await openShell();
+    terminal.emitData('pending');
+    socket.terminate();
+    await waitFor(() => terminal.killed === 1, 'losing the socket stops adb');
+    terminal.emitData('late');
+    await pause(40);
+    assert.equal(output(), '');
+    await assertStillServing();
+});
+
+test('a shell that exits by itself still delivers its last output before closing the channel', async () => {
+    const { socket, terminal, output, received } = await openShell();
+    terminal.emitData('bye');
+    terminal.listeners.exit.forEach((listener) => listener({ exitCode: 0 }));
+    await waitFor(() => received.some((message) => message.type === MessageType.CloseChannel), 'the channel closes');
+    assert.equal(output(), 'bye');
+    assert.equal(received.find((message) => message.type === MessageType.CloseChannel).toCloseEvent().code, 1000);
+    socket.close();
+});
