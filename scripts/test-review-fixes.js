@@ -130,7 +130,7 @@ test('concurrent cold opens reserve one iOS session before choosing its port', a
     try {
         const first = runner.acquire('same'), second = runner.acquire('same');
         assert.equal(runner.sessions.size, 1); assert.equal(runner.sessions.get('same').holders, 2);
-        selectPort(12345); assert.deepEqual(await Promise.all([first, second]), [12345, 12345]); assert.equal(starts, 1);
+        selectPort(12345); assert.deepEqual((await Promise.all([first, second])).map(hold => hold.port), [12345, 12345]); assert.equal(starts, 1);
     } finally { runner.release(); portfinder.getPortPromise = original; }
 });
 

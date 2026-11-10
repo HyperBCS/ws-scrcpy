@@ -16,6 +16,12 @@ const FAKE = path.join(__dirname, 'fixtures', 'fake-pymobiledevice3.js');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-coredevice-'));
 // The tracker tests start the unlock scheduler, whose store creates the data directory.
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
+// The start budget and the wait after a failed session have their own tests. Everything else
+// starts the same fixture phones far more often than those two would allow.
+process.env.IOS_SESSION_START_LIMIT = '0';
+process.env.IOS_SESSION_COOLDOWN_MS = '0';
+// Clear of 18100, where a server running on this machine keeps its own serve-web.
+process.env.IOS_SERVE_WEB_BASE_PORT = '18300';
 after(() => {
     // A failed assertion skips a test's own `runner.release()`; without this the fake serve-web
     // and its ffmpeg child would outlive the run.
@@ -46,6 +52,8 @@ process.env.IOS_PROBE_CMD = shim;
 process.env.IOS_PROBE_ARGS = JSON.stringify([]);
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+// What `runner.acquire()` hands a proxy; the tests that fake the runner set it by hand.
+const fakeHold = (udid) => ({ udid, port: 0, token: 0 });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const withEnv = async (env, run) => {
     const previous = {};
@@ -107,7 +115,7 @@ test('the runner mounts the DDI, starts serve-web, waits for /codec and tears do
         const states = [];
         runner.on('status', (event) => states.push(event.state));
         const started = Date.now();
-        const port = await runner.acquire('iphone-a');
+        const { port } = await runner.acquire('iphone-a');
         assert(Date.now() - started >= 250, 'acquire waits for the stream to be ready, not just for the process');
         assert.deepEqual(states, ['starting', 'starting', 'ready']);
         assert.equal(runner.getStatus('iphone-a').state, 'ready');
@@ -133,7 +141,7 @@ test('the runner mounts the DDI, starts serve-web, waits for /codec and tears do
         assert.equal(JSON.parse(codec.body).codec, 'hev1.1.6.L120.90');
         // A second viewer joins the same process.
         const again = await runner.acquire('iphone-a');
-        assert.equal(again, port);
+        assert.equal(again.port, port);
         assert.equal(calls().filter((line) => line.includes('"serve-web"')).length, 1);
         runner.release('iphone-a');
         runner.release('iphone-a');
@@ -418,6 +426,319 @@ test('restart-session kills serve-web so the next viewer gets a fresh process', 
             'restart stays inside the process',
         );
         assert.equal(calls().filter((line) => line.includes('"serve-web"')).length, 2);
+        runner.release();
+    });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Session lifecycle: the paths that start, overlap or cut off display sessions on the phone. A
+// burst of short sessions wedges the phone's display service until a reboot (docs/HANDOFF.md),
+// so each of these counts what the fake serve-web saw.
+
+const until = async (check, ms = 5000) => {
+    for (const end = Date.now() + ms; Date.now() < end; ) {
+        if (check()) return true;
+        await sleep(20);
+    }
+    return check();
+};
+const serveWebStarts = () => calls().filter((line) => line.startsWith('args ') && line.includes('"serve-web"')).length;
+const openViewer = (udid) => {
+    const socket = new FakeSocket();
+    const proxy = CoreDeviceProxy.processRequest(socket, {
+        action: 'proxy-coredevice',
+        url: new URL(`ws://localhost/?action=proxy-coredevice&udid=${udid}`),
+    });
+    return { socket, proxy };
+};
+
+test('a viewer who leaves while the session is starting gives its hold back', async () => {
+    await withEnv({ FAKE_SERVE_DELAY_MS: '400' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const { socket } = openViewer('iphone-leaves-early');
+        await until(() => runner.getStatus('iphone-leaves-early').state === 'starting');
+        const session = runner.sessions.get('iphone-leaves-early');
+        assert.equal(session.holders, 1);
+        socket.close(1001, 'navigated away');
+        assert.equal(session.holders, 1, 'the start is not cut off: stopping serve-web mid-start skips its cleanup');
+        assert(await until(() => session.state === 'ready'));
+        await tick();
+        assert.equal(session.holders, 0, 'nobody holds the session once it is up');
+        assert(session.releaseTimer, 'the no-viewers timer is running, so serve-web stops after the grace period');
+        runner.release();
+    });
+});
+
+test('a start budget refuses further serve-web starts for a phone and survives a restart', async () => {
+    fs.rmSync(logFile, { force: true });
+    const { StartBudget } = require('../src/server/appl-device/services/StartBudget');
+    const { StartRefusedError } = require('../src/server/appl-device/services/CoreDeviceRunner');
+    await withEnv({ FAKE_LOG: logFile, IOS_SESSION_START_LIMIT: '2', IOS_SESSION_START_WINDOW_MS: '60000' }, async () => {
+        let runner = CoreDeviceRunner.getInstance();
+        for (let i = 0; i < 2; i++) {
+            await runner.acquire('iphone-budget');
+            runner.stopSession('iphone-budget', 'test');
+        }
+        assert.equal(serveWebStarts(), 2);
+        const refusal = await runner.acquire('iphone-budget').catch((error) => error);
+        assert(refusal instanceof StartRefusedError);
+        assert.equal(refusal.reason, 'budget');
+        assert.match(refusal.message, /started 2 times in the last 60 s\. The next start is allowed in \d+ s\./);
+        assert.equal(serveWebStarts(), 2, 'the refused start spawned nothing');
+        // Another phone has its own count.
+        await runner.acquire('iphone-budget-other');
+        assert.equal(serveWebStarts(), 3);
+        runner.release();
+
+        // A restarted server reads the count back from the data directory.
+        const saved = JSON.parse(
+            fs.readFileSync(path.join(process.env.WS_NOTIFICATION_DATA, 'ios-session-starts.json'), 'utf8'),
+        );
+        assert.equal(saved['iphone-budget'].length, 2);
+        runner = CoreDeviceRunner.getInstance();
+        await assert.rejects(runner.acquire('iphone-budget'), /The next start is allowed in/);
+        assert.equal(serveWebStarts(), 3);
+
+        // A start that never reached serve-web (the mount failed) is not a display session.
+        await withEnv({ FAKE_MOUNT_FAIL: 'devmode' }, async () => {
+            for (let i = 0; i < 3; i++) {
+                await assert.rejects(runner.acquire('iphone-budget-mount'), /Developer Mode is off/);
+            }
+        });
+        await runner.acquire('iphone-budget-mount');
+        runner.release();
+    });
+
+    // The window itself, with the clock passed in.
+    await withEnv({ IOS_SESSION_START_LIMIT: undefined, IOS_SESSION_START_WINDOW_MS: undefined }, async () => {
+        const budget = new StartBudget();
+        const t0 = Date.now();
+        assert.equal(budget.waitMs('iphone-window', t0), 0);
+        budget.record('iphone-window', t0);
+        budget.record('iphone-window', t0 + 10000);
+        assert.equal(budget.waitMs('iphone-window', t0 + 20000), 0, 'two starts are within the default of three');
+        budget.record('iphone-window', t0 + 20000);
+        assert.equal(budget.waitMs('iphone-window', t0 + 30000), 270000, 'the first start has to leave the 5 min window');
+        assert.equal(budget.waitMs('iphone-window', t0 + 300000), 0);
+        assert.equal(new StartBudget().waitMs('iphone-window', t0 + 30000), 270000, 'a new process reads the same file');
+    });
+});
+
+test('a failed session holds off the next start, so a second tab cannot restart the loop', async () => {
+    fs.rmSync(logFile, { force: true });
+    const { StartRefusedError } = require('../src/server/appl-device/services/CoreDeviceRunner');
+    await withEnv({ FAKE_LOG: logFile, IOS_SESSION_COOLDOWN_MS: '900' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        await withEnv({ FAKE_MEDIA_IN_USE: '1' }, async () => {
+            await assert.rejects(runner.acquire('iphone-cooldown'), /camera or microphone is in use/);
+        });
+        assert.equal(serveWebStarts(), 1);
+        const refusal = await runner.acquire('iphone-cooldown').catch((error) => error);
+        assert(refusal instanceof StartRefusedError);
+        assert.equal(refusal.reason, 'cooldown');
+        assert.match(refusal.message, /camera or microphone is in use.*\. The next start is allowed in 1 s\./);
+        assert.equal(serveWebStarts(), 1, 'nothing was spawned during the wait');
+        assert.equal(runner.getStatus('iphone-cooldown').state, 'error', 'the device card keeps the reason');
+        await sleep(950);
+        await runner.acquire('iphone-cooldown');
+        assert.equal(serveWebStarts(), 2);
+
+        // A failure before serve-web ran left nothing on the phone to wait for.
+        await withEnv({ FAKE_MOUNT_FAIL: 'devmode' }, async () => {
+            await assert.rejects(runner.acquire('iphone-cooldown-mount'), /Developer Mode is off/);
+            await assert.rejects(runner.acquire('iphone-cooldown-mount'), /Developer Mode is off/);
+        });
+        runner.release();
+    });
+});
+
+test('the proxy tells the viewer whether a start failed, was put off, or is out of budget', async () => {
+    await withEnv({ IOS_SESSION_COOLDOWN_MS: '60000', IOS_SESSION_START_LIMIT: '1' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const closed = async (udid) => {
+            const { socket } = openViewer(udid);
+            await until(() => socket.closes.length > 0);
+            return { code: socket.closes[0].code, message: socket.texts().at(-1).message };
+        };
+        await withEnv({ FAKE_SERVE_EXIT: '3' }, async () => {
+            assert.equal((await closed('iphone-codes')).code, 4009, 'a start that was tried and failed');
+        });
+        const waiting = await closed('iphone-codes');
+        assert.equal(waiting.code, 4010, 'nothing was started; asking again later is fine');
+        assert.match(waiting.message, /The next start is allowed in/);
+        // Budget: one start is allowed, the second is refused for good.
+        await runner.acquire('iphone-codes-budget');
+        runner.stopSession('iphone-codes-budget', 'test');
+        const spent = await closed('iphone-codes-budget');
+        assert.equal(spent.code, 4011, 'the viewer must not retry on its own');
+        assert.match(spent.message, /started 1 times/);
+        runner.release();
+    });
+});
+
+test('a udid the tracker does not report as attached is refused before any command runs', async () => {
+    fs.rmSync(logFile, { force: true });
+    const { StartRefusedError } = require('../src/server/appl-device/services/CoreDeviceRunner');
+    await withEnv({ FAKE_LOG: logFile }, async () => {
+        CoreDeviceRunner.setDeviceCheck((udid) => udid === 'iphone-attached');
+        try {
+            const runner = CoreDeviceRunner.getInstance();
+            const refusal = await runner.acquire('iphone-made-up').catch((error) => error);
+            assert(refusal instanceof StartRefusedError);
+            assert.equal(refusal.reason, 'not-connected');
+            assert.deepEqual(calls(), [], 'no mount, no serve-web');
+            assert.equal(runner.getStatus('iphone-made-up').state, 'stopped');
+            await runner.acquire('iphone-attached');
+            runner.release();
+        } finally {
+            CoreDeviceRunner.setDeviceCheck(undefined);
+        }
+    });
+});
+
+test('restart reaches serve-web once; a second one straight after is dropped', async () => {
+    fs.rmSync(logFile, { force: true });
+    await withEnv({ FAKE_LOG: logFile }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const first = openViewer('iphone-restart-twice');
+        const second = openViewer('iphone-restart-twice');
+        await until(() => [first, second].every(({ socket }) => socket.texts().some((m) => m.type === 'codec')));
+        first.socket.message(JSON.stringify({ type: 'restart' }));
+        await until(() => calls().some((line) => line.startsWith('post /restart')));
+        first.socket.message(JSON.stringify({ type: 'restart' }));
+        second.socket.message(JSON.stringify({ type: 'restart' }));
+        await sleep(200);
+        assert.equal(calls().filter((line) => line.startsWith('post /restart')).length, 1);
+        runner.release();
+    });
+});
+
+test('a stop during the preflight waits until serve-web can shut down in order', async () => {
+    fs.rmSync(logFile, { force: true });
+    await withEnv({ FAKE_LOG: logFile, FAKE_PREFLIGHT_MS: '600' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const start = runner.acquire('iphone-preflight').catch((error) => error);
+        assert(await until(() => serveWebStarts() === 1));
+        runner.stopSession('iphone-preflight', 'test');
+        assert.equal(runner.getStatus('iphone-preflight').state, 'stopped');
+        assert.match((await start).message, /Session stopped/);
+        await CoreDeviceRunner.childrenClosed();
+        const lines = calls();
+        assert(!lines.some((line) => line.startsWith('serve-web killed in preflight')), 'no SIGTERM before the handler');
+        assert(lines.includes('serve-web sigterm iphone-preflight'));
+        assert(lines.includes('serve-web shutdown complete iphone-preflight'));
+        runner.release();
+    });
+});
+
+test('a serve-web that never gets as far as its signal handler is still stopped, after a bound', async () => {
+    fs.rmSync(logFile, { force: true });
+    await withEnv({ FAKE_LOG: logFile, FAKE_PREFLIGHT_MS: '20000', IOS_SIGNAL_READY_TIMEOUT_MS: '400' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const start = runner.acquire('iphone-stuck-preflight').catch((error) => error);
+        assert(await until(() => serveWebStarts() === 1));
+        const stopped = Date.now();
+        runner.stopSession('iphone-stuck-preflight', 'test');
+        await start;
+        await CoreDeviceRunner.childrenClosed();
+        assert(Date.now() - stopped < 5000, 'the stop does not wait out the whole preflight');
+        assert(calls().includes('serve-web killed in preflight iphone-stuck-preflight'));
+        runner.release();
+    });
+});
+
+test('a replacement session starts only after the previous serve-web has closed', async () => {
+    fs.rmSync(logFile, { force: true });
+    await withEnv({ FAKE_LOG: logFile, FAKE_SHUTDOWN_MS: '500' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        await runner.acquire('iphone-overlap');
+        const messages = [];
+        runner.on('status', (event) => event.udid === 'iphone-overlap' && messages.push(event.message));
+        runner.stopSession('iphone-overlap', 'Restarting the phone session');
+        await runner.acquire('iphone-overlap');
+        const lines = calls();
+        const closed = lines.indexOf('serve-web shutdown complete iphone-overlap');
+        const mounts = lines.flatMap((line, index) => (line.includes('"mounter","auto-mount"') ? [index] : []));
+        const spawns = lines.flatMap((line, index) =>
+            line.startsWith('args ') && line.includes('"serve-web"') ? [index] : [],
+        );
+        assert.equal(spawns.length, 2);
+        assert(closed > spawns[0], 'the first serve-web shut down in order');
+        assert(mounts[1] > closed && spawns[1] > closed, 'nothing was run for the new session before that');
+        assert.deepEqual(messages.slice(0, 3), [
+            'Restarting the phone session',
+            'Waiting for the previous session to stop',
+            'Preparing the device',
+        ]);
+        runner.release();
+    });
+});
+
+test('a hold only counts against the session it came from', async () => {
+    const runner = CoreDeviceRunner.getInstance();
+    const stale = await runner.acquire('iphone-holds');
+    runner.stopSession('iphone-holds', 'test');
+    const current = await runner.acquire('iphone-holds');
+    assert.notEqual(stale.token, current.token);
+    const session = runner.sessions.get('iphone-holds');
+    assert.equal(session.holders, 1);
+
+    // A viewer of the stopped session finishing its teardown late.
+    runner.release('iphone-holds', stale);
+    assert.equal(session.holders, 1, 'a stale release does not take the new viewer\'s hold');
+    assert.equal(session.releaseTimer, undefined);
+    runner.stopSession('iphone-holds', 'Restarting after keyboard disconnect failed', stale);
+    assert.equal(runner.getStatus('iphone-holds').state, 'ready', 'a stale stop does not end the new session');
+
+    runner.release('iphone-holds', current);
+    assert.equal(session.holders, 0);
+    runner.stopSession('iphone-holds', 'done', current);
+    assert.equal(runner.getStatus('iphone-holds').state, 'stopped');
+    runner.release();
+});
+
+test('a second phone opened during the first one\'s start gets its own port, kept until its serve-web closes', async () => {
+    fs.rmSync(logFile, { force: true });
+    // serve-web binds only after its preflight, so a free-port probe sees the port free for both.
+    await withEnv({ FAKE_LOG: logFile, FAKE_PREFLIGHT_MS: '300', FAKE_SHUTDOWN_MS: '400' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const first = runner.acquire('iphone-port-1');
+        // The second phone is opened while the first serve-web is in its preflight: spawned, not bound.
+        assert(await until(() => serveWebStarts() === 1));
+        const [one, two] = await Promise.all([first, runner.acquire('iphone-port-2')]);
+        assert.notEqual(one.port, two.port);
+        for (const udid of ['iphone-port-1', 'iphone-port-2']) {
+            assert.equal((await runner.request(udid, 'GET', '/codec')).status, 200);
+        }
+        // The fake stops listening at once and takes 400 ms to exit, as the real one keeps the
+        // phone busy during its shutdown. Its port is not handed out in the meantime.
+        runner.stopSession('iphone-port-1', 'test');
+        const three = await runner.acquire('iphone-port-3');
+        assert.notEqual(three.port, one.port);
+        assert.notEqual(three.port, two.port);
+        runner.release();
+        await CoreDeviceRunner.childrenClosed();
+        assert.equal(CoreDeviceRunner.ports.size, 0, 'every port is given back once its serve-web has closed');
+    });
+});
+
+test('a button press is answered only when the phone has the edge, and the release waits for it', async () => {
+    fs.rmSync(logFile, { force: true });
+    await withEnv({ FAKE_LOG: logFile, FAKE_BUTTON_MS: '150' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const { socket } = openViewer('iphone-button-edge');
+        await until(() => socket.binaries().length >= 3);
+        socket.message(JSON.stringify({ type: 'button', name: 'home' }));
+        await until(() => calls().includes('done /button {"name":"home","state":"up"}'));
+        assert.deepEqual(
+            calls().filter((line) => line.includes('/button')),
+            [
+                'post /button {"name":"home","state":"down"}',
+                'done /button {"name":"home","state":"down"}',
+                'post /button {"name":"home","state":"up"}',
+                'done /button {"name":"home","state":"up"}',
+            ],
+        );
         runner.release();
     });
 });
@@ -864,7 +1185,7 @@ test('touch frames serialize, reject invalid identities, exclude other viewers a
         const proxy = new CoreDeviceProxy(socket, 'multitouch-phone');
         proxy.runner = { request: async (_id, _method, _path, body) => { posts.push(JSON.parse(body)); await tick(); return { status: 200, body: '' }; }, release: () => stopped.push('runner') };
         proxy.stream = { destroy: () => stopped.push('stream') };
-        proxy.acquired = true;
+        proxy.hold = fakeHold('multitouch-phone');
         return { socket, proxy };
     };
     const first = make(), second = make();
@@ -1091,7 +1412,7 @@ test('keyboard ownership protects held modifiers and transfers only after releas
             release: () => stopped.push(name),
         };
         proxy.stream = { destroy() {} };
-        proxy.acquired = true;
+        proxy.hold = fakeHold(proxy.udid);
         return { socket, proxy };
     };
     const first = make('first'), second = make('second');
@@ -1166,7 +1487,8 @@ test('disconnect waits for keyboard input, touch cleanup, and native detach whil
     };
     first.stream = { destroy: () => events.push('first:media-destroy') };
     second.stream = { destroy: () => events.push('second:media-destroy') };
-    first.acquired = second.acquired = true;
+    first.hold = fakeHold(first.udid);
+    second.hold = fakeHold(second.udid);
     try {
         firstSocket.message(JSON.stringify({ type: 'touch-frame', contacts: [{ id: 0, touching: true, x: 1, y: 2 }] }));
         await first.inputChain;
@@ -1187,7 +1509,7 @@ test('disconnect waits for keyboard input, touch cleanup, and native detach whil
         acknowledgeDetach({ status: 200, body: '' });
         await tick();
         assert.deepEqual(events.slice(-2), ['first:media-destroy', 'first:runner-release']);
-        assert.equal(second.acquired, true, 'detaching the keyboard does not release another viewer media session');
+        assert.ok(second.hold, 'detaching the keyboard does not release another viewer media session');
         secondSocket.message(JSON.stringify({ type: 'key', usages: [5] }));
         await second.inputChain;
         assert.equal(events.at(-1), 'second:/key');
@@ -1272,8 +1594,9 @@ for (const failure of ['transport', 'http'])
                 events.push(`first:${route}`);
                 return route === '/keyboard/detach' ? cleanup : { status: 200, body: '' };
             },
-            stopSession: () => events.push('native-stop'),
-            release: () => events.push('runner-release'),
+            // Both name the session this viewer was given, so neither can act on a newer one.
+            stopSession: (_id, _message, given) => events.push(given === hold ? 'native-stop' : 'native-stop-unscoped'),
+            release: (_id, given) => events.push(given === hold ? 'runner-release' : 'runner-release-unscoped'),
         };
         second.runner = {
             request: async (_id, _method, route) => {
@@ -1283,7 +1606,8 @@ for (const failure of ['transport', 'http'])
             release() {},
         };
         first.stream = second.stream = { destroy() {} };
-        first.acquired = true;
+        const hold = fakeHold(udid);
+        first.hold = hold;
         try {
             firstSocket.message(JSON.stringify({ type: 'key', usages: [0xe1] }));
             await first.inputChain;
@@ -1427,6 +1751,7 @@ test('browser side: the receiver decodes both message kinds and reconnects until
         global.setTimeout = realSetTimeout;
     }
 });
+
 
 
 // Static assets pulled in by the client modules (icons, touch-point images) are not code.

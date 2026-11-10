@@ -14,7 +14,7 @@ import {
     splitStreamFrames,
 } from '../../../common/CoreDeviceProtocol';
 import { AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, AudioPacketKind } from '../../../common/AudioProtocol';
-import { CoreDeviceRunner, HttpReply } from '../services/CoreDeviceRunner';
+import { CoreDeviceRunner, HttpReply, SessionHold, StartRefusedError } from '../services/CoreDeviceRunner';
 import { CoreDeviceAudioRelay } from '../services/CoreDeviceAudio';
 import { DeviceStateMonitor } from '../services/DeviceStateMonitor';
 
@@ -47,6 +47,15 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 const INPUT_TIMEOUT_MS = 4000;
 // Button edges and keyboard detach wait for native completion, bounded at 8 s by serve-web.
 const INPUT_COMPLETION_TIMEOUT_MS = 10000;
+// `restart` stops and starts the phone's video inside serve-web. Each one is a display session
+// on the phone, and a burst of those is what wedges its display service (docs/HANDOFF.md).
+const VIDEO_RESTART_INTERVAL_MS = 30000;
+// Close codes `CoreDeviceReceiver` tells apart. 4009: a start was tried and failed. 4010: nothing
+// was started and asking again later is fine. 4011: the phone's start budget is used up, so the
+// viewer must not retry on its own.
+const CLOSE_START_FAILED = 4009;
+const CLOSE_START_REFUSED = 4010;
+const CLOSE_START_BUDGET = 4011;
 // Typing bursts are a few hundred reports; a backlog beyond this means the phone stopped
 // answering, and stale input aimed at an old picture is worse than dropped input.
 const MAX_QUEUED_INPUT = 512;
@@ -64,6 +73,8 @@ export class CoreDeviceProxy extends Mw {
     public static readonly TAG = TAG;
     private static touchOwners = new Map<string, CoreDeviceProxy>();
     private static keyboardOwners = new Map<string, CoreDeviceProxy>();
+    // Per phone, shared by every viewer: when `restart` last reached serve-web.
+    private static videoRestarts = new Map<string, number>();
     private contacts: CoreDeviceContact[] = [];
     private keyboardPressed = false;
     private keyboardBusy = false;
@@ -72,7 +83,8 @@ export class CoreDeviceProxy extends Mw {
     private stream?: NodeJS.ReadableStream & { destroy?: () => void };
     private unsubscribeAudio?: () => void;
     private released = false;
-    private acquired = false;
+    // Set while this viewer holds the phone's session; names the session it was given.
+    private hold?: SessionHold;
     private onStatus?: (event: { udid: string; state: string; message?: string }) => void;
 
     /**
@@ -93,7 +105,13 @@ export class CoreDeviceProxy extends Mw {
             return;
         }
         const proxy = new CoreDeviceProxy(ws, udid);
-        proxy.init().catch((error: Error) => proxy.failSession(error.message));
+        proxy.init().catch((error: Error) => {
+            const refused = error instanceof StartRefusedError ? error.reason : undefined;
+            proxy.failSession(
+                error.message,
+                refused === 'budget' ? CLOSE_START_BUDGET : refused ? CLOSE_START_REFUSED : CLOSE_START_FAILED,
+            );
+        });
         return proxy;
     }
 
@@ -136,11 +154,11 @@ export class CoreDeviceProxy extends Mw {
      * viewer's session events to it. Seen while the phone rebooted: the session recovered but the
      * stranded client never came back.
      */
-    private failSession(message: string): void {
+    private failSession(message: string, code = CLOSE_START_FAILED): void {
         this.send({ type: 'status', state: 'error', message });
         if (this.ws.readyState === this.ws.OPEN) {
             // `close()` flushes the status frame before completing the handshake.
-            this.ws.close(4009, 'Stream unavailable');
+            this.ws.close(code, 'Stream unavailable');
         }
         this.release();
     }
@@ -162,11 +180,14 @@ export class CoreDeviceProxy extends Mw {
             state: stale ? 'starting' : current.state,
             message: stale ? undefined : current.message,
         });
-        await this.runner.acquire(this.udid);
-        this.acquired = true;
+        const hold = await this.runner.acquire(this.udid);
         if (this.released) {
+            // The viewer left while the session was starting. `release()` had no hold to give back
+            // then, so give this one back now or serve-web runs on with nobody watching.
+            this.runner.release(this.udid, hold);
             return;
         }
+        this.hold = hold;
         const codec = await this.runner.request(this.udid, 'GET', '/codec');
         if (codec.status !== 200) {
             throw new Error('The screen stream has no codec information yet. Try again in a moment.');
@@ -642,12 +663,19 @@ export class CoreDeviceProxy extends Mw {
             case 'pli':
                 this.requestKeyframe();
                 return;
-            case 'restart':
+            case 'restart': {
+                const last = CoreDeviceProxy.videoRestarts.get(this.udid) ?? 0;
+                if (Date.now() - last < VIDEO_RESTART_INTERVAL_MS) {
+                    console.log(`${this.name} restart ignored: the video was restarted a moment ago`);
+                    return;
+                }
+                CoreDeviceProxy.videoRestarts.set(this.udid, Date.now());
                 await this.runner.request(this.udid, 'POST', '/restart');
                 return;
+            }
             case 'restart-session':
                 // Kills the process; our own stream dies with it and the viewer reconnects.
-                this.runner.stopSession(this.udid, 'Restarting the phone session');
+                this.runner.stopSession(this.udid, 'Restarting the phone session', this.hold);
                 return;
             default:
                 return;
@@ -707,9 +735,9 @@ export class CoreDeviceProxy extends Mw {
         const finish = () => {
             this.stream?.destroy?.();
             this.stream = undefined;
-            if (this.acquired) {
-                this.acquired = false;
-                this.runner.release(this.udid);
+            if (this.hold) {
+                this.runner.release(this.udid, this.hold);
+                this.hold = undefined;
             }
         };
         if (
@@ -737,7 +765,8 @@ export class CoreDeviceProxy extends Mw {
                     } catch {
                         // A timeout gives no ordering guarantee: a late detach could remove the
                         // next viewer's keyboard. End this native session before freeing ownership.
-                        this.runner.stopSession(this.udid, 'Restarting after keyboard disconnect failed');
+                        // Only this viewer's own session: by now another viewer may have a new one.
+                        this.runner.stopSession(this.udid, 'Restarting after keyboard disconnect failed', this.hold);
                     }
                 })
                 .finally(() => {

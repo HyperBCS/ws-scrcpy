@@ -1,7 +1,7 @@
 import { UnlockRunOutcome } from '../../../common/IosUnlockSchedule';
 import { clampHid } from '../../../common/CoreDeviceProtocol';
 import { hidUsageForCode } from '../../../app/applDevice/hidKeyboard';
-import { CoreDeviceRunner, HttpReply } from './CoreDeviceRunner';
+import { CoreDeviceRunner, HttpReply, SessionHold } from './CoreDeviceRunner';
 import { DeviceStateMonitor } from './DeviceStateMonitor';
 import { CoreDeviceProxy } from '../mw/CoreDeviceProxy';
 import { PyMobileDevice } from './PyMobileDevice';
@@ -136,8 +136,9 @@ export class UnlockDriver {
         }
 
         const reused = runner.getStatus(udid).state === 'ready';
+        let hold: SessionHold;
         try {
-            await runner.acquire(udid);
+            hold = await runner.acquire(udid);
         } catch (error) {
             // `acquire` has already dropped its hold on failure.
             return { outcome: 'failed-session', message: (error as Error).message };
@@ -270,7 +271,8 @@ export class UnlockDriver {
                 );
             }
             // With no viewer the runner stops serve-web after its grace period, SIGTERM first.
-            runner.release(udid);
+            // The hold names this run's session, so a session a viewer started since is left alone.
+            runner.release(udid, hold);
         }
     }
 }

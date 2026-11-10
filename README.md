@@ -296,6 +296,9 @@ machine the setup script says so; pick another with
 | `WS_IOS_SETTINGS_KEY` | 64 hex characters: the key for the stored unlock passcode, instead of `ios-settings.key` in the data directory |
 | `IOS_UNLOCK_FAST` | `1` shortens every pause in the scheduled unlock sequence to 5 ms; for the fixture tests only |
 | `IOS_SERVE_WEB_BASE_PORT` | First loopback port tried for each phone's `serve-web` (default 18100). `scripts/test-ios-unlock.js` sets it so it does not share ports with `scripts/test-coredevice.js` |
+| `IOS_SESSION_START_LIMIT` | How many screen sessions may be started for one iPhone per window (default 3). Further starts are refused with the time to wait. `0` turns the limit off |
+| `IOS_SESSION_START_WINDOW_MS` | The length of that window in milliseconds (default 300000, five minutes) |
+| `IOS_SESSION_COOLDOWN_MS` | How long a new start is held off after a screen session failed (default 30000). `0` turns the wait off |
 | `WS_SCRCPY_DEBUG` | Verbose logs, including every `pymobiledevice3` child's output. Reveals the digits of a stored unlock passcode; see [Scheduled unlock](#scheduled-unlock) |
 
 [pymobiledevice3]: https://github.com/doronz88/pymobiledevice3
