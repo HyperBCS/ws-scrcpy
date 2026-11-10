@@ -1788,13 +1788,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 replace.disabled = true;
                 setTimeout(() => (replace.disabled = false), CONFIRM_GUARD_MS);
             }
-        }).then(
-            (result) => ({
-                choice: (result === 'replace' || result === 'keep' ? result : 'skip') as ConflictChoice,
-                // Closing the dialog answers for this one item only.
-                all: !!all?.checked && result !== '',
-            }),
-        );
+        }).then((result) => ({
+            choice: (result === 'replace' || result === 'keep' ? result : 'skip') as ConflictChoice,
+            // Closing the dialog answers for this one item only.
+            all: !!all?.checked && result !== '',
+        }));
     }
 
     private presentDialog(): void {
