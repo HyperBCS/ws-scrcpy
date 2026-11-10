@@ -26,6 +26,8 @@
 }
 
 .stream-stage {
+    /* The floating controls shield is positioned against the stage. */
+    position: relative;
     display: flex;
     flex: 1 1 0;
     min-height: 0;

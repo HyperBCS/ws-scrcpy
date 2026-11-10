@@ -10,7 +10,7 @@ async function main() {
     app.use(express.static(path.join(__dirname, '../dist/public')));
     const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
     const suites = process.argv.slice(2);
-    const defaults = ['review-polish', 'notifications', 'motion', 'settings', 'sheets', 'switcher', 'unlock', 'tools', 'files', 'ios-typing', 'ios-settings', 'ios-reconnect', 'audio-availability'];
+    const defaults = ['review-polish', 'notifications', 'motion', 'settings', 'sheets', 'switcher', 'unlock', 'tools', 'files', 'ios-typing', 'ios-settings', 'ios-reconnect', 'audio-availability', 'confirm'];
     try {
         for (const suite of suites.length ? suites : defaults) {
             if (!/^[a-z-]+$/.test(suite)) throw Error('Invalid suite name');

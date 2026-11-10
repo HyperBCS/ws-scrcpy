@@ -1,6 +1,7 @@
 import { Presence } from '../ui/Presence';
 import { Toast } from '../ui/Toast';
 import { AnimatedDetails } from '../ui/AnimatedDetails';
+import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { devices, deviceName } from '../state/devices';
 import {
@@ -30,16 +31,21 @@ function choicesKey(sources: string[], receiver: string): string {
 
 function SourceSettings({
     source,
+    stored,
     busy,
     update,
     remove,
 }: {
     source: NotificationSource;
+    // How many of this iPhone's notifications the server holds; both prompts state the loss.
+    stored: number;
     busy: boolean;
     update: (source: NotificationSource) => void;
     remove: () => void;
 }) {
     const [filter, setFilter] = useState(source.apps.join(', '));
+    const confirm = useArmedAction<'erase-text' | 'remove'>();
+    const count = `${stored} stored notification${stored === 1 ? '' : 's'}`;
     useEffect(() => setFilter(source.apps.join(', ')), [source.apps.join(', ')]);
     return (
         <AnimatedDetails class="notification-details">
@@ -50,10 +56,30 @@ function SourceSettings({
                         type="checkbox"
                         checked={source.preview}
                         disabled={busy}
-                        onChange={(e) => update({ ...source, preview: e.currentTarget.checked })}
+                        onChange={(e) => {
+                            const preview = e.currentTarget.checked;
+                            if (preview || !stored) {
+                                update({ ...source, preview });
+                                return;
+                            }
+                            // Turning text off also erases the text already stored, so it is
+                            // confirmed first and the box stays ticked until then.
+                            e.currentTarget.checked = true;
+                            confirm.arm('erase-text', e.currentTarget.closest('label'));
+                        }}
                     />
                     <span>Include notification text</span>
                 </label>
+                {confirm.armed === 'erase-text' && (
+                    <ConfirmPrompt
+                        action={confirm}
+                        question={`Stop storing notification text from ${source.name}?`}
+                        consequence={`The text of its ${count} is erased from the server and cannot be restored.`}
+                        confirmLabel="Erase text"
+                        danger
+                        onConfirm={() => update({ ...source, preview: false })}
+                    />
+                )}
                 <p class="notification-help">
                     Missing message text? Check Show Previews in this iPhone’s notification settings.
                 </p>
@@ -88,9 +114,33 @@ function SourceSettings({
                         </button>
                     </div>
                 </AnimatedDetails>
-                <button class="notification-danger" disabled={busy} onClick={remove}>
-                    Remove iPhone
-                </button>
+                <div class="notification-remove-source">
+                    <p class="notification-help">
+                        Removing this iPhone deletes its link and its {count} from the server. Nothing changes on the
+                        iPhone.
+                    </p>
+                    <button
+                        class="notification-danger"
+                        disabled={busy}
+                        onClick={(e) => confirm.arm('remove', e.currentTarget)}
+                    >
+                        Remove iPhone
+                    </button>
+                    {confirm.armed === 'remove' && (
+                        <ConfirmPrompt
+                            action={confirm}
+                            question={
+                                stored
+                                    ? `Remove ${source.name} and delete its ${count}?`
+                                    : `Remove ${source.name} from notification sharing?`
+                            }
+                            consequence="This cannot be undone. To share its notifications again, connect the iPhone again."
+                            confirmLabel="Remove iPhone"
+                            danger
+                            onConfirm={remove}
+                        />
+                    )}
+                </div>
             </div>
         </AnimatedDetails>
     );
@@ -387,6 +437,7 @@ export function NotificationsView() {
                                             )}
                                             <SourceSettings
                                                 source={s}
+                                                stored={status.notifications.filter((n) => n.source === s.id).length}
                                                 busy={busy}
                                                 update={(source) =>
                                                     void run(async () => {
@@ -671,7 +722,7 @@ export function NotificationsView() {
                                         {subscription && (
                                             <button
                                                 disabled={busy}
-                                                class="notification-danger"
+                                                class="notification-turn-off"
                                                 onClick={() =>
                                                     void run(async () => {
                                                         await api('subscriptions', 'DELETE', {

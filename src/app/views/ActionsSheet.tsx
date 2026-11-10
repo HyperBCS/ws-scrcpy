@@ -232,7 +232,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                         </SheetRow>
                     )}
                     <SheetRow title="Disconnect" description="Return to devices.">
-                        <button type="button" class="sheet-button danger" onClick={goToDeviceList}>
+                        <button type="button" class="sheet-button" onClick={goToDeviceList}>
                             Disconnect
                         </button>
                     </SheetRow>

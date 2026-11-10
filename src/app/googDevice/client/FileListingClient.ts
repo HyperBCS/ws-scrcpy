@@ -1,5 +1,6 @@
 import { FileDownloads } from './FileDownloads';
 import { trapDialogTab } from '../../ui/dialogFocus';
+import { CONFIRM_GUARD_MS } from '../../ui/ConfirmAction';
 import { transitionVisibility, cancelVisibility } from '../../ui/motion';
 import '../../../style/filelisting.css';
 import { ParamsFileListing } from '../../../types/ParamsFileListing';
@@ -1636,9 +1637,20 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 }" value="confirm">${esc(options.confirm)}</button>
             </div>
         </form>`;
-        return this.showDialog(() => this.dialog.querySelector<HTMLButtonElement>('[value="confirm"]')?.focus()).then(
-            (result) => result === 'confirm',
-        );
+        return this.showDialog(() => {
+            const confirm = this.dialog.querySelector<HTMLButtonElement>('[value="confirm"]');
+            if (!options.danger) {
+                confirm?.focus();
+                return;
+            }
+            // The same rule as the app's other destructive actions: Cancel is the default, and the
+            // red button waits out a double tap or a repeated key on whatever opened the dialog.
+            this.dialog.querySelector<HTMLButtonElement>('[data-dialog="cancel"]')?.focus();
+            if (confirm) {
+                confirm.disabled = true;
+                setTimeout(() => (confirm.disabled = false), CONFIRM_GUARD_MS);
+            }
+        }).then((result) => result === 'confirm');
     }
 
     private presentDialog(): void {

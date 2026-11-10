@@ -14,6 +14,17 @@
         env(safe-area-inset-left, 0px);
 }
 
+/* Covers the stage while the panel is open, so the press that closes it is not a remote tap.
+   It sits above the picture and its touch layer and below the sleep card and the toolbar. */
+.floating-toolbar-shield {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    pointer-events: auto;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
 .floating-toolbar-fab {
     position: relative;
     pointer-events: auto;

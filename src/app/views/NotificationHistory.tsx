@@ -4,6 +4,7 @@ import type { NotificationSource } from '../../common/Notification';
 import { notificationRequest as api, closeReadNotifications } from '../state/notifications';
 import { route, pushRoute } from '../state/router';
 import { Toast } from '../ui/Toast';
+import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { animate, reducedMotion } from '../ui/motion';
 import { NotificationCard } from './NotificationCard';
 import { NotificationActionSheet } from './NotificationActionSheet';
@@ -81,9 +82,8 @@ export function NotificationHistory({
     const [bulkError, setBulkError] = useState(false);
     const [bulkBusy, setBulkBusy] = useState('');
     const [confirmation, setConfirmation] = useState<DismissalConfirmation | null>(null);
-    const lastConfirmation = useRef<DismissalConfirmation>();
-    if (confirmation) lastConfirmation.current = confirmation;
-    const prompt = lastConfirmation.current;
+    // Bulk dismissal is confirmed in the bulk sheet itself. Closing that sheet disarms it.
+    const bulkConfirm = useArmedAction<'here' | 'phone'>(menu === 'bulk');
     const clicked = useRef('');
     const list = useRef<HTMLElement>(null);
     const positions = useRef(new Map<string, number>());
@@ -137,6 +137,10 @@ export function NotificationHistory({
     const previousMenuItem = useRef<HistoryItem>();
     if (selectedMenuItem) previousMenuItem.current = selectedMenuItem;
     const menuItem = selectedMenuItem || previousMenuItem.current;
+    // A phone action other than a plain dismissal (Decline, Delete) needs a confirming press.
+    // Closing the card's sheet disarms it.
+    const phoneConfirm = useArmedAction<string>(!!selectedMenuItem);
+    const [phoneResult, setPhoneResult] = useState('');
     const matchingUnread = filtered.filter((n) => !n.read && !n.dismissed);
     const narrowed = !!query.trim() || !!appFilter;
     const markRead = async (keys: string[], read = true) => {
@@ -156,6 +160,7 @@ export function NotificationHistory({
         setMenuKey('');
         setUndo(null);
         setConfirmation(null);
+        setPhoneResult('');
     }, [source?.id]);
     useEffect(() => {
         if (!highlighted || clicked.current === highlighted) return;
@@ -179,6 +184,7 @@ export function NotificationHistory({
         setPendingKeys(new Set(pending.current));
         setMenuKey('');
         setBulkMessage('');
+        setPhoneResult('');
         try {
             await run(async () => {
                 if (kind === 'read') await api('history/read', 'POST', { keys: [item.key], read: !item.read });
@@ -210,11 +216,25 @@ export function NotificationHistory({
             await refresh();
         });
     };
-    const dismissAll = (onPhone: boolean) => {
+    const phoneAction = (item: HistoryItem) => {
+        const label = item.negativeActionLabel;
+        const name = sources.find((s) => s.id === item.source)?.name || 'the iPhone';
+        setMenuKey('');
+        setUndo(null);
+        setPhoneResult('');
+        void run(async () => {
+            await api(`history/${encodeURIComponent(item.key)}/action`, 'POST', { expectedLabel: label });
+            closeReadNotifications([item.key]);
+            setAccepted((keys) => [...keys, item.key]);
+            // The phone accepted the request; it does not report that the alert is gone.
+            setPhoneResult(`${label} sent to ${name}.`);
+            await refresh();
+        });
+    };
+    const dismissAll = (onPhone: boolean, trigger: EventTarget | null) => {
         if (!source || busy || bulkBusy) return;
         // Freeze this exact device and alert set before confirmation. New arrivals
         // and a subsequently selected device must never join the confirmed batch.
-        setMenu(null);
         const sourceId = source.id;
         const name = source.name;
         const snapshot = (onPhone ? phoneDismissals : localDismissals).map((n) => ({
@@ -223,10 +243,12 @@ export function NotificationHistory({
         }));
         if (!snapshot.length) return;
         setConfirmation({ sourceId, name, onPhone, snapshot });
+        bulkConfirm.arm(onPhone ? 'phone' : 'here', trigger);
     };
     const confirmDismissAll = () => {
         if (!confirmation || busy || bulkBusy) return;
         const { sourceId, name, onPhone, snapshot } = confirmation;
+        setMenu(null);
         setConfirmation(null);
         setBulkMessage('');
         setUndo(null);
@@ -438,6 +460,12 @@ export function NotificationHistory({
                 onDismiss={() => setUndo(null)}
                 action={{ label: 'Undo', run: undoLast, disabled: busy }}
             />
+            <Toast
+                className="notification-phone-result"
+                message={phoneResult}
+                identity={phoneResult}
+                onDismiss={() => setPhoneResult('')}
+            />
             <NotificationActionSheet
                 open={menu === 'filters'}
                 title="Filter notifications"
@@ -488,31 +516,33 @@ export function NotificationHistory({
                 >
                     Mark all read
                 </button>
-                <button disabled={busy || !localDismissals.length} onClick={() => dismissAll(false)}>
+                <button
+                    disabled={busy || !localDismissals.length}
+                    onClick={(event) => dismissAll(false, event.currentTarget)}
+                >
                     Dismiss all here
                 </button>
-                <button disabled={busy || !phoneDismissals.length} onClick={() => dismissAll(true)}>
+                <button
+                    disabled={busy || !phoneDismissals.length}
+                    onClick={(event) => dismissAll(true, event.currentTarget)}
+                >
                     Dismiss all on phone
                 </button>
-            </NotificationActionSheet>
-            <NotificationActionSheet
-                open={!!confirmation}
-                title={
-                    prompt
-                        ? `Dismiss ${prompt.snapshot.length} notification${prompt.snapshot.length === 1 ? '' : 's'}?`
-                        : 'Dismiss notifications'
-                }
-                description={
-                    prompt
-                        ? `${prompt.onPhone ? 'On' : 'Here for'} ${prompt.name}. Only matching alerts are included. History is kept.${prompt.onPhone ? '' : ' The iPhone is unchanged.'}`
-                        : undefined
-                }
-                onClose={() => setConfirmation(null)}
-            >
-                <button class="notification-confirm-dismiss" disabled={busy} onClick={confirmDismissAll}>
-                    {prompt?.onPhone ? 'Dismiss on phone' : 'Dismiss here'}
-                </button>
-                <button onClick={() => setConfirmation(null)}>Cancel</button>
+                {bulkConfirm.armed && confirmation && (
+                    <ConfirmPrompt
+                        action={bulkConfirm}
+                        question={`Dismiss ${confirmation.snapshot.length} notification${confirmation.snapshot.length === 1 ? '' : 's'} ${confirmation.onPhone ? `on ${confirmation.name}` : `from ${confirmation.name} here`}?`}
+                        consequence={
+                            confirmation.onPhone
+                                ? 'Only matching alerts are included. They are cleared on the iPhone and cannot be brought back there. History is kept here.'
+                                : 'Only matching alerts are included. History is kept and the iPhone is unchanged.'
+                        }
+                        confirmLabel={confirmation.onPhone ? 'Dismiss on phone' : 'Dismiss here'}
+                        danger={confirmation.onPhone}
+                        layout="stack"
+                        onConfirm={confirmDismissAll}
+                    />
+                )}
             </NotificationActionSheet>
             {menuItem && (
                 <NotificationActionSheet
@@ -548,26 +578,31 @@ export function NotificationHistory({
                         </button>
                     )}
                     {menuItem.active && menuItem.canDismiss && menuItem.negativeActionLabel && (
-                        <button
-                            disabled={busy || accepted.includes(menuItem.key)}
-                            onClick={() => {
-                                const item = menuItem;
-                                setMenuKey('');
-                                setUndo(null);
-                                void run(async () => {
-                                    await api(`history/${encodeURIComponent(item.key)}/action`, 'POST', {
-                                        expectedLabel: item.negativeActionLabel,
-                                    });
-                                    closeReadNotifications([item.key]);
-                                    setAccepted((keys) => [...keys, item.key]);
-                                    await refresh();
-                                });
-                            }}
-                        >
-                            {accepted.includes(menuItem.key)
-                                ? 'Action sent'
-                                : `${menuItem.negativeActionLabel} on iPhone`}
-                        </button>
+                        <>
+                            <h3 class="notification-action-sheet-group">On {source?.name || 'the iPhone'}</h3>
+                            <button
+                                disabled={busy || accepted.includes(menuItem.key)}
+                                onClick={(event) => {
+                                    if (isDismissActionLabel(menuItem.negativeActionLabel)) phoneAction(menuItem);
+                                    else phoneConfirm.arm(menuItem.key, event.currentTarget);
+                                }}
+                            >
+                                {accepted.includes(menuItem.key)
+                                    ? 'Action sent'
+                                    : `${menuItem.negativeActionLabel} on iPhone`}
+                            </button>
+                            {phoneConfirm.armed === menuItem.key && (
+                                <ConfirmPrompt
+                                    action={phoneConfirm}
+                                    question={`${menuItem.negativeActionLabel} on ${source?.name || 'the iPhone'}?`}
+                                    consequence={`This runs on the iPhone for “${menuItem.title || menuItem.appName || 'this notification'}” and cannot be undone from here.`}
+                                    confirmLabel={menuItem.negativeActionLabel}
+                                    danger
+                                    layout="stack"
+                                    onConfirm={() => phoneAction(menuItem)}
+                                />
+                            )}
+                        </>
                     )}
                 </NotificationActionSheet>
             )}
