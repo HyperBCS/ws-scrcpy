@@ -788,6 +788,32 @@ test('name conflicts are put to the owner, and nothing is replaced without that 
 
     // An answer that no longer applies drops the whole batch, including the free names.
     assert.deepEqual(await resolveNameConflicts(['new.txt', 'notes.txt'], existing, true, async () => undefined), []);
+
+    // The kind of the incoming item decides: a folder never replaces a file and keeps its whole
+    // name, and a file keeps its extension even where a folder holds the name.
+    asked.length = 0;
+    assert.deepEqual(
+        await resolveNameConflicts(
+            ['photo.png', 'archive', 'bundle.zip'],
+            new Map([...existing, ['bundle.zip', { isFolder: true }]]),
+            true,
+            answers([
+                { choice: 'replace', all: false },
+                { choice: 'keep', all: false },
+                { choice: 'keep', all: false },
+            ]),
+            (name) => name === 'photo.png' || name === 'archive',
+        ),
+        [
+            { name: 'archive', target: 'archive (1)', replace: false },
+            { name: 'bundle.zip', target: 'bundle (1).zip', replace: false },
+        ],
+    );
+    assert.deepEqual(asked, [
+        { name: 'photo.png', canReplace: false, remaining: 2 },
+        { name: 'archive', canReplace: false, remaining: 1 },
+        { name: 'bundle.zip', canReplace: false, remaining: 0 },
+    ]);
 });
 
 test('leaving or cancelling while upload setup is pending cancels the late adb transfer without reviving it', async (t) => {

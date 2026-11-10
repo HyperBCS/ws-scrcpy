@@ -676,6 +676,28 @@ async function main() {
                 paths: [ROOT + '/archive/notes.txt', ROOT + '/archive/notes (1).txt'],
             });
             files.delete(ROOT + '/archive/notes (1).txt');
+            // A folder does not replace a file, and a kept copy of it keeps its whole name.
+            dirs.add(ROOT + '/photos.2026');
+            files.set(ROOT + '/archive/photos.2026', Buffer.from('A file named like the folder'));
+            await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
+            await row(page, 'photos.2026').waitFor();
+            await page.locator('.file-listing-client[data-listing="ready"]').waitFor();
+            await select(page, 'photos.2026');
+            await command(page, 'Copy');
+            await open(page, 'archive');
+            await page.locator('.fx-crumb[aria-current="page"]').filter({ hasText: 'archive' }).waitFor();
+            await page.locator('.file-listing-client[data-listing="ready"]').waitFor();
+            await command(page, 'Paste');
+            await conflict(page, '“photos.2026” already exists', ['Skip', 'Keep both']);
+            await answer(page, 'Keep both');
+            await row(page, 'photos.2026 (1)').waitFor();
+            assert.deepEqual(traffic.operations.at(-1), {
+                cmd: 'COPY',
+                paths: [ROOT + '/photos.2026', ROOT + '/archive/photos.2026 (1)'],
+            });
+            dirs.delete(ROOT + '/photos.2026');
+            dirs.delete(ROOT + '/archive/photos.2026 (1)');
+            files.delete(ROOT + '/archive/photos.2026');
 
             // Delete needs a confirmation and removes only the selected item.
             await select(page, 'notes.txt');

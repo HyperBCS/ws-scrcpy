@@ -38,6 +38,9 @@ export function freeName(name: string, taken: ReadonlySet<string>, isFolder = fa
  * `ask` receives how many further conflicts follow, so the dialog can offer to apply one answer
  * to all of them. It resolves to undefined when the answer no longer applies (the explorer was
  * closed or moved to another folder); nothing is returned then.
+ *
+ * `isFolder` says which incoming names are folders: a folder does not replace a file, and its
+ * new name keeps no extension. Uploads are always files.
  */
 export async function resolveNameConflicts(
     names: string[],
@@ -49,6 +52,7 @@ export async function resolveNameConflicts(
         canReplace: boolean,
         remaining: number,
     ) => Promise<ConflictAnswer | undefined>,
+    isFolder: (name: string) => boolean = () => false,
 ): Promise<Resolution[]> {
     const taken = new Set<string>([...existing.keys(), ...names]);
     let remaining = names.filter((name) => existing.has(name)).length;
@@ -61,7 +65,8 @@ export async function resolveNameConflicts(
             continue;
         }
         remaining--;
-        const canReplace = replaceable && !item.isFolder;
+        const incomingFolder = isFolder(name);
+        const canReplace = replaceable && !item.isFolder && !incomingFolder;
         let choice = forAll;
         if (!choice || (choice === 'replace' && !canReplace)) {
             const answer = await ask(name, item, canReplace, remaining);
@@ -76,7 +81,7 @@ export async function resolveNameConflicts(
         if (choice === 'replace' && canReplace) {
             resolved.push({ name, target: name, replace: true });
         } else if (choice === 'keep') {
-            const target = freeName(name, taken, item.isFolder);
+            const target = freeName(name, taken, incomingFolder);
             taken.add(target);
             resolved.push({ name, target, replace: false });
         }

@@ -51,7 +51,8 @@ type Command =
     | 'refresh'
     | 'select-all';
 
-type Clipboard = { mode: 'cut' | 'copy'; dir: string; names: string[] };
+/** `folders` lists which of `names` are folders. */
+type Clipboard = { mode: 'cut' | 'copy'; dir: string; names: string[]; folders: string[] };
 
 type Preferences = {
     view: ViewMode;
@@ -1398,11 +1399,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             }
             case 'cut':
             case 'copy': {
-                const names = this.selectedEntries().map((entry) => entry.name);
+                const selected = this.selectedEntries();
+                const names = selected.map((entry) => entry.name);
                 if (!names.length) {
                     return;
                 }
-                this.clipboard = { mode: command as Clipboard['mode'], dir: this.path, names };
+                const folders = selected.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+                this.clipboard = { mode: command as Clipboard['mode'], dir: this.path, names, folders };
                 this.report(`${names.length} item${names.length === 1 ? '' : 's'} ready to paste.`);
                 this.paintSelection();
                 return;
@@ -1544,7 +1547,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         // A copy made in its own folder has nothing to replace: the source is the existing item.
-        const items = await this.resolveNames(clipboard.names, clipboard.dir !== this.path);
+        const items = await this.resolveNames(clipboard.names, clipboard.dir !== this.path, clipboard.folders);
         if (!items.length) {
             return;
         }
@@ -1570,11 +1573,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
      * handled the same way for each. Returns nothing when every item was skipped, or when the
      * explorer closed or changed folder while a question was open.
      */
-    private async resolveNames(names: string[], replaceable: boolean): Promise<Resolution[]> {
+    private async resolveNames(names: string[], replaceable: boolean, folders: string[] = []): Promise<Resolution[]> {
         if (!names.length) {
             return [];
         }
         const folder = this.path;
+        const incomingFolders = new Set(folders);
         const existing = new Map(this.entries.map((entry) => [entry.name, { isFolder: entry.isDirectory() }]));
         this.resolving = true;
         this.updateControls();
@@ -1587,6 +1591,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     const answer = await this.askConflict(name, item.isFolder, canReplace, remaining);
                     return this.stopped || this.path !== folder ? undefined : answer;
                 },
+                (name) => incomingFolders.has(name),
             );
             if (!resolved.length && !this.stopped && this.path === folder) {
                 this.report(names.length === 1 ? `Skipped ${names[0]}.` : `Skipped ${names.length} items.`);
