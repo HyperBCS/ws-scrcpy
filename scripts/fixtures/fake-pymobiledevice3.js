@@ -12,6 +12,17 @@
 //   FAKE_MOUNT_FAIL     "devmode" | "other": make `mounter auto-mount` fail that way
 //   FAKE_SERVE_EXIT     exit code for serve-web to die with immediately
 //   FAKE_SERVE_DELAY_MS how long /codec answers 503 before the stream is "ready"
+//   FAKE_PREFLIGHT_MS   how long serve-web takes before it binds HTTP and installs its SIGTERM
+//                       handler, like the real preflight (up to 25 s). A SIGTERM inside it kills
+//                       the process with no device cleanup, logged as "serve-web killed in preflight <udid>"
+//   FAKE_SHUTDOWN_MS    how long the orderly shutdown after SIGTERM takes. The log gets
+//                       "serve-web sigterm <udid>" at once and "serve-web shutdown complete <udid>"
+//                       at the end
+//   FAKE_MEDIA_IN_USE   the preflight fails with the camera-or-microphone-in-use error (9022) and
+//                       serve-web exits 1 without binding, as the real one does
+//   FAKE_BUTTON_MS      /button and /keyboard/detach answer after this long, like the patched
+//                       helper that replies once the phone has the edge. The log gets
+//                       "done <path> <body>" when the reply is sent
 //   FAKE_CLIPBOARD_HANG /clipboard accepts the request and never responds
 //   FAKE_CLIPBOARD_HANG_FIRST  /clipboard hangs for this many requests, then answers normally --
 //                       a phone whose pasteboard daemon was wedged and has just been restarted
@@ -195,7 +206,8 @@ if (command === 'developer core-device display serve-web') {
         process.exit(Number(process.env.FAKE_SERVE_EXIT));
     }
     const port = Number(flag('--http-port'));
-    const readyAt = Date.now() + Number(process.env.FAKE_SERVE_DELAY_MS || 0);
+    const preflightMs = Number(process.env.FAKE_PREFLIGHT_MS || 0);
+    const readyAt = Date.now() + preflightMs + Number(process.env.FAKE_SERVE_DELAY_MS || 0);
     // Counts the /clipboard requests swallowed under FAKE_CLIPBOARD_HANG_FIRST. It lives in this
     // process on purpose: the wedge being modelled is on the phone, so it outlives nothing here
     // and a restart of the *daemon* (the probe) is what makes the next request answer.
@@ -322,6 +334,13 @@ if (command === 'developer core-device display serve-web') {
                     return;
                 }
             }
+            if (['/keyboard/detach', '/button'].includes(path) && process.env.FAKE_BUTTON_MS) {
+                setTimeout(() => {
+                    log(`done ${path} ${body}`);
+                    response.writeHead(200).end('ok');
+                }, Number(process.env.FAKE_BUTTON_MS));
+                return;
+            }
             if (['/touch', '/key', '/keyboard/detach', '/button'].includes(path)) {
                 response.writeHead(200).end('ok');
                 return;
@@ -334,11 +353,39 @@ if (command === 'developer core-device display serve-web') {
             response.writeHead(404).end();
         });
     });
-    server.listen(port, '127.0.0.1', () => process.stderr.write(`INFO Open http://127.0.0.1:${port}/\n`));
+    // The real serve-web starts the phone's video and audio first (the preflight), then binds HTTP,
+    // and only then installs its SIGTERM handler. Until that point a SIGTERM is as abrupt as a
+    // SIGKILL: the sessions it started stay allocated on the phone.
+    let listening = false;
+    let stopping = false;
     process.on('SIGTERM', () => {
+        if (!listening) {
+            log(`serve-web killed in preflight ${udid}`);
+            process.exit(143);
+        }
+        if (stopping) return;
+        stopping = true;
+        log(`serve-web sigterm ${udid}`);
         server.close();
-        process.exit(0);
+        server.closeAllConnections();
+        setTimeout(() => {
+            log(`serve-web shutdown complete ${udid}`);
+            process.exit(0);
+        }, Number(process.env.FAKE_SHUTDOWN_MS || 0));
     });
+    setTimeout(() => {
+        if (process.env.FAKE_MEDIA_IN_USE) {
+            process.stderr.write(
+                "ERROR CoreDeviceError: The device's camera or microphone is in use by another app " +
+                    '(e.g. Camera or Voice Memos). Quit that app on the device, then retry (9022)\n',
+            );
+            process.exit(1);
+        }
+        server.listen(port, '127.0.0.1', () => {
+            listening = true;
+            process.stderr.write(`INFO Open http://127.0.0.1:${port}/\n`);
+        });
+    }, preflightMs);
 } else if (!longLived) {
     process.stderr.write(`fake pymobiledevice3: unknown command ${JSON.stringify(args)}\n`);
     process.exit(2);
