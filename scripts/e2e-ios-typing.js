@@ -291,23 +291,8 @@ async function keyboardLifecycleFlow(browser) {
             { type: 'key', usages: [0x04] }, { type: 'key', usages: [] }, { type: 'keyboard-detach' },
         ]);
 
-        // The separate passcode helper also releases its keyboard after the final digit.
-        // This dummy code and its wake/swipe/key sequence are intercepted by fixture sockets.
-        await page.locator('.floating-toolbar-fab').click();
-        await page.locator('.control-buttons-list [title="Actions"]').click();
-        await page.getByRole('dialog', { name: 'Actions', exact: true }).getByRole('button', { name: 'Unlock', exact: true }).click();
-        await settleMotion(page);
-        const beforePasscode = test.keys().length;
-        await page.getByLabel('Device passcode').fill('1234');
-        assert.equal(test.keys().length, beforePasscode, 'editing the local passcode field sends no remote keys');
-        await page.getByRole('button', { name: 'Unlock', exact: true }).click();
-        await waitUntil(() => detachCount() === 7, 'passcode input detaches after its final digit');
-        assert.deepEqual(test.keys().slice(beforePasscode), [...press(0x1e), ...press(0x1f), ...press(0x20), ...press(0x21)]);
-        assert.equal(keyboardMessages().at(-1).type, 'keyboard-detach');
-        await page.getByText('Passcode sent.', { exact: false }).waitFor();
-        assert.equal(await page.getByLabel('Device passcode').inputValue(), '1234', 'the masked passcode is retained for reuse');
         assert.deepEqual(test.errors, []);
-        console.log('keyboard lifecycle: queued close, reopen race, blur/background, held-key release and passcode cleanup passed');
+        console.log('keyboard lifecycle: queued close, reopen race, blur/background and held-key release passed');
     } finally { await test.context.close(); }
 }
 
@@ -447,38 +432,20 @@ async function unlockFlow(browser) {
             if (mobile) { await page.locator('.floating-toolbar-fab').click(); await settleMotion(page); }
             await page.locator('.control-buttons-list [title="Lock"]').click();
             assert.deepEqual(test.sent.filter(m => m.type === 'button'), [{ type: 'button', name: 'lock', state: 'press' }]);
+            // The Unlock panel types nothing from the browser: the server does it with the stored
+            // passcode (scripts/e2e-ios-settings.js covers that flow). Here: it opens directly,
+            // has no passcode field, and without a stored passcode it leads to Settings.
             const dialog = await openUnlock();
-            const input = dialog.getByLabel('Device passcode');
-            const button = dialog.getByRole('button', { name: 'Unlock', exact: true });
-            for (const control of [input, button]) {
-                const box = await control.boundingBox();
-                assert(box.y >= 0 && box.y + box.height <= page.viewportSize().height, 'unlock controls are visible immediately without scrolling');
-            }
+            const button = dialog.getByRole('button', { name: 'Open Settings', exact: true });
+            const box = await button.boundingBox();
+            assert(box.y >= 0 && box.y + box.height <= page.viewportSize().height, 'the unlock action is visible immediately without scrolling');
             assert.equal(await dialog.getByRole('heading', { name: 'Sound', exact: true }).count(), 0);
-            assert.equal(await input.getAttribute('type'), 'password');
-            await input.fill('000719'); assert.equal(test.keys().length, 0);
-            await input.press('Enter');
-            await dialog.getByText('Passcode sent.', { exact: true }).waitFor();
-            assert.deepEqual(test.keys(), [...press(0x27), ...press(0x27), ...press(0x27), ...press(0x24), ...press(0x1e), ...press(0x26)]);
-            const count = test.keys().length;
-            await page.reload(); await openUnlock();
-            assert.equal(await input.inputValue(), '000719', 'saved code survives reload');
-            assert.equal(test.keys().length, count, 'saved codes never send themselves');
-            await page.getByRole('button', { name: 'Close Unlock device' }).click();
-            await page.evaluate(() => { location.hash = location.hash.replace('fixture-iphone-typing', 'fixture-other-phone'); });
-            await page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
-            if (mobile) { await page.locator('.floating-toolbar-fab').click(); await settleMotion(page); }
-            await page.locator('.control-buttons-list [title="Actions"]').click();
-            await page.getByRole('dialog', { name: 'Actions', exact: true }).getByRole('button', { name: 'Unlock', exact: true }).click();
-            await settleMotion(page);
-            assert.equal(await input.inputValue(), '', 'another device does not inherit the code');
-            await page.evaluate(() => { location.hash = location.hash.replace('fixture-other-phone', 'fixture-iphone-typing'); });
-            await openUnlock(); assert.equal(await input.inputValue(), '000719');
-            await dialog.getByRole('button', { name: 'Forget', exact: true }).click();
-            await page.reload(); await openUnlock(); assert.equal(await input.inputValue(), '');
-            assert.equal(test.keys().length, count);
+            assert.equal(await dialog.locator('input').count(), 0, 'no passcode is entered in the browser');
+            await dialog.getByText('No passcode is stored on the server for this phone.', { exact: false }).waitFor();
+            assert.equal(test.keys().length, 0, 'opening the panel sends no keys');
+            assert.deepEqual(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.includes('passcode'))), []);
             assert.deepEqual(test.errors, []);
-            console.log('PASS iOS', mobile ? 'mobile' : 'desktop', 'Lock dispatch, direct Unlock panel, masked per-device persistence, reload and Forget');
+            console.log('PASS iOS', mobile ? 'mobile' : 'desktop', 'Lock dispatch and direct Unlock panel without a passcode field');
         } finally { await test.context.close(); }
     }
 }

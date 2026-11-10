@@ -9,18 +9,40 @@ const { submitDevicePasscode, requestLockState } = require('../src/app/state/unl
 const { activeStream, unlockSheetOpen } = require('../src/app/state/stream');
 const { devices } = require('../src/app/state/devices');
 const { findDeviceForStream } = require('../src/app/state/streamDevice');
-const { readSavedPasscode, savePasscode, forgetPasscode } = require('../src/app/state/savedPasscode');
-const { sendUnlockCommand } = require('../src/app/state/unlockSchedule');
+const { readSavedPasscode, savePasscode, forgetPasscode, purgeLegacyPasscodes } = require('../src/app/state/savedPasscode');
+const { sendUnlockCommand, runUnlockNow, unlockCardLine, formatUnlockMoment } = require('../src/app/state/unlockSchedule');
 
-test('saved passcodes preserve leading zeros and password mode, stay per device, and can be forgotten', (t) => {
+function fakeStorage(t) {
     const previous = Object.getOwnPropertyDescriptor(global, 'localStorage');
     const values = new Map();
     Object.defineProperty(global, 'localStorage', { configurable: true, value: {
         getItem: key => values.get(key) ?? null,
         setItem: (key, value) => values.set(key, value),
         removeItem: key => values.delete(key),
+        key: index => [...values.keys()][index] ?? null,
+        get length() { return values.size; },
     } });
     t.after(() => { if (previous) Object.defineProperty(global, 'localStorage', previous); else delete global.localStorage; });
+    return values;
+}
+
+test('passcodes saved by an earlier version are removed once, whatever the device; remembered ones and other keys stay', (t) => {
+    const values = fakeStorage(t);
+    values.set('ws-scrcpy:passcode:android-a', '{"value":"000719","mode":"pin"}');
+    values.set('ws-scrcpy:passcode:iphone-b', '{"value":"246810","mode":"pin"}');
+    values.set('ws-scrcpy:remembered-passcode:android-a', '{"value":"1234","mode":"pin"}');
+    values.set('ws-scrcpy:theme', 'dark');
+    assert.equal(readSavedPasscode('iphone-b'), undefined, 'the old copies are not read any more');
+    assert.equal(purgeLegacyPasscodes(), 2);
+    assert.deepEqual([...values.keys()].sort(), ['ws-scrcpy:remembered-passcode:android-a', 'ws-scrcpy:theme']);
+    assert.equal(purgeLegacyPasscodes(), 0, 'nothing left for a second run');
+    assert.deepEqual(readSavedPasscode('android-a'), { value: '1234', mode: 'pin' });
+    Object.defineProperty(global, 'localStorage', { configurable: true, get() { throw Error('Storage blocked'); } });
+    assert.equal(purgeLegacyPasscodes(), 0, 'blocked storage is not an error');
+});
+
+test('remembered passcodes preserve leading zeros and password mode, stay per device, and can be forgotten', (t) => {
+    const values = fakeStorage(t);
     assert.equal(readSavedPasscode('phone-a'), undefined);
     assert.equal(savePasscode('phone-a', '000719', 'pin'), true);
     assert.equal(savePasscode('phone-b', 'Fixture 7!', 'password'), true);
@@ -30,7 +52,7 @@ test('saved passcodes preserve leading zeros and password mode, stay per device,
     assert.equal(readSavedPasscode('phone-a'), undefined);
     assert.equal(readSavedPasscode('phone-b').value, 'Fixture 7!');
     for (const value of ['invalid json', 'null', '{"value":4,"mode":"pin"}', '{"value":"bad","mode":"pin"}']) {
-        values.set('ws-scrcpy:passcode:phone-a', value);
+        values.set('ws-scrcpy:remembered-passcode:phone-a', value);
         assert.equal(readSavedPasscode('phone-a'), undefined);
     }
     Object.defineProperty(global, 'localStorage', { configurable: true, get() { throw Error('Storage blocked'); } });
@@ -296,6 +318,50 @@ test('scheduled-unlock commands resolve on the matching reply only, parse the re
     closed.tracker.sendCommand = () => { throw Error('socket closed'); };
     await assert.rejects(sendUnlockCommand(closed.tracker, 'run_unlock_now', 'test', {}, 1000), /Could not reach the server/);
     assert.equal(closed.tracker.listenerCount('run_unlock_now'), 0);
+});
+
+test('Run now sends keepUnlocked only for the stream page, and a refusal rejects with the server message', async () => {
+    const plain = unlockTracker([{ result: '{"outcome":"unlocked"}' }]);
+    assert.deepEqual(await runUnlockNow(plain.tracker, 'test'), { outcome: 'unlocked' });
+    assert.deepEqual(plain.sent, [{ type: 'run_unlock_now', data: { udid: 'test' } }]);
+    const kept = unlockTracker([{ result: '{"outcome":"unlocked"}' }]);
+    await runUnlockNow(kept.tracker, 'test', { keepUnlocked: true });
+    assert.deepEqual(kept.sent, [{ type: 'run_unlock_now', data: { udid: 'test', keepUnlocked: true } }]);
+    const refused = unlockTracker([{ error: 'A screen session was opened for this phone a moment ago. Try again in 90 s.' }]);
+    await assert.rejects(runUnlockNow(refused.tracker, 'test'), /Try again in 90 s\.$/);
+});
+
+test('the card line shows a schedule that cannot run or failed as a problem, and nothing while it is off', () => {
+    const now = 1800000000000;
+    const on = { enabled: true, time: '03:00', hasPasscode: true, timeZone: 'Europe/Berlin', lastUnlockedAt: now - 2 * 3600000 };
+    assert.equal(unlockCardLine({ ...on, enabled: false }, now), undefined);
+    assert.deepEqual(unlockCardLine(on, now), {
+        text: 'Scheduled unlock 03:00 · last 2 h ago',
+        title: 'Scheduled unlock at 03:00, Europe/Berlin',
+        problem: false,
+    });
+    assert.equal(unlockCardLine({ ...on, timeZone: undefined, serverTimeZone: 'UTC' }, now).title, 'Scheduled unlock at 03:00, server time (UTC)');
+    assert.deepEqual(
+        [
+            { ...on, lastRun: { at: now, trigger: 'schedule', outcome: 'failed-wake' } },
+            { ...on, lastRun: { at: now, trigger: 'schedule', outcome: 'left-unlocked' } },
+            { ...on, lastRun: { at: now, trigger: 'schedule', outcome: 'skipped-recent' } },
+            { ...on, passcodeRejected: true },
+            { ...on, hasPasscode: false },
+        ].map((status) => { const line = unlockCardLine(status, now); return [line.text, line.problem]; }),
+        [
+            ['Scheduled unlock 03:00 · Failed: the screen did not wake', true],
+            ['Scheduled unlock 03:00 · Unlocked, but the phone did not lock again', true],
+            ['Scheduled unlock 03:00 · last 2 h ago', false],
+            ['Scheduled unlock paused: passcode rejected', true],
+            ['Scheduled unlock cannot run: no passcode', true],
+        ],
+    );
+    // Times are shown in the schedule's zone, not the browser's.
+    const at = Date.UTC(2026, 10, 11, 8, 0);
+    assert.match(formatUnlockMoment(at, 'America/New_York'), /03:00/);
+    assert.match(formatUnlockMoment(at, 'Asia/Kolkata'), /13:30|01:30/);
+    assert.equal(typeof formatUnlockMoment(at, 'Not/A_Zone'), 'string', 'an unknown zone falls back instead of throwing');
 });
 
 test('scheduled-unlock commands time out, clean up, and ignore a late reply', async (t) => {

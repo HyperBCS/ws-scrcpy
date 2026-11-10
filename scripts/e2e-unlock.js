@@ -5,16 +5,28 @@ const assert = require('node:assert/strict');
 const { chromium } = require('playwright');
 const { fixture, UDID } = require('./e2e-settings');
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
+const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-unlock';
+require('node:fs').mkdirSync(OUT, { recursive: true });
 const PIN = '000719';
 const PASSWORD = 'Fixture 7!';
 const LOCKED = { 'keyguard.showing': true, 'keyguard.occluded': false, 'device.locked': true, 'screen.power': 'on' };
 
-async function start(browser, { mobile = true, flags = LOCKED, holdQuery = 0 } = {}) {
+const REMEMBERED_KEY = `ws-scrcpy:remembered-passcode:${UDID}`;
+
+async function start(browser, { mobile = true, flags = LOCKED, holdQuery = 0, storage = {} } = {}) {
     const context = await browser.newContext({
         viewport: mobile ? { width: 320, height: 568 } : { width: 1280, height: 600 },
         isMobile: mobile,
         hasTouch: mobile,
     });
+    if (Object.keys(storage).length) {
+        // Seeded once, before the app's own scripts run; a reload must not put it back.
+        await context.addInitScript((entries) => {
+            if (sessionStorage.getItem('fixture-seeded')) return;
+            sessionStorage.setItem('fixture-seeded', '1');
+            for (const [key, value] of Object.entries(entries)) localStorage.setItem(key, value);
+        }, storage);
+    }
     const page = await context.newPage();
     const hidReports = [];
     let uhidCreated = false;
@@ -129,14 +141,16 @@ async function open(page) {
 async function state(page, value) {
     await page.locator(`[data-unlock-state="${value}"]`).waitFor();
 }
+const passcodeKeys = (page) =>
+    page.evaluate(() => Object.keys(localStorage).filter((key) => key.includes('passcode')).sort());
 async function noLeaks(test) {
-    const storage = await test.page.evaluate(() => ({
-        local: Object.fromEntries(Object.entries(localStorage).filter(([key]) => !key.startsWith('ws-scrcpy:passcode:'))),
+    const storage = await test.page.evaluate((remembered) => ({
+        local: Object.fromEntries(Object.entries(localStorage).filter(([key]) => key !== remembered)),
         session: { ...sessionStorage },
         url: location.href,
-    }));
+    }), REMEMBERED_KEY);
     for (const secret of [PIN, PASSWORD]) {
-        assert(!JSON.stringify(storage).includes(secret), 'Passcodes stay in their dedicated device storage entry, never in session storage or URLs');
+        assert(!JSON.stringify(storage).includes(secret), 'A passcode is only ever in the one entry the owner asked for, never in session storage or URLs');
         assert(!test.logs.some((log) => log.includes(secret)), 'No credential in browser logs');
         assert(!JSON.stringify(test.commands).includes(secret), 'Tracker commands never contain credentials');
     }
@@ -159,6 +173,8 @@ async function main() {
             assert(awakeNotice.equals(asleepNotice), 'The lock notice is equally bright while the device is asleep');
             await open(page);
             test.update({ 'screen.power': 'on', 'device.awake': true });
+            const remember = page.getByRole('checkbox', { name: 'Remember in this browser', exact: true });
+            assert.equal(await remember.isChecked(), false, 'Remembering is off unless the owner asks for it');
             assert.equal(await field(page).getAttribute('type'), 'password');
             assert.equal(await field(page).getAttribute('inputmode'), 'numeric');
             assert(await field(page).evaluate((el) => parseFloat(getComputedStyle(el).fontSize) >= 16));
@@ -195,6 +211,7 @@ async function main() {
             test.update({ 'device.locked': false, 'keyguard.showing': false });
             await state(page, 'confirmed');
             assert((await status(page).textContent()).includes('Device confirmed unlocked'));
+            assert.deepEqual(await passcodeKeys(page), [], 'A confirmed unlock stores nothing unless asked');
             test.update(LOCKED);
             await state(page, 'idle');
             assert(
@@ -204,7 +221,7 @@ async function main() {
             await field(page).fill(PIN);
             await page.getByRole('button', { name: 'Close Unlock device' }).click();
             await open(page);
-            assert.equal(await field(page).inputValue(), PIN, 'Reopening restores the saved PIN');
+            assert.equal(await field(page).inputValue(), '', 'Reopening does not bring back a passcode that was not remembered');
             await page.getByRole('radio', { name: 'Password', exact: true }).check();
             assert.equal(await field(page).getAttribute('type'), 'password');
             assert.equal(await field(page).getAttribute('inputmode'), 'text');
@@ -225,20 +242,41 @@ async function main() {
                 'No horizontal form overflow',
             );
             await noLeaks(test);
+            assert.deepEqual(await passcodeKeys(page), [], 'Sending stores nothing');
             await page.reload();
             await open(page);
-            assert.equal(await field(page).inputValue(), PASSWORD, 'Reload restores the saved passcode');
+            assert.equal(await field(page).inputValue(), '', 'Nothing to restore after a reload');
+
+            // Remember in this browser: written only once the device confirms the unlock.
+            await page.getByRole('radio', { name: 'Password', exact: true }).check();
+            await remember.check();
+            await field(page).fill(PASSWORD);
+            await page.getByRole('button', { name: 'Send password', exact: true }).click();
+            await state(page, 'waiting');
+            assert.deepEqual(await passcodeKeys(page), [], 'Not stored when it is sent');
+            test.update({ 'device.locked': false, 'keyguard.showing': false });
+            await state(page, 'confirmed');
+            assert.deepEqual(await passcodeKeys(page), [REMEMBERED_KEY], 'Stored after the device confirmed it');
+            test.update(LOCKED);
+            await page.reload();
+            await open(page);
+            assert.equal(await field(page).inputValue(), PASSWORD, 'A remembered passcode survives reload');
             assert.equal(await page.getByRole('radio', { name: 'Password', exact: true }).isChecked(), true);
-            assert.deepEqual(test.texts, [PIN, PASSWORD], 'Restoring a passcode never submits it');
-            await page.getByRole('button', { name: 'Forget', exact: true }).click();
+            assert.equal(await remember.isChecked(), true);
+            assert.deepEqual(test.texts, [PIN, PASSWORD, PASSWORD], 'Restoring a passcode never submits it');
+            await noLeaks(test);
+            await remember.uncheck();
             assert.equal(await field(page).inputValue(), '');
+            assert.deepEqual(await passcodeKeys(page), [], 'Clearing the box forgets it at once');
             await page.reload(); await open(page);
-            assert.equal(await field(page).inputValue(), '', 'Forget survives reload');
+            assert.equal(await field(page).inputValue(), '', 'Forgetting survives reload');
+            assert.equal(await remember.isChecked(), false);
+            await page.screenshot({ path: require('node:path').join(OUT, `unlock-${mobile ? 'phone' : 'desktop'}.png`) });
             await test.context.close();
             console.log(
                 'PASS',
                 mobile ? 'phone' : 'desktop',
-                'masked input, no typing leaks, single submission, actual confirmation, relock, close cleanup and password validation',
+                'masked input, no typing leaks, single submission, actual confirmation, relock, close cleanup, password validation and opt-in remembering',
             );
         }
 
@@ -323,7 +361,8 @@ async function main() {
             await test.page.waitForTimeout(1000);
             assert.deepEqual(test.texts, [], 'Closing cancels a pending preflight before any credential bytes');
             await open(test.page);
-            assert.equal(await field(test.page).inputValue(), PIN, 'Canceled input remains saved without being resent');
+            assert.equal(await field(test.page).inputValue(), '', 'A canceled passcode is neither kept nor resent');
+            assert.deepEqual(await passcodeKeys(test.page), []);
             await noLeaks(test);
             await test.context.close();
             console.log('PASS close cancels lock check', holdQuery);
@@ -359,8 +398,8 @@ async function main() {
         await open(changedClient.page);
         assert.equal(
             await field(changedClient.page).inputValue(),
-            PIN,
-            'A new client for the same device restores the saved passcode without sending it',
+            '',
+            'A new client for the same device starts with an empty field',
         );
         await noLeaks(changedClient);
         await changedClient.context.close();
@@ -385,10 +424,13 @@ async function main() {
         assert.equal(await unknown.page.locator('.lock-screen-notice').count(), 0, 'Unknown lock state is neutral');
         await unknown.context.close();
 
-        const timedOut = await start(browser);
+        // A remembered passcode that no longer unlocks the device is dropped, not offered again.
+        const timedOut = await start(browser, {
+            storage: { [REMEMBERED_KEY]: JSON.stringify({ value: PIN, mode: 'pin' }) },
+        });
         await timedOut.page.clock.install();
         await open(timedOut.page);
-        await field(timedOut.page).fill(PIN);
+        assert.equal(await field(timedOut.page).inputValue(), PIN, 'The remembered PIN is offered');
         await timedOut.page.getByRole('button', { name: 'Send PIN', exact: true }).click();
         await timedOut.page.clock.runFor(1200);
         await state(timedOut.page, 'waiting');
@@ -399,8 +441,30 @@ async function main() {
             !(await status(timedOut.page).textContent()).toLowerCase().includes('incorrect'),
             'A timeout cannot establish an incorrect passcode',
         );
+        assert((await status(timedOut.page).textContent()).includes('saved in this browser was removed'));
+        assert.deepEqual(await passcodeKeys(timedOut.page), [], 'An unconfirmed passcode does not stay saved');
+        assert.equal(await field(timedOut.page).inputValue(), '', 'and is not left in the field for another tap');
         await timedOut.context.close();
-        console.log('PASS unknown state and unconfirmed timeout with no automatic retry');
+        console.log('PASS unknown state and unconfirmed timeout with no automatic retry or saved copy');
+
+        // Copies an earlier version saved on every send, confirmed or not, are removed on load.
+        const legacy = await start(browser, {
+            storage: {
+                [`ws-scrcpy:passcode:${UDID}`]: JSON.stringify({ value: PIN, mode: 'pin' }),
+                'ws-scrcpy:passcode:some-iphone': JSON.stringify({ value: '246810', mode: 'pin' }),
+                'ws-scrcpy:unrelated': 'kept',
+            },
+        });
+        assert.deepEqual(await passcodeKeys(legacy.page), [], 'Passcodes saved without asking are deleted');
+        assert.equal(await legacy.page.evaluate(() => localStorage.getItem('ws-scrcpy:unrelated')), 'kept');
+        await open(legacy.page);
+        assert.equal(await field(legacy.page).inputValue(), '', 'and nothing is prefilled from them');
+        assert.equal(
+            await legacy.page.getByRole('checkbox', { name: 'Remember in this browser', exact: true }).isChecked(),
+            false,
+        );
+        await legacy.context.close();
+        console.log('PASS passcodes saved by an earlier version are removed');
     } finally {
         await browser.close();
     }
