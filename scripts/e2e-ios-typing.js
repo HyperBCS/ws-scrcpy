@@ -483,10 +483,49 @@ async function unlockFlow(browser) {
     }
 }
 
+// Text too long for the server's WebSocket frame limit is refused in the sheet and never sent.
+async function clipboardLimitFlow(browser) {
+    for (const [mobile, colorScheme] of [[true, 'light'], [true, 'dark'], [false, 'light'], [false, 'dark']]) {
+        const test = await start(browser, { mobile });
+        const { page } = test;
+        try {
+            await page.emulateMedia({ colorScheme });
+            if (mobile) { await page.locator('.floating-toolbar-fab').click(); await settleMotion(page); }
+            await page.locator('.control-buttons-list [title="Actions"]').click();
+            const dialog = page.getByRole('dialog', { name: 'Actions', exact: true });
+            await dialog.waitFor(); await settleMotion(page);
+            const draft = dialog.getByLabel('Text for the device clipboard');
+            const send = dialog.getByRole('button', { name: 'Send to phone', exact: true });
+            const tooLong = dialog.getByText('This text is too long to send. The limit is 256 KB.', { exact: true });
+            const clipboardMessages = () => test.sent.filter((message) => message.type === 'clipboard');
+            await draft.fill('a'.repeat((1 << 18) - 13));
+            await tooLong.waitFor();
+            assert.equal(await tooLong.getAttribute('role'), 'alert');
+            assert(await send.isDisabled(), 'Send is disabled while the text is too long');
+            await tooLong.scrollIntoViewIfNeeded();
+            await fs.mkdir(SCREENSHOTS, { recursive: true });
+            await page.screenshot({ path: path.join(SCREENSHOTS, `ws-ios-clipboard-limit-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`), animations: 'disabled' });
+            const box = await tooLong.boundingBox(), panel = await dialog.boundingBox();
+            assert(box.x >= panel.x && box.x + box.width <= panel.x + panel.width + 1, 'the message stays inside the sheet');
+            // Three bytes per character: the limit counts UTF-8 bytes, not characters.
+            await draft.fill('\u20ac'.repeat(Math.floor(((1 << 18) - 14) / 3) + 1));
+            await tooLong.waitFor();
+            assert.equal(clipboardMessages().length, 0, 'nothing was sent while the text was too long');
+            await draft.fill('a'.repeat((1 << 18) - 14));
+            await tooLong.waitFor({ state: 'detached' });
+            await send.click();
+            await dialog.getByText('Sending to the phone clipboard…', { exact: true }).waitFor();
+            assert.deepEqual(clipboardMessages().map((message) => [message.op, message.text.length]), [['set', (1 << 18) - 14]]);
+            assert.deepEqual(test.errors, []);
+            console.log('PASS iOS', mobile ? 'mobile' : 'desktop', colorScheme, 'clipboard text limit');
+        } finally { await test.context.close(); }
+    }
+}
+
 (async () => {
     const browser = await ({ chromium, webkit }[browserName] || chromium).launch({ headless: true });
     try {
-        const scenarios = [mobileFlow, desktopFlow, keyboardViewportFlow, keyboardLifecycleFlow, unlockFlow];
+        const scenarios = [mobileFlow, desktopFlow, keyboardViewportFlow, keyboardLifecycleFlow, unlockFlow, clipboardLimitFlow];
         const selected = process.env.SCENARIO ? scenarios.filter(run => run.name === process.env.SCENARIO) : scenarios;
         assert.ok(selected.length, 'SCENARIO names a known typing fixture');
         for (const run of selected) await run(browser);

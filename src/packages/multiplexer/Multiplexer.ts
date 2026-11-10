@@ -96,6 +96,11 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
 
         const onErrorHandler = (event: Event) => {
             this.readyState = this.ws.readyState;
+            if (!this._id) {
+                // Channels receive the same event from here; one line per socket is enough.
+                const { error, message } = event as ErrorEvent;
+                console.error(`[Multiplexer] Socket error: ${error?.message || message || 'unknown'}`);
+            }
             this.dispatchEvent(event);
             this.channels.clear();
         };
@@ -224,10 +229,9 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
                 }
                 break;
             }
-            default: {
-                const error = new Error(`Unsupported message type: ${message.type}`);
-                this.dispatchEvent(new ErrorEventClass('error', { error }));
-            }
+            default:
+                // The caller logs this and passes it to any 'error' listener.
+                throw new Error(`Unsupported message type: ${message.type}`);
         }
     }
 
@@ -237,7 +241,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
         try {
             this.dispatchEvent(new ErrorEventClass('error', { error }));
         } catch {
-            // `EventEmitter` throws back at us when nobody listens for 'error'; already logged above.
+            // A listener that throws must not take the socket's event handler down with it.
         }
     }
 
@@ -399,8 +403,16 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
         if (event.type === 'message' && typeof this.onmessage === 'function') {
             Reflect.apply(this.onmessage, this, [event]);
         }
-        if (event.type === 'error' && typeof this.onerror === 'function') {
-            Reflect.apply(this.onerror, this, [event]);
+        if (event.type === 'error') {
+            if (typeof this.onerror === 'function') {
+                Reflect.apply(this.onerror, this, [event]);
+            }
+            // `EventEmitter` throws an 'error' that nobody listens for. Nothing can catch it when it
+            // comes from a socket event, so on the server it would stop the process. The callers
+            // log the error before it gets here.
+            if (!this.listenerCount('error')) {
+                return false;
+            }
         }
         return super.dispatchEvent(event);
     }

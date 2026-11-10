@@ -40,4 +40,8 @@ export class TypedEmitter<T extends EventMap> implements Emitter<T> {
     emit<K extends EventKey<T>>(eventName: K, params: T[K]): boolean {
         return this.emitter.emit(eventName, params);
     }
+
+    listenerCount<K extends EventKey<T>>(eventName: K): number {
+        return this.emitter.listenerCount(eventName);
+    }
 }
