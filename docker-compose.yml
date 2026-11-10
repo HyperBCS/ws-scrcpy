@@ -23,7 +23,9 @@ services:
       dockerfile: Dockerfile
     container_name: ws-scrcpy
     restart: unless-stopped
-    stop_grace_period: 25s
+    # The server gives each iPhone's serve-web up to 30 s to return the phone's display sessions
+    # before it kills it. A shorter grace here would cut that off with SIGKILL.
+    stop_grace_period: 40s
     network_mode: host
     # Load config/apparmor-ws-scrcpy on the host before starting (see README).
     security_opt:
@@ -48,7 +50,9 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     container_name: ws-scrcpy-dev
-    stop_grace_period: 25s
+    # The server gives each iPhone's serve-web up to 30 s to return the phone's display sessions
+    # before it kills it. A shorter grace here would cut that off with SIGKILL.
+    stop_grace_period: 40s
     network_mode: host
     # Load config/apparmor-ws-scrcpy on the host before starting (see README).
     security_opt:

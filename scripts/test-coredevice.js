@@ -743,6 +743,78 @@ test('a button press is answered only when the phone has the edge, and the relea
     });
 });
 
+// Runs scripts/fixtures/shutdown-harness.js: a small server with one fake iPhone session and the
+// real `Shutdown` handlers. `act` gets the child once the session is ready.
+const runHarness = (mode, act = () => undefined) =>
+    new Promise((resolve, reject) => {
+        const { spawn } = require('node:child_process');
+        const child = spawn(process.execPath, [path.join(__dirname, 'fixtures', 'shutdown-harness.js'), mode], {
+            env: {
+                ...process.env,
+                HARNESS_PYMOBILEDEVICE3: shim,
+                FAKE_LOG: logFile,
+                FAKE_SHUTDOWN_MS: '600',
+                IOS_SERVE_WEB_BASE_PORT: '18400',
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        let acted = false;
+        child.stdout.on('data', (data) => {
+            stdout += data;
+            if (!acted && stdout.includes('harness ready')) {
+                acted = true;
+                act(child);
+            }
+        });
+        child.stderr.on('data', (data) => (stderr += data));
+        child.on('error', reject);
+        child.on('exit', (code, signal) => resolve({ code, signal, stdout, stderr, lines: calls() }));
+    });
+
+test('a crash stops serve-web in order and waits for it before Node exits with 1', async () => {
+    for (const mode of ['throw', 'reject']) {
+        fs.rmSync(logFile, { force: true });
+        const result = await runHarness(mode);
+        assert.equal(result.code, 1, result.stderr);
+        assert.match(result.stderr, mode === 'throw' ? /Uncaught exception: Error: harness boom/ : /Unhandled rejection: Error: harness boom/);
+        assert.match(result.stderr, /shutdown-harness\.js/, 'the stack is logged');
+        assert.match(result.stdout, /Stopping iOS CoreDevice session runner/);
+        assert(
+            result.lines.includes('serve-web shutdown complete iphone-harness'),
+            'serve-web had finished its shutdown by the time Node exited',
+        );
+    }
+});
+
+test('a second signal does not cut the shutdown short while serve-web is still stopping', async () => {
+    fs.rmSync(logFile, { force: true });
+    const result = await runHarness('signal', (child) => {
+        child.kill('SIGTERM');
+        setTimeout(() => child.kill('SIGTERM'), 200);
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /Still waiting for the phone sessions to stop/);
+    assert(result.lines.includes('serve-web shutdown complete iphone-harness'));
+});
+
+test('a nodemon restart (SIGUSR2) is passed on only after serve-web has closed', async () => {
+    fs.rmSync(logFile, { force: true });
+    const result = await runHarness('signal', (child) => child.kill('SIGUSR2'));
+    assert.equal(result.signal, 'SIGUSR2');
+    assert(result.lines.includes('serve-web shutdown complete iphone-harness'));
+});
+
+test('Node exiting without a shutdown sends serve-web SIGTERM, not SIGKILL', async () => {
+    fs.rmSync(logFile, { force: true });
+    const result = await runHarness('exit');
+    assert.equal(result.code, 3);
+    // serve-web outlives Node here and finishes on its own; SIGKILL would leave no trace at all.
+    assert(await until(() => calls().includes('serve-web shutdown complete iphone-harness'), 5000));
+    assert(calls().includes('serve-web sigterm iphone-harness'));
+});
+
 test('clipboard requests are serialised, and a third is refused rather than queued', async () => {
     await withEnv({ FAKE_LOG: logFile, FAKE_CLIPBOARD_HANG: '1', IOS_CLIPBOARD_TIMEOUT_MS: '300' }, async () => {
         const runner = CoreDeviceRunner.getInstance();
