@@ -1815,3 +1815,31 @@ kind. (4) On load, a stored `lastRun` of `failed-still-locked` whose message doe
 "Passcode not entered" was written by the old driver for typed digits that left the phone
 locked. It is read as `failed-rejected` and marks the passcode rejected, so a server upgraded
 after such a night stays paused until the passcode is saved again.
+
+### Phase 1 integration of the 2026-11-10 review (fixture-tested only)
+
+The five phase 1 packages were merged into `review-fixes`. Points that only show once they are
+together:
+
+**Scheduled unlock and the session rules.** `UnlockDriver` takes its session through
+`CoreDeviceRunner.acquire()`, so the start budget, the cooldown after a failed session and the
+attached-phone check apply to it as to a viewer. A refused start, or one that failed before
+serve-web ran, ends the run as `failed-session` with the runner's reason and does not count toward
+the Run now cooldown, since nothing reached the phone. A scheduled run refused this way gets its
+one retry ten minutes later, after the five-minute budget window. Runs are serialised and share a
+viewer's session through the per-session hold, so the scheduler cannot start a second serve-web.
+The driver's `/restart` on a viewer's session now shares the per-phone 30 s spacing with the
+viewers' Restart picture (`CoreDeviceRunner.videoRestartWaitMs` and `noteVideoRestart`): the
+driver waits out a recent restart, because it needs one for input to work, and a Restart picture
+pressed straight after an unlock run is dropped.
+
+**Uploads land under a hidden name first.** `FilePushReader` pushes to `.partial-<hex>` in the
+target folder and renames it into place after adb reports success (`mv -nT`, or `mv -fT` when the
+owner chose Replace). A crash mid-upload can leave such a file; it shows with Hidden items on.
+Needs a check on a phone: toybox `mv -fT` and `cp -T`, the rename on FUSE `/sdcard` (DCIM,
+Pictures), and adbd removing a cancelled partial file.
+
+**One confirm rule.** The Files dialogs follow the shared prompt's rule: the destructive answer
+(Delete, Replace) is red and ignores presses for `CONFIRM_GUARD_MS`, and focus starts on the
+answer that loses nothing. The iPhone card shows one scheduled-unlock line, from
+`unlockCardLine()`; the separate "has no passcode" warning from p1-confirm was folded into it.
