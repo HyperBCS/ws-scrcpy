@@ -1637,3 +1637,93 @@ covers it), whether the swipe-then-digits path works from the server the way it 
 browser (same requests, same timings), and whether a Face ID unlock resets the iOS inactivity
 timer. The integrator's hardware sequence is in the plan; the first real run should be a manual
 one with someone watching the phone.
+
+### iPhone session lifecycle: the wedge paths (2026-11-10, fixture-tested only)
+
+The September entry "What actually wedges the display daemon" names the trigger: a burst of short
+display sessions, worse with SIGKILL and with two at once. The 2026-11-10 review found the code
+paths that produce such a burst without anyone doing anything unusual. This is what changed and
+why. None of it has been run against a phone.
+
+**Holds name their session.** `CoreDeviceRunner.acquire()` returns a `SessionHold` (`udid`,
+`port`, `token`); `release(udid, hold)` and `stopSession(udid, message, hold)` do nothing when
+the phone's session has been replaced since. Before, both acted on whatever session the map held,
+so a viewer finishing a slow teardown (a 10 s `/keyboard/detach` timeout, a `close` event that
+lagged) could stop or un-hold the session another viewer had just started. The tracker's own
+stops (unplug, reboot, Restart services) pass no hold on purpose: they mean "whatever is running".
+A viewer that leaves while the session is still starting used to leak its hold, because
+`release()` ran before `acquire()` resolved; serve-web then ran for ever and its keep-awake
+assertion kept the phone from locking. The proxy now gives the hold back when `acquire()`
+resolves. It does not cut the start short: see the next point.
+
+**No SIGTERM before serve-web can handle it.** serve-web (11.44.0) starts the phone's video and
+audio in a preflight of up to 25 s, binds HTTP, and only then installs its SIGTERM handler. A
+SIGTERM before that ends the process with no `stop_all_streams`, which is a SIGKILL as far as the
+phone is concerned. `kill()` therefore waits until the process is known to handle the signal:
+its "Open http://" log line, or any HTTP reply (the handlers are installed between the bind and
+the first served request). The wait ends 35 s after the spawn at the latest
+(`SIGNAL_READY_TIMEOUT_MS`). The better fix is a patch that installs the handlers at the top of
+`serve()`; it has not been written, because it cannot be tried without the phone.
+
+**One serve-web per phone at a time.** `stopSession()` used to forget the child as soon as it had
+signalled it, and the next `acquire()` mounted and spawned while the old process was still in its
+orderly shutdown (bounded steps of 2+2+3+3+3+6 s). The runner now keeps a per-phone promise that
+resolves on the old child's `close`, and a new session waits for it ("Waiting for the previous
+session to stop"). `SIGKILL_GRACE_MS` went from 15 s to 30 s to cover the 19 s worst case, and
+`stop_grace_period` in docker-compose.yml from 25 s to 40 s. A stop that lands inside a slow
+preflight can still need longer than 40 s; Docker then kills it, which is one SIGKILL.
+
+**Ports are reserved, not just probed.** serve-web binds after its preflight, so for up to 25 s a
+free-port probe says the port is free. A second phone opened in that window got the same port; its
+serve-web then failed to bind and left `serve()` before its cleanup. Ports stay in
+`CoreDeviceRunner.ports` from allocation until the child's `close`. Two probes at the very same
+moment never collided (portfinder holds the port while it tests it); the staggered case did, and
+that is the one the test covers. Needs two iPhones to see for real.
+
+**Start budget and cooldown.** `StartBudget` allows three serve-web starts per phone in five
+minutes and persists the times in `ios-session-starts.json` in the data directory, so a crash
+loop or a run of dev rebuilds does not reset it. Only a spawned serve-web counts; a mount failure
+does not. After a session fails once serve-web has run, the next start for that phone is held off
+for 30 s (`ERROR_COOLDOWN_MS`): a start that fails on "camera in use" exits before its cleanup and
+the phone needs the ~20 s RTCP timeout to reclaim what it started. Both refuse with
+`StartRefusedError` before anything is spawned. Three per five minutes is deliberately tight. It
+also limits ordinary use: leaving the stream page for more than the 15 s grace and coming back is
+a new start, and the fourth such visit inside five minutes is refused with the time to wait.
+`IOS_SESSION_START_LIMIT`, `IOS_SESSION_START_WINDOW_MS` and `IOS_SESSION_COOLDOWN_MS` change the
+numbers; the measured wedge was six sessions in about four minutes, two by SIGKILL and two at
+once. The proxy's `restart` (video restart inside serve-web) reaches the phone at most once per
+30 s per phone. `acquire()` also refuses a udid the tracker does not list as attached; the check
+is installed in `src/server/index.ts` and lets everything through until the tracker has seen at
+least one phone, so a tracker that failed its first poll cannot lock every phone out.
+
+**The viewer's half.** The proxy closes with 4009 when a start was tried and failed, 4010 when
+nothing was started and asking again is fine (cooldown, phone not attached), and 4011 when the
+budget is used up. `CoreDeviceReceiver` used to reset its retry counter on socket open, and the
+server opens every socket before it starts the session, so the delay was always 1 s. The counter
+now resets when the codec arrives; the delay doubles to 60 s; three 4009 closes in a row, or one
+4011, stop the retries until someone presses Retry. Retry used to send `restart` down a socket
+that had already closed, and it was hidden under a dismissible copy of the same message; the
+copy is gone and Retry reconnects.
+
+**Crashes and exits.** Node runs `exit` handlers after an uncaught exception, and the runner's
+handler sent SIGKILL to every serve-web. `src/server/Shutdown.ts` now handles
+`uncaughtException` and `unhandledRejection`: it logs the stack, stops the services as SIGTERM
+does, waits for the serve-web processes to close (bounded by `shutdownBudgetMs()`), and exits
+with 1. A second SIGINT or SIGTERM no longer exits at once while a serve-web is still shutting
+down. The SIGUSR2 that nodemon sends is passed on only after they have closed, so the next dev
+server does not start a session on top of the old one. The runner's `exit` hook remains for the
+cases nothing else covers and sends SIGTERM, not SIGKILL. In Docker Node is PID 1 and its exit
+kills everything in the container, which is why the waiting has to happen before the exit.
+
+**The fake can now show these.** `FAKE_PREFLIGHT_MS` (a SIGTERM inside it is logged as "killed in
+preflight"), `FAKE_SHUTDOWN_MS` (logs "sigterm" and "shutdown complete"), `FAKE_MEDIA_IN_USE` and
+`FAKE_BUTTON_MS` (the reply waits, as the patched helper's does). `scripts/fixtures/
+shutdown-harness.js` runs one fake session under the real `Shutdown` so the crash, signal and
+exit paths can be tested in a child process. test-coredevice.js turns the budget and the cooldown
+off for its other tests and uses port base 18300, clear of a server running on the same machine.
+
+**Still open.** The serve-web patch for early signal handlers. A test that the installed
+`screen_stream.py` carries every patch marker: on this machine's `python/venv` it would fail,
+because the file has no "ws-scrcpy button completion" marker: `/button` is still answered when
+the request is queued, not when the phone has the edge. Running `npm run patch:ios` there would
+add it. The Docker image builds its own venv from the Dockerfile and was not checked.
