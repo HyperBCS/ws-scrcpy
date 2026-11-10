@@ -859,7 +859,28 @@ async function main() {
                 .waitFor();
             assert.equal(files.get(ROOT + '/late.txt').toString(), 'Device copy', 'the file on the device is kept');
             assert.deepEqual(traffic.starts.at(-1), { path: ROOT + '/late.txt', overwrite: false });
+            // The folder is listed again, so trying a second time asks first.
+            await row(page, 'late.txt').waitFor();
             await settled(page);
+            assert.equal(
+                await page.locator('.fx-status[role="alert"]').innerText(),
+                'late.txt: An item with this name already exists.',
+            );
+            await pick(['late.txt', 'Browser copy']);
+            await conflict(page, 'Replace “late.txt”?', ['Skip', 'Keep both', 'Replace']);
+            await answer(page, 'Skip');
+            // A refusal in a batch stays on screen after the files that did upload.
+            files.set(ROOT + '/later.txt', Buffer.from('Device copy'));
+            await pick(['later.txt', 'Browser copy'], ['on-time.txt', 'On time']);
+            await uploaded('on-time.txt');
+            await settled(page);
+            assert.equal(
+                await page.locator('.fx-status[role="alert"]').innerText(),
+                'later.txt: An item with this name already exists.',
+                'the failure is still shown after the folder is listed again',
+            );
+            assert.equal(files.get(ROOT + '/later.txt').toString(), 'Device copy');
+            assert.equal(files.get(ROOT + '/on-time.txt').toString(), 'On time');
 
             // An answer belongs to the folder it was given in. Here the explorer moves to another
             // folder after the answer but before the upload starts: the file still goes to the

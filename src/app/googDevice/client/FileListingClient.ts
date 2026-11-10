@@ -156,6 +156,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private readonly requests = new Map<Multiplexer, Request>();
     /** Progress rows by upload key: two uploads may carry the same file name. */
     private readonly uploads = new Map<number, HTMLElement>();
+    /** Failures in the current batch of uploads, shown together when the last one ends. */
+    private uploadErrors: string[] = [];
     /** True while the owner is answering name conflicts; nothing else may start meanwhile. */
     private resolving = false;
     private readonly fileDownloads = new FileDownloads((destination) => {
@@ -2209,11 +2211,25 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             row.remove();
             this.uploads.delete(data.key);
             this.transfers.hidden = !this.transfers.childElementCount;
-            this.report(data.error ? `${data.fileName}: ${data.message}` : `Uploaded ${data.fileName}.`, data.error);
+            const outcome = data.error ? `${data.fileName}: ${data.message}` : `Uploaded ${data.fileName}.`;
+            if (data.error) {
+                this.uploadErrors.push(outcome);
+            }
+            this.report(outcome, data.error);
             if (!this.uploads.size) {
+                // A later success must not hide an earlier failure, so the failures are shown
+                // again once the folder is listed. The folder is listed even after a failure: a
+                // refused name means the listing was out of date, and a second try must see it.
+                const failures = this.uploadErrors;
+                this.uploadErrors = [];
+                if (failures.length) {
+                    const summary =
+                        failures.length === 1 ? failures[0] : `${failures.length} uploads failed. ${failures[0]}`;
+                    this.operationError = this.operationError ? `${this.operationError} ${summary}` : summary;
+                }
                 if (this.pendingPath) {
                     this.load(this.pendingPath);
-                } else if (!data.error) {
+                } else {
                     this.reload();
                 }
             }
