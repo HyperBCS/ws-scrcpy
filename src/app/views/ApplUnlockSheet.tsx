@@ -1,112 +1,116 @@
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
-import { forgetPasscode, readSavedPasscode, savePasscode } from '../state/savedPasscode';
+import { findDeviceByUdid } from '../state/devices';
+import { openApplSettingsSheet } from '../state/settingsSheet';
 import { streamConnected, unlockSheetOpen } from '../state/stream';
+import { runUnlockNow } from '../state/unlockSchedule';
+import { unlockOutcomeText, UnlockRunResult } from '../../common/IosUnlockSchedule';
+import ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
 import { BottomSheet } from '../ui/BottomSheet';
 import '../../style/views/UnlockSheet.css';
 
+type Phase = 'idle' | 'running' | 'confirmed' | 'failed';
+
+/**
+ * Unlock for the iPhone stream page. Nothing is typed or kept in the browser: the server types
+ * the passcode stored for the scheduled unlock (`RUN_UNLOCK_NOW` with `keepUnlocked`), through
+ * the same driver, which reads the lock before typing and confirms the unlock afterwards. A
+ * phone without a stored passcode is unlocked on the remote screen, or after storing one in
+ * Settings.
+ */
 export function ApplUnlockSheet({ client }: { client: StreamClientCoreDevice }) {
     const open = unlockSheetOpen.value;
     const connected = streamConnected.value;
     const udid = client.getDeviceUdid();
-    const [passcode, setPasscode] = useState('');
-    const [saved, setSaved] = useState(false);
-    const [busy, setBusy] = useState(false);
+    const entry = findDeviceByUdid(udid);
+    const descriptor = entry?.params.type === 'ios' ? (entry.descriptor as ApplDeviceDescriptor) : undefined;
+    const tracker = entry?.tracker;
+    const schedule = descriptor?.unlockSchedule;
+    const locked = descriptor?.['device.locked'] ?? 'unknown';
+    const [phase, setPhase] = useState<Phase>('idle');
     const [note, setNote] = useState('');
     const pending = useRef<object>();
 
     useLayoutEffect(() => {
-        const stored = open ? readSavedPasscode(udid) : undefined;
-        setPasscode(stored?.value || '');
-        setSaved(!!stored);
-        setNote('');
-    }, [open, client]);
-    useLayoutEffect(() => {
+        // A reply for another phone, or one that lands after the sheet was reopened, is dropped.
         pending.current = undefined;
-        setBusy(false);
+        setPhase('idle');
+        setNote('');
         return () => {
             pending.current = undefined;
         };
-    }, [client]);
+    }, [open, client]);
 
-    const submit = async (event: Event) => {
-        event.preventDefault();
-        if (!connected || pending.current) return;
-        const digits = passcode.trim();
-        if (!/^\d{4,10}$/.test(digits)) {
-            setNote('Enter a passcode with 4 to 10 digits.');
-            return;
-        }
+    const unlock = () => {
+        if (!tracker || !connected || pending.current) return;
         const attempt = {};
         pending.current = attempt;
-        setBusy(true);
-        setSaved(savePasscode(udid, digits, 'pin'));
-        setNote('Unlocking…');
-        try {
-            const sent = await client.unlockWithPasscode(digits);
-            if (pending.current === attempt) {
-                setNote(sent ? 'Passcode sent.' : 'Could not send the passcode. Try again.');
-            }
-        } catch {
-            if (pending.current === attempt) setNote('Connection lost. Reconnect and try again.');
-        } finally {
-            if (pending.current === attempt) {
-                pending.current = undefined;
-                setBusy(false);
-            }
-        }
+        setPhase('running');
+        setNote('Unlocking with the passcode stored on the server…');
+        const settle = (next: Phase, text: string) => {
+            if (pending.current !== attempt) return;
+            pending.current = undefined;
+            setPhase(next);
+            setNote(text);
+        };
+        runUnlockNow(tracker, udid, { keepUnlocked: true }).then(
+            (result: UnlockRunResult) => {
+                const text = `${unlockOutcomeText(result.outcome)}${result.message ? `. ${result.message}` : ''}.`;
+                const unlocked = result.outcome === 'unlocked' || result.outcome === 'already-unlocked';
+                // Nothing is sent again on a failure; the next attempt is the owner's decision.
+                settle(unlocked ? 'confirmed' : 'failed', text);
+            },
+            (error: Error) => settle('failed', error.message),
+        );
     };
+
+    const openSettings = () => {
+        unlockSheetOpen.value = false;
+        openApplSettingsSheet(udid, entry?.key);
+    };
+
+    const running = phase === 'running';
+    const unusable = !schedule?.hasPasscode
+        ? 'No passcode is stored on the server for this phone. Store one in Settings, or enter it on the remote screen.'
+        : schedule.passcodeRejected
+          ? 'The stored passcode was rejected by the phone. Save it again in Settings before it is used again.'
+          : '';
+    const stateMessage = !connected
+        ? 'Waiting for the device to reconnect.'
+        : note || (locked === false ? 'This phone reports that it is unlocked.' : unusable);
 
     return (
         <BottomSheet open={open} onClose={() => (unlockSheetOpen.value = false)} title="Unlock device">
-            <form
-                class="unlock-sheet-content"
-                onSubmit={submit}
-                autoComplete="off"
-                onKeyUp={(event) => event.stopPropagation()}
-            >
-                <label class="unlock-sheet-field">
-                    <span>Device passcode</span>
-                    <input
-                        type="password"
-                        inputMode="numeric"
-                        enterKeyHint="go"
-                        autoComplete="off"
-                        maxLength={10}
-                        value={passcode}
-                        disabled={!connected || busy}
-                        onInput={(event) => setPasscode(event.currentTarget.value)}
-                        onKeyDown={(event) => event.stopPropagation()}
-                    />
-                </label>
-                <p class="unlock-sheet-hint">
-                    {saved ? 'Saved in this browser.' : 'Saved in this browser when you unlock.'}
-                    {saved && (
-                        <button
-                            type="button"
-                            class="unlock-forget"
-                            disabled={busy}
-                            onClick={() => {
-                                if (forgetPasscode(udid)) {
-                                    setSaved(false);
-                                    setPasscode('');
-                                }
-                            }}
-                        >
-                            Forget
-                        </button>
-                    )}
+            <div class="unlock-sheet-content">
+                <p class="unlock-sheet-intro">
+                    The server types the passcode stored for this phone. It is never sent to or kept in this browser.
                 </p>
-                <div class="unlock-sheet-feedback" role="status" aria-live="polite">
-                    {!connected ? 'Waiting for the device to reconnect.' : note}
+                <div
+                    class={`unlock-sheet-feedback ${phase === 'failed' || (!note && unusable) ? 'warning' : ''}`}
+                    role="status"
+                    aria-live="polite"
+                    data-unlock-state={!connected ? 'disconnected' : phase}
+                >
+                    {stateMessage}
                 </div>
                 <div class="unlock-sheet-actions">
-                    <button type="submit" class="primary" disabled={!connected || !passcode || busy}>
-                        {busy ? 'Unlocking…' : 'Unlock'}
-                    </button>
+                    {unusable ? (
+                        <button type="button" class="primary" onClick={openSettings}>
+                            Open Settings
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            class="primary"
+                            disabled={!connected || !tracker || running || locked === false}
+                            onClick={unlock}
+                        >
+                            {running ? 'Unlocking…' : 'Unlock with stored passcode'}
+                        </button>
+                    )}
                 </div>
                 <p class="unlock-sheet-hint">After a restart, unlock once on the phone.</p>
-            </form>
+            </div>
         </BottomSheet>
     );
 }

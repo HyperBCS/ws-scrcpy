@@ -288,7 +288,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 </SheetGroup>
 
                 <SheetGroup title="Lock screen">
-                    <SheetRow title="Unlock device" description="Enter the device passcode.">
+                    <SheetRow title="Unlock device" description="Uses the passcode stored on the server.">
                         <button
                             type="button"
                             class="sheet-button"

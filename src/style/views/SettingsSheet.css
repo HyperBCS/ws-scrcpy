@@ -463,3 +463,12 @@
 .appl-settings-sheet .sheet-group-card > .sheet-facts {
     padding: 12px 14px;
 }
+/* A schedule that cannot run and a run that failed must not look like one that worked. */
+.appl-settings-sheet .sheet-row[data-tone='error'] .sheet-row-title,
+.appl-settings-sheet .sheet-row[data-tone='error'] .sheet-row-desc {
+    color: var(--status-unauthorized-color);
+}
+.appl-settings-sheet .sheet-problem-icon {
+    margin-right: 6px;
+    vertical-align: -2px;
+}

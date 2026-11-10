@@ -147,6 +147,23 @@
 #devices .device-battery {
     white-space: nowrap;
 }
+#devices .device-unlock-schedule.problem {
+    color: var(--status-unauthorized-color);
+    font-weight: 600;
+}
+#devices .device-unlock-schedule.problem::before {
+    content: '!';
+    display: inline-block;
+    width: 1.15em;
+    height: 1.15em;
+    margin-right: 0.35em;
+    border: 1.5px solid currentColor;
+    border-radius: 50%;
+    box-sizing: border-box;
+    font-size: 0.85em;
+    line-height: 1;
+    text-align: center;
+}
 #devices .device-serial {
     font-family: var(--font-stack-mono);
     font-size: 0.68rem;

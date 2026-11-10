@@ -255,66 +255,6 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         return run;
     }
 
-    /**
-     * Unlocks a phone that has been unlocked at least once since boot: wakes it, swipes up to open
-     * the passcode field, then types the passcode with the virtual keyboard.
-     *
-     * Verified on iOS 27. Two details the hardware taught us. The screen must be awake, and the
-     * passcode field must already be open before the digits go out: typing exactly six digits at
-     * the clock-face lock screen leaves **five** dots filled, because the first keypress is
-     * consumed opening the field. The swipe does that opening instead of a priming keypress, so
-     * nothing can be mistaken for a digit -- a priming digit would submit a wrong passcode on a
-     * four-digit device if it ever stopped being swallowed.
-     *
-     * A freshly rebooted phone cannot be unlocked this way at all: until the passcode is entered
-     * on the device, iOS keeps the USB data connection shut, so there is no tunnel to carry HID.
-     */
-    public unlockWithPasscode(passcode: string): Promise<boolean> {
-        const digits = passcode.trim();
-        if (!/^\d{4,10}$/.test(digits)) {
-            return Promise.resolve(false);
-        }
-        const usages = Array.from(digits, (digit) => hidUsageForCode(`Digit${digit}`));
-        if (usages.some((usage) => usage === undefined)) {
-            return Promise.resolve(false);
-        }
-        const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-        this.beginTyping();
-        const run = this.typing.then(async () => {
-            if (this.stopped) {
-                return;
-            }
-            this.pressButton('home');
-            await pause(1200);
-            // Swipe up from the bottom. Coordinates are screen-normalised (0..65535), so this
-            // needs no video size and works before the first frame has been decoded.
-            const x = 0x8000;
-            let y = 0xf800;
-            this.receiver.send({ type: 'touch', op: 'contact', x, y });
-            for (let step = 0; step < 12 && !this.stopped; step++) {
-                await pause(25);
-                y = clampHid(y - 0x0ccc);
-                this.receiver.send({ type: 'touch', op: 'contact', x, y });
-            }
-            this.receiver.send({ type: 'touch', op: 'release', x, y });
-            await pause(1200);
-            for (const usage of usages as number[]) {
-                if (this.stopped) {
-                    return;
-                }
-                this.sendKeyboardReport([usage]);
-                await pause(120);
-                this.sendKeyboardReport([]);
-                await pause(180);
-            }
-        });
-        this.typing = run.catch(() => undefined);
-        // Schedule this now, so newer typing invalidates it even while the passcode runs.
-        // The recovery queue also runs it after a failed operation, without losing that error.
-        const detached = this.endTyping();
-        return run.then(() => true).finally(() => detached);
-    }
-
     public requestClipboard(): void {
         deviceClipboard.value = undefined;
         deviceClipboardError.value = '';

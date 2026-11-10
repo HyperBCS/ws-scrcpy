@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { UnlockRequestError } from '../googDevice/client/passcode';
-import { readSavedPasscode, savePasscode, forgetPasscode } from '../state/savedPasscode';
+import { readSavedPasscode, savePasscode, forgetPasscode, PasscodeMode } from '../state/savedPasscode';
 import type { DeviceLockValue } from './LockScreenNotice';
 import '../../style/views/UnlockSheet.css';
 
@@ -36,9 +36,13 @@ export function UnlockSheet({
     const controller = useRef<AbortController>();
     const timeout = useRef<ReturnType<typeof setTimeout>>();
     const composing = useRef(false);
-    const [mode, setMode] = useState<'pin' | 'password'>('pin');
+    // The passcode of the attempt in flight, kept only when it is to be remembered: it is
+    // written to storage once the device confirms the unlock and dropped in every other case.
+    const toRemember = useRef<{ value: string; mode: PasscodeMode }>();
+    const [mode, setMode] = useState<PasscodeMode>('pin');
     const [hasDraft, setHasDraft] = useState(false);
     const [saved, setSaved] = useState(false);
+    const [remember, setRemember] = useState(false);
     const [phase, setPhase] = useState<Phase>('idle');
     const [feedback, setFeedback] = useState('');
     const confirmed = connected && locked === false && keyguardShowing === false;
@@ -53,6 +57,12 @@ export function UnlockSheet({
         controller.current = undefined;
         if (timeout.current !== undefined) clearTimeout(timeout.current);
         timeout.current = undefined;
+        toRemember.current = undefined;
+    };
+    // A saved passcode that did not unlock the device may be out of date; sending it again
+    // from a prefilled field would be another failed attempt.
+    const dropSaved = () => {
+        if (forgetPasscode(udid)) setSaved(false);
     };
     const close = () => {
         clearDraft();
@@ -66,6 +76,7 @@ export function UnlockSheet({
         composing.current = false;
         const stored = open ? readSavedPasscode(udid) : undefined;
         setSaved(!!stored);
+        setRemember(!!stored);
         setMode(stored?.mode || 'pin');
         if (stored && input.current) {
             input.current.value = stored.value;
@@ -91,8 +102,11 @@ export function UnlockSheet({
                 );
             }
         } else if (confirmed && controller.current) {
+            const confirmedPasscode = toRemember.current;
             cancelPending();
             clearDraft();
+            // The only place a passcode is written to storage: after the device confirmed it.
+            if (confirmedPasscode) setSaved(savePasscode(udid, confirmedPasscode.value, confirmedPasscode.mode));
             setPhase('confirmed');
             setFeedback('Device confirmed unlocked.');
         } else if (!confirmed && phase === 'confirmed') {
@@ -137,17 +151,20 @@ export function UnlockSheet({
             );
             return;
         }
-        setSaved(savePasscode(udid, passcode, mode));
         const attempt = new AbortController();
         controller.current = attempt;
+        toRemember.current = remember ? { value: passcode, mode } : undefined;
         setPhase('sending');
         setFeedback('Checking the device lock before sending…');
         timeout.current = setTimeout(() => {
             if (controller.current !== attempt) return;
             cancelPending();
+            dropSaved();
             setPhase('unconfirmed');
             setFeedback(
-                'Unlock was not confirmed. Check the remote screen before trying again. Nothing will be resent automatically.',
+                `Unlock was not confirmed. Check the remote screen before trying again. Nothing will be resent automatically.${
+                    saved ? ' The passcode saved in this browser was removed.' : ''
+                }`,
             );
         }, CONFIRM_TIMEOUT_MS);
         try {
@@ -244,23 +261,28 @@ export function UnlockSheet({
                         onCompositionEnd={() => (composing.current = false)}
                     />
                 </label>
+                <label class="unlock-remember">
+                    <input
+                        type="checkbox"
+                        checked={remember}
+                        disabled={pending}
+                        onChange={(event) => {
+                            const checked = event.currentTarget.checked;
+                            setRemember(checked);
+                            if (!checked && saved && forgetPasscode(udid)) {
+                                setSaved(false);
+                                clearDraft();
+                            }
+                        }}
+                    />
+                    <span>Remember in this browser</span>
+                </label>
                 <p id="unlock-input-hint" class="unlock-sheet-hint">
-                    {saved ? 'Saved in this browser.' : 'Saved in this browser when you send it.'}
-                    {saved && (
-                        <button
-                            type="button"
-                            class="unlock-forget"
-                            disabled={pending}
-                            onClick={() => {
-                                if (forgetPasscode(udid)) {
-                                    setSaved(false);
-                                    clearDraft();
-                                }
-                            }}
-                        >
-                            Forget
-                        </button>
-                    )}
+                    {saved
+                        ? 'Saved in this browser as plain text. Clear the box to forget it.'
+                        : remember
+                          ? 'Saved as plain text in this browser once the device confirms it is unlocked.'
+                          : 'Not saved. Tick the box to keep it in this browser after a confirmed unlock.'}
                 </p>
                 <div
                     id="unlock-feedback"

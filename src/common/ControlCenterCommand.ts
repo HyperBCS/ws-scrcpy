@@ -1,5 +1,10 @@
 import { ScrcpyServerConfig } from './Constants';
-import { isValidUnlockPasscode, isValidUnlockSchedulePatch, UnlockSchedulePatch } from './IosUnlockSchedule';
+import {
+    isValidUnlockPasscode,
+    isValidUnlockSchedulePatch,
+    UnlockRunOptions,
+    UnlockSchedulePatch,
+} from './IosUnlockSchedule';
 
 export class ControlCenterCommand {
     public static KILL_SERVER = 'kill_server';
@@ -31,6 +36,7 @@ export class ControlCenterCommand {
     private args?: any;
     private data?: any;
     private unlockSchedule?: UnlockSchedulePatch;
+    private unlockRunOptions?: UnlockRunOptions;
     private passcode?: string;
 
     public static fromJSON(json: string): ControlCenterCommand {
@@ -86,11 +92,14 @@ export class ControlCenterCommand {
                     throw new Error('Missing device id');
                 }
                 if (!isValidUnlockSchedulePatch(data.schedule)) {
-                    throw new Error('Invalid "schedule" value: expected "enabled" (boolean) or "time" (HH:MM)');
+                    throw new Error(
+                        'Invalid "schedule" value: expected "enabled" (boolean) or "time" (HH:MM), with an optional "timeZone"',
+                    );
                 }
                 command.unlockSchedule = {
                     ...('enabled' in data.schedule ? { enabled: data.schedule.enabled } : {}),
                     ...('time' in data.schedule ? { time: data.schedule.time } : {}),
+                    ...('timeZone' in data.schedule ? { timeZone: data.schedule.timeZone } : {}),
                 };
                 return command;
             case this.SET_UNLOCK_PASSCODE:
@@ -104,10 +113,15 @@ export class ControlCenterCommand {
                 command.passcode = data.passcode;
                 return command;
             case this.CLEAR_UNLOCK_PASSCODE:
+                if (!command.udid) {
+                    throw new Error('Missing device id');
+                }
+                return command;
             case this.RUN_UNLOCK_NOW:
                 if (!command.udid) {
                     throw new Error('Missing device id');
                 }
+                command.unlockRunOptions = { keepUnlocked: data.keepUnlocked === true };
                 return command;
             default:
                 throw new Error(`Unknown command "${body.command}"`);
@@ -141,6 +155,10 @@ export class ControlCenterCommand {
     /** The validated patch of an UPDATE_UNLOCK_SCHEDULE command. */
     public getUnlockSchedule(): UnlockSchedulePatch | undefined {
         return this.unlockSchedule;
+    }
+    /** The options of a RUN_UNLOCK_NOW command. */
+    public getUnlockRunOptions(): UnlockRunOptions | undefined {
+        return this.unlockRunOptions;
     }
     /** The validated passcode of a SET_UNLOCK_PASSCODE command. Read once, never logged. */
     public getPasscode(): string | undefined {

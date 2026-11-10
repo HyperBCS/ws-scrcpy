@@ -457,7 +457,9 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
             case ControlCenterCommand.CLEAR_UNLOCK_PASSCODE:
                 return JSON.stringify(this.requireScheduler().clearPasscode(udid));
             case ControlCenterCommand.RUN_UNLOCK_NOW:
-                return JSON.stringify(await this.requireScheduler().runNow(udid, 'manual'));
+                return JSON.stringify(
+                    await this.requireScheduler().runNow(udid, 'manual', command.getUnlockRunOptions()),
+                );
             default:
                 throw new Error(`Unsupported command: "${type}"`);
         }

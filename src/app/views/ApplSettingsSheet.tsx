@@ -3,21 +3,24 @@ import { BottomSheet } from '../ui/BottomSheet';
 import { SheetGroup, SheetRow, SheetStatus, SheetToggleRow } from '../ui/SheetControls';
 import { applSettingsSheetTarget, closeApplSettingsSheet } from '../state/settingsSheet';
 import { devices, deviceName, findDeviceByUdid } from '../state/devices';
-import { readSavedPasscode } from '../state/savedPasscode';
 import {
     clearUnlockPasscode,
     formatUnlockMoment,
     runUnlockNow,
     setUnlockPasscode,
+    unlockDisplayZone,
     updateUnlockSchedule,
 } from '../state/unlockSchedule';
 import {
     DEFAULT_UNLOCK_TIME,
+    isUnlockProblem,
     isValidUnlockPasscode,
     isValidUnlockTime,
+    localTimeZone,
     unlockOutcomeText,
     UnlockRunOutcome,
     UnlockRunResult,
+    UnlockSchedulePatch,
     UnlockScheduleStatus,
 } from '../../common/IosUnlockSchedule';
 import { DeviceState } from '../../common/DeviceState';
@@ -29,17 +32,88 @@ const DEFAULT_STATUS: UnlockScheduleStatus = { enabled: false, time: DEFAULT_UNL
 type Pending = 'schedule' | 'time' | 'passcode' | 'clear' | 'run';
 type Tone = 'neutral' | 'error' | 'success' | 'warning';
 type Note = { text: string; tone: Tone };
+type Summary = { state: 'running' | 'paused' | 'blocked' | 'off' | 'on'; title: string; text: string; tone: Tone };
 
 function runTone(outcome: UnlockRunOutcome): Tone {
     if (outcome === 'unlocked' || outcome === 'already-unlocked') {
         return 'success';
     }
-    return outcome.startsWith('failed-') || outcome === 'skipped-disconnected' ? 'error' : 'neutral';
+    return isUnlockProblem(outcome) ? 'error' : 'neutral';
 }
 
-function describeRun(run: UnlockRunResult, withTime: boolean): string {
-    const when = withTime ? ` · ${formatUnlockMoment(run.at)}` : '';
-    return `${unlockOutcomeText(run.outcome)}${when}${run.message ? `. ${run.message}` : ''}`;
+function describeRun(run: UnlockRunResult, when?: string): string {
+    return `${unlockOutcomeText(run.outcome)}${when ? ` · ${when}` : ''}${run.message ? `. ${run.message}` : ''}`;
+}
+
+/** State, next run and last result in one row, so a schedule that cannot run is seen first. */
+function summarize(schedule: UnlockScheduleStatus, running: boolean, moment: (at: number) => string): Summary {
+    const last = schedule.lastRun;
+    if (running) {
+        return {
+            state: 'running',
+            title: 'Running now',
+            // The stream page's Unlock runs here too, and that one does not lock the phone after.
+            text: 'An unlock run is in progress.',
+            tone: 'neutral',
+        };
+    }
+    if (schedule.passcodeRejected) {
+        return {
+            state: 'paused',
+            title: 'Paused',
+            text: 'The phone rejected the stored passcode. Nothing is typed until the passcode is saved again.',
+            tone: 'error',
+        };
+    }
+    if (schedule.enabled && !schedule.hasPasscode) {
+        const reason = last?.outcome === 'skipped-no-passcode' && last.message ? `${last.message}. ` : '';
+        return {
+            state: 'blocked',
+            title: 'On, but cannot run',
+            text: `${reason}Store the passcode below.`,
+            tone: 'error',
+        };
+    }
+    const lastText = last ? `Last run: ${unlockOutcomeText(last.outcome)}` : 'No run yet';
+    if (!schedule.enabled) {
+        return { state: 'off', title: 'Off', text: lastText, tone: 'neutral' };
+    }
+    return {
+        state: 'on',
+        title: 'On',
+        text: `${schedule.nextRunAt ? `Next run ${moment(schedule.nextRunAt)} · ` : ''}${lastText}`,
+        tone: last && isUnlockProblem(last.outcome) ? 'error' : 'neutral',
+    };
+}
+
+function ProblemIcon() {
+    return (
+        <svg
+            class="sheet-problem-icon"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+        >
+            <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+        </svg>
+    );
+}
+
+/** A phone or tablet picker hands over one finished value; a desktop field changes per segment typed. */
+function commitsOnChange(): boolean {
+    try {
+        return window.matchMedia('(pointer: coarse)').matches;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -67,10 +141,14 @@ export function ApplSettingsSheet() {
     const [replyStatus, setReplyStatus] = useState<UnlockScheduleStatus>();
     const [pending, setPending] = useState<Pending>();
     const [passcode, setPasscode] = useState('');
+    const [passcodeAgain, setPasscodeAgain] = useState('');
     const [replacing, setReplacing] = useState(false);
-    const [browserSaved, setBrowserSaved] = useState(false);
+    // The time as typed, until it is saved. Segments of a desktop time field arrive one by one.
+    const [timeDraft, setTimeDraft] = useState<string>();
+    const [timeSaved, setTimeSaved] = useState(false);
     const [note, setNote] = useState<Note>();
     const [runNote, setRunNote] = useState<Note>();
+    const timeInput = useRef<HTMLInputElement>(null);
     // A reply that lands after the sheet closed, or reopened for another phone, is dropped.
     const generation = useRef(0);
 
@@ -79,10 +157,12 @@ export function ApplSettingsSheet() {
         setReplyStatus(undefined);
         setPending(undefined);
         setPasscode('');
+        setPasscodeAgain('');
         setReplacing(false);
+        setTimeDraft(undefined);
+        setTimeSaved(false);
         setNote(undefined);
         setRunNote(undefined);
-        setBrowserSaved(!!target && readSavedPasscode(target.udid)?.mode === 'pin');
     }, [target]);
 
     // The server emits the status before it replies, so a broadcast is never older than a reply.
@@ -93,6 +173,12 @@ export function ApplSettingsSheet() {
     const schedule = replyStatus ?? broadcast ?? DEFAULT_STATUS;
     const connected = descriptor?.state === DeviceState.CONNECTED;
     const locked = pending !== undefined || !tracker;
+    const browserZone = localTimeZone();
+    // Every time in the sheet is shown in the schedule's zone, which the Time row names.
+    const zone = unlockDisplayZone(schedule);
+    const moment = (at: number) => formatUnlockMoment(at, zone);
+    const zoneLabel =
+        schedule.timeZone ?? (schedule.serverTimeZone ? `Server time (${schedule.serverTimeZone})` : 'Server time');
 
     function send<T>(
         kind: Pending,
@@ -123,9 +209,12 @@ export function ApplSettingsSheet() {
             return;
         }
         setNote(undefined);
+        // Turning it on saves the schedule from this browser; a schedule without a zone gets this one.
+        const patch: UnlockSchedulePatch =
+            enabled && !schedule.timeZone && browserZone ? { enabled, timeZone: browserZone } : { enabled };
         send(
             'schedule',
-            () => updateUnlockSchedule(tracker, renderTarget.udid, { enabled }),
+            () => updateUnlockSchedule(tracker, renderTarget.udid, patch),
             (status) => {
                 setReplyStatus(status);
                 setNote({
@@ -137,21 +226,52 @@ export function ApplSettingsSheet() {
         );
     };
 
-    const onTimeChange = (time: string) => {
-        if (!tracker || !renderTarget || !isValidUnlockTime(time) || time === schedule.time) {
+    const saveTime = (time: string) => {
+        if (!tracker || !renderTarget) {
             return;
         }
         setNote(undefined);
+        setTimeSaved(false);
         send(
             'time',
-            () => updateUnlockSchedule(tracker, renderTarget.udid, { time }),
+            () =>
+                updateUnlockSchedule(tracker, renderTarget.udid, {
+                    time,
+                    ...(browserZone ? { timeZone: browserZone } : {}),
+                }),
             (status) => {
                 setReplyStatus(status);
-                setNote({ text: `Unlock time set to ${status.time}.`, tone: 'neutral' });
+                setTimeSaved(true);
+                // Keep what was typed while the request was out.
+                setTimeDraft((draft) => (draft === time ? undefined : draft));
             },
-            (message) => setNote({ text: message, tone: 'error' }),
+            (message) => {
+                setTimeDraft(undefined);
+                setNote({ text: message, tone: 'error' });
+            },
         );
     };
+
+    /** Save the typed time once it is complete: on Enter, on leaving the field, or when a picker closes. */
+    const commitTime = (value = timeDraft) => {
+        if (value === undefined) {
+            return;
+        }
+        if (!isValidUnlockTime(value) || value === schedule.time) {
+            setTimeDraft(undefined);
+            return;
+        }
+        // A save already out is followed up by the effect below.
+        if (pending === undefined) {
+            saveTime(value);
+        }
+    };
+
+    useEffect(() => {
+        if (pending === undefined && timeDraft !== undefined && document.activeElement !== timeInput.current) {
+            commitTime();
+        }
+    }, [pending]);
 
     const onSavePasscode = () => {
         if (!tracker || !renderTarget || locked) {
@@ -162,19 +282,27 @@ export function ApplSettingsSheet() {
             setNote({ text: 'Enter a passcode with 4 to 10 digits.', tone: 'error' });
             return;
         }
+        // A mistyped passcode costs a failed attempt on the phone, so it is entered twice.
+        if (passcodeAgain.trim() !== digits) {
+            setPasscodeAgain('');
+            setNote({ text: 'The two entries do not match. Enter the passcode again.', tone: 'error' });
+            return;
+        }
         setNote({ text: 'Saving on the server…', tone: 'neutral' });
-        // The field is cleared after the reply either way; the server holds the only copy.
+        // The fields are cleared after the reply either way; the server holds the only copy.
         send(
             'passcode',
             () => setUnlockPasscode(tracker, renderTarget.udid, digits),
             (status) => {
                 setReplyStatus(status);
                 setPasscode('');
+                setPasscodeAgain('');
                 setReplacing(false);
                 setNote({ text: 'Passcode stored on the server.', tone: 'success' });
             },
             (message) => {
                 setPasscode('');
+                setPasscodeAgain('');
                 setNote({ text: message, tone: 'error' });
             },
         );
@@ -196,6 +324,22 @@ export function ApplSettingsSheet() {
         );
     };
 
+    const onUseBrowserZone = () => {
+        if (!tracker || !renderTarget || !browserZone) {
+            return;
+        }
+        setNote(undefined);
+        send(
+            'schedule',
+            () => updateUnlockSchedule(tracker, renderTarget.udid, { time: schedule.time, timeZone: browserZone }),
+            (status) => {
+                setReplyStatus(status);
+                setNote({ text: `The time is now in ${browserZone}.`, tone: 'neutral' });
+            },
+            (message) => setNote({ text: message, tone: 'error' }),
+        );
+    };
+
     const onRunNow = () => {
         if (!tracker || !renderTarget) {
             return;
@@ -204,7 +348,7 @@ export function ApplSettingsSheet() {
         send(
             'run',
             () => runUnlockNow(tracker, renderTarget.udid),
-            (result) => setRunNote({ text: describeRun(result, false), tone: runTone(result.outcome) }),
+            (result) => setRunNote({ text: describeRun(result), tone: runTone(result.outcome) }),
             (message) => setRunNote({ text: message, tone: 'error' }),
         );
     };
@@ -220,6 +364,17 @@ export function ApplSettingsSheet() {
     const lastRun = schedule.lastRun;
     const running = pending === 'run' || !!schedule.running;
     const developerMode = descriptor?.developerMode;
+    const summary = summarize(schedule, running, moment);
+    const lastRunProblem = !!lastRun && isUnlockProblem(lastRun.outcome);
+    const timeDescription =
+        pending === 'time'
+            ? 'Saving…'
+            : timeDraft !== undefined && timeDraft !== schedule.time
+              ? 'Not saved yet. Press Enter or leave the field to save.'
+              : timeSaved
+                ? `${zoneLabel} · saved${schedule.nextRunAt ? `, next run ${moment(schedule.nextRunAt)}` : ''}`
+                : zoneLabel;
+    const stopKeys = (event: KeyboardEvent) => event.stopPropagation();
 
     return (
         <BottomSheet open={!!target} onClose={closeApplSettingsSheet} title="Settings">
@@ -241,39 +396,79 @@ export function ApplSettingsSheet() {
                     title="Scheduled unlock"
                     hint="Unlocks the phone once a day so iOS does not restart it after 72 hours without an unlock, then locks it again. Skipped if the phone was unlocked in the last 22 hours."
                 >
+                    <SheetRow
+                        title={
+                            <>
+                                {summary.tone === 'error' && <ProblemIcon />}
+                                {summary.title}
+                            </>
+                        }
+                        description={summary.text}
+                        attributes={{ 'data-unlock-summary': summary.state, 'data-tone': summary.tone }}
+                    />
                     <SheetToggleRow
                         title="Unlock every day"
-                        description={
-                            schedule.hasPasscode
-                                ? 'At the time below, server local time.'
-                                : 'Store a passcode below first.'
-                        }
+                        description={schedule.hasPasscode ? 'At the time below.' : 'Store a passcode below first.'}
                         checked={schedule.enabled}
                         // Turning it off never needs a passcode: a removed one leaves the switch on.
                         disabled={locked || (!schedule.hasPasscode && !schedule.enabled)}
                         onChange={onToggle}
                     />
-                    <SheetRow title="Time" description="Server local time">
+                    <SheetRow title="Time" description={timeDescription} attributes={{ 'data-unlock-time': '' }}>
                         <input
+                            ref={timeInput}
                             type="time"
                             step="60"
                             class="sheet-input"
                             aria-label="Unlock time"
-                            value={schedule.time}
-                            disabled={locked}
-                            onChange={(event) => onTimeChange(event.currentTarget.value)}
+                            value={timeDraft ?? schedule.time}
+                            // Not disabled by its own save: that would drop focus in the middle of typing.
+                            disabled={!tracker || (pending !== undefined && pending !== 'time')}
+                            onInput={(event) => {
+                                setTimeDraft(event.currentTarget.value);
+                                setTimeSaved(false);
+                            }}
+                            onChange={(event) => {
+                                if (commitsOnChange()) {
+                                    commitTime(event.currentTarget.value);
+                                }
+                            }}
+                            onBlur={(event) => commitTime(event.currentTarget.value)}
+                            onKeyDown={(event) => {
+                                event.stopPropagation();
+                                if (event.key === 'Enter') {
+                                    event.preventDefault();
+                                    commitTime(event.currentTarget.value);
+                                }
+                            }}
+                            onKeyUp={stopKeys}
                         />
                     </SheetRow>
+                    {browserZone && schedule.timeZone !== browserZone && (
+                        <SheetRow
+                            title="Time zone"
+                            description={
+                                schedule.timeZone
+                                    ? `The time is in ${schedule.timeZone}. This browser is in ${browserZone}.`
+                                    : `The time is server time, saved before time zones were stored. This browser is in ${browserZone}.`
+                            }
+                            layout="stack"
+                        >
+                            <button type="button" class="sheet-button" disabled={locked} onClick={onUseBrowserZone}>
+                                Use {browserZone}
+                            </button>
+                        </SheetRow>
+                    )}
                     {!schedule.hasPasscode || replacing ? (
                         <SheetRow
                             title="Passcode"
-                            description="Encrypted on the server. Never shown or sent to a browser."
+                            description="Enter it twice. Encrypted on the server; never shown or sent to a browser."
                             layout="stack"
                         >
                             <input
                                 type="password"
                                 inputMode="numeric"
-                                enterKeyHint="go"
+                                enterKeyHint="next"
                                 autoComplete="off"
                                 maxLength={10}
                                 class="sheet-input"
@@ -288,26 +483,37 @@ export function ApplSettingsSheet() {
                                         onSavePasscode();
                                     }
                                 }}
-                                onKeyUp={(event) => event.stopPropagation()}
+                                onKeyUp={stopKeys}
+                            />
+                            <input
+                                type="password"
+                                inputMode="numeric"
+                                enterKeyHint="go"
+                                autoComplete="off"
+                                maxLength={10}
+                                class="sheet-input"
+                                aria-label="Repeat the passcode"
+                                placeholder="Repeat"
+                                value={passcodeAgain}
+                                disabled={locked}
+                                onInput={(event) => setPasscodeAgain(event.currentTarget.value)}
+                                onKeyDown={(event) => {
+                                    event.stopPropagation();
+                                    if (event.key === 'Enter') {
+                                        event.preventDefault();
+                                        onSavePasscode();
+                                    }
+                                }}
+                                onKeyUp={stopKeys}
                             />
                             <button
                                 type="button"
                                 class="sheet-button primary"
-                                disabled={locked || !passcode}
+                                disabled={locked || !passcode || !passcodeAgain}
                                 onClick={onSavePasscode}
                             >
                                 Save on server
                             </button>
-                            {browserSaved && (
-                                <button
-                                    type="button"
-                                    class="sheet-button"
-                                    disabled={locked}
-                                    onClick={() => setPasscode(readSavedPasscode(renderTarget.udid)?.value ?? '')}
-                                >
-                                    Use the passcode saved in this browser
-                                </button>
-                            )}
                             {replacing && (
                                 <button
                                     type="button"
@@ -316,6 +522,7 @@ export function ApplSettingsSheet() {
                                     onClick={() => {
                                         setReplacing(false);
                                         setPasscode('');
+                                        setPasscodeAgain('');
                                     }}
                                 >
                                     Cancel
@@ -325,8 +532,13 @@ export function ApplSettingsSheet() {
                     ) : (
                         <SheetRow
                             title="Passcode"
-                            description="Stored on the server. Never shown or sent to a browser."
+                            description={
+                                schedule.passcodeRejected
+                                    ? 'Rejected by the phone. Replace it to resume the schedule.'
+                                    : 'Stored on the server. Never shown or sent to a browser.'
+                            }
                             layout="pair"
+                            attributes={{ 'data-tone': schedule.passcodeRejected ? 'error' : undefined }}
                         >
                             <button
                                 type="button"
@@ -344,21 +556,19 @@ export function ApplSettingsSheet() {
                 </SheetGroup>
                 {note && <SheetStatus tone={note.tone}>{note.text}</SheetStatus>}
 
-                <SheetGroup title="Status">
+                <SheetGroup title="Runs">
                     <SheetRow
-                        title="Last run"
-                        description={lastRun ? describeRun(lastRun, true) : 'No run yet.'}
-                        attributes={{ 'data-outcome': lastRun?.outcome }}
-                    />
-                    <SheetRow
-                        title="Next run"
-                        description={
-                            schedule.running
-                                ? 'Running now.'
-                                : schedule.nextRunAt
-                                  ? formatUnlockMoment(schedule.nextRunAt)
-                                  : 'Off'
+                        title={
+                            <>
+                                {lastRunProblem && <ProblemIcon />}
+                                Last run
+                            </>
                         }
+                        description={lastRun ? describeRun(lastRun, moment(lastRun.at)) : 'No run yet.'}
+                        attributes={{
+                            'data-outcome': lastRun?.outcome,
+                            'data-tone': lastRunProblem ? 'error' : undefined,
+                        }}
                     />
                     <SheetRow
                         title="Run now"
