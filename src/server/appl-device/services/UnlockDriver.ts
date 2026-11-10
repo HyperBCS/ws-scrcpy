@@ -64,7 +64,8 @@ export interface UnlockDriverResult {
     message?: string;
     // When `device.locked` was read as `false`: set for `unlocked`, `already-unlocked` and `left-unlocked`.
     verifiedAt?: number;
-    // Every digit of the passcode was sent. The scheduler never retries such a run.
+    // The last digit of the passcode was sent, even if its post failed. The scheduler never
+    // retries such a run.
     typed?: boolean;
     // `false` when the run used a session that was already ready or never asked for one.
     openedSession?: boolean;
@@ -269,14 +270,16 @@ export class UnlockDriver {
                 if (!readError) {
                     log(`digits (${usages.length})`);
                     keyboardAttached = true;
-                    for (const usage of usages) {
+                    for (const [index, usage] of usages.entries()) {
                         digitsSent = true;
+                        // A post that fails or times out may still have reached the phone, and
+                        // the last digit submits the passcode. From here it counts as typed.
+                        typed = typed || index === usages.length - 1;
                         await post('digits', '/key', { usages: [usage] });
                         await pause('key', KEY_DOWN_MS);
                         await post('digits', '/key', { usages: [] });
                         await pause('key', KEY_UP_MS);
                     }
-                    typed = true;
                 }
             }
             if (readError) {

@@ -422,6 +422,25 @@ test('driver: a step that fails after the digits still presses Lock', async () =
         assert.equal(lockPresses(lines), 2);
         runner.stopSession('iphone-detach-fails-open');
     });
+    // The last digit's post fails: it may have reached the phone and submitted the passcode, so
+    // the run counts as typed and is not retried. An earlier digit's failure submits nothing.
+    const lastDigit = `/key {"usages":[${USAGES.at(-1)}]}`;
+    await withEnv({ FAKE_LOG: logFile, FAKE_POST_FAIL: lastDigit }, async () => {
+        const { result, lines, runner } = await runDriver('iphone-last-digit-fails');
+        assert.equal(result.outcome, 'failed-session', result.message);
+        assert.equal(result.typed, true, 'the last digit may have been taken');
+        assert.equal(lockPresses(lines), 1);
+        runner.stopSession('iphone-last-digit-fails');
+    });
+    const firstDigit = `/key {"usages":[${USAGES[0]}]}`;
+    await withEnv({ FAKE_LOG: logFile, FAKE_POST_FAIL: firstDigit }, async () => {
+        const { result, lines, runner } = await runDriver('iphone-first-digit-fails');
+        assert.equal(result.outcome, 'failed-session', result.message);
+        assert.equal(result.typed, false, 'nothing was submitted, so the retry may type it');
+        assert.equal(lines.filter(isKey).length, 1);
+        assert.equal(lockPresses(lines), 1);
+        runner.stopSession('iphone-first-digit-fails');
+    });
 });
 
 test('driver: a Lock press that fails is repeated once; if it cannot be pressed the phone is left-unlocked', async () => {
