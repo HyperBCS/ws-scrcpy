@@ -36,6 +36,9 @@
 //   FAKE_LOG            file to append one line per invocation (args + POST bodies)
 //   FAKE_TOUCH_DROP_AFTER  drop the connection on every `/touch` past this many, so a gesture can
 //                       be cut off mid-swipe the way a wedged HID channel cuts one off
+//   FAKE_POST_FAIL      answer 500 to every POST whose "<path> <body>" contains this text, for
+//                       example "/keyboard/detach" or "\"name\":\"lock\"" (the POST is still logged)
+//   FAKE_POST_FAIL_COUNT  only that many matching POSTs fail; later ones answer normally
 const http = require('node:http');
 const fs = require('node:fs');
 
@@ -213,12 +216,24 @@ if (command === 'developer core-device display serve-web') {
         return Buffer.concat([length, Buffer.from(bytes)]);
     };
     let touches = 0;
+    let failedPosts = 0;
     const server = http.createServer((request, response) => {
         const path = request.url.split('?')[0];
         let body = '';
         request.on('data', (chunk) => (body += chunk));
         request.on('end', () => {
             if (request.method === 'POST') log(`post ${path} ${body}`);
+            if (
+                request.method === 'POST' &&
+                process.env.FAKE_POST_FAIL &&
+                `${path} ${body}`.includes(process.env.FAKE_POST_FAIL) &&
+                failedPosts < Number(process.env.FAKE_POST_FAIL_COUNT || Infinity)
+            ) {
+                // A step the phone refuses: the HID or button service answered with an error.
+                failedPosts++;
+                response.writeHead(500, { 'Content-Type': 'text/plain' }).end('failed on request');
+                return;
+            }
             if (path === '/codec') {
                 if (Date.now() < readyAt) {
                     response.writeHead(503).end();

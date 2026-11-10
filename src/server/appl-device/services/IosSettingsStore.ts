@@ -5,6 +5,8 @@ import { resolveDataDir } from '../../dataDir';
 import {
     DEFAULT_UNLOCK_TIME,
     isValidUnlockTime,
+    isValidUnlockTimeZone,
+    localTimeZone,
     nextUnlockRunAt,
     UnlockRunResult,
     UnlockSchedulePatch,
@@ -19,6 +21,8 @@ export const IOS_SETTINGS_FILE = 'ios-settings.json';
 export const IOS_SETTINGS_KEY_FILE = 'ios-settings.key';
 /** 64 hex characters. When set, no key file is written or read. */
 export const IOS_SETTINGS_KEY_ENV = 'WS_IOS_SETTINGS_KEY';
+/** A settings file that could not be read is moved here, so the next write does not destroy it. */
+export const IOS_SETTINGS_BAD_FILE = 'ios-settings.json.bad';
 
 const CIPHER = 'aes-256-gcm';
 const KEY_BYTES = 32;
@@ -39,6 +43,8 @@ export interface EncryptedPasscode {
 export interface StoredUnlockSettings {
     enabled: boolean;
     time: string;
+    // IANA zone of `time`. Absent on a record written before zones were stored: server local time.
+    timeZone?: string;
     passcode?: EncryptedPasscode;
     lastUnlockedAt?: number;
     lastRun?: UnlockRunResult;
@@ -46,7 +52,22 @@ export interface StoredUnlockSettings {
     retryAt?: number;
     // Start of the last daily slot that was used, set before the run starts so a crash cannot loop.
     lastSlotAt?: number;
+    // When a run typed this passcode and the phone stayed locked. Cleared by `setPasscode`.
+    passcodeRejectedAt?: number;
+    // Runs in a row that typed the passcode without a confirmed unlock.
+    unconfirmedAttempts?: number;
+    // The `lastUnlockedAt` value the 72-hour warning was pushed for.
+    deadlineWarnedFor?: number;
 }
+
+const RUN_STATE_FIELDS = [
+    'lastUnlockedAt',
+    'retryAt',
+    'lastSlotAt',
+    'passcodeRejectedAt',
+    'unconfirmedAttempts',
+    'deadlineWarnedFor',
+] as const;
 
 export interface IosSettingsFile {
     version: 1;
@@ -58,6 +79,9 @@ export interface UnlockRunState {
     lastUnlockedAt?: number;
     retryAt?: number;
     lastSlotAt?: number;
+    passcodeRejectedAt?: number;
+    unconfirmedAttempts?: number;
+    deadlineWarnedFor?: number;
 }
 
 /**
@@ -71,13 +95,20 @@ export interface UnlockRunState {
 export interface UnlockSettingsStore {
     /** Create the directory (0700) and read the settings file. Idempotent. Never throws at startup. */
     load(): void;
+    /**
+     * What stops stored schedules from running, in plain sentences for a push: a settings file
+     * that could not be read, or a schedule that is on while its passcode cannot be decrypted.
+     * Empty when all is well.
+     */
+    getProblems(): string[];
     /** Every udid with an unlock record. */
     listUdids(): string[];
     /**
      * Public status of one device, defaults for an unknown udid (`enabled: false`,
      * `time: DEFAULT_UNLOCK_TIME`, `hasPasscode: false`). `nextRunAt` is
-     * `nextUnlockRunAt(time, Date.now())` while `enabled && hasPasscode`, else absent. `running`
-     * is never set here; the scheduler adds it and may bring `nextRunAt` forward to `retryAt`.
+     * `nextUnlockRunAt(time, Date.now(), timeZone)` while `enabled && hasPasscode` and the
+     * passcode has not been rejected, else absent. `running` is never set here; the scheduler
+     * adds it and may bring `nextRunAt` forward to `retryAt`.
      * `hasPasscode` is false when ciphertext exists but cannot be decrypted (key file missing);
      * then `lastRun.message` reads "Stored passcode unreadable: key file missing".
      */
@@ -86,9 +117,12 @@ export interface UnlockSettingsStore {
     getRunState(udid: string): UnlockRunState;
     /** Apply a validated patch and persist. Returns the new status. */
     updateSchedule(udid: string, patch: UnlockSchedulePatch): UnlockScheduleStatus;
-    /** Encrypt and persist a validated passcode, creating the key file if needed. Returns the new status. */
+    /**
+     * Encrypt and persist a validated passcode, creating the key file if needed, and clear the
+     * rejected mark and the unconfirmed count of the passcode it replaces. Returns the new status.
+     */
     setPasscode(udid: string, passcode: string): UnlockScheduleStatus;
-    /** Remove the ciphertext; `enabled` is left as it is. Returns the new status. */
+    /** Remove the ciphertext and its rejected mark; `enabled` is left as it is. Returns the new status. */
     clearPasscode(udid: string): UnlockScheduleStatus;
     /** Decrypt the stored passcode. Throws when none is stored or it cannot be decrypted. */
     readPasscode(udid: string): string;
@@ -96,6 +130,8 @@ export interface UnlockSettingsStore {
     recordRun(udid: string, result: UnlockRunResult): void;
     setRetryAt(udid: string, at: number | undefined): void;
     setLastSlotAt(udid: string, at: number): void;
+    /** Set the given bookkeeping fields; a field given as `undefined` is removed. */
+    setRunState(udid: string, patch: Partial<UnlockRunState>): void;
     /** Drop the singleton. No pending writes exist, since every write is synchronous. */
     release(): void;
 }
@@ -123,13 +159,16 @@ function sanitizeUnlock(value: unknown): StoredUnlockSettings | undefined {
         return undefined;
     }
     const unlock: StoredUnlockSettings = { enabled: value.enabled, time: value.time };
+    if (isValidUnlockTimeZone(value.timeZone)) {
+        unlock.timeZone = value.timeZone;
+    }
     if (isEncryptedPasscode(value.passcode)) {
         unlock.passcode = value.passcode;
     }
     if (isPlainObject(value.lastRun)) {
         unlock.lastRun = value.lastRun as unknown as UnlockRunResult;
     }
-    for (const field of ['lastUnlockedAt', 'retryAt', 'lastSlotAt'] as const) {
+    for (const field of RUN_STATE_FIELDS) {
         const at = optionalNumber(value[field]);
         if (at !== undefined) {
             unlock[field] = at;
@@ -169,6 +208,8 @@ export class IosSettingsStore implements UnlockSettingsStore {
     private loadedAt = 0;
     // An unusable `WS_IOS_SETTINGS_KEY` is logged once, not on every status read.
     private keyEnvReported = false;
+    // Why the settings file was not used, for `getProblems`.
+    private loadProblem?: string;
     private file: IosSettingsFile = { version: 1, devices: {} };
 
     /** `directory` is a test seam; production uses the data directory. */
@@ -185,6 +226,7 @@ export class IosSettingsStore implements UnlockSettingsStore {
             fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
         } catch (error) {
             console.error(`${TAG} could not create ${this.directory}: ${(error as Error).message}`);
+            this.loadProblem = 'The iPhone settings directory could not be created. Scheduled unlock cannot run.';
             return;
         }
         const name = path.join(this.directory, IOS_SETTINGS_FILE);
@@ -203,10 +245,31 @@ export class IosSettingsStore implements UnlockSettingsStore {
                 }
             }
         } catch (error) {
-            // Start empty rather than fail the tracker. The file is replaced on the next write.
+            // Start empty rather than fail the tracker, and move the file aside: the next write
+            // would replace it, and it may hold the only copy of a schedule and its ciphertext.
             console.error(`${TAG} could not read ${IOS_SETTINGS_FILE}: ${(error as Error).message}`);
             this.file = { version: 1, devices: {} };
+            let kept = `It was kept as ${IOS_SETTINGS_BAD_FILE}.`;
+            try {
+                fs.renameSync(name, path.join(this.directory, IOS_SETTINGS_BAD_FILE));
+            } catch (renameError) {
+                kept = 'It will be replaced on the next change.';
+                console.error(`${TAG} could not keep the unreadable file: ${(renameError as Error).message}`);
+            }
+            this.loadProblem = `${IOS_SETTINGS_FILE} could not be read, so no scheduled unlock is set. ${kept}`;
         }
+    }
+
+    public getProblems(): string[] {
+        this.load();
+        const problems = this.loadProblem ? [this.loadProblem] : [];
+        const unreadable = Object.values(this.file.devices).some(
+            (entry) => entry.unlock?.enabled && entry.unlock.passcode,
+        );
+        if (unreadable && !this.readKey()) {
+            problems.push(`${UNREADABLE_KEY_MISSING}. Scheduled unlock cannot run until the passcode is saved again.`);
+        }
+        return problems;
     }
 
     public listUdids(): string[] {
@@ -242,8 +305,16 @@ export class IosSettingsStore implements UnlockSettingsStore {
                 message: UNREADABLE_KEY_MISSING,
             };
         }
-        if (status.enabled && status.hasPasscode) {
-            status.nextRunAt = nextUnlockRunAt(status.time, Date.now());
+        if (record.timeZone) {
+            status.timeZone = record.timeZone;
+        } else {
+            status.serverTimeZone = localTimeZone();
+        }
+        if (status.hasPasscode && record.passcodeRejectedAt !== undefined) {
+            status.passcodeRejected = true;
+        }
+        if (status.enabled && status.hasPasscode && !status.passcodeRejected) {
+            status.nextRunAt = nextUnlockRunAt(status.time, Date.now(), record.timeZone);
         }
         return status;
     }
@@ -255,7 +326,7 @@ export class IosSettingsStore implements UnlockSettingsStore {
         if (!record) {
             return state;
         }
-        for (const field of ['lastUnlockedAt', 'retryAt', 'lastSlotAt'] as const) {
+        for (const field of RUN_STATE_FIELDS) {
             if (record[field] !== undefined) {
                 state[field] = record[field];
             }
@@ -270,6 +341,9 @@ export class IosSettingsStore implements UnlockSettingsStore {
         }
         if (isValidUnlockTime(patch.time)) {
             record.time = patch.time;
+        }
+        if (isValidUnlockTimeZone(patch.timeZone)) {
+            record.timeZone = patch.timeZone;
         }
         this.write();
         return this.getSchedule(udid);
@@ -287,6 +361,8 @@ export class IosSettingsStore implements UnlockSettingsStore {
             tag: cipher.getAuthTag().toString('base64'),
             data: data.toString('base64'),
         };
+        delete record.passcodeRejectedAt;
+        delete record.unconfirmedAttempts;
         this.write();
         return this.getSchedule(udid);
     }
@@ -294,6 +370,8 @@ export class IosSettingsStore implements UnlockSettingsStore {
     public clearPasscode(udid: string): UnlockScheduleStatus {
         const record = this.record(udid);
         delete record.passcode;
+        delete record.passcodeRejectedAt;
+        delete record.unconfirmedAttempts;
         this.write();
         return this.getSchedule(udid);
     }
@@ -348,6 +426,22 @@ export class IosSettingsStore implements UnlockSettingsStore {
 
     public setLastSlotAt(udid: string, at: number): void {
         this.record(udid).lastSlotAt = at;
+        this.write();
+    }
+
+    public setRunState(udid: string, patch: Partial<UnlockRunState>): void {
+        const record = this.record(udid);
+        for (const field of RUN_STATE_FIELDS) {
+            if (!(field in patch)) {
+                continue;
+            }
+            const value = patch[field];
+            if (value === undefined) {
+                delete record[field];
+            } else {
+                record[field] = value;
+            }
+        }
         this.write();
     }
 

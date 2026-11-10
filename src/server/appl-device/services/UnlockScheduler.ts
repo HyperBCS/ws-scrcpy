@@ -1,8 +1,17 @@
 import { TypedEmitter } from '../../../common/TypedEmitter';
 import {
+    UNLOCK_DEADLINE_MS,
+    UNLOCK_DEADLINE_URGENT_MS,
+    UNLOCK_DEADLINE_WARN_MS,
+    UNLOCK_MANUAL_COOLDOWN_MS,
     UNLOCK_RECENT_MS,
     UNLOCK_RETRY_MS,
+    UNLOCK_SESSION_CAP,
+    UNLOCK_SESSION_CAP_WINDOW_MS,
     UNLOCK_SLOT_WINDOW_MS,
+    UNLOCK_UNCONFIRMED_LIMIT,
+    UNLOCK_URGENT_INTERVAL_MS,
+    UnlockRunOptions,
     UnlockRunOutcome,
     UnlockRunResult,
     UnlockRunTrigger,
@@ -12,7 +21,7 @@ import {
     unlockOutcomeText,
 } from '../../../common/IosUnlockSchedule';
 import { KnownBoolean } from '../../../types/AndroidLockState';
-import { IosSettingsStore, UnlockSettingsStore } from './IosSettingsStore';
+import { IosSettingsStore, UnlockRunState, UnlockSettingsStore } from './IosSettingsStore';
 import { UnlockDriver } from './UnlockDriver';
 import { DeviceStateMonitor, DeviceStateMonitorEvents } from './DeviceStateMonitor';
 import { NotificationService, SystemPushPayload } from '../../notifications/NotificationService';
@@ -21,15 +30,31 @@ const TAG = '[UnlockScheduler]';
 
 const TICK_MS = 60000;
 const FIRST_TICK_MS = 5000;
-// A scheduled run that ends one of these ways is pushed to every subscription and, the first
-// time that night, retried once.
-const REPORTED_OUTCOMES = new Set<UnlockRunOutcome>([
+// A scheduled run that ends one of these ways is pushed to every subscription.
+const PUSHED_OUTCOMES = new Set<UnlockRunOutcome>([
+    'failed-wake',
+    'failed-session',
+    'failed-still-locked',
+    'failed-rejected',
+    'unverified',
+    'left-unlocked',
+    'skipped-disconnected',
+    'skipped-no-passcode',
+    'skipped-rejected',
+]);
+// A scheduled run that ends one of these ways without having typed the passcode is retried
+// once that night. A run that typed it is never retried: whether iOS counts a repeated wrong
+// passcode toward its lockout is unknown, so it is assumed to.
+const RETRIED_OUTCOMES = new Set<UnlockRunOutcome>([
     'failed-wake',
     'failed-session',
     'failed-still-locked',
     'unverified',
     'skipped-disconnected',
+    'skipped-viewer',
 ]);
+const PAUSED_NOTE = 'Scheduled unlock is paused until the passcode is saved again';
+const HOUR_MS = 3600 * 1000;
 // The recent-unlock skip is a day minus the slot window, 22 hours, and the panel says so:
 // yesterday's own scheduled unlock happened a few seconds after its slot, which is 23 h 59 m
 // before today's tick, and a literal 24 h check would skip every other night. An unlock more
@@ -83,6 +108,11 @@ export interface UnlockSchedulerDeps {
  * methods and after each run, so a command reply and the descriptor broadcast always agree.
  * `getStatus` is `store.getSchedule(udid)` plus `running` and, while a retry is pending, that
  * `retryAt` as `nextRunAt`.
+ *
+ * Safety rules added after the 2026-11-10 review: a run that typed the passcode is never
+ * retried, and one that ends still locked stops every later run until the passcode is saved
+ * again (`recordPasscodeVerdict`); manual runs join, cool down and are capped (`runNow`); the
+ * 72-hour deadline is watched (`checkDeadline`).
  */
 export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
     private static instance?: UnlockScheduler;
@@ -109,6 +139,13 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
     private readonly pending = new Map<string, number>();
     // One run at a time across the process: two phones never open display sessions together.
     private chain: Promise<unknown> = Promise.resolve();
+    // The run queued or in progress per device; a manual run that arrives meanwhile joins it.
+    private readonly inflight = new Map<string, Promise<UnlockRunResult>>();
+    // When each recent run that opened a display session ended, per device, oldest first.
+    private readonly sessionRuns = new Map<string, number[]>();
+    // When the timer last started a run per device; spaces the runs outside the slot window.
+    private readonly lastTimerRunAt = new Map<string, number>();
+    private storeChecked = false;
     private released = false;
 
     /** Public for tests; production goes through `getInstance()`. Missing deps are resolved in `start()`. */
@@ -169,6 +206,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
         }
         this.options = undefined;
         this.lastLocked.clear();
+        this.storeChecked = false;
     }
 
     public getStatus(udid: string): UnlockScheduleStatus {
@@ -178,6 +216,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             retryAt !== undefined &&
             status.enabled &&
             status.hasPasscode &&
+            !status.passcodeRejected &&
             (status.nextRunAt === undefined || retryAt < status.nextRunAt)
         ) {
             status.nextRunAt = retryAt;
@@ -188,15 +227,25 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
         return status;
     }
 
-    /** `UPDATE_UNLOCK_SCHEDULE`. The patch is already validated by `ControlCenterCommand`. */
+    /**
+     * `UPDATE_UNLOCK_SCHEDULE`. The patch is already validated by `ControlCenterCommand`. When
+     * the schedule is turned on or its time or zone changes, the slot that has already passed is
+     * marked used and a pending retry is dropped, so the first run is the next slot shown as
+     * "Next run" and nothing starts within a minute of the change.
+     */
     public updateSchedule(udid: string, patch: UnlockSchedulePatch): UnlockScheduleStatus {
-        this.store.updateSchedule(udid, patch);
+        const before = this.store.getSchedule(udid);
+        const after = this.store.updateSchedule(udid, patch);
+        if ((after.enabled && !before.enabled) || after.time !== before.time || after.timeZone !== before.timeZone) {
+            this.skipPassedSlot(udid, after);
+        }
         return this.emitStatus(udid);
     }
 
     /** `SET_UNLOCK_PASSCODE`. Already validated; must not be logged, kept or echoed. */
     public setPasscode(udid: string, passcode: string): UnlockScheduleStatus {
-        this.store.setPasscode(udid, passcode);
+        const status = this.store.setPasscode(udid, passcode);
+        this.skipPassedSlot(udid, status);
         return this.emitStatus(udid);
     }
 
@@ -211,9 +260,54 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
      * across the process; a second call waits. Resolves when the run has ended, with the result
      * that was also recorded and broadcast. Manual runs ignore `skipped-disabled` and
      * `skipped-recent` and never schedule a retry.
+     *
+     * A manual run that arrives while a run for the same phone is queued or in progress resolves
+     * with that run's result instead of starting another. A manual run too soon after a run that
+     * opened a display session is refused: the promise rejects with a message that says when it
+     * can run. Bursts of short display sessions wedge the phone's display service.
      */
-    public runNow(udid: string, trigger: UnlockRunTrigger): Promise<UnlockRunResult> {
-        return this.enqueue(udid, trigger, false);
+    public runNow(udid: string, trigger: UnlockRunTrigger, options: UnlockRunOptions = {}): Promise<UnlockRunResult> {
+        if (trigger === 'manual') {
+            const current = this.inflight.get(udid);
+            if (current) {
+                return current;
+            }
+            const waitMs = this.manualWaitMs(udid);
+            if (waitMs > 0) {
+                const seconds = Math.ceil(waitMs / 1000);
+                return Promise.reject(
+                    new Error(`A screen session was opened for this phone a moment ago. Try again in ${seconds} s.`),
+                );
+            }
+        }
+        return this.enqueue(udid, trigger, false, options);
+    }
+
+    /** How long a manual run has to wait: the cooldown after the last session-opening run, and the cap. */
+    private manualWaitMs(udid: string): number {
+        const now = this.now();
+        const runs = (this.sessionRuns.get(udid) ?? []).filter((at) => now - at < UNLOCK_SESSION_CAP_WINDOW_MS);
+        this.sessionRuns.set(udid, runs);
+        if (!runs.length) {
+            return 0;
+        }
+        let waitMs = runs[runs.length - 1] + UNLOCK_MANUAL_COOLDOWN_MS - now;
+        if (runs.length >= UNLOCK_SESSION_CAP) {
+            waitMs = Math.max(waitMs, runs[runs.length - UNLOCK_SESSION_CAP] + UNLOCK_SESSION_CAP_WINDOW_MS - now);
+        }
+        return Math.max(0, waitMs);
+    }
+
+    /** Mark the slot that has already passed as used and drop a pending retry. */
+    private skipPassedSlot(udid: string, status: UnlockScheduleStatus): void {
+        const passed = lastUnlockSlotAt(status.time, this.now(), status.timeZone);
+        const { lastSlotAt, retryAt } = this.store.getRunState(udid);
+        if ((lastSlotAt ?? -Infinity) < passed) {
+            this.store.setLastSlotAt(udid, passed);
+        }
+        if (retryAt !== undefined) {
+            this.store.setRetryAt(udid, undefined);
+        }
     }
 
     // ------------------------------------------------------------------ dependencies
@@ -253,6 +347,8 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
      * passed, is less than two hours old and has not been used. `lastSlotAt` is set before the
      * run starts so a crash cannot loop. A retry older than the slot window is dropped the same
      * way a missed slot is, so a server that was down does not unlock the phone in the morning.
+     * The exception is the 72-hour deadline (`checkDeadline`). The first tick also pushes what
+     * the store reports as stopping schedules from running.
      * Runs from a timer, so a store that cannot be written is logged here and never thrown.
      */
     private tick(): void {
@@ -260,6 +356,17 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             return;
         }
         const now = this.now();
+        if (!this.storeChecked) {
+            this.storeChecked = true;
+            try {
+                for (const problem of this.store.getProblems()) {
+                    console.error(`${TAG} ${problem}`);
+                    this.notify({ title: PUSH_TITLE, body: problem, tag: 'ios-unlock-store', url: '#!action=' });
+                }
+            } catch (error) {
+                console.error(`${TAG} store check failed: ${(error as Error).message}`);
+            }
+        }
         for (const udid of this.store.listUdids()) {
             try {
                 this.tickDevice(udid, now);
@@ -271,9 +378,11 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
 
     private tickDevice(udid: string, now: number): void {
         const schedule = this.store.getSchedule(udid);
-        if (!schedule.enabled || !schedule.hasPasscode) {
+        if (!schedule.enabled) {
             return;
         }
+        // A schedule that is on without a usable passcode still gets its slot: the run ends as
+        // `skipped-no-passcode` or `skipped-rejected` and is pushed, so it is not silent.
         const state = this.store.getRunState(udid);
         if (state.retryAt !== undefined) {
             if (state.retryAt > now) {
@@ -281,20 +390,71 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             }
             this.store.setRetryAt(udid, undefined);
             if (now - state.retryAt < UNLOCK_SLOT_WINDOW_MS) {
-                this.schedule(udid, true);
+                this.schedule(udid, true, now);
             } else {
                 this.emitStatus(udid);
             }
             return;
         }
-        const slotStart = lastUnlockSlotAt(schedule.time, now);
+        const slotStart = lastUnlockSlotAt(schedule.time, now, schedule.timeZone);
         if (now - slotStart < UNLOCK_SLOT_WINDOW_MS && (state.lastSlotAt ?? -Infinity) < slotStart) {
             this.store.setLastSlotAt(udid, slotStart);
-            this.schedule(udid, false);
+            this.schedule(udid, false, now);
+            return;
+        }
+        this.checkDeadline(udid, schedule, state, now);
+    }
+
+    /**
+     * iOS restarts a phone that has not been unlocked for 72 hours, and after that it cannot be
+     * unlocked remotely. With the schedule on: one push when the last unlock is 36 hours old,
+     * with the hours left; past 48 hours, a run outside the slot window, at most every two hours
+     * and only while a run can do something (passcode usable, phone connected, deadline not yet
+     * passed). A phone that reads unlocked right now is not at risk.
+     */
+    private checkDeadline(udid: string, schedule: UnlockScheduleStatus, state: UnlockRunState, now: number): void {
+        const last = state.lastUnlockedAt;
+        if (last === undefined || this.monitor.getState(udid)['device.locked'] === false) {
+            return;
+        }
+        const age = now - last;
+        const usable = schedule.hasPasscode && !schedule.passcodeRejected;
+        if (age >= UNLOCK_DEADLINE_WARN_MS && state.deadlineWarnedFor !== last) {
+            this.store.setRunState(udid, { deadlineWarnedFor: last });
+            const left = Math.ceil((last + UNLOCK_DEADLINE_MS - now) / HOUR_MS);
+            const parts = [
+                `Not unlocked for ${Math.floor(age / HOUR_MS)} hours`,
+                left > 0
+                    ? `iOS restarts the phone in about ${left} hours unless it is unlocked`
+                    : 'iOS has probably restarted it; unlock it once on the phone',
+            ];
+            if (!schedule.hasPasscode) {
+                parts.push('Scheduled unlock has no usable passcode');
+            } else if (schedule.passcodeRejected) {
+                parts.push(PAUSED_NOTE);
+            }
+            this.notify({
+                title: PUSH_TITLE,
+                body: `${parts.join('. ')}.`,
+                tag: `ios-unlock-deadline-${udid}`,
+                url: '#!action=',
+            });
+        }
+        if (
+            usable &&
+            age >= UNLOCK_DEADLINE_URGENT_MS &&
+            age < UNLOCK_DEADLINE_MS &&
+            (this.pending.get(udid) ?? 0) === 0 &&
+            now - (this.lastTimerRunAt.get(udid) ?? -Infinity) >= UNLOCK_URGENT_INTERVAL_MS &&
+            this.options?.isConnected(udid)
+        ) {
+            // Its own spacing replaces the ten-minute retry.
+            this.schedule(udid, true, now);
         }
     }
 
-    private schedule(udid: string, retry: boolean): void {
+    private schedule(udid: string, retry: boolean, now: number): void {
+        this.lastTimerRunAt.set(udid, now);
         this.enqueue(udid, 'schedule', retry).catch((error: Error) =>
             console.error(`${TAG} [${udid}] scheduled run failed: ${error.message}`),
         );
@@ -325,39 +485,73 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
 
     // ------------------------------------------------------------------ runs
 
-    private enqueue(udid: string, trigger: UnlockRunTrigger, retry: boolean): Promise<UnlockRunResult> {
+    private enqueue(
+        udid: string,
+        trigger: UnlockRunTrigger,
+        retry: boolean,
+        options: UnlockRunOptions = {},
+    ): Promise<UnlockRunResult> {
         this.pending.set(udid, (this.pending.get(udid) ?? 0) + 1);
         this.emitStatus(udid);
-        const run = this.chain.then(() => this.execute(udid, trigger, retry));
+        const run = this.chain.then(() => this.execute(udid, trigger, retry, options));
         this.chain = run.then(
             () => undefined,
             () => undefined,
         );
+        this.inflight.set(udid, run);
+        const done = () => {
+            if (this.inflight.get(udid) === run) {
+                this.inflight.delete(udid);
+            }
+        };
+        run.then(done, done);
         return run;
     }
 
-    private async execute(udid: string, trigger: UnlockRunTrigger, retry: boolean): Promise<UnlockRunResult> {
+    private async execute(
+        udid: string,
+        trigger: UnlockRunTrigger,
+        retry: boolean,
+        options: UnlockRunOptions,
+    ): Promise<UnlockRunResult> {
         const at = this.now();
         const started = Date.now();
         let result: UnlockRunResult;
+        // Every digit was sent, and the run started a serve-web (or tried to).
+        let typed = false;
+        let openedSession: boolean;
         try {
-            result = await this.perform(udid, trigger, at);
+            const performed = await this.perform(udid, trigger, at, options);
+            result = performed.result;
+            typed = performed.typed;
+            openedSession = performed.openedSession;
         } catch (error) {
             // The driver rejects only on programming errors; the run still ends with a result so
             // the panel never stays on "running".
             console.error(`${TAG} [${udid}] ${trigger} run threw: ${(error as Error).message}`);
             result = { at, trigger, outcome: 'failed-session', message: (error as Error).message };
+            openedSession = true;
+        }
+        if (openedSession) {
+            const runs = this.sessionRuns.get(udid) ?? [];
+            runs.push(this.now());
+            this.sessionRuns.set(udid, runs.slice(-UNLOCK_SESSION_CAP));
         }
         try {
+            const paused = this.recordPasscodeVerdict(udid, result.outcome, typed);
+            if (paused) {
+                result.message = result.message ? `${result.message}. ${PAUSED_NOTE}` : PAUSED_NOTE;
+            }
             this.store.recordRun(udid, result);
-            if (trigger === 'schedule' && REPORTED_OUTCOMES.has(result.outcome) && !retry) {
+            if (trigger === 'schedule' && RETRIED_OUTCOMES.has(result.outcome) && !retry && !typed && !paused) {
                 this.store.setRetryAt(udid, this.now() + UNLOCK_RETRY_MS);
             }
         } catch (error) {
             // The run itself is over; the panel must not stay on "running" because a write failed.
             console.error(`${TAG} [${udid}] could not record the run: ${(error as Error).message}`);
         }
-        if (trigger === 'schedule' && REPORTED_OUTCOMES.has(result.outcome)) {
+        // A phone left unlocked is reported whoever started the run.
+        if ((trigger === 'schedule' && PUSHED_OUTCOMES.has(result.outcome)) || result.outcome === 'left-unlocked') {
             this.notify({
                 title: PUSH_TITLE,
                 body: result.message
@@ -374,24 +568,59 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
         return result;
     }
 
+    /**
+     * What the run says about the stored passcode. Typed and still locked: rejected, and no run
+     * types it again until it is saved again. Typed without a confirmed unlock: counted, and the
+     * second in a row is treated the same way. A confirmed unlock clears the count. Returns
+     * whether this run paused the schedule.
+     */
+    private recordPasscodeVerdict(udid: string, outcome: UnlockRunOutcome, typed: boolean): boolean {
+        const state = this.store.getRunState(udid);
+        if (outcome === 'unlocked' || outcome === 'left-unlocked') {
+            if (state.unconfirmedAttempts !== undefined) {
+                this.store.setRunState(udid, { unconfirmedAttempts: undefined });
+            }
+            return false;
+        }
+        if (!typed) {
+            return false;
+        }
+        const attempts = (state.unconfirmedAttempts ?? 0) + 1;
+        const rejected = outcome === 'failed-rejected' || attempts >= UNLOCK_UNCONFIRMED_LIMIT;
+        this.store.setRunState(udid, {
+            unconfirmedAttempts: attempts,
+            ...(rejected ? { passcodeRejectedAt: this.now(), retryAt: undefined } : {}),
+        });
+        return rejected;
+    }
+
     /** The skip rules in order, then the driver. */
-    private async perform(udid: string, trigger: UnlockRunTrigger, at: number): Promise<UnlockRunResult> {
+    private async perform(
+        udid: string,
+        trigger: UnlockRunTrigger,
+        at: number,
+        runOptions: UnlockRunOptions,
+    ): Promise<{ result: UnlockRunResult; typed: boolean; openedSession: boolean }> {
         const options = this.options;
         if (!options) {
             throw new Error('Scheduler not started');
         }
-        const skip = (outcome: UnlockRunOutcome, message?: string): UnlockRunResult => ({
-            at,
-            trigger,
-            outcome,
-            message,
+        const skip = (outcome: UnlockRunOutcome, message?: string) => ({
+            result: { at, trigger, outcome, message },
+            typed: false,
+            openedSession: false,
         });
         const schedule = this.store.getSchedule(udid);
         if (trigger === 'schedule' && !schedule.enabled) {
             return skip('skipped-disabled');
         }
         if (!schedule.hasPasscode) {
-            return skip('skipped-no-passcode');
+            // The store explains a passcode it holds but cannot decrypt in the status it returns.
+            const reason = schedule.lastRun?.outcome === 'skipped-no-passcode' ? schedule.lastRun.message : undefined;
+            return skip('skipped-no-passcode', reason);
+        }
+        if (schedule.passcodeRejected) {
+            return skip('skipped-rejected', 'Save the passcode again in Settings');
         }
         if (!options.isConnected(udid)) {
             return skip('skipped-disconnected', DISCONNECTED_MESSAGE);
@@ -405,11 +634,22 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             return skip('already-unlocked');
         }
         // The passcode is decrypted inside the thunk only, by the driver, right before typing.
-        const outcome = await this.driver.run(udid, () => this.store.readPasscode(udid));
-        if (outcome.outcome === 'unlocked') {
+        const outcome = await this.driver.run(udid, () => this.store.readPasscode(udid), {
+            keepUnlocked: !!runOptions.keepUnlocked,
+        });
+        if (
+            outcome.outcome === 'unlocked' ||
+            outcome.outcome === 'left-unlocked' ||
+            outcome.outcome === 'already-unlocked'
+        ) {
             this.recordUnlockedAt(udid, outcome.verifiedAt ?? this.now());
         }
-        return { at, trigger, outcome: outcome.outcome, message: outcome.message };
+        return {
+            result: { at, trigger, outcome: outcome.outcome, message: outcome.message },
+            typed: !!outcome.typed,
+            // A driver that does not say is taken to have opened one.
+            openedSession: outcome.openedSession !== false,
+        };
     }
 
     private emitStatus(udid: string): UnlockScheduleStatus {

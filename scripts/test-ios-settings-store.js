@@ -23,10 +23,11 @@ require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'c
 const {
     IosSettingsStore,
     IOS_SETTINGS_FILE,
+    IOS_SETTINGS_BAD_FILE,
     IOS_SETTINGS_KEY_FILE,
     IOS_SETTINGS_KEY_ENV,
 } = require('../src/server/appl-device/services/IosSettingsStore');
-const { DEFAULT_UNLOCK_TIME, nextUnlockRunAt } = require('../src/common/IosUnlockSchedule');
+const { DEFAULT_UNLOCK_TIME, nextUnlockRunAt, localTimeZone } = require('../src/common/IosUnlockSchedule');
 const { ControlCenterCommand } = require('../src/common/ControlCenterCommand');
 const { ControlCenter: IosControlCenter } = require('../src/server/appl-device/services/ControlCenter');
 const { UnlockScheduler } = require('../src/server/appl-device/services/UnlockScheduler');
@@ -96,7 +97,12 @@ test('the data directory and both files are private, and the passcode is never o
     assert.equal(raw.includes('135790'), false);
     assert.equal(raw.includes(Buffer.from('135790').toString('base64')), false);
     assert(raw.includes('"iv"') && raw.includes('"tag"') && raw.includes('"data"'));
-    assert.deepEqual(status, { enabled: false, time: DEFAULT_UNLOCK_TIME, hasPasscode: true });
+    assert.deepEqual(status, {
+        enabled: false,
+        time: DEFAULT_UNLOCK_TIME,
+        hasPasscode: true,
+        serverTimeZone: localTimeZone(),
+    });
     assert.equal('passcode' in status, false, 'the status never carries the passcode');
     assert.equal(store.readPasscode('iphone-a'), '135790');
     assert.equal(
@@ -249,6 +255,9 @@ test('ciphertext without its key is reported through the status and never thrown
         assert(status.lastRun.at > 1700000000000, 'as of the time the store was read');
         assert.throws(() => candidate.readPasscode('iphone-k'), /key file missing/);
         assert.deepEqual(candidate.listUdids(), ['iphone-k']);
+        assert.deepEqual(candidate.getProblems(), [
+            'Stored passcode unreadable: key file missing. Scheduled unlock cannot run until the passcode is saved again.',
+        ]);
     }
     // A device with ciphertext and no run yet still gets a readable lastRun.
     const file = readJson(dir);
@@ -262,6 +271,63 @@ test('ciphertext without its key is reported through the status and never thrown
     const reentered = new IosSettingsStore(dir);
     assert.equal(reentered.setPasscode('iphone-k', '8765').hasPasscode, true);
     assert.equal(reentered.readPasscode('iphone-k'), '8765');
+    assert.deepEqual(reentered.getProblems(), []);
+});
+
+test('the time zone is stored with the schedule; a record without one is server time and says so', () => {
+    const dir = freshDir();
+    const store = new IosSettingsStore(dir);
+    store.setPasscode('iphone-z', '4321');
+    const legacy = store.updateSchedule('iphone-z', { enabled: true, time: '03:00' });
+    assert.equal(legacy.timeZone, undefined);
+    assert.equal(legacy.serverTimeZone, localTimeZone(), 'the panel can name the server zone');
+    assert(Math.abs(legacy.nextRunAt - nextUnlockRunAt('03:00', Date.now())) <= 1000);
+
+    const zoned = store.updateSchedule('iphone-z', { time: '03:00', timeZone: 'Pacific/Auckland' });
+    assert.equal(zoned.timeZone, 'Pacific/Auckland');
+    assert.equal(zoned.serverTimeZone, undefined);
+    assert(Math.abs(zoned.nextRunAt - nextUnlockRunAt('03:00', Date.now(), 'Pacific/Auckland')) <= 1000);
+    assert.equal(readJson(dir).devices['iphone-z'].unlock.timeZone, 'Pacific/Auckland');
+    assert.equal(new IosSettingsStore(dir).getSchedule('iphone-z').timeZone, 'Pacific/Auckland', 'survives a reload');
+    assert.equal(
+        store.updateSchedule('iphone-z', { enabled: false }).timeZone,
+        'Pacific/Auckland',
+        'a patch without a zone keeps it',
+    );
+
+    // A zone this runtime does not know is dropped on load rather than trusted.
+    const file = readJson(dir);
+    file.devices['iphone-z'].unlock.timeZone = 'Mars/Olympus_Mons';
+    writeJson(dir, file);
+    assert.equal(new IosSettingsStore(dir).getSchedule('iphone-z').timeZone, undefined);
+});
+
+test('a rejected passcode is marked in the status, stops nextRunAt, and is cleared by saving or removing the passcode', () => {
+    const dir = freshDir();
+    const store = new IosSettingsStore(dir);
+    store.setPasscode('iphone-r', '4321');
+    store.updateSchedule('iphone-r', { enabled: true });
+    assert.equal(store.getSchedule('iphone-r').passcodeRejected, undefined);
+    store.setRunState('iphone-r', { passcodeRejectedAt: 1700000000000, unconfirmedAttempts: 1, deadlineWarnedFor: 5 });
+    const rejected = new IosSettingsStore(dir).getSchedule('iphone-r');
+    assert.equal(rejected.passcodeRejected, true, 'survives a restart');
+    assert.equal(rejected.hasPasscode, true);
+    assert.equal(rejected.nextRunAt, undefined, 'no run is announced while it is rejected');
+    assert.deepEqual(store.getRunState('iphone-r'), {
+        passcodeRejectedAt: 1700000000000,
+        unconfirmedAttempts: 1,
+        deadlineWarnedFor: 5,
+    });
+
+    const saved = store.setPasscode('iphone-r', '8765');
+    assert.equal(saved.passcodeRejected, undefined);
+    assert.equal(typeof saved.nextRunAt, 'number');
+    assert.deepEqual(store.getRunState('iphone-r'), { deadlineWarnedFor: 5 }, 'the mark belongs to the old passcode');
+
+    store.setRunState('iphone-r', { passcodeRejectedAt: 1700000000000, deadlineWarnedFor: undefined });
+    assert.deepEqual(store.getRunState('iphone-r'), { passcodeRejectedAt: 1700000000000 });
+    assert.equal(store.clearPasscode('iphone-r').passcodeRejected, undefined);
+    assert.deepEqual(store.getRunState('iphone-r'), {});
 });
 
 test('defaults, schedule patches, nextRunAt and the scheduler bookkeeping survive a reload', () => {
@@ -323,7 +389,7 @@ test('defaults, schedule patches, nextRunAt and the scheduler bookkeeping surviv
     assert.equal(again.getSchedule('iphone-s').lastRun.message, 'Lock not confirmed');
 });
 
-test('a damaged or foreign settings file is logged and replaced, never thrown', () => {
+test('a damaged settings file is logged, kept as .bad and reported; a foreign one is filtered; neither throws', () => {
     const errors = [];
     const original = console.error;
     console.error = (line) => errors.push(String(line));
@@ -338,8 +404,21 @@ test('a damaged or foreign settings file is logged and replaced, never thrown', 
             time: DEFAULT_UNLOCK_TIME,
             hasPasscode: false,
         });
+        assert.deepEqual(store.getProblems(), [
+            'ios-settings.json could not be read, so no scheduled unlock is set. It was kept as ios-settings.json.bad.',
+        ]);
+        assert.equal(
+            fs.existsSync(path.join(broken, IOS_SETTINGS_FILE)),
+            false,
+            'moved aside, not left to be overwritten',
+        );
         assert.equal(store.updateSchedule('iphone-x', { time: '01:00' }).time, '01:00');
-        assert.equal(readJson(broken).devices['iphone-x'].unlock.time, '01:00', 'the next write repairs the file');
+        assert.equal(readJson(broken).devices['iphone-x'].unlock.time, '01:00', 'the next write starts a new file');
+        assert.equal(
+            fs.readFileSync(path.join(broken, IOS_SETTINGS_BAD_FILE), 'utf8'),
+            '{not json',
+            'the unreadable file is still there after that write',
+        );
 
         const foreign = freshDir();
         fs.mkdirSync(foreign, { recursive: true });
@@ -357,6 +436,8 @@ test('a damaged or foreign settings file is logged and replaced, never thrown', 
         assert.deepEqual(picky.listUdids(), ['good']);
         assert.deepEqual(picky.getRunState('good'), { lastUnlockedAt: 5 });
         assert.equal(picky.getSchedule('bad').enabled, false);
+        assert.deepEqual(picky.getProblems(), [], 'a readable file with unusable entries is not a problem to push');
+        assert.equal(fs.existsSync(path.join(foreign, IOS_SETTINGS_BAD_FILE)), false);
 
         const wrongVersion = freshDir();
         fs.mkdirSync(wrongVersion, { recursive: true });
@@ -392,8 +473,8 @@ test('the four unlock commands reply with the scheduler result as JSON and nothi
         updateSchedule: (id, patch) => (calls.push(['updateSchedule', id, patch]), status),
         setPasscode: (id, passcode) => (calls.push(['setPasscode', id, passcode]), status),
         clearPasscode: (id) => (calls.push(['clearPasscode', id]), status),
-        runNow: async (id, trigger) => {
-            calls.push(['runNow', id, trigger]);
+        runNow: async (id, trigger, options) => {
+            calls.push(['runNow', id, trigger, options]);
             await tick();
             return result;
         },
@@ -403,21 +484,31 @@ test('the four unlock commands reply with the scheduler result as JSON and nothi
         await center.runCommand(
             unlockCommand('update_unlock_schedule', { udid, schedule: { enabled: true, extra: 'dropped' } }),
         ),
-        await center.runCommand(unlockCommand('update_unlock_schedule', { udid, schedule: { time: '04:00' } })),
+        await center.runCommand(
+            unlockCommand('update_unlock_schedule', { udid, schedule: { time: '04:00', timeZone: 'Europe/Berlin' } }),
+        ),
         await center.runCommand(unlockCommand('set_unlock_passcode', { udid, passcode: '0987654321' })),
         await center.runCommand(unlockCommand('clear_unlock_passcode', { udid })),
         await center.runCommand(unlockCommand('run_unlock_now', { udid })),
+        await center.runCommand(unlockCommand('run_unlock_now', { udid, keepUnlocked: true, extra: 'dropped' })),
+        await center.runCommand(unlockCommand('run_unlock_now', { udid, keepUnlocked: 'yes' })),
     ];
     for (const reply of replies) assert.equal(typeof reply, 'string', 'the tracker forwards strings as-is');
     assert.deepEqual(replies.slice(0, 4).map(JSON.parse), [status, status, status, status]);
-    assert.deepEqual(JSON.parse(replies[4]), result);
+    assert.deepEqual(replies.slice(4).map(JSON.parse), [result, result, result]);
     assert.deepEqual(calls, [
         ['updateSchedule', udid, { enabled: true }],
-        ['updateSchedule', udid, { time: '04:00' }],
+        ['updateSchedule', udid, { time: '04:00', timeZone: 'Europe/Berlin' }],
         ['setPasscode', udid, '0987654321'],
         ['clearPasscode', udid],
-        ['runNow', udid, 'manual'],
+        ['runNow', udid, 'manual', { keepUnlocked: false }],
+        ['runNow', udid, 'manual', { keepUnlocked: true }],
+        ['runNow', udid, 'manual', { keepUnlocked: false }],
     ]);
+
+    // A refused run (cooldown) reaches the browser as the command's error.
+    center.scheduler.runNow = () => Promise.reject(new Error('Try again in 90 s.'));
+    await assert.rejects(center.runCommand(unlockCommand('run_unlock_now', { udid })), /Try again in 90 s\./);
 
     await assert.rejects(
         center.runCommand(unlockCommand('run_unlock_now', { udid: 'iphone-other' })),
@@ -444,11 +535,24 @@ test('an invalid passcode, time or device id is rejected without the value in th
             (error) => error.message === 'Invalid passcode: use 4 to 10 digits',
         );
     }
-    for (const schedule of [{ time: '25:00' }, { time: '3:00' }, { enabled: 'yes' }, {}, { other: 1 }, 'x', null]) {
+    for (const schedule of [
+        { time: '25:00' },
+        { time: '3:00' },
+        { enabled: 'yes' },
+        { time: '03:00', timeZone: 'Nowhere/Special' },
+        { timeZone: 'UTC' },
+        {},
+        { other: 1 },
+        'x',
+        null,
+    ]) {
         assert.throws(
             () => unlockCommand('update_unlock_schedule', { udid: 'iphone-v', schedule }),
             (error) => {
-                assert.equal(error.message, 'Invalid "schedule" value: expected "enabled" (boolean) or "time" (HH:MM)');
+                assert.equal(
+                    error.message,
+                    'Invalid "schedule" value: expected "enabled" (boolean) or "time" (HH:MM), with an optional "timeZone"',
+                );
                 return true;
             },
         );
