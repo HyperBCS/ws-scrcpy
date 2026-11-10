@@ -16,6 +16,7 @@ import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { goToDeviceList } from '../state/router';
 import { ControlMessage } from '../controlMessage/ControlMessage';
 import { CommandControlMessage, CopyKey } from '../controlMessage/CommandControlMessage';
+import { CLIPBOARD_TOO_LONG_NOTE, clipboardTextTooLong } from '../ui/clipboardLimit';
 import '../../style/views/ActionsSheet.css';
 
 interface ActionsSheetProps {
@@ -28,6 +29,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
     const [reading, setReading] = useState(false);
     const [copying, setCopying] = useState(false);
     const received = deviceClipboard.value;
+    const draftTooLong = clipboardTextTooLong(clipboardDraft);
     const connected = streamConnected.value;
     const session = activeStream.value;
     const entry = session ? findDeviceForStream(session.params) : undefined;
@@ -88,7 +90,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
     };
 
     const onPaste = () => {
-        if (clipboardDraft && streamConnected.value) {
+        if (clipboardDraft && !draftTooLong && streamConnected.value) {
             client.sendMessage(CommandControlMessage.createSetClipboardCommand(clipboardDraft, true));
             setClipboardNote('Pasted into the focused field on the device.');
         }
@@ -156,13 +158,17 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                             type="button"
                             class="sheet-button primary"
                             onClick={onPaste}
-                            disabled={!clipboardDraft || !connected}
+                            disabled={!clipboardDraft || draftTooLong || !connected}
                         >
                             Paste
                         </button>
                     </SheetRow>
                 </SheetGroup>
-                {clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>}
+                {draftTooLong ? (
+                    <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
+                ) : (
+                    clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
+                )}
 
                 <SheetGroup title="Device panels">
                     <SheetRow title="Notifications">

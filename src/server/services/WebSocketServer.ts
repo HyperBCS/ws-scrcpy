@@ -41,6 +41,11 @@ export class WebSocketServer implements Service {
             },
         });
         wss.on('connection', (ws: WS, request) => {
+            // ws reports an oversized or malformed frame as 'error' and then closes the socket.
+            // With no listener that event is an uncaught exception, which stops the server.
+            ws.on('error', (error: Error) => {
+                console.error(`[${TAG}] Socket error: ${error.message}`);
+            });
             if (!request.url) {
                 ws.close(4001, `[${TAG}] Invalid url`);
                 return;
@@ -66,6 +71,9 @@ export class WebSocketServer implements Service {
                 ws.close(4002, `[${TAG}] Unsupported request`);
             }
             return;
+        });
+        wss.on('error', (error: Error) => {
+            console.error(`[${TAG}] Server error: ${error.message}`);
         });
         wss.on('close', () => {
             console.log(`${TAG} stopped`);

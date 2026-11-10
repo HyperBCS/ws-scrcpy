@@ -1,7 +1,21 @@
 import webpush, { PushSubscription } from 'web-push';
 
+/**
+ * A relayed phone alert is also kept in the history, so its push may expire quickly. A system
+ * alert (a failed scheduled unlock, for example) is shown nowhere else unless the owner goes
+ * looking, so the push service holds it for a day and wakes a dozing phone for it.
+ */
+export type PushKind = 'relay' | 'system';
+const DELIVERY: Record<PushKind, { lifetimeMs: number; urgency: 'normal' | 'high' }> = {
+    relay: { lifetimeMs: 5 * 60000, urgency: 'normal' },
+    system: { lifetimeMs: 24 * 3600000, urgency: 'high' },
+};
+// Per subscription and per kind, so a burst of relayed alerts cannot push a system alert out.
+const MAX_QUEUED = 50;
+
 interface Job {
     key: string;
+    kind: PushKind;
     testPayload?: string;
     expires: number;
 }
@@ -40,12 +54,13 @@ export class PushDelivery {
         return this.queues.size;
     }
 
-    enqueue(id: string, key: string, testPayload?: string): void {
+    enqueue(id: string, key: string, testPayload?: string, kind: PushKind = 'relay'): void {
         if (this.closed) return;
         const existing = this.queues.get(id);
         const queue = existing || [];
-        if (queue.length >= 50) queue.shift();
-        queue.push({ key, testPayload, expires: Date.now() + 300000 });
+        const sameKind = queue.filter((job) => job.kind === kind);
+        if (sameKind.length >= MAX_QUEUED) queue.splice(queue.indexOf(sameKind[0]), 1);
+        queue.push({ key, kind, testPayload, expires: Date.now() + DELIVERY[kind].lifetimeMs });
         if (!existing) {
             this.queues.set(id, queue);
             void this.drain(id, queue);
@@ -93,7 +108,7 @@ export class PushDelivery {
                     try {
                         await webpush.sendNotification(target.subscription, target.payload, {
                             TTL: Math.max(1, Math.floor((job.expires - Date.now()) / 1000)),
-                            urgency: 'normal',
+                            urgency: DELIVERY[job.kind].urgency,
                             timeout: 10000,
                             vapidDetails: { subject, ...target.vapid },
                         });

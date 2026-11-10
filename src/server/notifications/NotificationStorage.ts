@@ -20,6 +20,11 @@ export interface FeedItem extends NotificationHistoryItem {
     reconnectable: boolean;
 }
 
+const STORE_FILE = 'notifications.json';
+
+/** load() could not use the settings file. `message` is written for the Setup page. */
+export class NotificationStoreError extends Error {}
+
 /** Owns atomic private-file writes and the single debounced history save. */
 export class NotificationStorage {
     private timer?: NodeJS.Timeout;
@@ -33,26 +38,97 @@ export class NotificationStorage {
         const file = path.join(this.directory, name);
         return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : undefined;
     }
+    /**
+     * Without the fsyncs a power loss shortly after the rename can leave an empty file under the
+     * final name: the rename may reach the disk before the data does.
+     */
     private write(name: string, value: unknown): void {
         const file = path.join(this.directory, name);
-        fs.writeFileSync(file + '.tmp', JSON.stringify(value), { mode: 0o600 });
+        const descriptor = fs.openSync(file + '.tmp', 'w', 0o600);
+        try {
+            fs.writeFileSync(descriptor, JSON.stringify(value));
+            fs.fsyncSync(descriptor);
+        } finally {
+            fs.closeSync(descriptor);
+        }
         fs.renameSync(file + '.tmp', file);
+        try {
+            const directory = fs.openSync(this.directory, 'r');
+            try {
+                fs.fsyncSync(directory);
+            } finally {
+                fs.closeSync(directory);
+            }
+        } catch {
+            // Some filesystems cannot sync a directory. The file itself is already on disk.
+        }
     }
+    private readStore(): NotificationStore | undefined {
+        const file = path.join(this.directory, STORE_FILE);
+        let text: string;
+        try {
+            if (!fs.existsSync(file)) return undefined;
+            text = fs.readFileSync(file, 'utf8');
+        } catch {
+            // The file may be intact (wrong owner, failing disk), so it stays where it is.
+            throw new NotificationStoreError(
+                `Notifications are off: ${STORE_FILE} could not be read. Check the data directory, then restart the server.`,
+            );
+        }
+        try {
+            const value = JSON.parse(text) as Partial<NotificationStore> | null;
+            const { vapid, sources = [], subscriptions = [] } = value || {};
+            // Startup reads every record's id outside any error handling, so check each one.
+            const hasId = (record: unknown) =>
+                !!record && typeof record === 'object' && typeof (record as { id?: unknown }).id === 'string';
+            if (
+                !value ||
+                typeof value !== 'object' ||
+                Array.isArray(value) ||
+                !Array.isArray(sources) ||
+                !Array.isArray(subscriptions) ||
+                !sources.every(hasId) ||
+                !subscriptions.every(hasId) ||
+                (vapid !== undefined && (typeof vapid?.publicKey !== 'string' || typeof vapid.privateKey !== 'string'))
+            )
+                throw Error('Invalid settings');
+            return value as NotificationStore;
+        } catch {
+            // Keep the damaged file for repair by hand. Writing a new one in its place would
+            // replace the push keys and drop every paired phone and subscription.
+            const kept = `${STORE_FILE}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+            try {
+                fs.renameSync(file, path.join(this.directory, kept));
+            } catch {
+                throw new NotificationStoreError(
+                    `Notifications are off: ${STORE_FILE} is damaged and could not be moved aside. Repair or remove it, then restart the server.`,
+                );
+            }
+            throw new NotificationStoreError(
+                `Notifications are off: ${STORE_FILE} is damaged and was kept as ${kept}. Restart the server to begin with new settings, or repair that file and put it back first.`,
+            );
+        }
+    }
+    /** Throws `NotificationStoreError` when the settings exist but cannot be used. */
     load(): NotificationStore {
         fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-        const existing = this.read('notifications.json') as NotificationStore | undefined;
+        const existing = this.readStore();
         const store: NotificationStore = {
             vapid: existing?.vapid || webpush.generateVAPIDKeys(),
             sources: existing?.sources || [],
             subscriptions: existing?.subscriptions || [],
         };
         if (!existing || 'token' in existing) this.save(store);
-        // Remove obsolete app credentials while preserving push keys and device settings.
-        fs.rmSync(path.join(this.directory, 'notification-setup-key'), { force: true });
+        try {
+            // Remove obsolete app credentials while preserving push keys and device settings.
+            fs.rmSync(path.join(this.directory, 'notification-setup-key'), { force: true });
+        } catch {
+            /* Cleanup only. */
+        }
         return store;
     }
     save(store: NotificationStore): void {
-        this.write('notifications.json', store);
+        this.write(STORE_FILE, store);
     }
     loadHistory(sources: NotificationSource[]): FeedItem[] {
         try {

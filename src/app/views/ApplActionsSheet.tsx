@@ -9,6 +9,7 @@ import { goToDeviceList } from '../state/router';
 import { findDeviceByUdid } from '../state/devices';
 import { ControlCenterCommand } from '../../common/ControlCenterCommand';
 import { copyTextToClipboard } from '../ui/copyText';
+import { CLIPBOARD_TOO_LONG_NOTE, clipboardTextTooLong } from '../ui/clipboardLimit';
 import ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
 import '../../style/views/ActionsSheet.css';
 
@@ -38,6 +39,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
     const [debugBusy, setDebugBusy] = useState(false);
     const [debugNote, setDebugNote] = useState('');
     const received = deviceClipboard.value;
+    const draftTooLong = clipboardTextTooLong(clipboardDraft);
     const readError = deviceClipboardError.value;
     const connected = streamConnected.value;
     const audioSession = activeAudioSession.value;
@@ -119,7 +121,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
     };
 
     const onSendClipboard = () => {
-        if (!clipboardDraft) {
+        if (!clipboardDraft || draftTooLong) {
             return;
         }
         setClipboardNote('Sending to the phone clipboard…');
@@ -351,13 +353,17 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             type="button"
                             class="sheet-button primary"
                             onClick={onSendClipboard}
-                            disabled={!connected || !clipboardDraft || pending?.kind === 'clipboard'}
+                            disabled={!connected || !clipboardDraft || draftTooLong || pending?.kind === 'clipboard'}
                         >
                             Send to phone
                         </button>
                     </SheetRow>
                 </SheetGroup>
-                {clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>}
+                {draftTooLong ? (
+                    <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
+                ) : (
+                    clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
+                )}
 
                 <SheetGroup title="Phone" hint={phoneSummary}>
                     <SheetRow

@@ -80,7 +80,12 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
 
     public async start(): Promise<void> {
         this.mainApp = express();
-        NotificationService.getInstance().mount(this.mainApp, PATHNAME);
+        try {
+            NotificationService.getInstance().mount(this.mainApp, PATHNAME);
+        } catch (error) {
+            // Notifications are optional. Device control must still start without them.
+            console.error(`[${this.getName()}] Notifications are unavailable: ${(error as Error).message}`);
+        }
         /// #if INCLUDE_GOOG && INCLUDE_FILE_LISTING
         mountFileDownloads(this.mainApp, PATHNAME);
         /// #endif

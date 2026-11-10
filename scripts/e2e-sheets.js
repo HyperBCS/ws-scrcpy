@@ -283,12 +283,35 @@ async function main() {
                 remotePackets.filter((packet) => packet.length === 32 && packet[0] === 2).length >= touchesBefore + 2,
                 'positive control: exposed mock screen receives touch down/up after the popup closes',
             );
+            // Text too long for one control message is refused in the sheet and never sent.
+            const actions = page.getByRole('button', { name: 'Actions', exact: true });
+            if (!(await actions.isVisible()))
+                await page.getByRole('button', { name: 'Show controls', exact: true }).click();
+            await actions.click();
+            await page.locator('.bottom-sheet-root.open').waitFor();
+            await settle(page);
+            const draft = page.getByLabel('Text to paste on device');
+            const paste = page.getByRole('button', { name: 'Paste', exact: true });
+            const tooLong = page.getByText('This text is too long to send. The limit is 256 KB.', { exact: true });
+            const clipboardPackets = () => remotePackets.filter((packet) => packet[0] === 9);
+            await draft.fill('a'.repeat((1 << 18) - 13));
+            await tooLong.waitFor();
+            assert(await paste.isDisabled(), 'Paste is disabled while the text is too long');
+            await tooLong.scrollIntoViewIfNeeded();
+            await page.screenshot({ path: path.join(OUT, label + '-clipboard-too-long.png') });
+            await draft.fill('a'.repeat((1 << 18) - 14));
+            await tooLong.waitFor({ state: 'detached' });
+            await paste.click();
+            await page.getByText('Pasted into the focused field on the device.', { exact: true }).waitFor();
+            await pause(50);
+            assert.equal(clipboardPackets().length, 1, 'text at the limit is sent once');
+            assert.equal(clipboardPackets()[0].length, 1 << 18, 'and fits one scrcpy control message');
             assert.deepEqual(errors, [], 'no browser runtime errors');
             await context.close();
             console.log(
                 'PASS',
                 label,
-                'close, drag/cancel, scroll/focus restoration, Apply lock and remote touch isolation',
+                'close, drag/cancel, scroll/focus restoration, Apply lock, remote touch isolation and clipboard limit',
             );
         }
     } finally {
