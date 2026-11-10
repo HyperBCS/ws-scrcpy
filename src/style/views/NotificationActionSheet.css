@@ -172,6 +172,17 @@
     }
 }
 
-.notification-action-sheet .notification-confirm-dismiss {
-    color: var(--status-unauthorized-color);
+/* Actions that run on the phone sit under their own heading, apart from the local ones. */
+.notification-action-sheet .notification-action-sheet-group {
+    margin: 8px 0 0;
+    padding: 14px 12px 4px;
+    border-top: 1px solid var(--device-border-color);
+    color: var(--text-color-light);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+}
+.notification-action-sheet .confirm-prompt {
+    margin: 4px 0 8px;
 }

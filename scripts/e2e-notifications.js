@@ -46,6 +46,13 @@ async function confirmPrompt(scope, question, button) {
     await prompt.getByRole('button', { name: button, exact: true }).click();
     return prompt;
 }
+// A phone action that is not a plain dismissal: the first tap arms it, the prompt confirms it.
+async function confirmedCardAction(page, title, name, question, button) {
+    const sheet = await openCardMenu(page, title);
+    await sheet.getByRole('button', { name, exact: true }).click();
+    await confirmPrompt(sheet, question, button);
+    await sheet.waitFor({ state: 'detached' });
+}
 async function openToolbar(page) {
     await page.getByRole('button', { name: 'Notification actions', exact: true }).click();
     const sheet = page.getByRole('dialog');
@@ -605,23 +612,64 @@ async function dismissKeepsHistory(browser) {
 async function labeledPhoneActions(browser) {
     const items = historyItems();
     items.push({ key: 'b-call', source: 'phone-b', app: 'com.apple.mobilephone', appName: 'Phone', title: 'Incoming call', body: 'Sam', received: Date.now(), read: false, dismissed: false, active: true, canDismiss: true, negativeActionLabel: 'Decline' });
+    items.push({ key: 'b-clear', source: 'phone-b', app: 'com.example.chat', appName: 'Messages', title: 'Clearable alert', body: 'Seen.', received: Date.now() - 30000, read: true, dismissed: false, active: true, canDismiss: true, negativeActionLabel: 'Clear' });
     const f = await fixture(browser, { history: true, notifications: items, source: 'phone-b' });
     try {
         const initial = await openCardMenu(f.page, 'Incoming call');
-        await initial.getByRole('button', { name: 'Decline on iPhone', exact: true }).waitFor();
+        const decline = initial.getByRole('button', { name: 'Decline on iPhone', exact: true });
+        await decline.waitFor();
+        const layout = await initial.evaluate(el => {
+            const heading = el.querySelector('.notification-action-sheet-group');
+            const local = [...el.querySelectorAll('.notification-action-sheet-actions > button')].find(button => button.textContent === 'Dismiss here');
+            const phone = [...el.querySelectorAll('.notification-action-sheet-actions > button')].find(button => button.textContent === 'Decline on iPhone');
+            return {
+                heading: heading?.textContent, divider: heading ? parseFloat(getComputedStyle(heading).borderTopWidth) : 0,
+                order: !!heading && !!local && !!phone && local.getBoundingClientRect().bottom <= heading.getBoundingClientRect().top && heading.getBoundingClientRect().bottom <= phone.getBoundingClientRect().top,
+            };
+        });
+        assert.deepEqual(layout, { heading: 'On Phone B', divider: 1, order: true }, 'phone actions sit under a divider and a heading that names the phone');
+        // One tap on Decline sends nothing: it arms a prompt whose buttons are elsewhere.
+        await decline.click();
+        const prompt = initial.getByRole('alertdialog', { name: 'Decline on Phone B?', exact: true });
+        await prompt.waitFor();
+        assert.match(await prompt.textContent(), /This runs on the iPhone for “Incoming call” and cannot be undone from here\./);
+        const confirmBox = await prompt.getByRole('button', { name: 'Decline', exact: true }).boundingBox();
+        const cancelBox = await prompt.getByRole('button', { name: 'Cancel', exact: true }).boundingBox();
+        assert.ok(cancelBox.y > confirmBox.y, 'Cancel is the last button in the sheet');
+        await f.page.waitForTimeout(300);
+        assert.deepEqual(f.actions, [], 'one tap on a phone action other than Clear sends nothing');
+        await prompt.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await prompt.waitFor({ state: 'detached' });
+        assert.deepEqual(f.actions, [], 'Cancel sends nothing');
         assert.equal(await initial.getByRole('button', { name: 'Dismiss on iPhone', exact: true }).count(), 0, 'a decline call action is never mislabeled as simple dismissal');
         await initial.getByRole('button', { name: 'Close actions', exact: true }).click();
         const stale = await openCardMenu(f.page, 'A message from Alex');
         assert.equal(await stale.getByRole('button', { name: /on iPhone/ }).count(), 0, 'a stale alert has no source action');
         await stale.getByRole('button', { name: 'Close actions', exact: true }).click();
+        // Closing the sheet disarms it: reopening shows no prompt.
+        const armed = await openCardMenu(f.page, 'Incoming call');
+        await armed.getByRole('button', { name: 'Decline on iPhone', exact: true }).click();
+        await armed.getByRole('alertdialog').waitFor();
+        await armed.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await armed.waitFor({ state: 'detached' });
+        const reopened = await openCardMenu(f.page, 'Incoming call');
+        assert.equal(await reopened.getByRole('alertdialog').count(), 0, 'closing the sheet disarms the phone action');
+        await reopened.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await reopened.waitFor({ state: 'detached' });
         f.actionError = 'The iPhone disconnected. Reconnect and try again.';
-        await cardAction(f.page, 'Incoming call', 'Decline on iPhone');
+        await confirmedCardAction(f.page, 'Incoming call', 'Decline on iPhone', 'Decline on Phone B?', 'Decline');
         await f.page.getByRole('alert').filter({ hasText: f.actionError }).waitFor();
         assert.deepEqual(f.actions, [{ key: 'b-call', expectedLabel: 'Decline' }]);
+        assert.equal(await f.page.locator('.notification-phone-result').count(), 0, 'a refused action is not reported as sent');
         assert.equal(f.notifications.find(n => n.key === 'b-call').dismissed, false);
         assert.equal(await headerBadge(f.page).textContent(), '2', 'failed phone actions leave the selected phone’s history and unread count intact');
         f.actionError = '';
-        await cardAction(f.page, 'Incoming call', 'Decline on iPhone');
+        await confirmedCardAction(f.page, 'Incoming call', 'Decline on iPhone', 'Decline on Phone B?', 'Decline');
+        await f.page.locator('.notification-phone-result').getByText('Decline sent to Phone B.', { exact: true }).waitFor();
+        // Clear is a plain dismissal: one tap sends it, and the result is reported the same way.
+        await cardAction(f.page, 'Clearable alert', 'Clear on iPhone');
+        await f.page.locator('.notification-phone-result').getByText('Clear sent to Phone B.', { exact: true }).waitFor();
+        assert.deepEqual(f.actions.at(-1), { key: 'b-clear', expectedLabel: 'Clear' });
         const accepted = await openCardMenu(f.page, 'Incoming call');
         const sent = accepted.getByRole('button', { name: 'Action sent', exact: true });
         await sent.waitFor();
@@ -632,6 +680,73 @@ async function labeledPhoneActions(browser) {
         await assertClean(f);
         console.log('PASS phone action menus use the real iOS label, preserve failures, and do not pretend an accepted command removed the alert');
     } finally { await f.context.close(); }
+}
+
+async function confirmPromptLayouts(browser) {
+    for (const [width, height, label] of [[390, 844, 'phone'], [1280, 800, 'desktop']]) {
+        const items = historyItems();
+        items.push({ key: 'b-call', source: 'phone-b', app: 'com.apple.mobilephone', appName: 'Phone', title: 'Incoming call', body: 'Sam', received: Date.now(), read: false, dismissed: false, active: true, canDismiss: true, negativeActionLabel: 'Decline' });
+        const f = await fixture(browser, { notifications: items, width, height });
+        try {
+            const measure = scope => scope.evaluate(el => {
+                const prompt = el.querySelector('.confirm-prompt');
+                const box = prompt.getBoundingClientRect();
+                return {
+                    inside: box.left >= 0 && box.right <= innerWidth,
+                    overflow: prompt.scrollWidth > prompt.clientWidth + 1,
+                    targets: [...prompt.querySelectorAll('button')].map(button => button.getBoundingClientRect().height),
+                };
+            });
+            const check = (geometry, name) => {
+                assert.equal(geometry.inside, true, `${name} prompt stays inside the ${label} viewport`);
+                assert.equal(geometry.overflow, false, `${name} prompt does not overflow at ${label} width`);
+                assert.ok(geometry.targets.every(target => target >= 44), `${name} prompt keeps 44px targets`);
+            };
+            await openDetails(f.page, 'Settings for Phone B');
+            const source = f.page.locator('article.notification-source').filter({ hasText: 'Phone B' });
+            await source.locator('.notification-remove-source').getByRole('button', { name: 'Remove iPhone', exact: true }).click();
+            const removal = source.getByRole('alertdialog', { name: 'Remove Phone B and delete its 2 stored notifications?', exact: true });
+            await removal.locator('.confirm-prompt-button.danger:not([aria-disabled])').waitFor();
+            check(await measure(source), 'Remove iPhone');
+            for (const colorScheme of ['light', 'dark']) {
+                await f.page.emulateMedia({ colorScheme });
+                await source.screenshot({ path: path.join(SCREENSHOTS, `ws-notifications-remove-confirm-${label}-${colorScheme}.png`), animations: 'disabled' });
+            }
+            await f.page.emulateMedia({ colorScheme: 'light' });
+            await source.getByRole('checkbox', { name: 'Include notification text', exact: true }).click();
+            await removal.waitFor({ state: 'detached' });
+            await source.getByRole('alertdialog', { name: 'Stop storing notification text from Phone B?', exact: true }).locator('.confirm-prompt-button.danger:not([aria-disabled])').waitFor();
+            check(await measure(source), 'Erase text');
+            await source.screenshot({ path: path.join(SCREENSHOTS, `ws-notifications-erase-text-confirm-${label}-light.png`), animations: 'disabled' });
+            assert.deepEqual(f.removed, []);
+            assert.ok(!f.operations.includes('POST sources'), 'arming either prompt sends nothing');
+
+            await f.page.getByRole('button', { name: 'History', exact: true }).click();
+            const params = new URL(f.page.url());
+            params.hash = '!action=notifications&source=phone-b';
+            await f.page.goto(params.href);
+            const sheet = await openCardMenu(f.page, 'Incoming call');
+            const decline = sheet.getByRole('button', { name: 'Decline on iPhone', exact: true });
+            const pressed = await decline.boundingBox();
+            await decline.click();
+            await sheet.locator('.confirm-prompt-button.danger:not([aria-disabled])').waitFor();
+            check(await measure(sheet), 'Decline');
+            // The sheet grows when the prompt appears. Wherever that moves things, the confirm
+            // button must not end up where the first press landed.
+            const confirm = await sheet.locator('.confirm-prompt-button.danger').boundingBox();
+            assert.ok(
+                confirm.y >= pressed.y + pressed.height || confirm.y + confirm.height <= pressed.y,
+                `the confirm button is clear of the first press on ${label}: ${JSON.stringify({ pressed, confirm })}`,
+            );
+            for (const colorScheme of ['light', 'dark']) {
+                await f.page.emulateMedia({ colorScheme });
+                await f.page.screenshot({ path: path.join(SCREENSHOTS, `ws-notifications-phone-action-confirm-${label}-${colorScheme}.png`), animations: 'disabled' });
+            }
+            assert.deepEqual(f.actions, []);
+            await assertClean(f);
+        } finally { await f.context.close(); }
+    }
+    console.log('PASS confirm prompts fit phone and desktop widths in both themes and send nothing while armed');
 }
 
 async function notificationDeepLink(browser) {
@@ -657,12 +772,20 @@ async function confirmBulk(page, buttonName, accept, beforeAnswer) {
     const sheet = await openToolbar(page);
     const button = sheet.getByRole('button', { name: buttonName });
     await button.click();
-    const dialog = page.getByRole('dialog', { name: /^Dismiss \d+ notification/ });
+    // The confirm prompt opens in the same sheet; its button ignores presses for the first 500 ms.
+    const dialog = sheet.getByRole('alertdialog', { name: /^Dismiss \d+ notification/ });
     await dialog.waitFor();
     const message = await dialog.innerText();
     if (beforeAnswer) beforeAnswer(message);
-    await dialog.getByRole('button', { name: accept ? /^Dismiss (here|on phone)$/ : 'Cancel', exact: !accept }).click();
-    await dialog.waitFor({ state: 'detached' });
+    if (accept) {
+        await dialog.locator('.confirm-prompt-button:not([aria-disabled])').first().waitFor();
+        await dialog.getByRole('button', { name: /^Dismiss (here|on phone)$/ }).click();
+    } else {
+        await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await dialog.waitFor({ state: 'detached' });
+        await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
+    }
+    await sheet.waitFor({ state: 'detached' });
     return message;
 }
 
@@ -1350,7 +1473,7 @@ async function main() {
     const browser = await ({ chromium, webkit }[browserName] || chromium).launch({ headless: true });
     try {
         const cases = [onboarding, missedPairingRequest, configuredReceiver, receiverChoicesAndUnlink, enablingReceiver, errorsSurvivePolling,
-            iosInstallGate, recoverMissingServerSubscription, perDeviceHistory, dismissKeepsHistory, labeledPhoneActions,
+            iosInstallGate, recoverMissingServerSubscription, perDeviceHistory, dismissKeepsHistory, labeledPhoneActions, confirmPromptLayouts,
             notificationDeepLink, bulkDismissHere, bulkDismissPhone, compactLongNotification, stickyBarsReachScrollTop, accessibleActionMenus, richNotificationMedia,
             searchAndFilters, bulkRespectsFilters, swipeAndUndo, swipeMotionAndFailure, delayedActionDoesNotCrossDevices, standaloneTouchNotifications,
             compatibilityPointerEventsDoNotDoubleAct, nativeTouchCancellationAndMultifinger, hangingRegistrationCleanup,
