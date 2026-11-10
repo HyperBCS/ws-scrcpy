@@ -109,13 +109,17 @@ export class AdbkitFilePushStream extends FilePushStream {
         fileName,
         fileSize,
         overwrite = false,
+        folder,
     }: {
         id: number;
         fileName: string;
         fileSize: number;
         overwrite?: boolean;
+        folder?: string;
     }): void {
-        const filePath = path.join(this.fileListingClient.getPath(), fileName);
+        // The owner's answer about this name was given for `folder`. The explorer may have moved
+        // to another folder while the push id was allocated.
+        const filePath = path.join(folder ?? this.fileListingClient.getPath(), fileName);
         // Always state the choice: without the flag the server refuses a name that is taken.
         const startParams = { id, fileName: filePath, fileSize, overwrite, state: FilePushState.START };
         const channel = this.getChannel(id);

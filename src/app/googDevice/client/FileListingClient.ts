@@ -1597,6 +1597,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private planUploads = async (files: File[]): Promise<PlannedUpload[]> => {
+        // The answers are about this folder's listing, so the files go to this folder even if
+        // the explorer has moved on by the time they start.
+        const folder = this.path;
         const chosen = new Map<string, File>();
         const repeated = new Set<string>();
         files.forEach((file) => {
@@ -1608,6 +1611,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         });
         const plan = (await this.resolveNames([...chosen.keys()], true)).map(({ name, target, replace }) => ({
             file: chosen.get(name) as File,
+            folder,
             name: target,
             overwrite: replace,
         }));

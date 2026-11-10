@@ -69,7 +69,7 @@ async function fixture(page) {
     const dirs = new Set(['/', '/data', '/data/local', ROOT, ROOT + '/empty', ROOT + '/denied', ROOT + '/archive']);
     const traffic = {
         requests: [], operations: [], closed: [], fsChannels: 0, uploads: [], starts: [], hold: false, pending: null,
-        holdList: false, releaseList: null,
+        holdList: false, releaseList: null, holdStat: false, releaseStat: null,
     };
     await page.routeWebSocket('**', (socket) => {
         const fileRoots = new Set();
@@ -179,13 +179,23 @@ async function fixture(page) {
                     const destination = data.subarray(8, 8 + data.readUInt32LE(4)).toString();
                     traffic.requests.push({ cmd, destination });
                     if (cmd === 'STAT') {
-                        send(
-                            stat(
-                                dirs.has(destination) ? DIR : files.has(destination) ? FILE : 0,
-                                files.get(destination)?.length || 0,
-                            ),
-                        );
-                        end();
+                        const answer = () => {
+                            send(
+                                stat(
+                                    dirs.has(destination) ? DIR : files.has(destination) ? FILE : 0,
+                                    files.get(destination)?.length || 0,
+                                ),
+                            );
+                            end();
+                        };
+                        if (traffic.holdStat) {
+                            traffic.releaseStat = () => {
+                                traffic.releaseStat = null;
+                                answer();
+                            };
+                            return;
+                        }
+                        answer();
                     } else if (cmd === 'LIST') {
                         if (traffic.holdList) {
                             traffic.releaseList = () => {
@@ -233,7 +243,7 @@ async function fixture(page) {
                     };
                     if (state === 0) {
                         if (traffic.hold) {
-                            traffic.pending = { root: id, channel };
+                            traffic.pending = { root: id, channel, release: () => reply(1) };
                             return;
                         }
                         reply(1);
@@ -850,6 +860,37 @@ async function main() {
             assert.equal(files.get(ROOT + '/late.txt').toString(), 'Device copy', 'the file on the device is kept');
             assert.deepEqual(traffic.starts.at(-1), { path: ROOT + '/late.txt', overwrite: false });
             await settled(page);
+
+            // An answer belongs to the folder it was given in. Here the explorer moves to another
+            // folder after the answer but before the upload starts: the file still goes to the
+            // folder that was checked, and the same name in the other folder is left alone.
+            files.set(ROOT + '/archive/notes.txt', Buffer.from('Never asked about'));
+            await pick(['notes.txt', 'Answered for tmp']);
+            await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
+            traffic.holdStat = true;
+            await page.evaluate((target) => {
+                const params = new URLSearchParams(location.hash.replace(/^#!/, ''));
+                params.set('path', target);
+                location.hash = `#!${params}`;
+            }, ROOT + '/archive');
+            await until(page, () => traffic.releaseStat, 'the folder change');
+            traffic.holdStat = false;
+            traffic.hold = true;
+            await answer(page, 'Replace');
+            await until(page, () => traffic.pending, 'the upload to ask for a push id');
+            traffic.releaseStat();
+            await page.locator('.fx-crumb[aria-current="page"]').filter({ hasText: 'archive' }).waitFor();
+            traffic.hold = false;
+            traffic.pending.release();
+            traffic.pending = null;
+            await until(page, () => traffic.starts.length && traffic.starts.at(-1).overwrite, 'the START');
+            assert.deepEqual(traffic.starts.at(-1), { path: ROOT + '/notes.txt', overwrite: true });
+            await until(page, () => files.get(ROOT + '/notes.txt').toString() === 'Answered for tmp', 'the upload');
+            await settled(page);
+            assert.equal(files.get(ROOT + '/archive/notes.txt').toString(), 'Never asked about');
+            files.delete(ROOT + '/archive/notes.txt');
+            await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
+            await row(page, 'notes.txt').waitFor();
             traffic.hold = true;
             await page.locator('input[type=file]').setInputFiles({
                 name: 'pending-upload.txt',

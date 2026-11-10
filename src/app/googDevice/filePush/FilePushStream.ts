@@ -16,6 +16,7 @@ export abstract class FilePushStream extends TypedEmitter<FilePushStreamEvents> 
         fileName: string;
         fileSize: number;
         overwrite?: boolean;
+        folder?: string;
     }): void;
     public abstract sendEventFinish(params: { id: number }): void;
     public abstract sendEventAppend(params: { id: number; chunk: Uint8Array }): void;

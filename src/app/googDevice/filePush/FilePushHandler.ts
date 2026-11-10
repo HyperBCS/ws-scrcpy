@@ -18,8 +18,12 @@ export type PushUpdateParams = {
     finished: boolean;
 };
 
-/** One file to send: the name it gets on the device and whether it may replace that name. */
-export type PlannedUpload = { file: File; name: string; overwrite: boolean };
+/**
+ * One file to send: the name it gets on the device and whether it may replace that name.
+ * `folder` is the folder whose listing the name was checked against. Left out, the file goes to
+ * the folder that is open when the upload starts.
+ */
+export type PlannedUpload = { file: File; name: string; overwrite: boolean; folder?: string };
 
 /**
  * Decides what happens to each chosen file before anything is sent: a name that is already
@@ -95,7 +99,7 @@ export default class FilePushHandler implements DragEventListener {
         return { reader, result };
     }
 
-    private async pushFile(key: number, { file, name: fileName, overwrite }: PlannedUpload): Promise<void> {
+    private async pushFile(key: number, { file, name: fileName, overwrite, folder }: PlannedUpload): Promise<void> {
         if (this.released) return;
         const start = Date.now();
         const fileSize = file.size;
@@ -125,7 +129,7 @@ export default class FilePushHandler implements DragEventListener {
 
         this.pushIdFileNameMap.set(pushId, { key, fileName });
         const waitPromise = this.waitForResponse(pushId);
-        this.filePushStream.sendEventStart({ id: pushId, fileName, fileSize, overwrite });
+        this.filePushStream.sendEventStart({ id: pushId, fileName, fileSize, overwrite, folder });
         const [{ code: startResponseCode }, { reader, result }] = await Promise.all([
             waitPromise,
             FilePushHandler.getStreamReader(file),
