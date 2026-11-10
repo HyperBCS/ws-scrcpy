@@ -553,7 +553,7 @@ export class NotificationService implements Service {
         if (this.closed) return;
         const key = `system:${crypto.randomBytes(8).toString('hex')}`;
         const body = JSON.stringify({ title: payload.title, body: payload.body, tag: payload.tag, url: payload.url });
-        for (const sub of this.store.subscriptions) this.push.enqueue(sub.id, key, body);
+        for (const sub of this.store.subscriptions) this.push.enqueue(sub.id, key, body, 'system');
     }
 
     private preparePush(id: string, key: string, testPayload?: string): PushTarget | undefined {

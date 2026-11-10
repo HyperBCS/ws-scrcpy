@@ -423,3 +423,87 @@ test('valid settings load unchanged and every save reaches the disk before and a
         await second.close();
     }
 });
+
+// ------------------------------------------------------------------ system push alerts
+
+test('a system alert is held for a day at high urgency and a relayed alert keeps the short lifetime', async () => {
+    const directory = fs.mkdtempSync(path.join(temporary, 'settings-'));
+    const { service, api, close } = await mounted(directory);
+    const sent = [];
+    webpush.sendNotification = async (_subscription, payload, options) => {
+        sent.push({ payload: JSON.parse(payload), options });
+    };
+    try {
+        await service.start();
+        assert.equal((await api('/sources', source)).status, 200);
+        const body = { subscription: subscription('alerts'), sources: ['iphone'], receiverSource: '' };
+        assert.equal((await api('/subscriptions', body)).status, 200);
+        service.notifySystem({ title: 'iPhone unlock', body: 'Phone not reachable', tag: 'ios-unlock-x', url: '#!' });
+        await waitFor(() => sent.length === 1, 'the system alert is sent');
+        assert.equal(sent[0].options.urgency, 'high');
+        assert.ok(sent[0].options.TTL > 86300 && sent[0].options.TTL <= 86400, `TTL ${sent[0].options.TTL}`);
+        service.receive({
+            source: 'iphone',
+            session: 'a',
+            uid: 1,
+            event: 'added',
+            app: 'com.example',
+            appName: 'Example',
+            title: 'Title',
+            body: 'Body',
+            date: '20261110T120000',
+        });
+        await waitFor(() => sent.length === 2, 'the relayed alert is sent');
+        assert.equal(sent[1].options.urgency, 'normal');
+        assert.ok(sent[1].options.TTL > 290 && sent[1].options.TTL <= 300, `TTL ${sent[1].options.TTL}`);
+    } finally {
+        webpush.sendNotification = originalSend;
+        await close();
+    }
+});
+
+test('a burst of relayed alerts does not push a queued system alert out', async () => {
+    const sent = [];
+    let release;
+    const blocked = new Promise((resolve) => (release = resolve));
+    webpush.sendNotification = async (_subscription, payload) => {
+        sent.push(payload);
+        await blocked;
+    };
+    const delivery = new PushDelivery(
+        (_id, key) => ({
+            subscription: subscription('queue'),
+            payload: key,
+            vapid: { publicKey: 'public', privateKey: 'private' },
+        }),
+        () => undefined,
+    );
+    try {
+        // The first job is taken off the queue at once and waits in the push service call.
+        delivery.enqueue('sub', 'relay-first');
+        delivery.enqueue('sub', 'system-1', '{}', 'system');
+        for (let index = 0; index < 60; index++) delivery.enqueue('sub', `relay-${index}`);
+        release();
+        await waitFor(() => delivery.pending === 0, 'the queue drains');
+        assert.ok(sent.includes('system-1'), 'the system alert is delivered');
+        assert.equal(sent.length, 52, 'one in flight, the system alert, and the newest 50 relayed alerts');
+        assert.ok(!sent.includes('relay-9') && sent.includes('relay-10'), 'the oldest relayed alerts make room');
+        // System alerts are bounded too, among themselves.
+        const held = [];
+        let releaseSecond;
+        const blockedSecond = new Promise((resolve) => (releaseSecond = resolve));
+        webpush.sendNotification = async (_subscription, payload) => {
+            held.push(payload);
+            await blockedSecond;
+        };
+        delivery.enqueue('sub', 'relay-first');
+        for (let index = 0; index < 55; index++) delivery.enqueue('sub', `system-${index}`, '{}', 'system');
+        releaseSecond();
+        await waitFor(() => delivery.pending === 0, 'the second queue drains');
+        assert.equal(held.length, 51);
+        assert.ok(!held.includes('system-4') && held.includes('system-5'));
+    } finally {
+        delivery.stop();
+        webpush.sendNotification = originalSend;
+    }
+});
