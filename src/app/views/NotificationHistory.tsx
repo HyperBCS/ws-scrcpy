@@ -531,7 +531,7 @@ export function NotificationHistory({
                 {bulkConfirm.armed && confirmation && (
                     <ConfirmPrompt
                         action={bulkConfirm}
-                        question={`Dismiss ${confirmation.snapshot.length} notification${confirmation.snapshot.length === 1 ? '' : 's'} ${confirmation.onPhone ? 'on' : 'here for'} ${confirmation.name}?`}
+                        question={`Dismiss ${confirmation.snapshot.length} notification${confirmation.snapshot.length === 1 ? '' : 's'} ${confirmation.onPhone ? `on ${confirmation.name}` : `from ${confirmation.name} here`}?`}
                         consequence={
                             confirmation.onPhone
                                 ? 'Only matching alerts are included. They are cleared on the iPhone and cannot be brought back there. History is kept here.'
