@@ -811,6 +811,8 @@ body.file-listing-page {
 .fx-dialog h2 {
     margin: 0;
     font-size: 15px;
+    /* A title can quote a file name, which may have no space to break at. */
+    overflow-wrap: anywhere;
 }
 
 .fx-dialog-message {
@@ -851,6 +853,27 @@ body.file-listing-page {
 .fx-dialog-actions .fx-button {
     min-height: 44px;
     padding: 0 14px;
+}
+
+.fx-dialog-check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    cursor: pointer;
+}
+
+.fx-dialog-check input {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: var(--fx-accent);
+}
+
+/* Three answers must stay on one row at 320px. */
+.fx-conflict .fx-dialog-actions .fx-button {
+    padding: 0 12px;
 }
 
 .fx-properties {

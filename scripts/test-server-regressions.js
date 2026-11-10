@@ -703,6 +703,93 @@ test('the Files channel replaces on move and copy only when the request says so'
     );
 });
 
+test('name conflicts are put to the owner, and nothing is replaced without that answer', async () => {
+    const { freeName, resolveNameConflicts } = require('../src/app/googDevice/filePush/nameConflicts');
+    assert.equal(freeName('notes.txt', new Set(['notes.txt'])), 'notes (1).txt');
+    assert.equal(freeName('notes.txt', new Set(['notes.txt', 'notes (1).txt'])), 'notes (2).txt');
+    assert.equal(freeName('backup.tar.gz', new Set()), 'backup (1).tar.gz');
+    assert.equal(freeName('.bashrc', new Set()), '.bashrc (1)');
+    assert.equal(freeName('README', new Set()), 'README (1)');
+    assert.equal(freeName('photos.2026', new Set(), true), 'photos.2026 (1)');
+
+    const existing = new Map([
+        ['notes.txt', { isFolder: false }],
+        ['notes (1).txt', { isFolder: false }],
+        ['photo.png', { isFolder: false }],
+        ['archive', { isFolder: true }],
+    ]);
+    const asked = [];
+    const answers = (list) => async (name, _item, canReplace, remaining) => {
+        asked.push({ name, canReplace, remaining });
+        return list.shift();
+    };
+
+    // A free name needs no question.
+    assert.deepEqual(
+        await resolveNameConflicts(['new.txt'], existing, true, () => assert.fail('no conflict to ask about')),
+        [{ name: 'new.txt', target: 'new.txt', replace: false }],
+    );
+
+    // Each answer applies to its own item; "keep" avoids every name in the folder and the batch.
+    assert.deepEqual(
+        await resolveNameConflicts(
+            ['notes.txt', 'new.txt', 'photo.png', 'archive', 'notes (2).txt'],
+            existing,
+            true,
+            answers([
+                { choice: 'keep', all: false },
+                { choice: 'replace', all: false },
+                { choice: 'skip', all: false },
+            ]),
+        ),
+        [
+            { name: 'notes.txt', target: 'notes (3).txt', replace: false },
+            { name: 'new.txt', target: 'new.txt', replace: false },
+            { name: 'photo.png', target: 'photo.png', replace: true },
+            { name: 'notes (2).txt', target: 'notes (2).txt', replace: false },
+        ],
+    );
+    assert.deepEqual(asked, [
+        { name: 'notes.txt', canReplace: true, remaining: 2 },
+        { name: 'photo.png', canReplace: true, remaining: 1 },
+        { name: 'archive', canReplace: false, remaining: 0 },
+    ]);
+
+    // "Replace" for all still stops at a folder, and a forced "replace" there replaces nothing.
+    asked.length = 0;
+    assert.deepEqual(
+        await resolveNameConflicts(
+            ['notes.txt', 'archive', 'photo.png'],
+            existing,
+            true,
+            answers([
+                { choice: 'replace', all: true },
+                { choice: 'replace', all: false },
+            ]),
+        ),
+        [
+            { name: 'notes.txt', target: 'notes.txt', replace: true },
+            { name: 'photo.png', target: 'photo.png', replace: true },
+        ],
+    );
+    assert.deepEqual(
+        asked.map(({ name }) => name),
+        ['notes.txt', 'archive'],
+    );
+
+    // Where replacing is not on offer (a copy pasted into its own folder), it never happens.
+    assert.deepEqual(
+        await resolveNameConflicts(['notes.txt'], existing, false, async (_name, _item, canReplace) => {
+            assert.equal(canReplace, false);
+            return { choice: 'replace', all: false };
+        }),
+        [],
+    );
+
+    // An answer that no longer applies drops the whole batch, including the free names.
+    assert.deepEqual(await resolveNameConflicts(['new.txt', 'notes.txt'], existing, true, async () => undefined), []);
+});
+
 test('leaving or cancelling while upload setup is pending cancels the late adb transfer without reviving it', async (t) => {
     for (const cancel of [false, true]) {
         const pending = deferred();

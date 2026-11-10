@@ -104,9 +104,20 @@ export class AdbkitFilePushStream extends FilePushStream {
         channel.send(CommandControlMessage.createPushFileCommand(newParams).toBuffer());
     }
 
-    public sendEventStart({ id, fileName, fileSize }: { id: number; fileName: string; fileSize: number }): void {
+    public sendEventStart({
+        id,
+        fileName,
+        fileSize,
+        overwrite = false,
+    }: {
+        id: number;
+        fileName: string;
+        fileSize: number;
+        overwrite?: boolean;
+    }): void {
         const filePath = path.join(this.fileListingClient.getPath(), fileName);
-        const startParams = { id, fileName: filePath, fileSize, state: FilePushState.START };
+        // Always state the choice: without the flag the server refuses a name that is taken.
+        const startParams = { id, fileName: filePath, fileSize, overwrite, state: FilePushState.START };
         const channel = this.getChannel(id);
         if (!channel) {
             return;

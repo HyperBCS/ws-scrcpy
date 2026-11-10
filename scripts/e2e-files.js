@@ -18,9 +18,12 @@ function frame(type, id, payload = Buffer.alloc(0)) {
     payload.copy(buffer, 5);
     return buffer;
 }
-function close(id, code = 1000) {
-    const data = Buffer.alloc(6);
+function close(id, code = 1000, reason = '') {
+    const text = Buffer.from(reason);
+    const data = Buffer.alloc(6 + text.length);
     data.writeUInt16LE(code);
+    data.writeUInt32LE(text.length, 2);
+    text.copy(data, 6);
     return frame(8, id, data);
 }
 function stat(mode, size = 0) {
@@ -65,7 +68,7 @@ async function fixture(page) {
     ]);
     const dirs = new Set(['/', '/data', '/data/local', ROOT, ROOT + '/empty', ROOT + '/denied', ROOT + '/archive']);
     const traffic = {
-        requests: [], operations: [], closed: [], fsChannels: 0, uploads: [], hold: false, pending: null,
+        requests: [], operations: [], closed: [], fsChannels: 0, uploads: [], starts: [], hold: false, pending: null,
         holdList: false, releaseList: null,
     };
     await page.routeWebSocket('**', (socket) => {
@@ -151,6 +154,15 @@ async function fixture(page) {
                                 end();
                                 return;
                             }
+                            // Like the server: a taken name is refused unless the request ends
+                            // with the replace byte, and a folder is never replaced.
+                            if (data.length > to.offset && data[to.offset] === 1) operation.replace = true;
+                            if (dirs.has(to.value) || (files.has(to.value) && !operation.replace)) {
+                                traffic.operations.push(operation);
+                                send(fail('An item with this name already exists.'));
+                                end();
+                                return;
+                            }
                             if (files.has(from.value)) {
                                 files.set(to.value, files.get(from.value));
                                 if (cmd === 'MOVE') files.delete(from.value);
@@ -226,9 +238,19 @@ async function fixture(page) {
                         }
                         reply(1);
                     } else if (state === 1) {
-                        upload.path = data.subarray(10, 10 + data.readUInt16BE(8)).toString();
+                        const nameEnd = 10 + data.readUInt16BE(8);
+                        upload.path = data.subarray(10, nameEnd).toString();
                         upload.size = data.readUInt32BE(4);
+                        const overwrite = data.length > nameEnd && data[nameEnd] === 1;
                         traffic.uploads.push(upload.path);
+                        traffic.starts.push({ path: upload.path, overwrite });
+                        // Like the server: START is refused, with the reason in the close frame.
+                        if (dirs.has(upload.path) || (files.has(upload.path) && !overwrite)) {
+                            socket.send(
+                                frame(64, id, close(channel, 4013, 'An item with this name already exists.')),
+                            );
+                            return;
+                        }
                         reply(0);
                     } else if (state === 2) {
                         upload.chunks.push(data.subarray(8, 8 + data.readUInt32BE(4)));
@@ -282,6 +304,37 @@ async function select(page, ...names) {
         names.length,
     );
 }
+
+// The name-conflict dialog: its title, the answers on offer, and where the keyboard starts.
+async function conflict(page, title, answers) {
+    const dialog = page.locator('.fx-dialog[open]');
+    await dialog.getByRole('heading', { name: title, exact: true }).waitFor();
+    assert.deepEqual(await dialog.locator('.fx-dialog-actions button').allInnerTexts(), answers);
+    assert.equal(
+        await page.evaluate(() => document.activeElement?.textContent),
+        'Keep both',
+        'the keyboard starts on the answer that loses nothing',
+    );
+    return dialog;
+}
+async function answer(page, name) {
+    await page.locator('.fx-dialog[open]').getByRole('button', { name, exact: true }).click();
+    await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+}
+async function until(page, check, what) {
+    for (let attempt = 0; attempt < 250; attempt++) {
+        if (check()) return;
+        await page.waitForTimeout(20);
+    }
+    assert.fail(`Timed out waiting for ${what}`);
+}
+// No upload row left and the folder listed again.
+const settled = (page) =>
+    page.waitForFunction(
+        () =>
+            !document.querySelector('.file-listing-upload-progress') &&
+            document.querySelector('.file-listing-client')?.dataset.listing === 'ready',
+    );
 
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
@@ -582,6 +635,38 @@ async function main() {
             });
             assert(files.has(ROOT + '/notes.txt'), 'Copy leaves the original in place');
 
+            // Pasting over a name that is taken asks first, with the same dialog as an upload.
+            const pastesBefore = traffic.operations.length;
+            await command(page, 'Paste');
+            await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
+            await answer(page, 'Skip');
+            await page.getByRole('status').filter({ hasText: 'Skipped notes.txt.' }).waitFor();
+            assert.equal(traffic.operations.length, pastesBefore, 'Skip sends no operation');
+            files.set(ROOT + '/archive/notes.txt', Buffer.from('Archived earlier'));
+            await command(page, 'Paste');
+            await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
+            await answer(page, 'Replace');
+            await until(page, () => traffic.operations.length > pastesBefore, 'the replacing paste');
+            assert.deepEqual(traffic.operations.at(-1), {
+                cmd: 'COPY',
+                paths: [ROOT + '/notes.txt', ROOT + '/archive/notes.txt'],
+                replace: true,
+            });
+            assert.equal(files.get(ROOT + '/archive/notes.txt').toString(), 'Mock download contents\n');
+            await page.locator('.file-listing-client[data-listing="ready"]').waitFor();
+            // A copy pasted into its own folder has nothing to replace; it can only be kept.
+            await select(page, 'notes.txt');
+            await command(page, 'Copy');
+            await command(page, 'Paste');
+            await conflict(page, '“notes.txt” already exists', ['Skip', 'Keep both']);
+            await answer(page, 'Keep both');
+            await row(page, 'notes (1).txt').waitFor();
+            assert.deepEqual(traffic.operations.at(-1), {
+                cmd: 'COPY',
+                paths: [ROOT + '/archive/notes.txt', ROOT + '/archive/notes (1).txt'],
+            });
+            files.delete(ROOT + '/archive/notes (1).txt');
+
             // Delete needs a confirmation and removes only the selected item.
             await select(page, 'notes.txt');
             await command(page, 'Delete');
@@ -668,6 +753,103 @@ async function main() {
                 0,
                 'empty picker file completes without an APPEND packet',
             );
+
+            // An upload never replaces a file on its own. The owner is asked, per name.
+            const original = 'Mock download contents\n';
+            const pick = (...list) =>
+                page.locator('input[type=file]').setInputFiles(
+                    list.map(([name, text]) => ({ name, mimeType: 'text/plain', buffer: Buffer.from(text) })),
+                );
+            const uploaded = (name) => page.getByRole('link', { name: `Download ${name}`, exact: true }).waitFor();
+            const startsBefore = traffic.starts.length;
+            await pick(['notes.txt', 'Replacement']);
+            const question = await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
+            await settleMotion(page);
+            const questionBox = await question.boundingBox();
+            assert(questionBox.x >= 0 && questionBox.x + questionBox.width <= width, 'the dialog fits the screen');
+            for (const button of await question.locator('.fx-dialog-actions button').all()) {
+                const box = await button.boundingBox();
+                assert(box.height >= 44, `conflict answer height ${box.height}`);
+                assert(
+                    box.x >= questionBox.x && box.x + box.width <= questionBox.x + questionBox.width + 0.5,
+                    'every answer stays inside the dialog',
+                );
+            }
+            await page.screenshot({ path: path.join(OUT, label + '-conflict.png') });
+            // Closing the dialog skips the file: nothing is sent and nothing changes.
+            await page.keyboard.press('Escape');
+            await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+            await page.getByRole('status').filter({ hasText: 'Skipped notes.txt.' }).waitFor();
+            assert.equal(traffic.starts.length, startsBefore, 'a skipped upload sends no START');
+            assert.equal(files.get(ROOT + '/notes.txt').toString(), original);
+
+            // A dropped file is asked about in the same way as a picked one.
+            await page.evaluate(() => {
+                const data = new DataTransfer();
+                data.items.add(new File(['Dropped'], 'notes.txt', { type: 'text/plain' }));
+                document
+                    .querySelector('.file-listing-client')
+                    .dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }));
+            });
+            await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
+            await answer(page, 'Skip');
+            assert.equal(traffic.starts.length, startsBefore, 'a skipped drop sends no START');
+            assert.equal(files.get(ROOT + '/notes.txt').toString(), original);
+
+            await pick(['notes.txt', 'Second copy']);
+            await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
+            await answer(page, 'Keep both');
+            await uploaded('notes (1).txt');
+            assert.equal(files.get(ROOT + '/notes (1).txt').toString(), 'Second copy');
+            assert.equal(files.get(ROOT + '/notes.txt').toString(), original, 'Keep both leaves the original alone');
+            assert.deepEqual(traffic.starts.at(-1), { path: ROOT + '/notes (1).txt', overwrite: false });
+
+            // One answer can cover every conflict in the batch; free names go through unasked.
+            await pick(['notes.txt', 'Third copy'], ['fresh.txt', 'Fresh'], ['mobile-upload.txt', 'Other bytes']);
+            const several = await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
+            await several.getByLabel('Do the same for the other conflict', { exact: true }).check();
+            await page.screenshot({ path: path.join(OUT, label + '-conflict-several.png') });
+            await answer(page, 'Keep both');
+            await Promise.all([uploaded('notes (2).txt'), uploaded('fresh.txt'), uploaded('mobile-upload (1).txt')]);
+            assert.equal(files.get(ROOT + '/notes (2).txt').toString(), 'Third copy');
+            assert.equal(files.get(ROOT + '/mobile-upload (1).txt').toString(), 'Other bytes');
+            assert.equal(files.get(ROOT + '/fresh.txt').toString(), 'Fresh');
+            assert.equal(files.get(ROOT + '/notes.txt').toString(), original);
+            assert.equal(files.get(ROOT + '/mobile-upload.txt').toString(), 'Picker upload bytes');
+
+            // Replace is an explicit answer, and the only upload that carries the overwrite flag.
+            await pick(['notes.txt', 'Replacement']);
+            await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
+            await answer(page, 'Replace');
+            await until(page, () => files.get(ROOT + '/notes.txt').toString() === 'Replacement', 'the replacement');
+            await settled(page);
+            assert.deepEqual(traffic.starts.at(-1), { path: ROOT + '/notes.txt', overwrite: true });
+            assert.equal(traffic.starts.filter((start) => start.overwrite).length, 1);
+
+            // A folder is never replaced.
+            await pick(['archive', 'A file named like the folder']);
+            await conflict(page, '“archive” already exists', ['Skip', 'Keep both']);
+            await answer(page, 'Keep both');
+            await uploaded('archive (1)');
+            assert(dirs.has(ROOT + '/archive'), 'the folder is still there');
+
+            // Two files with one name in one batch: only the first is sent, and the owner is told.
+            await pick(['twice.txt', 'First'], ['twice.txt', 'Second']);
+            await page.getByRole('alert').filter({ hasText: '“twice.txt” was added more than once.' }).waitFor();
+            assert.equal(files.get(ROOT + '/twice.txt').toString(), 'First');
+            assert.equal(traffic.starts.filter((start) => start.path === ROOT + '/twice.txt').length, 1);
+            await settled(page);
+
+            // The listing can be out of date. The server still refuses, and the owner sees why.
+            files.set(ROOT + '/late.txt', Buffer.from('Device copy'));
+            await pick(['late.txt', 'Browser copy']);
+            await page
+                .getByRole('alert')
+                .filter({ hasText: 'late.txt: An item with this name already exists.' })
+                .waitFor();
+            assert.equal(files.get(ROOT + '/late.txt').toString(), 'Device copy', 'the file on the device is kept');
+            assert.deepEqual(traffic.starts.at(-1), { path: ROOT + '/late.txt', overwrite: false });
+            await settled(page);
             traffic.hold = true;
             await page.locator('input[type=file]').setInputFiles({
                 name: 'pending-upload.txt',
