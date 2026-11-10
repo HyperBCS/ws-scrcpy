@@ -1080,7 +1080,9 @@ validation* below for what was observed and what had to change.
      there is no RSD tunnel, no DDI and no HID, so HID unlock cannot bootstrap itself. A
      passcode-protected phone therefore needs one physical unlock after every reboot before
      ws-scrcpy can see it; the Reboot action's unattended recovery only holds for a phone with no
-     passcode. The Actions sheet's *Lock screen* row says so, and the passcode is never persisted.
+     passcode. The Actions sheet's *Lock screen* row says so. (The passcode was not persisted
+     then. Since 2026-11-04 the server stores it encrypted for the scheduled unlock, and since
+     2026-11-10 the browser never holds an iPhone passcode; see the last two entries.)
 - **Input died while video kept flowing (2026-09-16).** Reported as "I unlocked the device but I
   can't control it anymore". The tracker read `Connected / session ready`, frames were arriving at
   ~30 fps, and serve-web answered `/touch`, `/key` and `/button` with **200 ok** -- but a tap on
@@ -1637,3 +1639,65 @@ covers it), whether the swipe-then-digits path works from the server the way it 
 browser (same requests, same timings), and whether a Face ID unlock resets the iOS inactivity
 timer. The integrator's hardware sequence is in the plan; the first real run should be a manual
 one with someone watching the phone.
+
+### Scheduled unlock and passcode handling after the 2026-11-10 review (fixture-tested only)
+
+Findings C-ios-unlock-1 to -10, C-client-ui-1/-4/-5 and U-settings-3/-5. Nothing below has run
+against a phone; the first real run of each path should be watched. Tests:
+`scripts/test-ios-unlock.js`, `test-ios-settings-store.js`, `test-passcode.js`, and the
+`ios-settings`, `unlock` and `ios-typing` browser suites.
+
+**One code path types an iPhone passcode: `UnlockDriver`.** `StreamClientCoreDevice.unlockWithPasscode`
+is gone. The stream page's Unlock sheet (`ApplUnlockSheet`) sends `RUN_UNLOCK_NOW` with
+`keepUnlocked: true`; the driver then skips the viewer wait and does not press Lock. With no
+stored passcode, or a rejected one, the sheet leads to Settings.
+
+**Driver.** After the swipe it calls `waitForLock(udid, true, 5 s)` and types only on `true`;
+`false` ends the run as `already-unlocked` (no Lock press: someone is using the phone),
+`'unknown'` as `unverified` with nothing typed. That means a server with `IOS_LOCK_PROBE=0`, or a
+phone the monitor does not watch, never gets a passcode typed. A viewer who still owns input
+after the three 30 s waits ends the run as `skipped-viewer` before a session is opened. Once the
+fresh reading said locked, the run ends with a Lock press whatever happens after it, including a
+failed `/key`, `/keyboard/detach` or verify. Lock is pressed once more, after 2 s (two presses
+close together are a double-click), only if the press itself failed or the phone still reads
+unlocked; an `'unknown'` reading gets no second press because that would wake a phone that did
+lock. `left-unlocked` is the outcome when the phone was unlocked and does not read locked
+afterwards. Still locked after the digits is now `failed-rejected`; `failed-still-locked` is only
+"the passcode could not be read, nothing typed". The result carries `typed` (every digit sent)
+and `openedSession` (false for a reused session).
+
+**Scheduler.** A run that typed is never retried. `failed-rejected` sets `passcodeRejectedAt` in
+the store; from then on every run, scheduled or manual, ends as `skipped-rejected` without the
+driver until `setPasscode` or `clearPasscode` clears the mark. Two typed runs in a row without a
+confirmed unlock (`unverified`, or `failed-session` after the digits) are treated the same way
+(`unconfirmedAttempts`). Whether iOS counts a repeated wrong passcode is unknown and assumed.
+`runNow('manual')` returns the promise of a run already queued or running for that phone, and
+rejects with "Try again in N s" for 2 minutes after a session-opening run, or when 3 such runs
+ended in the last 5 minutes; skipped runs and runs on a shared session do not count.
+`updateSchedule` and `setPasscode` mark the slot that has already passed as used and drop a
+pending retry, so the first run is the one the panel shows as Next run. A schedule that is on
+without a usable passcode still gets its slot, which ends as `skipped-no-passcode` or
+`skipped-rejected` and is pushed. `checkDeadline`: one push when `lastUnlockedAt` is 36 h old
+(once per value, `deadlineWarnedFor`), and between 48 h and 72 h a run outside the slot window
+at most every 2 h, only when connected, usable and not read as unlocked. The first tick pushes
+`store.getProblems()`: an unreadable settings file (now renamed to `ios-settings.json.bad`
+instead of being overwritten) or an enabled schedule whose key is missing.
+
+**Time zone.** The panel sends `Intl.DateTimeFormat().resolvedOptions().timeZone` with a time
+change and when the schedule is turned on without a zone. The store keeps it as `timeZone`;
+`nextUnlockRunAt` and `lastUnlockSlotAt` take it and do the calendar arithmetic with
+`Intl.DateTimeFormat` (no dependency). A record without a zone is still server local time, and
+the status then carries `serverTimeZone` so the panel can say so and offer "Use <browser zone>".
+No `TZ` was added to the Dockerfile or docker-compose.
+
+**Browser passcodes.** `savedPasscode.ts` moved to the key prefix
+`ws-scrcpy:remembered-passcode:` and deletes every `ws-scrcpy:passcode:*` key when the app loads
+(those were written before any unlock was confirmed). The Android sheet writes a passcode only
+when "Remember in this browser" is ticked and the descriptor confirmed the unlock, and removes
+the saved copy when a send ends unconfirmed.
+
+**Panel.** The time field keeps a draft and saves on Enter or blur (on a coarse pointer also on
+`change`, because a phone's picker hands over one finished value); it is not disabled by its
+own save. Headless Chromium's time field is 12-hour whatever the locale, so the browser test
+types `0430`. The passcode is entered twice. The group opens with a summary row; failed runs and
+a paused or blocked schedule use the error tone there, in Last run and on the device card.

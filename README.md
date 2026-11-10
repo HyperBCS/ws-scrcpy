@@ -183,10 +183,13 @@ survive a reboot, and it is not an app.
   read still returns -- it just takes about ten seconds instead of 50 ms.
 * Device power: Reboot and Shut down (each needs a second press to confirm). A
   reboot also clears a phone whose screen capture has stopped responding.
-* Lock screen: **Unlock** opens the passcode panel directly. Android and iOS
-  passcodes are saved per device in this browser's local storage when submitted,
-  then filled in next time. **Forget** removes a saved code. Codes are only sent
-  to the device when you press the submit button.
+* Lock screen: **Unlock** opens the unlock panel directly. For an iPhone the
+  server types the passcode stored for the scheduled unlock (see below); the
+  browser never holds an iPhone passcode. For Android you type the PIN or
+  password, and it is kept in this browser only if you tick **Remember in this
+  browser**, as plain text in local storage, and only after the device confirms
+  the unlock. Clearing the box forgets it. Passcodes saved by earlier versions
+  are deleted when the page loads.
 
 **A passcode changes one thing.** After a reboot, a passcode-protected iPhone
 exposes no USB data connection until it is unlocked by hand on the device -- it
@@ -201,19 +204,34 @@ Developer Mode *before* setting a passcode: a passcode blocks the toggle.
 iOS restarts a phone that has not been unlocked for 72 hours, and a restarted
 phone with a passcode disappears from USB until someone unlocks it by hand. The
 server can unlock the phone once a day instead. Open **Settings** on the iPhone
-card, store the passcode, pick a time (default 03:00, server local time) and turn
-**Unlock every day** on. At that time the server opens a screen session, presses
-Home, swipes up, types the passcode, confirms the phone is unlocked, presses Lock
-and closes the session. The run is skipped when the phone was unlocked in the
+card, store the passcode (entered twice), pick a time (default 03:00) and turn
+**Unlock every day** on. The time is in the time zone of the browser that saved
+it, which the panel names next to the time; a schedule saved before zones were
+stored stays in server time until it is saved again. At that time the server
+opens a screen session, presses Home, swipes up, reads the lock state again,
+types the passcode only if the phone is locked, confirms the phone is unlocked,
+presses Lock and closes the session. The run is skipped when the phone was unlocked in the
 last 22 hours by any means: a day, less two hours, so the server's own unlock the
 night before does not count. A run that is more than two hours late (the server
 was down at that time) is skipped too, and so is a retry that is more than two
-hours late. If the phone is not reachable, or the run fails, **Last run** in the
-panel says so and the server retries once ten minutes later. Push subscribers
-receive a notification for a failed scheduled run or an unreachable phone; for
-an unreachable phone it reads "Phone not reachable. Not connected over USB. If
-the phone restarted, unlock it once on the phone." **Run now** starts the same
-sequence by hand, ignores the 22-hour rule and is never retried.
+hours late. If the phone is not reachable, or the run fails before the passcode
+is typed, **Last run** in the panel says so and the server retries once ten
+minutes later. Push subscribers receive a notification for a failed scheduled
+run or an unreachable phone; for an unreachable phone it reads "Phone not
+reachable. Not connected over USB. If the phone restarted, unlock it once on the
+phone." **Run now** starts the same sequence by hand, ignores the 22-hour rule
+and is never retried. It is refused for two minutes after a run that opened a
+screen session, and a second press while a run is in progress joins that run.
+
+A run that typed the passcode is never retried. If the phone is still locked
+after the digits, the stored passcode is treated as rejected: the schedule is
+paused, nothing types it again, and the panel, the device card and a push say
+so until the passcode is saved again. Repeated wrong passcodes disable an
+iPhone, so the server allows one. If the phone was unlocked and does not read
+as locked after Lock was pressed twice, the run ends as "Unlocked, but the phone
+did not lock again" and is pushed. With the schedule on, a push is also sent
+when the phone has not been unlocked for 36 hours, and past 48 hours the server
+tries outside the usual time, every two hours, until the 72 hours are up.
 
 The passcode is sent to the server once, over the device-list WebSocket, and is
 never sent back to a browser. It is stored AES-256-GCM encrypted in
@@ -226,13 +244,14 @@ to the user the server runs as. When the server runs as root they are root-owned
 and moving the server to another user means entering the passcode again. Set
 `WS_IOS_SETTINGS_KEY` to 64 hex characters to supply the key from the environment
 instead of the key file. If the key file is missing, the panel shows the stored
-passcode as unreadable and no run starts until the passcode is entered again.
+passcode as unreadable and no run starts until the passcode is entered again; a
+push says so when the server starts and at each scheduled time. A settings file
+that cannot be read is kept as `ios-settings.json.bad` and reported the same way.
 
 Two things to keep in mind:
 
-* Over plain http the passcode crosses your network once in clear text, like the
-  digits typed in the Unlock panel do today. Use `npm run start:https` if other
-  people share that network.
+* Over plain http the passcode crosses your network once in clear text, when it
+  is saved. Use `npm run start:https` if other people share that network.
 * `WS_SCRCPY_DEBUG` relays every `pymobiledevice3` line, and the lines for the
   passcode step name the HID key usages, which identify the digits. Do not run with
   `WS_SCRCPY_DEBUG` while a passcode is stored, or treat that log as sensitive.
