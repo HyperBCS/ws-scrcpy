@@ -271,7 +271,9 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             if (current && options.keepUnlocked && !current.keepUnlocked) {
                 // Its "unlocked" would be reported to a viewer who then finds the phone locked.
                 return Promise.reject(
-                    new Error('Another unlock run is in progress and will lock the phone again. Try again when it ends.'),
+                    new Error(
+                        'Another unlock run is in progress and will lock the phone again. Try again when it ends.',
+                    ),
                 );
             }
             if (current) {
@@ -523,7 +525,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
         const at = this.now();
         const started = Date.now();
         let result: UnlockRunResult;
-        // Every digit was sent, and the run started a serve-web (or tried to).
+        // The last digit was sent, and the run started a serve-web (or tried to).
         let typed = false;
         let openedSession: boolean;
         try {
