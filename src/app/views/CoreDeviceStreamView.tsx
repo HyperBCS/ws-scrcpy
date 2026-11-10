@@ -41,7 +41,7 @@ const SESSION_LABEL: Record<CoreDeviceSessionState, string> = {
 export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [error, setError] = useState('');
-    const [session, setSession] = useState<{ state: CoreDeviceSessionState; message?: string }>({
+    const [session, setSession] = useState<{ state: CoreDeviceSessionState; message?: string; retrying?: boolean }>({
         state: 'starting',
     });
 
@@ -64,7 +64,8 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
             setError(cause instanceof Error ? cause.message : 'The stream could not be started.');
             return;
         }
-        const onSession = (status: { state: CoreDeviceSessionState; message?: string }) => setSession(status);
+        const onSession = (status: { state: CoreDeviceSessionState; message?: string; retrying?: boolean }) =>
+            setSession(status);
         client.on('session', onSession);
         activeCoreDeviceStream.value = { params, client };
         return () => {
@@ -92,9 +93,11 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
     // where that is disabled, which must never show as asleep or locked.
     const locked = descriptor?.['device.locked'] ?? 'unknown';
     const screenOff = descriptor?.['screen.power'] === 'off';
+    // After a failed start the socket stays closed until the next try, which can be a minute
+    // away or wait for Retry; "Connecting" would be wrong for that long.
     const statusText = error
         ? 'Unable to connect'
-        : !streamConnected.value
+        : !streamConnected.value && session.state !== 'error'
           ? 'Connecting…'
           : SESSION_LABEL[session.state];
 
@@ -155,7 +158,7 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
             >
                 <span>{session.message}</span>
                 {session.state === 'error' && active && (
-                    <button type="button" onClick={() => active.client.restartStream()}>
+                    <button type="button" onClick={() => active.client.retry()}>
                         Retry
                     </button>
                 )}
@@ -186,12 +189,16 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                     <ApplActionsSheet client={active.client} descriptor={descriptor} />
                     <ApplUnlockSheet client={active.client} />
                     <DeviceSwitcherSheet />
-                    {/* A short Side-button tap wakes the display (the proxy sends the down/up pair). */}
-                    <SleepOverlay
-                        sessionKey={active.client}
-                        screenOff={screenOff}
-                        onWake={() => active.client.pressButton('lock')}
-                    />
+                    {/* A short Side-button tap wakes the display (the proxy sends the down/up pair).
+                        Left out once the client has stopped retrying: its "Reconnecting" would be
+                        untrue, and the error notice above carries Retry. */}
+                    {!(session.state === 'error' && session.retrying === false) && (
+                        <SleepOverlay
+                            sessionKey={active.client}
+                            screenOff={screenOff}
+                            onWake={() => active.client.pressButton('lock')}
+                        />
+                    )}
                     {liveText && <LiveTextOverlay open={liveTextOpen.value} target={liveText} />}
                 </>
             )}

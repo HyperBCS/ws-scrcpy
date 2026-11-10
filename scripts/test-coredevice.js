@@ -1825,6 +1825,118 @@ test('browser side: the receiver decodes both message kinds and reconnects until
 });
 
 
+test('browser side: the receiver backs off, counts failed starts and stops after three', () => {
+    global.location = new URL('http://localhost:8000/');
+    global.atob = (value) => Buffer.from(value, 'base64').toString('binary');
+    const sockets = [];
+    class MockWebSocket {
+        static OPEN = 1;
+        OPEN = 1;
+        CONNECTING = 0;
+        CLOSED = 3;
+        readyState = 0;
+        constructor() {
+            sockets.push(this);
+        }
+        addEventListener(name, listener) {
+            this[`on_${name}`] = listener;
+        }
+        close() {
+            this.readyState = 3;
+            this.on_close?.({});
+        }
+    }
+    global.WebSocket = MockWebSocket;
+    const timers = [];
+    const realSetTimeout = global.setTimeout;
+    global.setTimeout = (callback, delay) => {
+        timers.push({ callback, delay });
+        return timers.length;
+    };
+    try {
+        const { CoreDeviceReceiver } = require('../src/app/applDevice/client/CoreDeviceReceiver');
+        const receiver = new CoreDeviceReceiver({ action: 'proxy-coredevice', udid: 'iphone-backoff' });
+        const statuses = [];
+        receiver.on('status', (status) => statuses.push(status));
+        const open = () => {
+            sockets.at(-1).readyState = 1;
+            sockets.at(-1).on_open();
+        };
+        const say = (message) => sockets.at(-1).on_message({ data: JSON.stringify(message) });
+        const close = (code) => {
+            sockets.at(-1).readyState = 3;
+            sockets.at(-1).on_close({ code });
+        };
+        const reconnect = () => timers.at(-1).callback();
+
+        // A lost connection: the delay doubles up to a minute. The server opens every socket
+        // before it starts the session, so an open socket alone must not reset the delay.
+        const delays = [];
+        for (let i = 0; i < 8; i++) {
+            open();
+            close(1006);
+            delays.push(timers.at(-1).delay);
+            reconnect();
+        }
+        assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]);
+
+        // A stream that came up resets it.
+        open();
+        say({ type: 'codec', codec: 'hev1', description: '' });
+        close(4007);
+        assert.equal(timers.at(-1).delay, 1000);
+        reconnect();
+
+        // "Not now" (4010: cooling down, phone not attached) is retried and is not a failed start.
+        for (let i = 0; i < 5; i++) {
+            open();
+            close(4010);
+            reconnect();
+        }
+        assert.equal(receiver.isWaitingForRetry(), false);
+
+        // Three starts that were tried and failed: no fourth without the person asking.
+        const scheduled = timers.length;
+        for (let i = 0; i < 3; i++) {
+            open();
+            say({ type: 'status', state: 'starting' });
+            say({ type: 'status', state: 'error', message: 'The screen stream exited (3)' });
+            close(4009);
+            if (i < 2) reconnect();
+        }
+        assert.equal(timers.length, scheduled + 2, 'the third failure schedules no reconnect');
+        assert.equal(receiver.isWaitingForRetry(), true);
+        assert.deepEqual(statuses.at(-1), {
+            state: 'error',
+            message: 'The screen stream exited (3). Stopped retrying after 3 failed starts.',
+            retrying: false,
+        });
+
+        // Retry connects at once and counts from the start again.
+        const opened = sockets.length;
+        receiver.retry();
+        assert.equal(sockets.length, opened + 1);
+        assert.equal(receiver.isWaitingForRetry(), false);
+        open();
+        say({ type: 'status', state: 'error', message: 'The screen stream exited (3)' });
+        close(4009);
+        assert.equal(timers.at(-1).delay, 1000);
+        reconnect();
+
+        // The start budget is used up (4011): stop at once and keep the server's wording.
+        const budget = "This phone's screen session was started 3 times in the last 5 min. The next start is allowed in 2 min.";
+        open();
+        say({ type: 'status', state: 'error', message: budget });
+        const before = timers.length;
+        close(4011);
+        assert.equal(timers.length, before);
+        assert.equal(receiver.isWaitingForRetry(), true);
+        assert.deepEqual(statuses.at(-1), { state: 'error', message: budget, retrying: false });
+        receiver.stop();
+    } finally {
+        global.setTimeout = realSetTimeout;
+    }
+});
 
 // Static assets pulled in by the client modules (icons, touch-point images) are not code.
 for (const ext of ['.svg', '.png', '.css']) {

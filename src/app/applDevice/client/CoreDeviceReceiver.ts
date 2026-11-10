@@ -13,7 +13,8 @@ import { AudioFrame, audioErrorMetadata, parseAudioPacket } from '../../client/a
 export interface CoreDeviceReceiverEvents {
     connected: void;
     disconnected: void;
-    status: { state: CoreDeviceSessionState; message?: string };
+    // `retrying: false` marks the error after which the receiver waits for `retry()`.
+    status: { state: CoreDeviceSessionState; message?: string; retrying?: boolean };
     codec: { codec: string; description: Uint8Array };
     video: Uint8Array;
     clipboard: { text: string | null; error?: string };
@@ -26,7 +27,15 @@ export interface CoreDeviceReceiverEvents {
 export type ParamsCoreDeviceReceiver = ParamsBase & { udid: string };
 
 const RECONNECT_BASE_MS = 1000;
-const RECONNECT_MAX_MS = 10000;
+const RECONNECT_MAX_MS = 60000;
+// Every failed start is a short display session on the phone, and a burst of those wedges its
+// display service until a reboot. The server spaces and limits starts as well; this is the
+// viewer's share: stop asking after a few and leave the next try to the person.
+const MAX_FAILED_STARTS = 3;
+// `CoreDeviceProxy` close codes. 4009: a start was tried and failed. 4011: the phone's start
+// budget is used up. Any other close (4010 "not now", a dropped connection) is retried.
+const CLOSE_START_FAILED = 4009;
+const CLOSE_START_BUDGET = 4011;
 
 function decodeBase64(value: string): Uint8Array {
     const binary = atob(value);
@@ -39,14 +48,18 @@ function decodeBase64(value: string): Uint8Array {
 
 /**
  * The browser end of `CoreDeviceProxy`. Binary messages are video access units, text messages
- * are JSON; see `CoreDeviceProtocol`. Reconnects with backoff after any close, as the Android
- * `StreamReceiver` does, so a server-side session restart is a short freeze rather than a dead
- * page. `stop()` is final.
+ * are JSON; see `CoreDeviceProtocol`. Reconnects with a growing delay after a close, as the
+ * Android `StreamReceiver` does, so a server-side session restart is a short freeze rather than a
+ * dead page. After `MAX_FAILED_STARTS` failed starts in a row it stops and waits for `retry()`.
+ * `stop()` is final.
  */
 export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, CoreDeviceReceiverEvents> {
     public static readonly ACTION = ACTION.PROXY_COREDEVICE;
     private stopped = false;
     private attempts = 0;
+    private failedStarts = 0;
+    private waitingForRetry = false;
+    private lastError?: string;
     private reconnectTimer?: ReturnType<typeof setTimeout>;
     private ready = false;
     private audioMetadata?: AudioMetadata;
@@ -101,8 +114,36 @@ export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, 
     }
 
     protected onSocketOpen(): void {
-        this.attempts = 0;
+        // The server accepts the socket before it starts the session, so an open socket says
+        // nothing about the stream. The counters reset when the codec arrives.
         this.emit('connected', undefined as never);
+    }
+
+    /** True after the receiver gave up reconnecting; `retry()` starts it again. */
+    public isWaitingForRetry(): boolean {
+        return this.waitingForRetry;
+    }
+
+    /**
+     * Starts counting afresh and connects now. For a Retry button. While a socket is open, or is
+     * still opening or closing, the normal reconnect handling carries on from the reset counters.
+     */
+    public retry(): void {
+        if (this.stopped) {
+            return;
+        }
+        this.attempts = 0;
+        this.failedStarts = 0;
+        if (this.ws && this.ws.readyState !== this.ws.CLOSED) {
+            return;
+        }
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = undefined;
+        }
+        this.waitingForRetry = false;
+        this.openNewConnection();
+        this.prepareSocket();
     }
 
     protected onSocketMessage(event: MessageEvent): void {
@@ -119,10 +160,14 @@ export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, 
             switch (message.type) {
                 case 'status':
                     this.ready = message.state === 'ready';
+                    this.lastError = message.state === 'error' ? message.message : undefined;
                     this.emit('status', { state: message.state, message: message.message });
                     return;
                 case 'codec':
                     this.ready = true;
+                    // The session is up: the next disconnect starts from the short delay again.
+                    this.attempts = 0;
+                    this.failedStarts = 0;
                     this.emit('codec', { codec: message.codec, description: decodeBase64(message.description) });
                     return;
                 case 'clipboard':
@@ -167,7 +212,7 @@ export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, 
         }
     }
 
-    protected onSocketClose(): void {
+    protected onSocketClose(event?: CloseEvent): void {
         this.ready = false;
         // The next session may run a different helper process; its audio state starts over.
         this.audioMetadata = undefined;
@@ -176,7 +221,24 @@ export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, 
         if (this.stopped) {
             return;
         }
-        const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** Math.min(this.attempts, 4));
+        const code = event?.code;
+        if (code === CLOSE_START_FAILED) {
+            this.failedStarts++;
+        }
+        if (code === CLOSE_START_BUDGET || this.failedStarts >= MAX_FAILED_STARTS) {
+            this.waitingForRetry = true;
+            const reason = this.lastError || 'The phone stream could not be started.';
+            this.emit('status', {
+                state: 'error',
+                message:
+                    code === CLOSE_START_BUDGET
+                        ? reason
+                        : `${reason.replace(/\.?$/, '.')} Stopped retrying after ${this.failedStarts} failed starts.`,
+                retrying: false,
+            });
+            return;
+        }
+        const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** Math.min(this.attempts, 6));
         this.attempts++;
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = undefined;
