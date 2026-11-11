@@ -1,0 +1,84 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* Two to four options of which one is chosen (`ui/SegmentedControl.tsx`). The markup is a group
+   of radio buttons, so the arrow keys move the choice:
+   <div class="kit-segmented" role="radiogroup" aria-label="...">
+     <label class="kit-segment"><input type="radio" name="..."><span>Auto</span></label> ...
+   The input fills its segment and draws the chosen fill; the text sits over it. */
+.kit-segmented {
+    display: inline-flex;
+    gap: 2px;
+    box-sizing: border-box;
+    max-width: 100%;
+    padding: 2px;
+    border-radius: var(--radius-md);
+    background: var(--surface-sunken);
+}
+.kit-segmented-full {
+    display: flex;
+}
+.kit-segment {
+    position: relative;
+    display: flex;
+    flex: 0 1 auto;
+    min-width: 0;
+}
+.kit-segmented-full > .kit-segment {
+    flex: 1 1 0;
+}
+.kit-segment > input {
+    appearance: none;
+    -webkit-appearance: none;
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    cursor: pointer;
+    transition:
+        background-color var(--motion-fast) ease,
+        box-shadow var(--motion-fast) ease;
+}
+.kit-segment > span {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1 1 auto;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: var(--control-height);
+    padding: 0 var(--space-12);
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+}
+.kit-segment > input:checked {
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-control);
+}
+.kit-segment > input:checked + span {
+    color: var(--text);
+}
+/* Inside the segment: the ring of the chosen option must not be cut by the track's edge. */
+.kit-segment > input:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: calc(var(--focus-ring-offset) * -1);
+}
+.kit-segment > input:disabled {
+    cursor: default;
+}
+.kit-segment > input:disabled + span {
+    opacity: var(--disabled-opacity);
+}
+}
