@@ -2018,3 +2018,124 @@ Where two packages changed the same thing, the merge kept one behaviour:
 - A tool page whose lazy chunk fails to download (a tab left open across a deploy) offers Reload
   instead of Reconnect.
 
+### Scheduled unlock every 12 hours, and the 24-hour lockout (2026-11-11, fixture-tested only)
+
+This section replaces the daily slot, the 22-hour skip, the two-hour slot window, the single
+retry and the 36 h / 48 h deadline logic described in the three scheduled-unlock sections above.
+The driver sequence, the pause after a rejected passcode, the fresh lock reading before typing,
+Lock after a failed step, the start budget and the session holds are unchanged. Nothing below has
+run against a phone. Tests: `scripts/test-ios-unlock.js`, `test-ios-settings-store.js`,
+`test-passcode.js`, and the `ios-settings` browser suite (`lockoutFlow`).
+
+**What happened.** On the live server the 03:00 UTC run of 2026-11-11 failed twice with
+"Device is password protected. Please unlock and retry." The phone (iOS 27.2) had not restarted.
+It refuses every new service connection (mount, the CoreDevice tunnel, diagnostics, syslog) once
+about 24 hours have passed since its passcode was last entered: serve-web was spawned 24 h and
+0.14 s after the last server-typed unlock and was refused, while a session 21.4 h after it had
+worked. A lockdown connection opened before the mark (`notification observe`) stayed open after
+it. This is inferred from that one event. In this state nothing remote works, the unlock
+included; the passcode has to be entered on the phone. The run fired from a 60 s `setInterval`
+whose phase was set when the process started, so a container restart moved it a few seconds
+later, past the mark. iOS still restarts a phone that has not been unlocked for 72 hours, but the
+24-hour limit comes first, so nothing in the code waits for the 72 hours any more.
+
+**Two slots a day.** The stored schedule keeps its single `time`. `nextUnlockRunAt` and
+`lastUnlockSlotAt` (`src/common/IosUnlockSchedule.ts`) now work on a list of slots: `time` on
+each calendar day in the schedule's zone (server local time without one), and one slot halfway
+to the next day's `time`. That is 12 hours later on every day but the two with a clock change,
+where the 23 or 25 hours are split evenly (11 h 30 min, 12 h 30 min). A second slot at a fixed
+12 hours or at a fixed clock time leaves one 13-hour gap in autumn, which the skip rule below
+has no margin for. The panel's switch and the card line's title name the second slot by its
+clock time (`secondUnlockTime`, "03:00 and 15:00"). The panel's summary and the card line show
+the next run from `nextRunAt` ("next 15:00"): the next of the two slots, or a retry before it.
+On the two days with a clock change that is the real moment, half an hour off the named time.
+The interval is `UNLOCK_INTERVAL_MS`, a constant.
+
+**Start by the clock.** `UnlockScheduler.armTick` arms one timer for the next whole minute of
+the clock and re-arms it each time, so a run starts within a second of its slot whatever second
+the process started at. A timer that fires early leaves a short remainder and is armed again
+for it. The tick five seconds after start stays, and a minute that falls inside those five
+seconds is left to it: the tracker has not listed the phones yet, and a run would end as
+`skipped-disconnected`. So a server restarted within five seconds of a slot starts that run up
+to five seconds late; any earlier restart does not move it.
+
+**A slot owes a run until it is settled** (`tickDevice`, `settleSlot`). When a slot arrives,
+`lastSlotAt` is written and `retryAt` is set to the slot: "a run is owed, not before this time".
+The run starts at the first tick where `retryAt` has passed, no run is in progress and the phone
+is not in use. Before it starts, `retryAt` is moved an hour on, so a server that crashes during
+runs does not open a session at every restart. The result then decides:
+- worked, skipped for a final reason, typed the passcode, or the lockout below: `retryAt` is
+  removed;
+- a failure that typed nothing (`RETRIED_OUTCOMES`): `retryAt` is ten minutes on after the first
+  failure and an hour on after each later one (`slotAttempts` counts them). A retry that fails
+  with the same outcome and message as the run before is not pushed again;
+- `already-unlocked`: the slot stays owed (see "Phone in use").
+The next slot replaces whatever the one before still owed. There is no slot window any more: a
+slot the server was down for runs when the server is back, because waiting for the next slot
+can pass the 24 hours. Every start still goes through `CoreDeviceRunner.acquire`, so the start
+budget applies to the retries.
+
+**Skip rule.** `skipped-recent` now means: the server typed the passcode, and saw the phone
+unlock, less than `UNLOCK_SKIP_WINDOW_MS` (11 h) before the slot: 24 hours, less the 12 to the
+next slot, less 1 of margin, derived from those three constants. It is measured from the slot,
+not from the time the run starts. The store has a new `lastTypedUnlockAt`, written only when a
+run ends `unlocked`, or `left-unlocked` after typing. `lastUnlockedAt` is still any unlock that
+was seen and no longer skips anything: it may have been Face ID. In normal operation every slot
+runs, since the unlock 12 hours earlier is outside the window; the rule only skips a slot after
+Run now, the stream page's Unlock, or a late run.
+
+**Phone in use.** If the monitor's cached `device.locked` is `false` when a run is due, nothing
+is started: no session, no passcode, no Lock press, no recorded run. `retryAt` stays in the past
+and the run starts at the first tick where the phone no longer reads unlocked, any time before
+the next slot. The status carries `waitingForLock` meanwhile (broadcast once), which the panel
+shows as "Runs when the phone is next locked". If the driver's own fresh reading finds the phone
+unlocked after a session was opened, the slot stays owed and is looked at again ten minutes
+later. An unknown lock state does not wait: the driver decides, and types only on a fresh
+locked reading.
+
+**The lockout.** `isPasscodeLockout` (`IosUnlockSchedule.ts`) is the one place the refusal is
+matched: pymobiledevice3 11.44.0's `PasswordRequiredError` text ("Device is password protected.
+Please unlock and retry."), its start-service wording ("The device is protected with a passcode.
+Unlock it and try again."), the lockdown code `PasswordProtected`, and the plain sentence below.
+`CoreDeviceRunner` checks the mount's stderr and serve-web's stderr tail with it and fails the
+session with `UNLOCK_BY_HAND_MESSAGE`: "The iPhone stopped accepting connections. Enter the
+passcode on the phone." That is what the device card's session line and the stream page show to
+a viewer (`CoreDeviceStreamView` titles the card "Unlock the iPhone by hand" and drops the retry
+count the receiver appends). A refused mount spawns nothing and uses no start budget; a refused
+serve-web counts one start and sets the usual 30 s cooldown. `UnlockDriver` turns such a failed
+`acquire` into the new outcome `needs-manual-unlock`. The scheduler then: sets `lockedOutAt` in
+the store (status `needsManualUnlock`), pushes the sentence at once for a scheduled run (tag
+`ios-unlock-<udid>`), does not retry, does not touch `passcodeRejectedAt` or
+`unconfirmedAttempts`, and marks the 20-hour warning as sent. The next slot tries again and
+pushes again if it is still refused. `lockedOutAt` is removed when a run gets a session
+(`REACHED_OUTCOMES`), when the monitor reports `device.locked: false`, or when `screen.power`
+becomes known after `unknown`: the screen is read over a new diagnostics connection each time,
+so a reading means the phone accepts connections. A lock reading alone does not count, because
+the observer's old connection keeps delivering them. `isUnlockProblem` is false for the new
+outcome; the panel and the card show the problem from `needsManualUnlock`, so a cleared state
+leaves only the Last run row.
+
+**Warning.** `checkWarning` replaces `checkDeadline`: with the schedule on, one push (tag
+`ios-unlock-deadline-<udid>`) when `lastTypedUnlockAt` is 20 hours old (`UNLOCK_WARN_MS`), or
+`lastUnlockedAt` when the store has no typed time, with the hours left to 24. It is sent once
+per value (`warnedFor`), not while the phone reads unlocked and not while `lockedOutAt` is set.
+Past 24 hours it says the phone has probably stopped accepting connections. The runs outside the
+slot window past 48 hours are gone, with `lastTimerRunAt`.
+
+**Existing data.** `sanitizeUnlock` reads a stored `lastRun` of `failed-session` whose message
+matches `isPasscodeLockout` as `needs-manual-unlock` and sets `lockedOutAt` from its time, so
+the live file (schedule on, 03:00, no zone, that last run) loads and shows the hand-unlock
+state. On the live server the first screen reading after the upgrade removes it if the passcode
+has been entered since. `lastSlotAt` in that file is the 03:00 slot, so the first run is the
+next slot. Fields the new code does not know (`deadlineWarnedFor`, `lastTimerRunAt`) are
+dropped on load.
+
+**Fixture.** `FAKE_PASSCODE_LOCKOUT=mount` or `serve-web` makes that step fail with the
+`PasswordRequiredError` line.
+
+**Not verified on hardware.** That the limit is 24 hours from the passcode entry on every
+iOS version; whether a Face ID unlock moves it; whether a phone that is unlocked and in use at
+the 24-hour mark still refuses connections; that `diagnostics ioregistry` is refused in the
+same way as the mount (the clearing rule depends on it); and how serve-web words the refusal
+when the tunnel, not the mount, is refused (only the bare message from the live log is known).
+

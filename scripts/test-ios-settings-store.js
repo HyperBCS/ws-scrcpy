@@ -390,7 +390,7 @@ test('a rejected passcode is marked in the status, stops nextRunAt, and is clear
     store.setPasscode('iphone-r', '4321');
     store.updateSchedule('iphone-r', { enabled: true });
     assert.equal(store.getSchedule('iphone-r').passcodeRejected, undefined);
-    store.setRunState('iphone-r', { passcodeRejectedAt: 1700000000000, unconfirmedAttempts: 1, deadlineWarnedFor: 5 });
+    store.setRunState('iphone-r', { passcodeRejectedAt: 1700000000000, unconfirmedAttempts: 1, warnedFor: 5 });
     const rejected = new IosSettingsStore(dir).getSchedule('iphone-r');
     assert.equal(rejected.passcodeRejected, true, 'survives a restart');
     assert.equal(rejected.hasPasscode, true);
@@ -398,15 +398,15 @@ test('a rejected passcode is marked in the status, stops nextRunAt, and is clear
     assert.deepEqual(store.getRunState('iphone-r'), {
         passcodeRejectedAt: 1700000000000,
         unconfirmedAttempts: 1,
-        deadlineWarnedFor: 5,
+        warnedFor: 5,
     });
 
     const saved = store.setPasscode('iphone-r', '8765');
     assert.equal(saved.passcodeRejected, undefined);
     assert.equal(typeof saved.nextRunAt, 'number');
-    assert.deepEqual(store.getRunState('iphone-r'), { deadlineWarnedFor: 5 }, 'the mark belongs to the old passcode');
+    assert.deepEqual(store.getRunState('iphone-r'), { warnedFor: 5 }, 'the mark belongs to the old passcode');
 
-    store.setRunState('iphone-r', { passcodeRejectedAt: 1700000000000, deadlineWarnedFor: undefined });
+    store.setRunState('iphone-r', { passcodeRejectedAt: 1700000000000, warnedFor: undefined });
     assert.deepEqual(store.getRunState('iphone-r'), { passcodeRejectedAt: 1700000000000 });
     assert.equal(store.clearPasscode('iphone-r').passcodeRejected, undefined);
     assert.deepEqual(store.getRunState('iphone-r'), {});
@@ -437,6 +437,63 @@ test('a last run saved as still locked after typing, before the review, is read 
     assert.equal(new IosSettingsStore(dir).getSchedule('iphone-old').passcodeRejected, undefined, 'and stays resumed');
 });
 
+test('a last run that failed on "password protected" before 2026-11-11 is read as needing an unlock by hand', () => {
+    const dir = freshDir();
+    const store = new IosSettingsStore(dir);
+    const failed = (message) => ({ at: 1700000000000, trigger: 'schedule', outcome: 'failed-session', message });
+    // The first attempt of that night (serve-web's tunnel refused), its retry (the mount refused),
+    // and a session failure that has nothing to do with the passcode.
+    const records = {
+        'iphone-tunnel': failed('Device is password protected. Please unlock and retry.'),
+        'iphone-mount': failed(
+            'Could not mount the Developer Disk Image: Device is password protected. Please unlock and retry.',
+        ),
+        'iphone-other': failed('home: Request timed out'),
+    };
+    for (const udid of Object.keys(records)) {
+        store.setPasscode(udid, '4321');
+        store.updateSchedule(udid, { enabled: true });
+    }
+    const file = readJson(dir);
+    for (const [udid, lastRun] of Object.entries(records)) {
+        Object.assign(file.devices[udid].unlock, { lastRun, lastUnlockedAt: 1699913000000, lastTimerRunAt: 1700000000000 });
+    }
+    writeJson(dir, file);
+
+    const reloaded = new IosSettingsStore(dir);
+    for (const udid of ['iphone-tunnel', 'iphone-mount']) {
+        const status = reloaded.getSchedule(udid);
+        assert.equal(status.needsManualUnlock, true, udid);
+        assert.deepEqual(status.lastRun, {
+            at: 1700000000000,
+            trigger: 'schedule',
+            outcome: 'needs-manual-unlock',
+            message: 'Enter the passcode on the phone.',
+        });
+        assert.equal(status.enabled, true);
+        assert.equal(status.hasPasscode, true);
+        assert.equal(status.passcodeRejected, undefined, 'the passcode was never typed');
+        assert.equal(typeof status.nextRunAt, 'number', 'the schedule goes on without being saved again');
+        assert.deepEqual(reloaded.getRunState(udid), { lastUnlockedAt: 1699913000000, lockedOutAt: 1700000000000 });
+        assert.equal(reloaded.readPasscode(udid), '4321');
+    }
+    const other = reloaded.getSchedule('iphone-other');
+    assert.equal(other.needsManualUnlock, undefined);
+    assert.equal(other.lastRun.outcome, 'failed-session');
+
+    // The scheduler removes the mark once the phone is reachable; the last run stays what it was.
+    reloaded.setRunState('iphone-mount', { lockedOutAt: undefined, lastTypedUnlockAt: 1700040000000, slotAttempts: 2 });
+    const again = new IosSettingsStore(dir);
+    assert.equal(again.getSchedule('iphone-mount').needsManualUnlock, undefined, 'not marked again by the next load');
+    assert.equal(again.getSchedule('iphone-mount').lastRun.outcome, 'needs-manual-unlock');
+    assert.deepEqual(again.getRunState('iphone-mount'), {
+        lastUnlockedAt: 1699913000000,
+        lastTypedUnlockAt: 1700040000000,
+        slotAttempts: 2,
+    });
+    assert.equal(again.getSchedule('iphone-tunnel').needsManualUnlock, true);
+});
+
 test('defaults, schedule patches, nextRunAt and the scheduler bookkeeping survive a reload', () => {
     const dir = freshDir();
     const store = new IosSettingsStore(dir);
@@ -454,14 +511,14 @@ test('defaults, schedule patches, nextRunAt and the scheduler bookkeeping surviv
     assert.equal(enabled.nextRunAt, undefined, 'no next run without a passcode');
     const armed = store.setPasscode('iphone-s', '0000');
     assert(armed.nextRunAt > before, 'the next run is in the future');
-    assert(armed.nextRunAt <= Date.now() + DAY, 'and within a day');
+    assert(armed.nextRunAt <= Date.now() + DAY / 2 + 3600000, 'and within half a day: the schedule has two slots');
     assert.equal(nextUnlockRunAt('03:00', before) > before && nextUnlockRunAt('03:00', before) <= before + DAY, true);
 
     const timed = store.updateSchedule('iphone-s', { time: '23:15' });
     assert.equal(timed.time, '23:15');
     const expected = nextUnlockRunAt('23:15', Date.now());
     assert(Math.abs(timed.nextRunAt - expected) <= 1000);
-    assert.equal(new Date(timed.nextRunAt).getHours(), 23);
+    assert.equal(new Date(timed.nextRunAt).getHours() % 12, 11, '23:15, or 11:15 twelve hours from it');
     assert.equal(new Date(timed.nextRunAt).getMinutes(), 15);
     assert.equal(store.updateSchedule('iphone-s', { enabled: false }).nextRunAt, undefined);
     assert.equal(store.updateSchedule('iphone-s', { enabled: true, time: '06:00' }).time, '06:00');

@@ -236,7 +236,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         // A failed scheduled unlock: a problem line whose action opens the settings panel.
         const unlock = card(page, 'ios:HOME-IPHONE-UNLOCK');
         const unlockLine = unlock.locator('.device-problem[data-problem="unlock"]');
-        assert.match(await unlockLine.locator('.device-unlock-schedule.problem').textContent(), /^Scheduled unlock 03:00 · /);
+        assert.match(await unlockLine.locator('.device-unlock-schedule.problem').textContent(), /^Scheduled unlock 03:00 and 15:00 · /);
         assert.equal(await unlock.locator('.device-meta .device-unlock-schedule').count(), 0, 'the problem is not repeated in the meta line');
         await unlock.getByText('Screen is asleep.', { exact: true }).waitFor();
         await page.screenshot({ path: path.join(OUT, `devices-${label}.png`), fullPage: true });

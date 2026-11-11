@@ -55,7 +55,9 @@ export function ApplUnlockSheet({ client }: { client: StreamClientCoreDevice }) 
         };
         runUnlockNow(tracker, udid, { keepUnlocked: true }).then(
             (result: UnlockRunResult) => {
-                const text = `${unlockOutcomeText(result.outcome)}${result.message ? `. ${result.message}` : ''}.`;
+                // Some messages end their own sentence, such as "Enter the passcode on the phone."
+                const message = result.message?.replace(/\.$/, '');
+                const text = `${unlockOutcomeText(result.outcome)}${message ? `. ${message}` : ''}.`;
                 const unlocked = result.outcome === 'unlocked' || result.outcome === 'already-unlocked';
                 // Nothing is sent again on a failure; the next attempt is the owner's decision.
                 settle(unlocked ? 'confirmed' : 'failed', text);

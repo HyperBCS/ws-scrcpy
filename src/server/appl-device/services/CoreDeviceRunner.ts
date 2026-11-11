@@ -3,6 +3,7 @@ import { ChildProcess } from 'child_process';
 import * as portfinder from 'portfinder';
 import { TypedEmitter } from '../../../common/TypedEmitter';
 import { CoreDeviceSessionState } from '../../../common/CoreDeviceProtocol';
+import { isPasscodeLockout, UNLOCK_BY_HAND_MESSAGE } from '../../../common/IosUnlockSchedule';
 import { Service } from '../../services/Service';
 import { PyMobileDevice } from './PyMobileDevice';
 import { CoreDeviceAudioRelay } from './CoreDeviceAudio';
@@ -552,6 +553,9 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         // failure worth naming, because the fix is a toggle on the phone.
         const mount = await PyMobileDevice.runOneShot(['mounter', 'auto-mount', '--udid', udid], MOUNT_TIMEOUT_MS);
         if (mount.code !== 0) {
+            if (isPasscodeLockout(mount.stderr)) {
+                throw new Error(UNLOCK_BY_HAND_MESSAGE);
+            }
             const reason = PyMobileDevice.explain(mount.stderr);
             if (/DeveloperMode/i.test(reason)) {
                 throw new Error('Developer Mode is off on the phone (Settings > Privacy & Security > Developer Mode).');
@@ -599,18 +603,17 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
             });
             child.on('close', (code, signal) => {
                 exited = true;
+                // serve-web brings the tunnel up itself, so a phone that refuses it shows here.
+                const reason = isPasscodeLockout(session.stderrTail)
+                    ? UNLOCK_BY_HAND_MESSAGE
+                    : PyMobileDevice.explain(session.stderrTail) || `The screen stream exited (${signal || code})`;
                 if (this.sessions.get(udid) === session && session.child === child) {
                     // The failed session stays registered so the device card can show why; the
                     // next `acquire()` replaces it with a fresh process.
                     session.child = undefined;
-                    const reason = PyMobileDevice.explain(session.stderrTail);
-                    this.fail(session, reason || `The screen stream exited (${signal || code})`);
+                    this.fail(session, reason);
                 }
-                reject(
-                    new Error(
-                        PyMobileDevice.explain(session.stderrTail) || `The screen stream exited (${signal || code})`,
-                    ),
-                );
+                reject(new Error(reason));
             });
         });
         // A session stopped between two polls is nobody's to await; its exit is not an error.

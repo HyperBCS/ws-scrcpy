@@ -1,4 +1,9 @@
-import { UNLOCK_NOT_TYPED_MESSAGE, UnlockRunOutcome } from '../../../common/IosUnlockSchedule';
+import {
+    isPasscodeLockout,
+    UNLOCK_BY_HAND_ACTION,
+    UNLOCK_NOT_TYPED_MESSAGE,
+    UnlockRunOutcome,
+} from '../../../common/IosUnlockSchedule';
 import { clampHid } from '../../../common/CoreDeviceProtocol';
 import { hidUsageForCode } from '../../../app/applDevice/hidKeyboard';
 import { CoreDeviceRunner, HttpReply, SessionHold, SessionStartError, StartRefusedError } from './CoreDeviceRunner';
@@ -56,6 +61,7 @@ export type UnlockDriverOutcome = Extract<
     | 'failed-rejected'
     | 'unverified'
     | 'left-unlocked'
+    | 'needs-manual-unlock'
 >;
 
 export interface UnlockDriverResult {
@@ -118,7 +124,9 @@ class StepError extends Error {
  * that was unlocked and does not read locked afterwards is `left-unlocked`.
  *
  * A freshly rebooted phone cannot be unlocked this way: until the passcode is entered on the
- * device, iOS keeps the USB data connection shut, so there is no tunnel to carry HID.
+ * device, iOS keeps the USB data connection shut, so there is no tunnel to carry HID. Nor can a
+ * phone whose passcode was last entered 24 hours ago: it refuses the mount and the tunnel, and
+ * the run ends as `needs-manual-unlock`.
  *
  * Responsibility split: only `UnlockScheduler` calls `run`, one run at a time per process. The
  * driver never touches the store: the scheduler hands it `readPasscode`, which the driver calls
@@ -189,11 +197,12 @@ export class UnlockDriver {
             // session on the phone, so it does not count toward the Run now cooldown.
             const nothingStarted =
                 error instanceof StartRefusedError || (error instanceof SessionStartError && !error.serveWebStarted);
-            return {
-                outcome: 'failed-session',
-                message: (error as Error).message,
-                openedSession: !reused && !nothingStarted,
-            };
+            const openedSession = !reused && !nothingStarted;
+            const reason = (error as Error).message;
+            // The phone refuses connections until its passcode is entered on it. No retry helps.
+            return isPasscodeLockout(reason)
+                ? { outcome: 'needs-manual-unlock', message: UNLOCK_BY_HAND_ACTION, openedSession }
+                : { outcome: 'failed-session', message: reason, openedSession };
         }
         let touched = false;
         let keyboardAttached = false;

@@ -206,27 +206,48 @@ Developer Mode *before* setting a passcode: a passcode blocks the toggle.
 
 #### Scheduled unlock
 
-iOS restarts a phone that has not been unlocked for 72 hours, and a restarted
-phone with a passcode disappears from USB until someone unlocks it by hand. The
-server can unlock the phone once a day instead. Open **Settings** on the iPhone
-card, store the passcode (entered twice), pick a time (default 03:00) and turn
-**Unlock every day** on. The time is in the time zone of the browser that saved
-it, which the panel names next to the time; a schedule saved before zones were
-stored stays in server time until it is saved again. At that time the server
-opens a screen session, presses Home, swipes up, reads the lock state again,
-types the passcode only if the phone is locked, confirms the phone is unlocked,
-presses Lock and closes the session. The run is skipped when the phone was unlocked in the
-last 22 hours by any means: a day, less two hours, so the server's own unlock the
-night before does not count. A run that is more than two hours late (the server
-was down at that time) is skipped too, and so is a retry that is more than two
-hours late. If the phone is not reachable, or the run fails before the passcode
-is typed, **Last run** in the panel says so and the server retries once ten
-minutes later. Push subscribers receive a notification for a failed scheduled
-run or an unreachable phone; for an unreachable phone it reads "Phone not
-reachable. Not connected over USB. If the phone restarted, unlock it once on the
-phone." **Run now** starts the same sequence by hand, ignores the 22-hour rule
-and is never retried. It is refused for two minutes after a run that opened a
-screen session, and a second press while a run is in progress joins that run.
+An iPhone with a passcode stops accepting new connections 24 hours after the
+passcode was last entered (inferred from one event on iOS 27.2). After that
+nothing remote works, the unlock included, until the passcode is entered on the
+phone. iOS also restarts a phone that has not been unlocked for 72 hours; the
+24-hour limit comes first. The server can
+enter the passcode twice a day instead. Open **Settings** on the iPhone card,
+store the passcode (entered twice), pick a time (default 03:00) and turn
+**Unlock twice a day** on. The phone is unlocked at that time and 12 hours
+later. The time is in the time zone of the browser that saved it, which the
+panel names next to the time; a schedule saved before zones were stored stays in
+server time until it is saved again. On the two days a year the clocks change,
+the second run is halfway between the two set times, so no gap is longer than
+12 and a half hours.
+
+At each of the two times the server opens a screen session, presses Home,
+swipes up, reads the lock state again, types the passcode only if the phone is
+locked, confirms the phone is unlocked, presses Lock and closes the session.
+Runs start on the minute. A run is skipped only when the server itself typed
+the passcode less than 11 hours before that time; an unlock the server only saw
+does not count, because it may have been Face ID. If the phone is in use
+(unlocked) at that time, nothing is started; the run happens when the phone is
+next locked, any time before the following run. A run the server was down for
+happens when the server is back.
+
+If the phone is not reachable, or the run fails before the passcode is typed,
+**Last run** in the panel says so and the server tries again ten minutes later,
+then once an hour, until a run works or the next of the two times arrives. Push
+subscribers receive a notification for a failed scheduled run or an unreachable
+phone; a retry that fails the same way is not pushed again. For an unreachable
+phone it reads "Phone not reachable. Not connected over USB. If the phone
+restarted, unlock it once on the phone." **Run now** starts the same sequence by
+hand, ignores the 11-hour rule and is never retried. It is refused for two
+minutes after a run that opened a screen session, and a second press while a
+run is in progress joins that run.
+
+When the phone answers that it is password protected, the 24 hours are over.
+The run ends at once, without a retry, and the panel, the device card, a push
+and the stream page say: "The iPhone stopped accepting connections. Enter the
+passcode on the phone." The stored passcode is not marked as rejected. The next
+of the two times tries again, and the notice goes away when a run or a screen
+reading reaches the phone again. With the schedule on, a push is also sent when
+the passcode was last entered 20 hours ago, with the hours left.
 
 A run that typed the passcode is never retried. If the phone is still locked
 after the digits, the stored passcode is treated as rejected: the schedule is
@@ -236,9 +257,7 @@ iPhone, so the server allows one. A schedule whose last run under an earlier
 version ended "Failed: the phone is still locked" after typing is paused the
 same way. If the phone was unlocked and does not read
 as locked after Lock was pressed twice, the run ends as "Unlocked, but the phone
-did not lock again" and is pushed. With the schedule on, a push is also sent
-when the phone has not been unlocked for 36 hours, and past 48 hours the server
-tries outside the usual time, every two hours, until the 72 hours are up.
+did not lock again" and is pushed.
 
 The passcode is sent to the server once, over the device-list WebSocket, and is
 never sent back to a browser. It is stored AES-256-GCM encrypted in

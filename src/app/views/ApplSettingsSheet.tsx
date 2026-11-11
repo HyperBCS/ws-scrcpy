@@ -18,7 +18,9 @@ import {
     isValidUnlockPasscode,
     isValidUnlockTime,
     localTimeZone,
+    secondUnlockTime,
     unlockOutcomeText,
+    UNLOCK_BY_HAND_MESSAGE,
     UnlockRunOutcome,
     UnlockRunResult,
     UnlockSchedulePatch,
@@ -33,13 +35,19 @@ const DEFAULT_STATUS: UnlockScheduleStatus = { enabled: false, time: DEFAULT_UNL
 type Pending = 'schedule' | 'time' | 'passcode' | 'clear' | 'run';
 type Tone = 'neutral' | 'error' | 'success' | 'warning';
 type Note = { text: string; tone: Tone };
-type Summary = { state: 'running' | 'paused' | 'blocked' | 'off' | 'on'; title: string; text: string; tone: Tone };
+type Summary = {
+    state: 'running' | 'by-hand' | 'paused' | 'blocked' | 'off' | 'on';
+    title: string;
+    text: string;
+    tone: Tone;
+};
 
+/** The tone of a run that has just ended; a phone that refuses connections is an error then. */
 function runTone(outcome: UnlockRunOutcome): Tone {
     if (outcome === 'unlocked' || outcome === 'already-unlocked') {
         return 'success';
     }
-    return isUnlockProblem(outcome) ? 'error' : 'neutral';
+    return isUnlockProblem(outcome) || outcome === 'needs-manual-unlock' ? 'error' : 'neutral';
 }
 
 function describeRun(run: UnlockRunResult, when?: string): string {
@@ -56,6 +64,14 @@ function summarize(schedule: UnlockScheduleStatus, running: boolean, moment: (at
             // The stream page's Unlock runs here too, and that one does not lock the phone after.
             text: 'An unlock run is in progress.',
             tone: 'neutral',
+        };
+    }
+    if (schedule.needsManualUnlock) {
+        return {
+            state: 'by-hand',
+            title: 'Unlock the iPhone by hand',
+            text: `${UNLOCK_BY_HAND_MESSAGE}${schedule.nextRunAt ? ` Next try ${moment(schedule.nextRunAt)}.` : ''}`,
+            tone: 'error',
         };
     }
     if (schedule.passcodeRejected) {
@@ -79,10 +95,15 @@ function summarize(schedule: UnlockScheduleStatus, running: boolean, moment: (at
     if (!schedule.enabled) {
         return { state: 'off', title: 'Off', text: lastText, tone: 'neutral' };
     }
+    const next = schedule.waitingForLock
+        ? 'Runs when the phone is next locked · '
+        : schedule.nextRunAt
+          ? `Next run ${moment(schedule.nextRunAt)} · `
+          : '';
     return {
         state: 'on',
         title: 'On',
-        text: `${schedule.nextRunAt ? `Next run ${moment(schedule.nextRunAt)} · ` : ''}${lastText}`,
+        text: `${next}${lastText}`,
         tone: last && isUnlockProblem(last.outcome) ? 'error' : 'neutral',
     };
 }
@@ -398,7 +419,11 @@ export function ApplSettingsSheet() {
     const running = pending === 'run' || !!schedule.running;
     const developerMode = descriptor?.developerMode;
     const summary = summarize(schedule, running, moment);
-    const lastRunProblem = !!lastRun && isUnlockProblem(lastRun.outcome);
+    // A run that found the phone refusing connections is a problem for as long as the phone does.
+    const lastRunProblem =
+        !!lastRun &&
+        (isUnlockProblem(lastRun.outcome) ||
+            (lastRun.outcome === 'needs-manual-unlock' && !!schedule.needsManualUnlock));
     const timeDescription =
         pending === 'time'
             ? 'Saving…'
@@ -426,7 +451,7 @@ export function ApplSettingsSheet() {
 
                 <SheetGroup
                     title="Schedule"
-                    hint="Unlocks the phone once a day so iOS does not restart it after 72 hours without an unlock, then locks it again. Skipped if the phone was unlocked in the last 22 hours."
+                    hint="Unlocks the iPhone twice a day, at the set time and 12 hours later, then locks it again. The iPhone stops accepting connections 24 hours after the passcode was last entered."
                     status={note && <SheetStatus tone={note.tone}>{note.text}</SheetStatus>}
                 >
                     <SheetRow
@@ -440,8 +465,12 @@ export function ApplSettingsSheet() {
                         attributes={{ 'data-unlock-summary': summary.state, 'data-tone': summary.tone }}
                     />
                     <SheetToggleRow
-                        title="Unlock every day"
-                        description={schedule.hasPasscode ? 'At the time below.' : 'Store a passcode below first.'}
+                        title="Unlock twice a day"
+                        description={
+                            schedule.hasPasscode
+                                ? `At ${schedule.time} and ${secondUnlockTime(schedule.time)}.`
+                                : 'Store a passcode below first.'
+                        }
                         checked={schedule.enabled}
                         // Turning it off never needs a passcode: a removed one leaves the switch on.
                         disabled={locked || (!schedule.hasPasscode && !schedule.enabled)}
@@ -598,7 +627,7 @@ export function ApplSettingsSheet() {
                         question={`Remove the stored passcode for ${entry ? deviceName(entry) : 'this iPhone'}?`}
                         consequence={
                             schedule.enabled
-                                ? 'Scheduled unlock stops. iOS restarts the phone after 72 hours without an unlock.'
+                                ? 'Scheduled unlock stops. The iPhone stops accepting connections 24 hours after the passcode was last entered.'
                                 : 'Scheduled unlock cannot run without it.'
                         }
                         confirmLabel="Remove passcode"

@@ -8,18 +8,29 @@
  * as `SET_UNLOCK_PASSCODE`, and is only ever decrypted on the server right before a run.
  */
 
-/** Default daily unlock time, `HH:MM` in the schedule's time zone. */
+/** Default time of the first of the two daily runs, `HH:MM` in the schedule's time zone. */
 export const DEFAULT_UNLOCK_TIME = '03:00';
 /**
- * A phone unlocked within this window is left alone: iOS restarts after 72 h without an unlock.
- * The scheduler takes `UNLOCK_SLOT_WINDOW_MS` off it (22 h), so its own unlock the night before
- * does not skip tonight's run; `unlockOutcomeText('skipped-recent')` names the 22 hours.
+ * An iPhone refuses every new service connection (mount, tunnel, diagnostics) once this long has
+ * passed since its passcode was last entered. Nothing remote works after that, the unlock
+ * included, until the passcode is entered on the phone. Inferred from one event on iOS 27.2.
  */
-export const UNLOCK_RECENT_MS = 24 * 3600 * 1000;
-/** A slot that passed more than this long ago is skipped, so a server down overnight does not unlock at 09:00. */
-export const UNLOCK_SLOT_WINDOW_MS = 2 * 3600 * 1000;
-/** One retry after a failed scheduled run that typed nothing, this long later. Manual runs never retry. */
+export const UNLOCK_PASSCODE_LIMIT_MS = 24 * 3600 * 1000;
+/** The schedule runs at the set time and this long after it. Not a setting. */
+export const UNLOCK_INTERVAL_MS = 12 * 3600 * 1000;
+/** Kept free between the slot after a skipped one and the limit. An autumn clock change uses half an hour of it. */
+export const UNLOCK_SKIP_MARGIN_MS = 3600 * 1000;
+/**
+ * A slot is skipped only when the server typed the passcode, and saw the phone unlock, less than
+ * this long before it: 11 hours. The next slot then still comes before the limit.
+ */
+export const UNLOCK_SKIP_WINDOW_MS = UNLOCK_PASSCODE_LIMIT_MS - UNLOCK_INTERVAL_MS - UNLOCK_SKIP_MARGIN_MS;
+/** With the schedule on, one push is sent when the passcode was last entered this long ago. */
+export const UNLOCK_WARN_MS = 20 * 3600 * 1000;
+/** The first retry after a failed scheduled run that typed nothing. Manual runs never retry. */
 export const UNLOCK_RETRY_MS = 10 * 60 * 1000;
+/** Every retry after the first, until a run works or the next slot arrives. */
+export const UNLOCK_HOURLY_RETRY_MS = 3600 * 1000;
 /** How long a browser waits for the `RUN_UNLOCK_NOW` reply; a cold session can take ~45 s. */
 export const UNLOCK_RUN_TIMEOUT_MS = 180000;
 /** A manual run is refused this long after the last run that opened a display session. */
@@ -27,13 +38,6 @@ export const UNLOCK_MANUAL_COOLDOWN_MS = 2 * 60 * 1000;
 /** At most this many session-opening runs per phone in `UNLOCK_SESSION_CAP_WINDOW_MS`. */
 export const UNLOCK_SESSION_CAP = 3;
 export const UNLOCK_SESSION_CAP_WINDOW_MS = 5 * 60 * 1000;
-/** iOS restarts a phone that has not been unlocked for this long; after that only the phone itself can unlock it. */
-export const UNLOCK_DEADLINE_MS = 72 * 3600 * 1000;
-/** With the schedule on, one push is sent when the last unlock is this old. */
-export const UNLOCK_DEADLINE_WARN_MS = 36 * 3600 * 1000;
-/** Past this, a run starts outside the slot window, at most once per `UNLOCK_URGENT_INTERVAL_MS`. */
-export const UNLOCK_DEADLINE_URGENT_MS = 48 * 3600 * 1000;
-export const UNLOCK_URGENT_INTERVAL_MS = 2 * 3600 * 1000;
 /**
  * Runs that typed the whole passcode without a confirmed unlock (lock state unreadable, or the
  * session failed after the digits). This many in a row stop the schedule like a rejected passcode.
@@ -42,6 +46,26 @@ export const UNLOCK_UNCONFIRMED_LIMIT = 2;
 
 /** Start of the message of a `failed-still-locked` run, the only kind that typed nothing. */
 export const UNLOCK_NOT_TYPED_MESSAGE = 'Passcode not entered';
+
+const LOCKOUT_TEXT = 'The iPhone stopped accepting connections';
+/** The message of a `needs-manual-unlock` run. */
+export const UNLOCK_BY_HAND_ACTION = 'Enter the passcode on the phone.';
+/** What the panel, the card, the push and the stream page say when the phone refuses connections. */
+export const UNLOCK_BY_HAND_MESSAGE = `${LOCKOUT_TEXT}. ${UNLOCK_BY_HAND_ACTION}`;
+
+// pymobiledevice3 11.44.0: `PasswordRequiredError` reads "Device is password protected. Please
+// unlock and retry.", a refused service start "The device is protected with a passcode. Unlock it
+// and try again.", and lockdown's own error code is `PasswordProtected`.
+const PASSCODE_REFUSAL = /password protected|protected with a passcode|PasswordProtected|PasswordRequiredError/i;
+
+/**
+ * Whether a failure text says the phone refused the connection until its passcode is entered:
+ * pymobiledevice3's wording, or `UNLOCK_BY_HAND_MESSAGE` once the session runner has put it in
+ * plain words. The only place the wording is matched.
+ */
+export function isPasscodeLockout(text: unknown): boolean {
+    return typeof text === 'string' && (PASSCODE_REFUSAL.test(text) || text.includes(LOCKOUT_TEXT));
+}
 
 export type UnlockRunTrigger = 'schedule' | 'manual';
 
@@ -64,7 +88,9 @@ export type UnlockRunOutcome =
     | 'failed-rejected'
     | 'unverified'
     // The phone was unlocked and did not read as locked after Lock was pressed.
-    | 'left-unlocked';
+    | 'left-unlocked'
+    // The phone refused the connection: the passcode has to be entered on the phone itself.
+    | 'needs-manual-unlock';
 
 export interface UnlockRunResult {
     at: number;
@@ -88,8 +114,14 @@ export interface UnlockScheduleStatus {
     passcodeRejected?: boolean;
     // Last time the phone was seen going from locked to unlocked, by any means.
     lastUnlockedAt?: number;
-    // Set while `enabled && hasPasscode`: the next slot, or a pending retry if one is earlier.
+    // Set while `enabled && hasPasscode`: the next of the two daily slots, or a pending retry if
+    // one is earlier.
     nextRunAt?: number;
+    // The phone refused the last connection until its passcode is entered on the phone. Cleared
+    // when a run or the state monitor reaches the phone again.
+    needsManualUnlock?: boolean;
+    // A slot has arrived while the phone was in use; its run starts when the phone is locked.
+    waitingForLock?: boolean;
     lastRun?: UnlockRunResult;
     // A run is in progress (scheduled or manual); the panel disables "Run now" meanwhile.
     running?: boolean;
@@ -215,57 +247,63 @@ function zonedSlot(time: string, now: number, format: Intl.DateTimeFormat, dayOf
     );
 }
 
-/**
- * The next occurrence of `time`, strictly after `now`, in `timeZone` (server local time when no
- * zone is given). Day arithmetic is on the calendar, so a daylight-saving change makes one
- * interval 23 or 25 hours instead of skipping a day.
- */
-export function nextUnlockRunAt(time: string, now: number, timeZone?: string): number {
-    const format = timeZone ? zoneFormat(timeZone) : undefined;
-    if (format) {
-        // A slot inside a skipped hour can resolve to before `now`; a later day never does.
-        for (let day = 0; day < 3; day++) {
-            const slot = zonedSlot(time, now, format, day);
-            if (slot > now) {
-                return slot;
-            }
-        }
-    }
-    const [hours, minutes] = parseUnlockTime(time);
-    const next = new Date(now);
-    next.setHours(hours, minutes, 0, 0);
-    if (next.getTime() <= now) {
-        next.setDate(next.getDate() + 1);
-        next.setHours(hours, minutes, 0, 0);
-    }
-    return next.getTime();
-}
-
-/**
- * Start of the most recent slot at or before `now` (today's `time`, or yesterday's if today's is
- * still ahead), in `timeZone` or server local time.
- */
-export function lastUnlockSlotAt(time: string, now: number, timeZone?: string): number {
-    const format = timeZone ? zoneFormat(timeZone) : undefined;
-    if (format) {
-        for (let day = 0; day > -3; day--) {
-            const slot = zonedSlot(time, now, format, day);
-            if (slot <= now) {
-                return slot;
-            }
-        }
-    }
+/** The same in server local time, for a schedule saved without a zone. */
+function localSlot(time: string, now: number, dayOffset: number): number {
     const [hours, minutes] = parseUnlockTime(time);
     const slot = new Date(now);
+    slot.setDate(slot.getDate() + dayOffset);
     slot.setHours(hours, minutes, 0, 0);
-    if (slot.getTime() > now) {
-        slot.setDate(slot.getDate() - 1);
-        slot.setHours(hours, minutes, 0, 0);
-    }
     return slot.getTime();
 }
 
-/** Outcomes shown in the error tone: the run did not do its job, or left the phone exposed. */
+/**
+ * The slots around `now`, in order. Each calendar day has two: `time`, and the moment halfway to
+ * the next day's `time`. That is 12 hours later on every day but the two with a daylight-saving
+ * change, where the 23 or 25 hours are split evenly. A second slot at a fixed 12 hours, or at a
+ * fixed clock time, would leave one gap of 13 hours in autumn, which the skip rule has no margin
+ * for. Day arithmetic is on the calendar, so no slot is skipped or doubled.
+ */
+function unlockSlots(time: string, now: number, timeZone?: string): number[] {
+    const format = timeZone ? zoneFormat(timeZone) : undefined;
+    const starts: number[] = [];
+    for (let day = -2; day <= 3; day++) {
+        starts.push(format ? zonedSlot(time, now, format, day) : localSlot(time, now, day));
+    }
+    const slots: number[] = [];
+    for (let index = 0; index + 1 < starts.length; index++) {
+        const half = Math.floor((starts[index + 1] - starts[index]) / 2 / 60000) * 60000;
+        slots.push(starts[index], starts[index] + half);
+    }
+    return slots;
+}
+
+/**
+ * The next slot strictly after `now`, in `timeZone` (server local time when no zone is given):
+ * `time`, or the slot 12 hours after it.
+ */
+export function nextUnlockRunAt(time: string, now: number, timeZone?: string): number {
+    const slots = unlockSlots(time, now, timeZone);
+    return slots.find((slot) => slot > now) ?? slots[slots.length - 1];
+}
+
+/** Start of the most recent slot at or before `now`, in `timeZone` or server local time. */
+export function lastUnlockSlotAt(time: string, now: number, timeZone?: string): number {
+    const slots = unlockSlots(time, now, timeZone);
+    return [...slots].reverse().find((slot) => slot <= now) ?? slots[0];
+}
+
+/** The clock time of the second daily slot, `HH:MM`: `time` plus `UNLOCK_INTERVAL_MS`. */
+export function secondUnlockTime(time: string): string {
+    const [hours, minutes] = parseUnlockTime(time);
+    const second = (hours + UNLOCK_INTERVAL_MS / 3600000) % 24;
+    return `${String(second).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+/**
+ * Outcomes shown in the error tone: the run did not do its job, or left the phone exposed.
+ * `needs-manual-unlock` is not one of them: `needsManualUnlock` in the status says whether the
+ * phone still refuses connections, and that is what the panel and the card show.
+ */
 export function isUnlockProblem(outcome: UnlockRunOutcome): boolean {
     return (
         outcome.startsWith('failed-') ||
@@ -286,7 +324,7 @@ export function unlockOutcomeText(outcome: UnlockRunOutcome): string {
         case 'already-unlocked':
             return 'Already unlocked';
         case 'skipped-recent':
-            return 'Skipped: unlocked in the last 22 hours';
+            return `Skipped: the server entered the passcode less than ${UNLOCK_SKIP_WINDOW_MS / 3600000} hours earlier`;
         case 'skipped-disabled':
             return 'Skipped: scheduled unlock is off';
         case 'skipped-no-passcode':
@@ -309,5 +347,8 @@ export function unlockOutcomeText(outcome: UnlockRunOutcome): string {
             return 'Lock state not confirmed';
         case 'left-unlocked':
             return 'Unlocked, but the phone did not lock again';
+        case 'needs-manual-unlock':
+            // With `UNLOCK_BY_HAND_ACTION` as the message, the two read as `UNLOCK_BY_HAND_MESSAGE`.
+            return LOCKOUT_TEXT;
     }
 }

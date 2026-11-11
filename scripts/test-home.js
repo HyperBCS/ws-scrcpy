@@ -162,7 +162,7 @@ test('blocked and failed iPhones do not read as Ready', () => {
     });
     assert.equal(status(failedUnlock), 'attention', 'a failed scheduled unlock outranks Asleep');
     assert.equal(getDeviceProblems(failedUnlock, now)[0].kind, 'unlock');
-    assert.match(getDeviceProblems(failedUnlock, now)[0].message, /^Scheduled unlock 03:00 · /);
+    assert.match(getDeviceProblems(failedUnlock, now)[0].message, /^Scheduled unlock 03:00 and 15:00 · /);
     assert.equal(status(iphone('D2', { 'screen.power': 'off', unlockSchedule: schedule })), 'asleep');
     assert.equal(
         status(iphone('D3', { unlockSchedule: { ...schedule, hasPasscode: false } })),
