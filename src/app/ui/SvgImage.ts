@@ -52,8 +52,7 @@ export enum Icon {
 export default class SvgImage {
     static Icon = Icon;
 
-    // For JSX views, which render the markup themselves (`dangerouslySetInnerHTML`) instead of
-    // going through `create()`'s DOM-node construction below.
+    // The inline SVG markup for an icon. Only `create()` below reads it.
     public static getSvgString(type: Icon): string {
         switch (type) {
             case Icon.KEYBOARD:

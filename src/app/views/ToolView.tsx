@@ -141,7 +141,7 @@ export function ToolView({ params }: { params: URLSearchParams }) {
         setConnected(false);
         setLost(retrying ? 'reconnecting' : '');
         setControl(false);
-        document.body.className = `tool-page ${action === ACTION.FILE_LISTING ? 'file-listing' : action}`;
+        document.body.className = action === ACTION.FILE_LISTING ? 'file-listing' : action;
         mountTool(routeRef.current, mount, () => cancelled)
             .then((client) => {
                 if (!client) return;

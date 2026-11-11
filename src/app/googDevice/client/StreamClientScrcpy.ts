@@ -18,7 +18,7 @@ import { DisplayInfo } from '../../DisplayInfo';
 import { ACTION } from '../../../common/Action';
 import { StreamReceiverScrcpy } from './StreamReceiverScrcpy';
 import { UhidKeyboard } from '../UhidKeyboard';
-import { deviceClipboard, lastFrameAt, streamConnected, streamNotice, streamServiceStopped } from '../../state/stream';
+import { deviceClipboard, streamConnected, streamNotice, streamServiceStopped } from '../../state/stream';
 import { STREAM_SERVICE_STOPPED } from '../../../common/StreamCloseCode';
 import { AudioSession, createAudioSession } from '../../state/audio';
 import { isLocalKeyboardTarget } from '../localKeyboardTarget';
@@ -157,9 +157,6 @@ export class StreamClientScrcpy
     };
 
     public onVideo = (data: Uint8Array): void => {
-        // Fed to `lastFrameAt` unconditionally (even before the player starts playing) so the
-        // frame clock reflects "is data still arriving", not "is this tab currently rendering it".
-        lastFrameAt.value = Date.now();
         if (!this.player) {
             return;
         }
@@ -303,8 +300,6 @@ export class StreamClientScrcpy
             throw Error(`Invalid udid value: "${udid}"`);
         }
 
-        // Fresh frame clock for this session -- see `lastFrameAt`/`SleepOverlay`.
-        lastFrameAt.value = undefined;
         streamConnected.value = this.streamReceiver.isReady();
         deviceClipboard.value = undefined;
         if (!player) {

@@ -24,19 +24,10 @@ export interface CoreDeviceStreamSession {
 // Android-only views keep their precise client type.
 export const activeCoreDeviceStream = signal<CoreDeviceStreamSession | undefined>(undefined);
 
-// Timestamp (`Date.now()`) of the last frame handed to the player, fed from
-// `StreamClientScrcpy.onVideo`. Reset on every new stream mount.
-//
-// NOT a liveness signal, and deliberately not used as one: scrcpy only encodes a frame when the
-// screen content actually changes, so a healthy stream of a static screen legitimately goes many
-// seconds between frames (measured: ~1 frame per 2s on an idle home screen). Treating a frame gap
-// as "stalled" produced a false "no signal" overlay that swallowed touches, which then guaranteed
-// the screen never changed -- a deadlock. Use `streamConnected` for liveness instead.
-export const lastFrameAt = signal<number | undefined>(undefined);
-
-// Whether the stream's WebSocket is currently up. Unlike frame timing this is an unambiguous
-// liveness signal: `StreamReceiver` reconnects with backoff, so a `false` here means genuinely
-// no transport, not merely a quiet screen.
+// Whether the stream's WebSocket is currently up. This is the liveness signal: `StreamReceiver`
+// reconnects with backoff, so `false` means no transport. Frame timing is not one. scrcpy only
+// encodes a frame when the screen changes, so an idle screen goes seconds between frames, and
+// an overlay shown on a frame gap swallowed the touches that would have changed the screen.
 export const streamConnected = signal(false);
 
 // The owner stopped the Android stream service while this stream was open. The receiver does not
