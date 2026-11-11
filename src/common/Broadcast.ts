@@ -15,7 +15,8 @@ import {
     AudioPacketKind,
 } from './AudioProtocol';
 
-export type VideoFrameKind = 'config' | 'key' | 'delta';
+/** `session` carries no payload: the picture size changed and viewers need a new `scrcpy_initial`. */
+export type VideoFrameKind = 'config' | 'key' | 'delta' | 'session';
 type DataCallback = (data: Buffer, videoKind?: VideoFrameKind) => void;
 
 interface FrameHeader {
@@ -39,29 +40,27 @@ interface UhidOutputHeader {
 }
 
 /**
- * Header sent once at the head of the video stream.
+ * The video stream starts with the codec id alone. The picture size is not part of it: scrcpy
+ * 4.x sends the size in a session packet (see PACKET_FLAG_SESSION), once before the first frame
+ * and again whenever the capture session changes.
  *
- * scrcpy 4.0 added a 4-byte "session metadata" field (Genymobile/scrcpy#6159) between the codec id
- * and the dimensions, taking this from 12 to 16 bytes:
- *
- *   3.1:  codecId(4) width(4)  height(4)
- *   4.x:  codecId(4) meta(4)   width(4)  height(4)
- *
- * Verified by capture against a real device on both versions: parsing a 4.1 stream with the old
- * 12-byte header desynchronises on the very first frame, while 16 stays in sync.
+ *   3.1:  codecId(4) width(4) height(4)
+ *   4.x:  codecId(4), then session packets and media packets
  */
-const CODEC_HEADER_SIZE = 16;
-/** Offsets of the dimensions within the codec header (after the codec id and metadata fields). */
-const CODEC_HEADER_WIDTH_OFFSET = 8;
-const CODEC_HEADER_HEIGHT_OFFSET = 12;
+const VIDEO_CODEC_HEADER_SIZE = 4;
 /**
- * codec id only, sent once at the head of the audio stream. Audio has no width/height (no
- * session packets either - scrcpy only re-announces those for video, on rotation), so this is
- * shorter than CODEC_HEADER_SIZE despite otherwise mirroring it.
+ * codec id only, sent once at the head of the audio stream. Audio has no session packets:
+ * scrcpy sends those for video alone.
  */
 const AUDIO_CODEC_HEADER_SIZE = 4;
-/** pts + flags (8 bytes) followed by the packet size (4 bytes), sent before every frame */
+/**
+ * Every packet on the video socket starts with 12 bytes. A media packet has pts + flags (8 bytes)
+ * and the payload size (4 bytes). A session packet is the same length and has no payload: the
+ * flag word (4 bytes), then width (4) and height (4).
+ */
 const FRAME_HEADER_SIZE = 12;
+const SESSION_WIDTH_OFFSET = 4;
+const SESSION_HEIGHT_OFFSET = 8;
 /**
  * Upper bound for a single video packet. The stream is 3.5 Mbit/s at max_size=1280,
  * i.e. under 512 KiB for a whole second of video, so a packet past 4 MiB means we lost
@@ -93,6 +92,12 @@ const MAX_DEVICE_MESSAGE_SIZE = 1 << 18;
  */
 const PACKET_FLAG_CONFIG = 1n << 62n;
 const PACKET_FLAG_KEY_FRAME = 1n << 61n;
+/**
+ * Set on a session packet (doc/develop.md, Streamer.writeSessionMeta). scrcpy starts a new
+ * capture session when the device rotates or the encoder is reset, so these arrive mid-stream.
+ * Read as a media packet, the height becomes a payload size and framing is lost.
+ */
+const PACKET_FLAG_SESSION = 1n << 63n;
 
 const MAGIC_BYTES_MESSAGE = Buffer.from(DeviceMessage.MAGIC_BYTES_MESSAGE);
 /**
@@ -171,6 +176,7 @@ export class Broadcast {
     private videoBootstrapComplete = false;
     private videoBuffer = new ChunkAccumulator();
     private headerParsed = false;
+    private sessionStarted = false;
     private readyResolvers: Array<(ok: boolean) => void> = [];
     private frameHeader: FrameHeader | null = null;
     private stopped = false;
@@ -283,24 +289,44 @@ export class Broadcast {
         if (this.headerParsed) {
             return true;
         }
-        const header = this.videoBuffer.consume(CODEC_HEADER_SIZE);
+        const header = this.videoBuffer.consume(VIDEO_CODEC_HEADER_SIZE);
         if (!header) {
             return false;
         }
         this.codecId = header.readUInt32BE(0);
-        this.videoWidth = header.readUInt32BE(CODEC_HEADER_WIDTH_OFFSET);
-        this.videoHeight = header.readUInt32BE(CODEC_HEADER_HEIGHT_OFFSET);
         this.headerParsed = true;
-
         console.log(`Codec ID: ${this.codecId}`);
-        console.log(`Width: ${this.videoWidth}`);
-        console.log(`Height: ${this.videoHeight}`);
-        this.settleReady(true);
         return true;
     }
 
     /**
-     * Resolves true once the codec header has been parsed and videoWidth/videoHeight are real,
+     * A new capture session: the size may have changed and the encoder starts again with its own
+     * config packet and keyframe, so nothing cached from the previous session can be replayed.
+     */
+    private startSession(header: Buffer): boolean {
+        const width = header.readUInt32BE(SESSION_WIDTH_OFFSET);
+        const height = header.readUInt32BE(SESSION_HEIGHT_OFFSET);
+        if (!width || !height) {
+            console.error(`Broadcast: session packet with size ${width}x${height}, stream desynchronised`);
+            this.teardown();
+            return false;
+        }
+        this.videoWidth = width;
+        this.videoHeight = height;
+        this.lastConfigframe = null;
+        this.clearVideoBootstrap();
+        console.log(`Video session: ${width}x${height}`);
+        if (!this.sessionStarted) {
+            this.sessionStarted = true;
+            this.settleReady(true);
+        } else {
+            this.notifyListeners(EMPTY, 'session');
+        }
+        return true;
+    }
+
+    /**
+     * Resolves true once the first session packet has been parsed and videoWidth/videoHeight are real,
      * or false if the broadcast is torn down first. Callers must not advertise a screen size
      * to a client before this resolves — a 0x0 ScreenInfo is latched by the player for good.
      */
@@ -308,7 +334,7 @@ export class Broadcast {
         if (this.stopped) {
             return Promise.resolve(false);
         }
-        if (this.headerParsed) {
+        if (this.sessionStarted) {
             return Promise.resolve(true);
         }
         return new Promise((resolve) => this.readyResolvers.push(resolve));
@@ -330,6 +356,18 @@ export class Broadcast {
                     return;
                 }
                 const flags = header.readBigUInt64BE(0); // read 8 bytes as BigInt
+                if (flags & PACKET_FLAG_SESSION) {
+                    if (!this.startSession(header)) {
+                        return;
+                    }
+                    continue;
+                }
+                if (!this.sessionStarted) {
+                    // The size is only known from a session packet, and viewers wait for it.
+                    console.error('Broadcast: video started without a session packet, stream desynchronised');
+                    this.teardown();
+                    return;
+                }
                 const size = header.readUInt32BE(8);
                 if (size > MAX_PACKET_SIZE) {
                     console.error(`Broadcast: packet size ${size} exceeds ${MAX_PACKET_SIZE}, stream desynchronised`);
@@ -702,7 +740,11 @@ export class Broadcast {
         return this.control;
     }
 
-    craftInitialInfoPacket(deviceName: string, encoders: string[], clientId: number): Buffer {
+    /**
+     * `listening` is true when the packet is for a viewer that is already attached, which happens
+     * when the size changes mid-stream. That viewer must not count itself as another client.
+     */
+    craftInitialInfoPacket(deviceName: string, encoders: string[], clientId: number, listening = false): Buffer {
         const MAGIC_BYTES_INITIAL = Buffer.from('scrcpy_initial', 'utf-8');
         const DEVICE_NAME_FIELD_LENGTH = 64;
 
@@ -722,11 +764,11 @@ export class Broadcast {
             bounds: new Size(this.videoWidth, this.videoHeight),
             sendFrameMeta: false,
         });
-        // Number of viewers already attached to this broadcast. Callers craft this packet for a
-        // joining client *before* adding its listener, so this is exactly the "other clients"
+        // Number of other viewers attached to this broadcast. A joining client gets this packet
+        // *before* its listener is added, so the listener count is exactly the "other clients"
         // count the UI means. It was hardcoded to 1, which made the settings sheet's
         // "N other viewers will reconnect" warning meaningless.
-        const connectionCount = this.listeners.size;
+        const connectionCount = this.listeners.size - (listening ? 1 : 0);
 
         // === Device Name ===
         const nameBytes = Buffer.alloc(DEVICE_NAME_FIELD_LENGTH);

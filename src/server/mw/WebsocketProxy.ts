@@ -69,8 +69,8 @@ export class WebsocketProxy extends Mw {
             return;
         }
 
-        // craftInitialInfoPacket reports videoWidth/videoHeight, which are 0 until the 16-byte
-        // codec header has been consumed. The client latches that ScreenInfo permanently, so
+        // craftInitialInfoPacket reports videoWidth/videoHeight, which are 0 until the first
+        // session packet has been read. The client latches that ScreenInfo permanently, so
         // wait for it rather than advertising a 0x0 screen.
         if (!(await broadcast.whenReady())) {
             this.ws.close(4006, 'Stream ended before it was ready');
@@ -123,8 +123,24 @@ export class WebsocketProxy extends Mw {
             waitingForKeyframe = !broadcast.hasCompleteVideoBootstrap();
         }
 
+        const clientId = this.clientId;
         const listener: BroadcastListener = (data, videoKind) => {
             if (this.ws.readyState === this.ws.OPEN) {
+                if (videoKind === 'session') {
+                    // The device rotated or its encoder restarted. The client takes the picture
+                    // size from `scrcpy_initial` alone, so send it again with the new size. The
+                    // new session's own config packet and keyframe follow.
+                    waitingForKeyframe = true;
+                    this.sendPacket(
+                        broadcast.craftInitialInfoPacket(
+                            meta?.deviceName || udid,
+                            meta?.encoders ?? [],
+                            clientId,
+                            true,
+                        ),
+                    );
+                    return;
+                }
                 if (videoKind === 'config') {
                     waitingForKeyframe = true;
                 } else if (videoKind === 'key') {

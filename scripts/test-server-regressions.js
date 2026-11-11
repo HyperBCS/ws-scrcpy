@@ -969,6 +969,7 @@ test('Android video, optional audio and control connect through a TCP-only adb f
             if (peers.length === 1) {
                 const header = Buffer.alloc(16);
                 header.writeUInt32BE(0x68323634, 0);
+                header.writeUInt32BE(0x80000000, 4); // session packet flag
                 header.writeUInt32BE(720, 8);
                 header.writeUInt32BE(1280, 12);
                 socket.write(header);
@@ -1000,6 +1001,7 @@ test('a stopped broadcast never advertises its stale header as ready', async () 
     const broadcast = new Broadcast(video, control);
     const header = Buffer.alloc(16);
     header.writeUInt32BE(0x68323634, 0);
+    header.writeUInt32BE(0x80000000, 4); // session packet flag
     header.writeUInt32BE(720, 8);
     header.writeUInt32BE(1280, 12);
     video.emit('data', header);
@@ -1107,6 +1109,7 @@ test('active stream proxies advertise distinct ids and stale releases cannot fre
     const broadcast = new Broadcast(video, control);
     const header = Buffer.alloc(16);
     header.writeUInt32BE(0x68323634, 0);
+    header.writeUInt32BE(0x80000000, 4); // session packet flag
     header.writeUInt32BE(720, 8);
     header.writeUInt32BE(1280, 12);
     video.emit('data', header);

@@ -108,15 +108,30 @@ The vendored jar is **scrcpy v4.1** (`vendor/Genymobile/scrcpy/scrcpy-server.jar
 `SERVER_VERSION = '4.1'`). Upgrading from 3.1 required two breaking changes. If you ever bump the
 version again, **re-verify both**.
 
-### Video stream header: 16 bytes (was 12)
+### Video stream header: codec id, then session packets
 
 ```
 3.1:  codecId(4)  width(4)   height(4)
-4.x:  codecId(4)  meta(4)    width(4)   height(4)
+4.x:  codecId(4)  then 12-byte packets: session packets and media packets
+session packet:  flags(4, bit 31 set)  width(4)  height(4)      no payload
+media packet:    pts+flags(8)          size(4)   payload(size)
 ```
 
-scrcpy 4.0 added a session-metadata field (Genymobile/scrcpy#6159). See `CODEC_HEADER_SIZE` in
-`Broadcast.ts`.
+scrcpy 4.0 moved the size out of the header into a **session packet** (Genymobile/scrcpy#6159,
+`doc/develop.md`). One is sent before the first frame and another every time the capture session
+changes: on rotation, when a landscape video goes full screen, and after `RESET_VIDEO`. It is told
+apart from a media packet by the top bit of its first byte.
+
+An earlier note here described a fixed 16-byte header with a `meta` field. That was the codec id
+plus the first session packet. It parsed the start correctly and then read every later session
+packet as a frame header whose size was the new height, which lost framing and restarted the
+stream on each rotation (2026-11-10 review, C-server-core-2).
+
+`Broadcast.processFrames` now handles a session packet anywhere in the stream: it updates the
+size, drops the cached config and pictures of the old session, and notifies listeners with the
+kind `session`. `WebsocketProxy` answers that by sending the viewer a new `scrcpy_initial`, which
+is the only place the client takes the picture size from. The new session's config packet and
+keyframe follow. `whenReady()` resolves on the first session packet, not on the codec id.
 
 ### Joining an idle video stream
 
@@ -180,7 +195,7 @@ uhid-output `type + id(u16) + size(u16) + data`.
 
 ### Audio stream and browser envelope
 
-Audio has a **4-byte codec header**, not video's 16-byte header. The codec IDs are `0x00726177`
+Audio has a **4-byte codec header** like video, but no session packets. The codec IDs are `0x00726177`
 for raw PCM and `0x6f707573` for Opus; `0` means capture disabled and `1` means configuration
 failure. Each device audio packet then has `pts/flags(u64 BE) + payloadLength(u32 BE) + payload`.
 CONFIG is bit 62, KEY_FRAME is bit 61, and the timestamp uses the lower 61 bits in microseconds.
