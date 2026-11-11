@@ -188,6 +188,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /** Where the open menu was asked for, in viewport coordinates. */
     private menuAnchor = { x: 0, y: 0 };
     private typeAhead = { text: '', at: 0 };
+    /**
+     * The one row that Tab stops on. The arrow keys move between rows, so the list is a single
+     * stop: this row's name, then its menu button.
+     */
+    private rovingName?: string;
     private path: string;
     private pendingPath?: string;
     private closeMenuListener?: (event: Event) => void;
@@ -426,6 +431,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.wrapper.addEventListener('dblclick', this.onDoubleClick);
         this.wrapper.addEventListener('contextmenu', this.onContextMenu);
         this.wrapper.addEventListener('keydown', this.onKeyDown);
+        this.tableBody.addEventListener('focusin', this.onRowFocus);
         this.tableBody.addEventListener('pointerdown', this.onPointerDown);
         this.tableBody.addEventListener('pointerup', this.cancelLongPress);
         this.tableBody.addEventListener('pointercancel', this.cancelLongPress);
@@ -595,11 +601,16 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 : undefined;
         const list = this.visible();
         const cut = this.clipboard?.mode === 'cut' && this.clipboard.dir === this.path ? this.clipboard.names : [];
+        const shown = (name?: string) => (name !== undefined && list.some((entry) => entry.name === name) ? name : undefined);
+        this.rovingName = shown(focusedName) ?? shown(this.rovingName) ?? list[0]?.name;
+        // With rows to stop on, the container itself is reached by script only.
+        this.items.tabIndex = list.length ? -1 : 0;
         const rows = list.map((entry) => {
             const index = this.entries.indexOf(entry);
             const directory = entry.isDirectory();
             const selected = this.selection.has(entry.name);
             const name = esc(entry.name);
+            const tabIndex = entry.name === this.rovingName ? 0 : -1;
             return `<tr class="fx-row${selected ? ' selected' : ''}${
                 cut.includes(entry.name) ? ' fx-cut' : ''
             }" data-name="${name}" data-index="${index}" data-kind="${kindOf(entry)}" aria-selected="${selected}">
@@ -609,14 +620,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 <td class="entry-name">
                     <a class="${directory ? 'dir' : 'file'}" href="${esc(
                         this.link(path.join(this.path, entry.name)),
-                    )}" data-name="${name}" data-entry-id="${index}" aria-label="${
+                    )}" data-name="${name}" data-entry-id="${index}" tabindex="${tabIndex}" aria-label="${
                         entry.isFile() ? 'Download' : 'Open'
                     } ${name}">${iconMarkup(kindOf(entry))}<span class="fx-name">${name}</span></a>
                 </td>
                 <td class="entry-size" data-label="Size">${directory ? '—' : esc(formatSize(entry.size))}</td>
                 <td class="entry-type" data-label="Type">${esc(typeLabel(entry))}</td>
                 <td class="entry-time" data-label="Modified">${esc(formatModified(entry.mtime))}</td>
-                <td class="fx-cell-menu"><button type="button" class="fx-row-menu" tabindex="-1" aria-haspopup="menu" aria-label="Actions for ${name}"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg></button></td>
+                <td class="fx-cell-menu"><button type="button" class="fx-row-menu" tabindex="${tabIndex}" aria-haspopup="menu" aria-label="Actions for ${name}"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg></button></td>
             </tr>`;
         });
         if (!rows.length) {
@@ -658,6 +669,27 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.renderStatus();
         this.updateControls();
     }
+
+    /** Moves the list's Tab stop to the row that took focus. */
+    private onRowFocus = (event: FocusEvent): void => {
+        const name = (event.target as Element | null)?.closest<HTMLElement>('tr[data-name]')?.dataset.name;
+        if (name === undefined || name === this.rovingName) {
+            return;
+        }
+        const stops = (rowName: string | undefined, tabIndex: number) => {
+            if (rowName === undefined) {
+                return;
+            }
+            this.tableBody
+                .querySelectorAll<HTMLElement>(
+                    `tr[data-name="${CSS.escape(rowName)}"] .entry-name a, tr[data-name="${CSS.escape(rowName)}"] .fx-row-menu`,
+                )
+                .forEach((element) => (element.tabIndex = tabIndex));
+        };
+        stops(this.rovingName, -1);
+        this.rovingName = name;
+        stops(name, 0);
+    };
 
     private renderStatus(): void {
         const list = this.visible();
@@ -938,7 +970,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         } else if (event.key === 'End') {
             event.preventDefault();
             focusAt(list.length - 1);
-        } else if (event.key === ' ' && current) {
+        } else if (event.key === ' ' && current && !target?.closest('button')) {
+            // Space on the row's menu button presses that button.
             event.preventDefault();
             this.toggleSelection(current);
         } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {

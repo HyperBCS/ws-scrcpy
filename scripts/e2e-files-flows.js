@@ -178,6 +178,63 @@ async function menus(browser) {
     await session.finish();
 }
 
+// Keyboard focus in the list: visible on the row, and the list is one Tab stop.
+async function keyboardFocus(browser) {
+    const { page, finish } = await start(browser, DESKTOP, ROOT, 'light');
+    const stops = () => page.locator('tbody [tabindex="0"]').evaluateAll((list) => list.map((el) => el.getAttribute('aria-label')));
+    assert.deepEqual(await stops(), ['Open archive', 'Actions for archive'], 'one row holds the Tab stops');
+    assert.equal(await page.locator('.fx-items').getAttribute('tabindex'), '-1', 'the container is not a second stop');
+    await page.getByRole('button', { name: 'Modified', exact: true }).focus();
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), 'Open archive');
+    await page.keyboard.press('ArrowDown');
+    const focused = await page.evaluate(() => {
+        const anchor = document.activeElement;
+        const style = getComputedStyle(anchor);
+        const cell = anchor.closest('td').getBoundingClientRect();
+        const box = anchor.getBoundingClientRect();
+        const offset = parseFloat(style.outlineOffset);
+        const width = parseFloat(style.outlineWidth);
+        const other = document.querySelector('.fx-row[data-name="empty"]');
+        return {
+            label: anchor.getAttribute('aria-label'),
+            visible: anchor.matches(':focus-visible') && style.outlineStyle === 'solid' && width >= 2,
+            // The outline's outer edge, which must not leave the cell that clips it.
+            inside:
+                box.left - offset - width >= cell.left &&
+                box.top - offset - width >= cell.top &&
+                box.right + offset + width <= cell.right &&
+                box.bottom + offset + width <= cell.bottom,
+            rowTint: getComputedStyle(anchor.closest('tr')).backgroundColor !== getComputedStyle(other).backgroundColor,
+        };
+    });
+    assert.deepEqual(focused, { label: 'Open denied', visible: true, inside: true, rowTint: true });
+    await page.screenshot({ path: path.join(OUT, 'flows-row-focus.png') });
+    assert.deepEqual(await stops(), ['Open denied', 'Actions for denied'], 'the Tab stop follows the arrow keys');
+    // Tab reaches the focused row's menu, then leaves the list; it does not walk every row.
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), 'Actions for denied');
+    await page.keyboard.press('Space');
+    await page.locator('.fx-menu').waitFor();
+    assert.equal(await page.locator('.fx-row.selected').count(), 1, 'Space on the menu button opens the menu');
+    await page.keyboard.press('Escape');
+    await page.locator('.fx-menu').waitFor({ state: 'hidden' });
+    await row(page, 'denied').locator('.fx-row-menu').focus();
+    await page.keyboard.press('Tab');
+    assert.equal(
+        await page.evaluate(() => !!document.activeElement.closest('tbody')),
+        false,
+        'the next Tab leaves the list',
+    );
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), 'Open denied');
+    // A re-render (sorting) keeps the stop on the same row.
+    await page.getByRole('button', { name: 'Size', exact: true }).click();
+    assert.deepEqual(await stops(), ['Open denied', 'Actions for denied']);
+    await finish();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -186,6 +243,7 @@ async function main() {
         ['history desktop', () => history(browser, DESKTOP)],
         ['history phone', () => history(browser, PHONE)],
         ['menus on short screens', () => menus(browser)],
+        ['keyboard focus', () => keyboardFocus(browser)],
     ];
     try {
         for (const [name, run] of scenarios) {

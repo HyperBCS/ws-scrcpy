@@ -440,7 +440,21 @@ body.file-listing-page {
     white-space: nowrap;
 }
 
-.fx-row.selected {
+/* Keyboard focus is drawn inside the row. The cells clip their contents, so the app's usual
+   outline, 3px outside the element, was never visible here. */
+.file-explorer .entry-name a:focus-visible,
+.fx-row-menu:focus-visible,
+.fx-sort:focus-visible {
+    outline-offset: -3px;
+    border-radius: 6px;
+}
+
+.fx-row:has(:focus-visible) {
+    background: var(--device-list-hover-color);
+}
+
+.fx-row.selected,
+.fx-row.selected:has(:focus-visible) {
     background: var(--fx-selected);
 }
 
