@@ -29,7 +29,6 @@ confirmation = None
 advert_ready = False
 advert_pending = False
 advert_since = 0
-holdoff = {}
 owned_notifications = set()
 input_buffer = bytearray()
 AGENT = '/org/wsscrcpy/agent'
@@ -121,16 +120,29 @@ class Client:
             self.last_status = status
             emit('status', source=self.source, status=status)
 
+    def wait(self, seconds):
+        # Never shortens a longer wait that is already running.
+        self.retry_at = max(self.retry_at, time.monotonic() + seconds)
+
     def reset(self, reason):
         if not self.alive(): return
+        # A timed-out or malformed fragmented response has no cancellation command, so nothing is
+        # requested until the ATT timeout (30 s) has passed; fragments that arrive meanwhile are
+        # ignored because no request is in flight. The link, the session and the queue stay. The
+        # iPhone announces its alerts once per subscription, so a new session on the same
+        # subscription would never hear of the ones it missed, and on 2026-11-05 the iPhone did
+        # not reconnect on its own after being dropped.
+        job = self.current[3] if self.current else None
+        self.current = None
+        self.wait(RESET_HOLDOFF)
+        self.last_probe = 0  # Probe as soon as the wait ends, so the status recovers then.
         self.fail_actions('The iPhone did not answer in time; the action was not confirmed')
+        for key, queued in list(self.queue.items()):
+            if queued['action_failed']: del self.queue[key]
         self.status(reason)
-        clients.pop(self.source, None)
-        # A timed-out fragmented response has no cancellation command, so the next request must
-        # not share its session. Start a new one on the same link once the ATT timeout (30 s) has
-        # passed instead of disconnecting: on 2026-11-05 the iPhone did not reconnect on its own
-        # after being dropped.
-        holdoff[self.source] = time.monotonic() + RESET_HOLDOFF
+        if job and not job['action_failed'] and (not job['valid'] or job['valid']()):
+            if job['attempts'] < 3: self.queue[job['key']] = job
+            elif job['failed']: job['failed']()
 
     def fail_actions(self, reason):
         for complete in list(self.action_requests.values()): complete(False, reason)
@@ -216,12 +228,12 @@ class Client:
                 code in detail for code in ('0xa0', '0xa1', '0xa2', '0xa3'))
             if permission:
                 self.authorized = False
-                self.retry_at = time.monotonic() + 10
+                self.wait(10)
                 self.status('Allow notification sharing in the iPhone Bluetooth settings')
             if not terminal and job['attempts'] < 3:
                 self.queue[job['key']] = job  # Other UIDs keep their place ahead of this retry.
                 if not permission:
-                    self.retry_at = time.monotonic() + 2 ** job['attempts']
+                    self.wait(2 ** job['attempts'])
                     self.status('Retrying notification request')
             elif job['failed']:
                 job['failed']()
@@ -256,7 +268,7 @@ class Client:
                         owned_notifications.add(self.chars[characteristic])
                 def failed(error, characteristic=characteristic):
                     if self.alive():
-                        self.pending.discard(characteristic); self.retry_at = time.monotonic() + 5
+                        self.pending.discard(characteristic); self.wait(5)
                         self.status('Waiting for Bluetooth notification permission')
                 iface(self.chars[characteristic], 'org.bluez.GattCharacteristic1').StartNotify(reply_handler=ok, error_handler=failed)
         if len(self.ready) == 2 and not self.current and not self.queue and now - self.last_probe > (60 if self.authorized else 10):
@@ -387,7 +399,7 @@ def tick():
             chars = {str(v['org.bluez.GattCharacteristic1']['UUID']): str(p) for p, v in objects.items()
                      if str(p).startswith(str(path) + '/') and 'org.bluez.GattCharacteristic1' in v}
             if not all(c in chars for c in (DATA, SOURCE, CONTROL)): continue
-            if source not in clients and time.monotonic() >= holdoff.get(source, 0):
+            if source not in clients:
                 clients[source] = Client(str(path), source, chars)
                 clients[source].status('Authorizing notifications')
         emit('devices', devices=devices, pairingOpen=time.monotonic() < pair_until)
