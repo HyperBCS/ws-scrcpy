@@ -9,11 +9,11 @@ import { deviceName } from '../state/devices';
 import { findDeviceForSettings } from '../state/streamDevice';
 import { activeAudioSession, audioAvailability, isAudioAvailable } from '../state/audio';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
-import { ControlCenterCommand } from '../../common/ControlCenterCommand';
-import { DEFAULT_SCRCPY_SERVER_CONFIG, ScrcpyServerConfig } from '../../common/Constants';
+import { ScrcpyServerConfig } from '../../common/Constants';
 import { EncoderInfo } from '../../types/EncoderInfo';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { route, switchRoute } from '../state/router';
+import { normalized, useStreamConfig } from '../state/streamConfig';
 import '../../style/views/SettingsSheet.css';
 
 // Both browser players currently parse AVC/H.264. The server supports other codecs, but
@@ -28,23 +28,6 @@ const QUALITY_PRESETS = [
     { name: 'Balanced', bitrate: 3_500_000, maxFps: 60, maxSize: 1280 },
     { name: 'Sharper', bitrate: 8_000_000, maxFps: 60, maxSize: 1920 },
 ];
-const APPLY_TIMEOUT_MS = 20000;
-const LOAD_TIMEOUT_MS = 15000;
-
-interface ListEncodersReply {
-    udid: string;
-    requestId: number;
-    encoders?: EncoderInfo[];
-    config?: ScrcpyServerConfig;
-    error?: string;
-}
-interface UpdateStreamConfigReply {
-    udid: string;
-    requestId: number;
-    config?: ScrcpyServerConfig;
-    error?: string;
-}
-
 function formatBitrate(value: number): string {
     return `${value / 1_000_000} Mbps`;
 }
@@ -53,17 +36,6 @@ function formatMaxSize(value: number): string {
 }
 function formatMaxFps(value: number): string {
     return value === 0 ? 'Unlimited' : `${value} fps`;
-}
-function normalized<K extends keyof ScrcpyServerConfig>(
-    config: Partial<ScrcpyServerConfig>,
-    key: K,
-): ScrcpyServerConfig[K] {
-    return (config[key] ??
-        (key === 'videoCodec'
-            ? 'h264'
-            : key === 'videoEncoder'
-              ? ''
-              : DEFAULT_SCRCPY_SERVER_CONFIG[key])) as ScrcpyServerConfig[K];
 }
 function numberOptions(options: number[], current: number): number[] {
     return options.includes(current) ? options : [...options, current].sort((a, b) => a - b);
@@ -83,108 +55,19 @@ export function SettingsSheet() {
     const tracker = target ? entry?.tracker : undefined;
     const client: StreamClientScrcpy | undefined =
         renderTarget && session?.params.udid === renderTarget.udid ? session.client : undefined;
-    const [baseline, setBaseline] = useState<ScrcpyServerConfig>(DEFAULT_SCRCPY_SERVER_CONFIG);
-    const [configKnown, setConfigKnown] = useState(false);
-    const [patch, setPatch] = useState<Partial<ScrcpyServerConfig>>({});
-    const [encoders, setEncoders] = useState<EncoderInfo[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [loadError, setLoadError] = useState<string>();
-    const [applying, setApplying] = useState(false);
+    const config = useStreamConfig(target, tracker, target?.udid);
+    const { baseline, configKnown, patch, encoders, loading, loadError, applying, applyError, appliedNote } = config;
     const [confirming, setConfirming] = useState(false);
-    const [applyError, setApplyError] = useState<string>();
-    const [appliedNote, setAppliedNote] = useState<string>();
     const [captureKeyboard, setCaptureKeyboard] = useState(true);
     const [useUhid, setUseUhid] = useState(true);
     const [showStats, setShowStats] = useState(false);
-    const [reload, setReload] = useState(0);
-    const applyTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
-    const pendingPatch = useRef<Partial<ScrcpyServerConfig>>();
-    const pendingRequestId = useRef<number>();
 
+    // Each opening starts without a question waiting.
     useEffect(() => {
-        if (!target) {
-            return;
+        if (target) {
+            setConfirming(false);
         }
-        setPatch({});
-        setBaseline(DEFAULT_SCRCPY_SERVER_CONFIG);
-        setConfigKnown(false);
-        setEncoders([]);
-        setApplying(false);
-        setConfirming(false);
-        setApplyError(undefined);
-        setAppliedNote(undefined);
-        setLoadError(undefined);
-        setLoading(true);
-        pendingPatch.current = undefined;
-        pendingRequestId.current = undefined;
-        if (!tracker) {
-            setLoading(false);
-            setLoadError('Waiting for the phone…');
-            return;
-        }
-        const udid = target.udid;
-        let loadRequestId: number | undefined;
-        const loadTimeout = setTimeout(() => {
-            loadRequestId = undefined;
-            setLoading(false);
-            setLoadError('Stream settings took too long to load. Check the connection and try again.');
-        }, LOAD_TIMEOUT_MS);
-        const onEncoders = (data: ListEncodersReply) => {
-            if (!data || data.udid !== udid || data.requestId !== loadRequestId) {
-                return;
-            }
-            clearTimeout(loadTimeout);
-            loadRequestId = undefined;
-            setLoading(false);
-            if (data.error) {
-                setLoadError(`Could not load stream settings: ${data.error}`);
-                return;
-            }
-            setLoadError(undefined);
-            setEncoders(Array.isArray(data.encoders) ? data.encoders : []);
-            if (data.config) {
-                setBaseline(data.config);
-                setConfigKnown(true);
-            }
-        };
-        const onUpdated = (data: UpdateStreamConfigReply) => {
-            // A delayed or unsolicited reply must not clear a new edit or claim we applied it.
-            if (!data || data.udid !== udid || !pendingPatch.current || data.requestId !== pendingRequestId.current) {
-                return;
-            }
-            if (applyTimeoutRef.current !== undefined) {
-                clearTimeout(applyTimeoutRef.current);
-                applyTimeoutRef.current = undefined;
-            }
-            const submitted = pendingPatch.current;
-            pendingPatch.current = undefined;
-            pendingRequestId.current = undefined;
-            setApplying(false);
-            if (data.error) {
-                setApplyError(`Could not apply changes: ${data.error}`);
-                return;
-            }
-            setBaseline((current) => data.config ?? { ...current, ...submitted });
-            setConfigKnown(true);
-            setApplyError(undefined);
-            setPatch({});
-            setAppliedNote('Settings saved.');
-        };
-        tracker.on('list_encoders', onEncoders);
-        tracker.on('update_stream_config', onUpdated);
-        loadRequestId = tracker.sendCommand(ControlCenterCommand.LIST_ENCODERS, { udid });
-        return () => {
-            clearTimeout(loadTimeout);
-            tracker.off('list_encoders', onEncoders);
-            tracker.off('update_stream_config', onUpdated);
-            if (applyTimeoutRef.current !== undefined) {
-                clearTimeout(applyTimeoutRef.current);
-                applyTimeoutRef.current = undefined;
-            }
-            pendingPatch.current = undefined;
-            pendingRequestId.current = undefined;
-        };
-    }, [target, tracker, reload]);
+    }, [target, tracker]);
 
     useEffect(() => {
         setShowStats(client?.getPlayer()?.getShowQualityStats() ?? false);
@@ -261,45 +144,14 @@ export function SettingsSheet() {
             ? `${otherViewers} other open screen${otherViewers === 1 ? '' : 's'} will also reconnect.`
             : '';
 
-    function setFields(fields: Partial<ScrcpyServerConfig>): void {
-        setPatch((previous) => {
-            const next = { ...previous, ...fields };
-            if (configKnown) {
-                (Object.keys(next) as (keyof ScrcpyServerConfig)[]).forEach((key) => {
-                    if (normalized(next, key) === normalized(baseline, key)) {
-                        delete next[key];
-                    }
-                });
-            }
-            return next;
-        });
+    const setFields = (fields: Partial<ScrcpyServerConfig>) => {
+        config.setFields(fields);
         setConfirming(false);
-        setAppliedNote(undefined);
-        setApplyError(undefined);
-    }
-    const applyConfig = (config: Partial<ScrcpyServerConfig>) => {
-        if (!tracker || !Object.keys(config).length || pendingPatch.current) {
-            return;
+    };
+    const applyConfig = (changes: Partial<ScrcpyServerConfig>) => {
+        if (config.apply(changes)) {
+            setConfirming(false);
         }
-        setConfirming(false);
-        setApplying(true);
-        setApplyError(undefined);
-        setAppliedNote(undefined);
-        pendingPatch.current = { ...config };
-        // Set the timeout before sending: a synchronous reply must be able to clear it.
-        applyTimeoutRef.current = setTimeout(() => {
-            applyTimeoutRef.current = undefined;
-            pendingPatch.current = undefined;
-            pendingRequestId.current = undefined;
-            setApplying(false);
-            setApplyError(
-                'The phone has not confirmed the change. Reopen Stream settings to check its current values, or try again.',
-            );
-        }, APPLY_TIMEOUT_MS);
-        pendingRequestId.current = tracker.sendCommand(ControlCenterCommand.UPDATE_STREAM_CONFIG, {
-            udid: renderTarget.udid,
-            config,
-        });
     };
     const onConfirmApply = () => applyConfig(patch);
     const savedShown = !!appliedNote && !hasChanges && !applying;
@@ -344,7 +196,10 @@ export function SettingsSheet() {
                                 <button
                                     class="settings-sheet-button"
                                     disabled={applying}
-                                    onClick={() => setReload((value) => value + 1)}
+                                    onClick={() => {
+                                        setConfirming(false);
+                                        config.reload();
+                                    }}
                                 >
                                     Try again
                                 </button>
@@ -768,9 +623,8 @@ export function SettingsSheet() {
                                     <button
                                         class="settings-sheet-button"
                                         onClick={() => {
-                                            setPatch({});
+                                            config.discard();
                                             setConfirming(false);
-                                            setApplyError(undefined);
                                         }}
                                         disabled={locked}
                                     >
