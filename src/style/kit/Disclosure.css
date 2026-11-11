@@ -1,0 +1,104 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* The marker of every disclosure (`ui/AnimatedDetails.tsx`): a chevron drawn with two borders,
+   turned over while open. This is the one marker rule. The older class names leave the list as
+   their screens move to `kit-disclosure`. */
+:where(
+        .kit-disclosure,
+        .device-details,
+        .settings-advanced,
+        .settings-playback,
+        .sheet-details,
+        .notification-details
+    )
+    > summary::after {
+    content: '';
+    width: 7px;
+    height: 7px;
+    flex: 0 0 7px;
+    margin-left: auto;
+    margin-right: 4px;
+    border: solid currentColor;
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+    transition: transform var(--motion-settle) var(--ease-out);
+}
+:where(
+        .kit-disclosure,
+        .device-details,
+        .settings-advanced,
+        .settings-playback,
+        .sheet-details,
+        .notification-details
+    )[open]
+    > summary::after {
+    transform: rotate(225deg);
+}
+:where(
+        .kit-disclosure,
+        .device-details,
+        .settings-advanced,
+        .settings-playback,
+        .sheet-details,
+        .notification-details
+    )[data-expanded='false']
+    > summary::after {
+    transform: rotate(45deg);
+}
+
+/* The disclosure in the kit look (`Disclosure` in `ui/AnimatedDetails.tsx`): a card whose first
+   line opens it, with rows inside. */
+.kit-disclosure {
+    box-sizing: border-box;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    color: var(--text);
+}
+.kit-disclosure > summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    box-sizing: border-box;
+    min-height: 56px;
+    padding: var(--space-8) var(--space-16);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.4;
+    list-style: none;
+    cursor: pointer;
+}
+.kit-disclosure > summary::-webkit-details-marker {
+    display: none;
+}
+.kit-disclosure > summary::after {
+    color: var(--text-muted);
+}
+.kit-disclosure > summary:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: calc(var(--focus-ring-offset) * -1);
+}
+@media (hover: hover) {
+    .kit-disclosure > summary:hover {
+        color: var(--accent-text);
+    }
+}
+.kit-disclosure-title {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+/* A few words after the title, such as the current value. They give way to the title. */
+.kit-disclosure-note {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-regular);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+}

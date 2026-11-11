@@ -361,12 +361,8 @@ body.sheet-open #devices {
     display: none;
 }
 #devices .device-details summary::after {
-    content: '+';
     margin-left: auto;
     font-size: 15.4px;
-}
-#devices .device-details[open] summary::after {
-    content: '−';
 }
 #devices .device-details-content {
     padding-bottom: 2.1px;
