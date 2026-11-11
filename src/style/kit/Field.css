@@ -31,7 +31,8 @@ textarea.kit-field {
     min-height: calc(var(--control-height) * 2);
     padding: var(--space-8) var(--space-12);
     line-height: 1.4;
-    resize: vertical;
+    /* As in the mockup: no resize handle in the corner. Longer text scrolls inside. */
+    resize: none;
 }
 /* For a short value such as a time of day, at the end of a row. */
 .kit-field-short {
