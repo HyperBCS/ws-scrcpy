@@ -15,7 +15,7 @@ const KEYCODES: Record<LiveTextKey, number> = {
 /** The Type text overlay on Android: text is injected whole, editing keys as key events. */
 export function scrcpyLiveTextTarget(client: StreamClientScrcpy): LiveTextTarget {
     return {
-        hint: 'Tap a text field on the device first. Text is sent as you type.',
+        hint: 'Tap a text field on the phone first. Text is sent as you type.',
         beginTyping() {
             client.releaseVirtualKeyboard();
         },
