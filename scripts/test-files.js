@@ -295,6 +295,41 @@ test('the server acknowledges every upload chunk while its buffer has room, so c
     assert.deepEqual(channel.closes, [1000]);
 });
 
+// ------------------------------------------------------------------ the Files stylesheet
+
+test('the Files stylesheet states each rule once and forces nothing', () => {
+    const file = path.join(__dirname, '..', 'src', 'style', 'filelisting.css');
+    const source = fs.readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    assert.equal(/!\s*important/i.test(source), false, 'no declaration is !important: the selector and the layer decide');
+    // A rule is its selector under the conditions it is inside. One that is written twice has
+    // its declarations in two places, and the later place overrides the earlier one.
+    const seen = new Set();
+    const repeated = [];
+    const open = [];
+    let buffer = '';
+    for (const character of source) {
+        if (character === '{') {
+            const prelude = buffer.trim().replace(/\s+/g, ' ');
+            const key = [...open, prelude].join(' { ');
+            if (!prelude.startsWith('@')) {
+                if (seen.has(key)) repeated.push(key);
+                seen.add(key);
+            }
+            open.push(prelude);
+            buffer = '';
+        } else if (character === '}') {
+            open.pop();
+            buffer = '';
+        } else if (character === ';') {
+            buffer = '';
+        } else {
+            buffer += character;
+        }
+    }
+    assert.ok(seen.size > 50, 'the rules are found');
+    assert.deepEqual(repeated, [], 'each selector is written once under each condition');
+});
+
 // ------------------------------------------------------------------ the explorer while its tab is hidden
 //
 // The phone's page keeps Files mounted while it shows another tab and tells it with setActive.

@@ -40,9 +40,9 @@ body.file-listing-page {
 
 /* The crumbs and the path field swap with the `hidden` attribute, which the `display: flex`
    rules below would otherwise override -- the editor then appeared next to the crumbs instead
-   of in their place. */
+   of in their place. Two classes outweigh every one-class `display` rule in this file. */
 .file-explorer [hidden] {
-    display: none !important;
+    display: none;
 }
 
 .fx-sr-only {
@@ -122,6 +122,10 @@ body.file-listing-page {
     font-weight: 600;
     white-space: nowrap;
     cursor: pointer;
+    transition:
+        background-color var(--motion-fast),
+        color var(--motion-fast),
+        border-color var(--motion-fast);
 }
 
 .fx-icon-button {
@@ -181,14 +185,11 @@ body.file-listing-page {
     overflow-y: hidden;
     scrollbar-width: none;
     white-space: nowrap;
+    mask-image: linear-gradient(to right, transparent 0, #000 16px);
 }
 
 .fx-breadcrumb::-webkit-scrollbar {
     display: none;
-}
-
-.fx-breadcrumb {
-    mask-image: linear-gradient(to right, transparent 0, #000 16px);
 }
 
 .fx-crumb {
@@ -343,6 +344,10 @@ body.file-listing-page {
     font: inherit;
     white-space: nowrap;
     cursor: pointer;
+    transition:
+        background-color var(--motion-fast),
+        color var(--motion-fast),
+        border-color var(--motion-fast);
 }
 
 .fx-place[aria-current='page'] {
@@ -363,6 +368,8 @@ body.file-listing-page {
     flex-direction: column;
     min-height: 0;
     min-width: 0;
+    /* A container, so the list can drop a column by its own width. */
+    container: fx-main / inline-size;
 }
 
 .fx-transfers {
@@ -498,10 +505,6 @@ body.file-listing-page {
 }
 
 /* Type is the first column to go when the list itself is narrow. */
-.fx-main {
-    container: fx-main / inline-size;
-}
-
 @container fx-main (max-width: 720px) {
     .file-explorer[data-view='details'] .fx-col-type,
     .file-explorer[data-view='details'] .entry-type {
@@ -545,9 +548,9 @@ body.file-listing-page {
     opacity: 0.55;
 }
 
-.entry-name {
+.fx-table .entry-name {
     position: relative;
-    padding: 0 !important;
+    padding: 0;
 }
 
 .file-explorer .entry-name a {
@@ -604,8 +607,8 @@ body.file-listing-page {
 
 /* The checkbox column only takes space once selecting is under way -- Explorer reveals it the
    same way, and on a phone it would otherwise eat a quarter of the name column. */
-.fx-cell-select {
-    padding: 0 !important;
+.fx-table .fx-cell-select {
+    padding: 0;
 }
 
 .file-explorer:not(.fx-selecting) .fx-table .fx-cell-select {
@@ -629,16 +632,16 @@ body.file-listing-page {
     cursor: pointer;
 }
 
-.fx-cell-menu {
-    padding: 0 !important;
+.fx-table td.fx-cell-menu {
+    padding: 0;
     text-align: center;
 }
 
-.fx-empty {
-    padding: 18px 10px !important;
+.fx-table .fx-empty {
+    padding: 18px 10px;
     color: var(--text-color-light);
     text-align: center;
-    white-space: normal !important;
+    white-space: normal;
 }
 
 /* A folder that could not be listed says so where the list would be. */
@@ -739,6 +742,7 @@ body.file-listing-page {
 }
 
 .file-explorer[data-view='tiles'] tr {
+    position: relative;
     flex-direction: column;
     align-items: stretch;
     padding: 5px 2px;
@@ -764,10 +768,6 @@ body.file-listing-page {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
-}
-
-.file-explorer[data-view='tiles'] tr {
-    position: relative;
 }
 
 /* The checkbox belongs in the tile's corner; in the column layout it would otherwise sit on its
@@ -831,13 +831,19 @@ body.file-listing-page {
     overscroll-behavior: contain;
     padding: 4px;
     border: 1px solid var(--button-border-color);
-    border-radius: 9px;
+    border-radius: var(--radius-panel);
     background: var(--main-bg-color);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+    box-shadow: 0 12px 40px rgb(0 0 0 / 18%);
+    transform-origin: top left;
 }
 
 .fx-menu[hidden] {
     display: none;
+}
+
+.fx-menu[data-exiting],
+.fx-dialog[data-exiting] {
+    pointer-events: none;
 }
 
 .fx-menu button {
@@ -852,6 +858,10 @@ body.file-listing-page {
     font: inherit;
     text-align: left;
     cursor: pointer;
+    transition:
+        background-color var(--motion-fast),
+        color var(--motion-fast),
+        border-color var(--motion-fast);
 }
 
 .fx-menu button:disabled {
@@ -960,13 +970,21 @@ body.file-listing-page {
     width: min(360px, calc(100vw - 32px));
     padding: 0;
     border: 1px solid var(--button-border-color);
-    border-radius: 12px;
+    border-radius: 20px;
     background: var(--main-bg-color);
     color: var(--text-color);
+    box-shadow: 0 20px 64px rgb(0 0 0 / 25%);
 }
 
 .fx-dialog::backdrop {
     background: rgba(0, 0, 0, 0.45);
+    animation: sheet-backdrop-in var(--motion-settle) ease-out;
+    transition: opacity var(--motion-exit);
+}
+
+.fx-dialog[data-exiting]::backdrop {
+    animation: none;
+    opacity: 0;
 }
 
 .fx-dialog-form {
@@ -1200,9 +1218,6 @@ body.file-listing-page {
         flex: 1 1 100%;
     }
     /* Rows: the whole row is the tap target, so the name and its caption pack tightly. */
-    .file-explorer[data-view='details'] .fx-row {
-        min-height: var(--fx-row);
-    }
     .file-explorer[data-view='details'] .entry-name a {
         min-height: 0;
         padding: 6px 8px 0;
@@ -1222,6 +1237,7 @@ body.file-listing-page {
     }
     .file-explorer[data-view='details'] .fx-row {
         display: grid;
+        min-height: var(--fx-row);
         grid-template-columns: auto auto minmax(0, 1fr) auto;
         grid-template-areas:
             'select name name menu'
@@ -1297,35 +1313,5 @@ body.file-listing-page {
     .fx-button.fx-danger-solid:hover {
         filter: brightness(1.08);
     }
-}
-
-.fx-menu {
-    transform-origin: top left;
-    border-radius: var(--radius-panel);
-    box-shadow: 0 12px 40px rgb(0 0 0 / 18%);
-}
-.fx-menu button,
-.fx-button,
-.fx-place {
-    transition:
-        background-color var(--motion-fast),
-        color var(--motion-fast),
-        border-color var(--motion-fast);
-}
-.fx-dialog {
-    border-radius: 20px;
-    box-shadow: 0 20px 64px rgb(0 0 0 / 25%);
-}
-.fx-dialog::backdrop {
-    animation: sheet-backdrop-in var(--motion-settle) ease-out;
-    transition: opacity var(--motion-exit);
-}
-.fx-dialog[data-exiting]::backdrop {
-    animation: none;
-    opacity: 0;
-}
-.fx-menu[data-exiting],
-.fx-dialog[data-exiting] {
-    pointer-events: none;
 }
 }
