@@ -1122,18 +1122,21 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     private async startServerNow(): Promise<number | undefined> {
         let pid = await this.getServerPid();
-        if (typeof pid === 'number' && !broadcastManager.hasBroadcast(this.udid)) {
+        const streaming = broadcastManager.hasBroadcast(this.udid);
+        if (!streaming && (typeof pid === 'number' || this.launch)) {
             // A scrcpy server with this server's scid that this process is not attached to:
             // left behind by a previous run that was killed without cleaning up, or one whose
-            // stream died. Nothing can proxy it, so every viewer would be closed with "no
-            // active stream" for ever. Replace it. A scrcpy that someone else started carries
-            // another scid, or none, and is never seen here.
-            console.log(this.TAG, `Replacing orphaned scrcpy server (pid ${pid})`);
+            // stream died while its adb child still runs. Nothing can proxy it, so every viewer
+            // would be closed with "no active stream" for ever. Replace it. A scrcpy that
+            // someone else started carries another scid, or none, and is never seen here.
+            console.log(this.TAG, `Replacing orphaned scrcpy server (pid ${pid ?? 'not found'})`);
             await this.killServerNow(pid);
             pid = undefined;
         }
         try {
-            if (typeof pid !== 'number') {
+            // A stream that is up has a server behind it, even when a failed adb read did not
+            // find its process. A second launch would only wait on the phone for a connection.
+            if (typeof pid !== 'number' && !streaming) {
                 await ScrcpyServer.run(this);
                 // Fire-and-forget: WebsocketProxy reads getCachedEncoders() on the hot connect
                 // path and must not block on this. `list_encoders=true` spawns a whole second

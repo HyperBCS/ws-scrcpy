@@ -552,6 +552,30 @@ test('a server left behind by this server’s previous run is replaced', async (
     assert.equal(device.descriptor.pid, 901);
 });
 
+test('Start does not launch a second server while the stream is up and a process read misses it', async (t) => {
+    const { device, phone } = deviceFixture(t);
+    const stream = streamFixture(t, phone);
+    // The stream is up, but the adb read that lists processes failed and found nothing.
+    stream.up = true;
+    await device.startServer();
+    assert.equal(stream.launches, 0, 'no second scrcpy waits on the phone');
+    assert.deepEqual(phone.killed, []);
+    assert.equal(stream.up, true, 'and the running stream is left alone');
+});
+
+test('a launch whose stream ended is stopped before a fresh one starts', async (t) => {
+    const { device, phone } = deviceFixture(t);
+    const stream = streamFixture(t, phone);
+    // The adb child of an earlier launch still runs, but its stream has gone and no process
+    // with this server's scid is found.
+    const signals = [];
+    device.launch = { child: { kill: (signal) => signals.push(signal) }, done: true };
+    device.addViewer({ close() {} });
+    await device.ensureServer();
+    assert.deepEqual(signals, ['SIGTERM'], 'the old adb child is not left running');
+    assert.equal(stream.launches, 1);
+});
+
 test('starting waits for the launch itself and never polls for a PID file', async () => {
     const launches = [];
     const device = {
