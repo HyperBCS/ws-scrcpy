@@ -648,10 +648,18 @@ sites too. When you discover something the hard way, leave it in the code.
 - Each tool accepts an optional mount and exposes idempotent `stop()` cleanup. Route or device
   changes close its socket/channel and release owned DOM, terminal observers, polling/reconnect
   timers, and file transfers. File path-only changes reuse the active Files client. Cancelling
-  a still-connecting manager also closes the connection. Failed tool loads/connections have an
-  explicit retry action; Shell sessions are never silently recreated with previous commands.
-- Shell resizes its visible terminal with its container and the phone keyboard, provides native
-  keyboard focus plus Esc/Tab/Ctrl+C/history buttons, and avoids opening the phone keyboard on
+  a still-connecting manager also closes the connection. Failed tool loads have an explicit retry
+  action. Since the 2026-11-10 review a lost connection is retried by `ToolView` (1 s, 2 s, 4 s,
+  then one banner with Reconnect; the chip reads "Reconnecting…" meanwhile). Shell reconnects in
+  its own terminal (`ShellClient.reconnect()`, scrollback kept, modes reset by
+  `NEW_SESSION_RESET`); Files has no in-place reconnect and is mounted again for each attempt,
+  with the count kept in `retryRef`. A shell that exits is different: the server closes only
+  the channel, `sessionEnded()` is true, and nothing restarts it until "New session" is pressed.
+  No session ever replays earlier commands. Neither tool prints its own lost-connection text.
+- Shell resizes its visible terminal with its container and the phone keyboard and tells the
+  device (a `resize` message, debounced; after `start`, text frames are typed input and
+  messages are JSON in binary frames, so input can never be parsed as a message). It provides
+  native keyboard focus plus Esc/Tab/Ctrl/history buttons, and avoids opening the phone keyboard on
   entry. Files has a native multiple-file upload picker, compact folder shortcuts, responsive
   rows, empty/error states, downloads, and scoped upload cleanup. The Files section below
   replaces that first implementation.
@@ -761,9 +769,12 @@ sites too. When you discover something the hard way, leave it in the code.
   next to the crumbs instead of in their place. A folder switch no longer blanks the list:
   `list()` marks the wrapper `fx-loading` (old rows dimmed and inert) and the first render of the
   new listing replaces them, so nothing flashes. The shell's Ctrl+C button is now a **Ctrl
-  toggle**: `ShellClient` drops the attach addon and routes `term.onData` through `withControl()`
-  (letters and `@[\\]^_?` become their control codes) while the toggle is on, and writes socket
-  output itself in `onSocketMessage`.
+  key**: `ShellClient` drops the attach addon and routes `term.onData` through `applyControl()`
+  in `shellInput.ts` (letters and `@[\\]^_?` become their control codes), and writes socket
+  output itself in `onSocketMessage`. It was a toggle at first; since the 2026-11-10 review it is
+  **one-shot**: it changes the next single character and releases itself, because a forgotten
+  toggle turned `ls` and Enter into `^L ^S` (clear, then XOFF) and rewrote arrow keys and pastes.
+  A multi-character chunk passes unchanged and leaves Ctrl waiting.
 - **Folder changes use `pushRoute()` (`history.pushState`), not `location.hash =`.** The owner
   reported the whole screen flashing on every folder change and Back/Forward doing nothing on
   the iPhone, neither of which Chromium emulation reproduces. Assigning `location.hash` is a
