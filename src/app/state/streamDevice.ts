@@ -1,6 +1,5 @@
 import type { ParamsStreamScrcpy } from '../../types/ParamsStreamScrcpy';
-import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
-import { buildInterfaceOptions } from '../googDevice/client/deviceInterfaces';
+import { streamSocketUrl } from '../googDevice/client/deviceInterfaces';
 import { devices, DeviceEntry } from './devices';
 
 function canonicalSocket(value: string): string {
@@ -17,9 +16,7 @@ export function findDeviceForStream(params: ParamsStreamScrcpy): DeviceEntry | u
             (entry) =>
                 entry.params.type === 'android' &&
                 entry.descriptor.udid === params.udid &&
-                buildInterfaceOptions(entry.descriptor as GoogDeviceDescriptor, entry.params).some(
-                    (option) => canonicalSocket(option.url) === target,
-                ),
+                canonicalSocket(streamSocketUrl(entry.descriptor.udid, entry.params)) === target,
         );
         return matches.length === 1 ? matches[0] : undefined;
     } catch {

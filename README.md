@@ -341,10 +341,6 @@ You can customize project before build by overriding the
 in the browser via WebCodecs). **Off by default**: it requires Android 11+, and
 enabling it changes how many sockets scrcpy opens, so treat it as experimental.
 Audio must also be enabled per-device in the stream settings sheet.
-* `SCRCPY_LISTENS_ON_ALL_INTERFACES` - WebSocket server in `scrcpy-server.jar`
-will listen for connections on all available interfaces. When `true`, it allows
-connecting to device directly from a browser. Otherwise, the connection must be
-established over adb.
 
 ## Run configuration
 
@@ -360,8 +356,6 @@ Configuration file example: [config.example.yaml](/config.example.yaml).
 
 ## Known issues
 
-* The server on the Android Emulator listens on the internal interface and not
-available from the outside. Select `proxy over adb` from the interfaces list.
 * MsePlayer reports too many dropped frames in quality statistics: needs
 further investigation.
 * On Safari file upload does not show progress (it works in one piece).
@@ -389,12 +383,9 @@ of that device (they reconnect automatically).
 ## Security warning
 Be advised and keep in mind:
 * There is no encryption between browser and node.js server (you can [configure](#run-configuration) HTTPS).
-* There is no encryption between browser and WebSocket server on android device.
 * There is no authorization on any level.
-* The modified version of scrcpy with integrated WebSocket server is listening
-for connections on all network interfaces (see [custom build](#custom-build)).
-* The modified version of scrcpy will keep running after the last client
-disconnected.
+* Every Android connection goes through the node.js server, which reaches the
+phone over adb. The stock scrcpy server on the phone does not listen on the network.
 
 ## Related projects
 * [Genymobile/scrcpy][scrcpy]
@@ -576,7 +567,17 @@ The app has no login, setup key, session cookie, trusted-network setting or API
 credential. Device connections, notifications and downloads open directly.
 The server listens on port 8000 on the host network.
 
-Browser requests retain same-origin validation. Remote WebSocket and download
+Browser requests retain same-origin validation. The server also checks the
+`Host` header of every request and WebSocket upgrade, so a page on another site
+cannot reach it through a DNS name that was pointed at its address. It answers to
+IP addresses, `localhost`, the machine's own name (also with `.local`) and the
+`WS_PUBLIC_URL` host. Any other name gets `403 Host not allowed`: add it to
+`allowedHosts` in the configuration file, or to the comma-separated
+`WS_ALLOWED_HOSTS` environment variable. Every response forbids framing by other
+sites and limits the page's connections to this server and the hosts in
+`remoteHostList`. A stream link cannot name another host for its socket.
+
+Remote WebSocket and download
 proxies connect only to hosts listed in `remoteHostList`; no per-host access key
 is needed. Existing notification sources, receiver subscriptions and Web Push
 keys survive updates. Keep the data volume when rebuilding.

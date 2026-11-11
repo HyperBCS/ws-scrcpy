@@ -66,9 +66,8 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, GoogD
         }
     }
 
-    // The "proxy over adb" address for a device: the current server forwards a TCP connection to
-    // the device's local scrcpy server port. This is always available, unlike the direct network
-    // interfaces below, which require the device to be reachable on the LAN.
+    // The "proxy over adb" address for a device: the server forwards a TCP connection to the
+    // device's local scrcpy server port.
     public static createUrl(params: ParamsDeviceTracker, udid = ''): URL {
         const secure = !!params.secure;
         const hostname = params.hostname || location.hostname;
@@ -81,10 +80,6 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, GoogD
             urlObject.searchParams.set('udid', udid);
         }
         return urlObject;
-    }
-
-    public static getLocalStorageKey(fullName: string): string {
-        return `device_list::${fullName}::interface`;
     }
 
     protected getChannelCode(): string {

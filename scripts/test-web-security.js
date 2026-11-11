@@ -274,3 +274,102 @@ test('stopping the service stops the heartbeat', async () => {
     assert.equal(service.heartbeats.size, 0);
     await new Promise((resolve) => server.close(resolve));
 });
+
+// ------------------------------------------------------------------ Stream links (C-client-stream-2)
+
+test('a link cannot choose the socket host unless the connection is proxied', async () => {
+    await startServer();
+    const { BaseClient } = require('../src/app/client/BaseClient');
+    const { ManagerClient } = require('../src/app/client/ManagerClient');
+    const { CoreDeviceReceiver } = require('../src/app/applDevice/client/CoreDeviceReceiver');
+    const originalOpen = ManagerClient.prototype.openNewConnection;
+    ManagerClient.prototype.openNewConnection = () => undefined;
+    try {
+        const crafted = new URLSearchParams(
+            'action=stream-coredevice&udid=PHONE&hostname=attacker.example&port=443&secure=true&pathname=/collect',
+        );
+        const params = BaseClient.parseParameters(crafted);
+        assert.deepEqual(
+            [params.hostname, params.port, params.secure, params.pathname, params.useProxy],
+            [undefined, undefined, undefined, undefined, undefined],
+        );
+        const receiver = new CoreDeviceReceiver({ ...params, udid: 'PHONE' });
+        assert.equal(receiver.url.origin, 'wss://app.example:8443', "the socket goes to the page's own server");
+        assert.equal(receiver.url.pathname, '/');
+        receiver.stop();
+
+        const viaProxy = new URLSearchParams(crafted);
+        viaProxy.set('useProxy', 'true');
+        const proxied = new CoreDeviceReceiver({ ...BaseClient.parseParameters(viaProxy), udid: 'PHONE' });
+        assert.equal(proxied.url.origin, 'wss://app.example:8443', 'a proxied link still connects to this server');
+        assert.equal(proxied.url.searchParams.get('action'), 'proxy-ws');
+        assert.equal(new URL(proxied.url.searchParams.get('ws')).host, 'attacker.example', 'which checks the host');
+        proxied.stop();
+    } finally {
+        ManagerClient.prototype.openNewConnection = originalOpen;
+    }
+});
+
+test('the server proxy refuses a host that is not configured', async () => {
+    await startServer();
+    const { Config } = require('../src/server/Config');
+    const config = Config.getInstance();
+    assert.equal(config.getProxyHost(new URL('wss://attacker.example/?action=proxy-coredevice&udid=PHONE')), undefined);
+    assert.ok(config.getProxyHost(new URL('wss://proxied.example:8443/?action=proxy-coredevice&udid=PHONE')));
+});
+
+test('an Android stream link is refused when its socket is not this server', async () => {
+    await startServer();
+    const { ManagerClient } = require('../src/app/client/ManagerClient');
+    const { StreamReceiverScrcpy } = require('../src/app/googDevice/client/StreamReceiverScrcpy');
+    const { streamSocketUrl } = require('../src/app/googDevice/client/deviceInterfaces');
+    const originalOpen = ManagerClient.prototype.openNewConnection;
+    ManagerClient.prototype.openNewConnection = () => undefined;
+    const receiver = (ws, extra = {}) =>
+        new StreamReceiverScrcpy({ action: 'stream', udid: 'PHONE', player: 'mse', ws, ...extra });
+    try {
+        const local = { type: 'android', secure: true, hostname: 'app.example', port: 8443, pathname: '/' };
+        const own = streamSocketUrl('PHONE', local);
+        assert.equal(own, 'wss://app.example:8443/?action=proxy-adb&remote=tcp%3A8886&udid=PHONE');
+        const accepted = receiver(own);
+        assert.equal(accepted.url.toString(), own);
+        accepted.stop();
+
+        for (const ws of [
+            'wss://attacker.example/?action=proxy-adb&remote=tcp%3A8886&udid=PHONE',
+            'wss://app.example:9000/?action=proxy-adb&remote=tcp%3A8886&udid=PHONE',
+            'wss://app.example.attacker.example:8443/',
+            'wss://app.example:8443@attacker.example/',
+            'ws://app.example:8443/?action=proxy-adb&remote=tcp%3A8886&udid=PHONE',
+            // What the card offered while the direct option existed.
+            'ws://192.168.1.42:8886/',
+        ]) {
+            assert.throws(() => receiver(ws), /connects to another server/, ws);
+        }
+
+        // A device on a configured remote host: the socket is this server's proxy.
+        const remote = 'wss://proxied.example:8443/?action=proxy-adb&remote=tcp%3A8886&udid=PHONE';
+        const proxied = receiver(remote, { useProxy: true });
+        assert.equal(proxied.url.origin, 'wss://app.example:8443');
+        assert.equal(proxied.url.searchParams.get('ws'), remote);
+        proxied.stop();
+    } finally {
+        ManagerClient.prototype.openNewConnection = originalOpen;
+    }
+});
+
+// ------------------------------------------------------------------ Connection default (C-server-core-8, U-home-1)
+
+test('an Android device has one route, whatever addresses it reports', async () => {
+    await startServer();
+    const { streamSocketUrl } = require('../src/app/googDevice/client/deviceInterfaces');
+    const interfaces = require('../src/app/googDevice/client/deviceInterfaces');
+    assert.deepEqual(Object.keys(interfaces), ['streamSocketUrl'], 'no interface list and no saved choice');
+    const params = { type: 'android', secure: true, hostname: 'app.example', port: 8443, pathname: '/' };
+    const url = new URL(streamSocketUrl('emulator-5554', params));
+    assert.equal(url.host, 'app.example:8443');
+    assert.equal(url.searchParams.get('action'), 'proxy-adb');
+    assert.equal(url.searchParams.get('udid'), 'emulator-5554');
+    const flags = JSON.parse(fs.readFileSync(path.join(__dirname, '../webpack/default.build.config.json'), 'utf8'));
+    assert.equal('SCRCPY_LISTENS_ON_ALL_INTERFACES' in flags, false, 'the build flag is gone');
+});
