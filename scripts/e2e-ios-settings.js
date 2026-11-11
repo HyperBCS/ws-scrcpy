@@ -709,7 +709,7 @@ async function streamSheetsFlow(browser) {
 
             // Send to phone with no answer: the stream socket drops and comes back, and the button is usable again.
             handlers.onStream = undefined;
-            const draft = actionsDialog.getByLabel('Text for the device clipboard');
+            const draft = actionsDialog.getByLabel('Text for the phone clipboard');
             await draft.fill('note for the phone');
             const send = actionsDialog.getByRole('button', { name: 'Send to phone', exact: true });
             await send.click();
@@ -747,7 +747,7 @@ async function streamSheetsFlow(browser) {
             const refresh = actionsDialog.locator('.sheet-row', { hasText: 'Refresh info' }).getByRole('button');
             await page.waitForTimeout(2500);
             await refresh.click();
-            await actionsDialog.getByText('Device info refreshed.', { exact: true }).waitFor({ timeout: 10000 });
+            await actionsDialog.getByText('Phone info refreshed.', { exact: true }).waitFor({ timeout: 10000 });
             assert.deepEqual(test.errors, []);
             console.log('PASS iOS stream sheets', label, 'Settings from the controls and Actions, restart reply, requests end when a socket drops');
         } finally {

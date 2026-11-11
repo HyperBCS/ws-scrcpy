@@ -590,7 +590,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                             class="action-button"
                             disabled={!!busy}
                             onClick={() =>
-                                runCommand(ControlCenterCommand.REFRESH_DEVICE, 'Refreshing', 'Device info refreshed.')
+                                runCommand(ControlCenterCommand.REFRESH_DEVICE, 'Refreshing', 'Phone info refreshed.')
                             }
                         >
                             Refresh info

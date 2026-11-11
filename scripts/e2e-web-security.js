@@ -141,18 +141,22 @@ async function androidCard(browser) {
         await card.scrollIntoViewIfNeeded();
         await page.screenshot({ path: path.join(OUT, `android-card-${label}.png`) });
 
-        // Wake opens a short control connection; it used to go to the selected interface.
+        // Wake is a command on the device list's own connection to the server (p2-android-server):
+        // it opens no socket, so it cannot reach another host or the phone's own address.
         const before = test.sockets.length;
         await card.getByRole('button', { name: 'Wake', exact: true }).click();
         await page.waitForTimeout(200);
-        const opened = test.sockets.slice(before);
-        assert.equal(opened.length, 1, `${label}: Wake opens one socket`);
-        assert.equal(opened[0].searchParams.get('action'), 'proxy-adb');
+        assert.equal(test.sockets.length, before, `${label}: Wake opens no socket`);
+        assert.deepEqual(
+            test.commands.filter((command) => command.type === 'wake_device').map((command) => command.data?.udid),
+            [ANDROID],
+            `${label}: Wake asks the server`,
+        );
         assertOnlyOwnSockets(test.sockets, label);
         assert.equal(test.commands.filter((command) => command.type === 'update_interfaces').length, 0);
         assert.deepEqual(test.errors, [], `${label}: no runtime errors`);
         await test.context.close();
-        console.log('PASS', label, 'Android card: one route through the server, no interface choice, Wake uses it');
+        console.log('PASS', label, 'Android card: one route through the server, no interface choice, Wake goes to the server');
     }
 }
 

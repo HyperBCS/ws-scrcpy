@@ -398,7 +398,8 @@ async function errorBoundary(browser) {
     const context = await browser.newContext({ viewport: PHONE, isMobile: true, hasTouch: true });
     try {
         const page = await context.newPage();
-        await page.route(/\/\d+\.bundle\.js$/, (route) => route.abort());
+        // Lazy chunks are named <id>.<content hash>.js since the hashes were added.
+        await page.route(/\/\d+\.[0-9a-f]+\.js$/, (route) => route.abort());
         await page.goto(BASE);
         const failed = page.locator('.screen-failed');
         await failed.waitFor();
