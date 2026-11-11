@@ -620,7 +620,24 @@ async function phoneSelection(browser, layout, name, scheme) {
     assert.equal(await bar.getByRole('button', { name: 'Delete selected items', exact: true }).isDisabled(), true);
     await bar.getByRole('button', { name: 'Close selection', exact: true }).click();
     await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
-    assert.equal(traffic.operations.length, 1, 'Copy and Close send nothing to the device');
+
+    // A folder change ends selection mode: browser Back lands in a folder where taps open.
+    await page.getByRole('button', { name: 'Actions', exact: true }).click();
+    await page.getByRole('menuitemcheckbox', { name: 'Select items', exact: true }).click();
+    await bar.waitFor();
+    await page.goBack();
+    await crumb(page, 'archive');
+    await ready(page);
+    await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
+    assert.equal(await bar.isVisible(), false, 'no bar in the folder Back leads to');
+    assert.equal(await page.locator('.fx-history').isVisible(), true, 'history is back after a folder change');
+    await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
+    await crumb(page, 'tmp');
+    await ready(page);
+    await tap('archive');
+    await crumb(page, 'archive');
+    await ready(page);
+    assert.equal(traffic.operations.length, 1, 'Copy, Close and a folder change send nothing to the device');
     await finish();
 }
 

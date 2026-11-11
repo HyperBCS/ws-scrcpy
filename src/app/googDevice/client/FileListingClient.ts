@@ -2401,6 +2401,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.path = destination;
         this.entries = [];
         this.selection.clear();
+        // Selection mode belongs to the folder it was started in. Left on, the next folder
+        // would open with "0 selected" and taps that select instead of opening.
+        this.selectionMode = false;
         this.anchorName = undefined;
         this.rovingFromFocus = false;
         this.renderBreadcrumb();
