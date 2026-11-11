@@ -110,8 +110,15 @@ class EarlyStopTests(unittest.IsolatedAsyncioTestCase):
             loop.remove_signal_handler(signum)
         signal.signal(signal.SIGTERM, self.previous)
 
+    def require_stock(self):
+        # `npm run patch:ios` edits the installed file in place. Once it has run, the stock
+        # behaviour can no longer be observed from that file.
+        if patch.MARKER in self.source:
+            self.skipTest('The installed screen_stream.py is already patched')
+
     def test_stock_serve_installs_its_handlers_only_after_the_preflight(self):
         # What the patch is for. If upstream moves the handlers itself, the patch stops applying.
+        self.require_stock()
         body = ast.unparse(serve_source(self.source))
         self.assertLess(body.index('_eager_stream_start'), body.index('add_signal_handler'))
 
@@ -140,6 +147,7 @@ class EarlyStopTests(unittest.IsolatedAsyncioTestCase):
     async def test_without_the_patch_a_sigterm_in_the_preflight_finds_no_handler(self):
         # The defect, shown with the same stubs: the signal reaches the default handler (here the
         # safety net; in serve-web, the end of the process) and no cleanup step runs.
+        self.require_stock()
         serving = asyncio.create_task(self.build_server(self.source).serve())
         await asyncio.wait_for(self.entered.wait(), 5)
         os.kill(os.getpid(), signal.SIGTERM)
