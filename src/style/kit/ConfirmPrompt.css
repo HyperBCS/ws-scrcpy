@@ -1,0 +1,65 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* The confirm prompt in the kit look (`ui/ConfirmAction.tsx` with `kit`). Markup:
+     div.kit-confirm[role=alertdialog]       plus -stack, -danger and -swapped
+       p.kit-confirm-question
+       p.kit-confirm-consequence
+       div.kit-confirm-actions
+         button.kit-button.kit-confirm-go     kit-button-primary unless the prompt is -danger
+         button.kit-button.kit-confirm-cancel
+   The confirm button comes first and Cancel last; -swapped trades their places. */
+.kit-confirm {
+    box-sizing: border-box;
+    margin: var(--space-8) 0 var(--space-12);
+    padding: var(--space-16);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    color: var(--text);
+    text-align: left;
+}
+.kit-confirm-question {
+    margin: 0;
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+.kit-confirm-consequence {
+    margin: var(--space-4) 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+.kit-confirm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--space-8);
+    margin-top: var(--space-12);
+}
+.kit-confirm-stack > .kit-confirm-actions {
+    flex-direction: column;
+    flex-wrap: nowrap;
+}
+.kit-confirm-swapped > .kit-confirm-actions {
+    flex-direction: row-reverse;
+}
+.kit-confirm-stack.kit-confirm-swapped > .kit-confirm-actions {
+    flex-direction: column-reverse;
+}
+.kit-confirm-actions > .kit-button {
+    min-width: 88px;
+}
+
+/* A removal is confirmed on a solid danger fill. */
+.kit-confirm-danger .kit-button.kit-confirm-go,
+.kit-confirm-danger .kit-button.kit-confirm-go:hover:not(:disabled, [aria-disabled='true']),
+.kit-confirm-danger .kit-button.kit-confirm-go:active:not(:disabled, [aria-disabled='true']) {
+    border-color: var(--danger-fill);
+    background: var(--danger-fill);
+    color: var(--on-accent);
+}
+}

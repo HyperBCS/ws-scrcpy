@@ -1,5 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { buttonClass } from './Button';
 import '../../style/ui/ConfirmAction.css';
+import '../../style/kit/ConfirmPrompt.css';
 
 /** An armed action disarms by itself after this long without a confirming press. */
 export const CONFIRM_TIMEOUT_MS = 6000;
@@ -214,10 +216,38 @@ export function ConfirmPrompt({
         // A different question is a different request: the guard starts again.
     }, [question]);
 
+    // The kit look has class names of its own (`style/kit/ConfirmPrompt.css`) and the kit's
+    // buttons. The prompt behaves the same in both.
+    const names = kit
+        ? {
+              root: [
+                  'kit-confirm',
+                  layout === 'stack' && 'kit-confirm-stack',
+                  danger && 'kit-confirm-danger',
+                  swapped && 'kit-confirm-swapped',
+              ]
+                  .filter(Boolean)
+                  .join(' '),
+              question: 'kit-confirm-question',
+              consequence: 'kit-confirm-consequence',
+              actions: 'kit-confirm-actions',
+              confirm: danger
+                  ? `${buttonClass({ full: layout === 'stack' })} kit-confirm-go`
+                  : `${buttonClass({ variant: 'primary', full: layout === 'stack' })} kit-confirm-go`,
+              cancel: `${buttonClass({ full: layout === 'stack' })} kit-confirm-cancel`,
+          }
+        : {
+              root: `confirm-prompt ${layout} ${danger ? 'danger' : ''} ${swapped ? 'swapped' : ''}`,
+              question: 'confirm-prompt-question',
+              consequence: 'confirm-prompt-consequence',
+              actions: 'confirm-prompt-actions',
+              confirm: `confirm-prompt-button ${danger ? 'danger' : 'primary'}`,
+              cancel: 'confirm-prompt-button',
+          };
     return (
         <div
             ref={root}
-            class={`confirm-prompt ${layout} ${danger ? 'danger' : ''} ${swapped ? 'swapped' : ''}${kit ? ' kit' : ''}`}
+            class={names.root}
             role="alertdialog"
             aria-labelledby={questionId}
             aria-describedby={consequence ? consequenceId : undefined}
@@ -229,19 +259,19 @@ export function ConfirmPrompt({
                 }
             }}
         >
-            <p id={questionId} class="confirm-prompt-question">
+            <p id={questionId} class={names.question}>
                 {question}
             </p>
             {consequence && (
-                <p id={consequenceId} class="confirm-prompt-consequence">
+                <p id={consequenceId} class={names.consequence}>
                     {consequence}
                 </p>
             )}
-            <div class="confirm-prompt-actions">
+            <div class={names.actions}>
                 <button
                     ref={confirm}
                     type="button"
-                    class={`confirm-prompt-button ${danger ? 'danger' : 'primary'}`}
+                    class={names.confirm}
                     aria-disabled={ready ? undefined : true}
                     onClick={() => {
                         if (performance.now() - shownAt.current < CONFIRM_GUARD_MS) {
@@ -253,7 +283,7 @@ export function ConfirmPrompt({
                 >
                     {confirmLabel}
                 </button>
-                <button ref={cancel} type="button" class="confirm-prompt-button" onClick={action.disarm}>
+                <button ref={cancel} type="button" class={names.cancel} onClick={action.disarm}>
                     Cancel
                 </button>
             </div>
