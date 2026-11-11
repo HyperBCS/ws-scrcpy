@@ -312,6 +312,24 @@ async function linksOpenOnce(browser) {
         } finally { await test.context.close(); }
     }
 
+    // What the browser remembers can be wrong (a link edited by hand). The page keeps the screen
+    // it opened with instead of starting a second stream when the list disagrees, and the next
+    // visit is right.
+    test = await start(browser);
+    try {
+        await card(test.page, `ios:${IPHONE_2}`).waitFor();
+        await test.page.evaluate((udid) => localStorage.setItem('ws-scrcpy.phones', JSON.stringify({ [udid]: { platform: 'android' } })), IPHONE_2);
+        const wrong = await start(browser, { hash: `action=device&udid=${IPHONE_2}&view=screen`, listDelay: 500, context: test.context });
+        await wrong.page.locator('.stream-view').waitFor();
+        await wrong.page.waitForFunction((udid) => JSON.parse(localStorage.getItem('ws-scrcpy.phones'))[udid].platform === 'ios', IPHONE_2);
+        await quiet(wrong.page, 500);
+        assert.deepEqual(wrong.streams.map((stream) => stream.action), ['proxy-adb'], 'one stream for the visit, also when the list says otherwise');
+        const next = await start(browser, { hash: `action=device&udid=${IPHONE_2}&view=screen`, lists: false, context: test.context });
+        await next.page.locator('.stream-view').waitFor();
+        await quiet(next.page, 500);
+        assert.deepEqual(next.streams.map((stream) => stream.action), ['proxy-coredevice'], 'the next visit opens the iPhone screen');
+    } finally { await test.context.close(); }
+
     // Older tool links, the new form of them, and the links in delivered push banners.
     for (const [link, address, title, selector, channel] of [
         [`action=shell&udid=${PIXEL}`, `#!action=device&udid=${PIXEL}&view=shell`, 'Google Pixel 9 · Shell · ws-scrcpy', '.tool-view-shell', 'SHEL'],

@@ -91,13 +91,15 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
     const entry = findDeviceByUdid(udid);
     const listed = entry?.params.type;
     const name = entry ? deviceName(entry) : undefined;
-    // The list decides. Once a screen is open it stays that kind of screen when the phone
-    // drops out of the list.
+    // Decided once for each phone the page shows: by the list, or before the list arrives by
+    // what this browser remembers. The page then stays that kind of screen, whatever the list
+    // says later, so one visit never starts a second stream. What is remembered is corrected
+    // below for the next visit.
     const known = useRef<{ udid: string; platform: Platform }>();
     if (known.current?.udid !== udid) {
         known.current = undefined;
     }
-    const platform = listed ?? known.current?.platform ?? rememberedPhone(udid)?.platform;
+    const platform = known.current?.platform ?? listed ?? rememberedPhone(udid)?.platform;
     if (platform) {
         known.current = { udid, platform };
     }
