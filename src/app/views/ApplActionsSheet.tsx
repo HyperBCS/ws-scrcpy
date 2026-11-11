@@ -1,6 +1,9 @@
-import { AnimatedDetails } from '../ui/AnimatedDetails';
+import { Disclosure } from '../ui/AnimatedDetails';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { BottomSheet } from '../ui/BottomSheet';
+import { Banner } from '../ui/Banner';
+import { Button } from '../ui/Button';
+import { TextAreaField } from '../ui/Field';
+import { Sheet } from '../ui/Sheet';
 import { SheetGroup, SheetRow, SheetStatus, SheetToggleRow, SoundRows } from '../ui/SheetControls';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
@@ -259,7 +262,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
         : 'Phone details unavailable.';
 
     return (
-        <BottomSheet
+        <Sheet
             open={toolsSheetOpen.value}
             onClose={() => (toolsSheetOpen.value = false)}
             title="Actions"
@@ -267,44 +270,38 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
         >
             <div class="actions-sheet">
                 {!connected && (
-                    <SheetStatus tone="warning">
+                    <Banner>
                         {client.getDecoderProblem()
                             ? 'This browser cannot show the phone’s video. Actions that need the stream are off.'
                             : 'Reconnecting to the phone. Actions that need the stream are paused until it is back.'}
-                    </SheetStatus>
+                    </Banner>
                 )}
 
-                <SheetGroup title="Sound">
+                <SheetGroup kit title="Sound">
                     {audioSession ? (
-                        <SoundRows session={audioSession} />
+                        <SoundRows kit session={audioSession} />
                     ) : (
-                        <SheetRow title="Listen in this browser" description={audioAvailability.value.message} />
+                        <SheetRow kit title="Listen in this browser" description={audioAvailability.value.message} />
                     )}
                 </SheetGroup>
 
-                <SheetGroup title="Screen" status={screenNote && <SheetStatus>{screenNote}</SheetStatus>}>
-                    <SheetRow title="Rotate" description="Apps with a fixed orientation may ignore this." layout="pair">
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            onClick={() => onRotate('left')}
-                            disabled={!connected}
-                        >
+                <SheetGroup kit title="Screen" status={screenNote && <SheetStatus kit>{screenNote}</SheetStatus>}>
+                    <SheetRow
+                        kit
+                        title="Rotate"
+                        description="Apps with a fixed orientation may ignore this."
+                        layout="pair"
+                    >
+                        <Button size="compact" onClick={() => onRotate('left')} disabled={!connected}>
                             Left
-                        </button>
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            onClick={() => onRotate('right')}
-                            disabled={!connected}
-                        >
+                        </Button>
+                        <Button size="compact" onClick={() => onRotate('right')} disabled={!connected}>
                             Right
-                        </button>
+                        </Button>
                     </SheetRow>
-                    <SheetRow title="Refresh picture" description="Refresh a smeared picture.">
-                        <button
-                            type="button"
-                            class="sheet-button"
+                    <SheetRow kit title="Refresh picture" description="Refresh a smeared picture.">
+                        <Button
+                            size="compact"
                             onClick={() => {
                                 setScreenNote('Asked for a new keyframe.');
                                 client.requestKeyframe();
@@ -312,39 +309,34 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             disabled={!connected}
                         >
                             Refresh
-                        </button>
+                        </Button>
                     </SheetRow>
-                    <SheetRow title="Restart video" description="For frozen or broken video.">
-                        <button type="button" class="sheet-button" onClick={onRestartVideo}>
+                    <SheetRow kit title="Restart video" description="For frozen or broken video.">
+                        <Button size="compact" onClick={onRestartVideo}>
                             Restart video
-                        </button>
+                        </Button>
                     </SheetRow>
-                    <SheetRow title="Reconnect" description="Reconnect video, touch and keyboard.">
-                        <button
-                            type="button"
-                            class="sheet-button"
+                    <SheetRow kit title="Reconnect" description="Reconnect video, touch and keyboard.">
+                        <Button
+                            size="compact"
                             onClick={() => {
                                 setScreenNote('Reconnecting to the phone…');
                                 client.restartSession();
                             }}
                         >
                             Reconnect
-                        </button>
+                        </Button>
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup title="Keyboard">
-                    <SheetRow title="Type text">
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            onClick={() => openSheet('liveText')}
-                            disabled={!connected}
-                        >
+                <SheetGroup kit title="Keyboard">
+                    <SheetRow kit title="Type text">
+                        <Button size="compact" onClick={() => openSheet('liveText')} disabled={!connected}>
                             Open
-                        </button>
+                        </Button>
                     </SheetRow>
                     <SheetToggleRow
+                        kit
                         title="Send keystrokes"
                         description="Keys typed in this browser go to the phone."
                         checked={keyboard}
@@ -352,75 +344,64 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     />
                 </SheetGroup>
 
-                <SheetGroup title="Lock screen">
-                    <SheetRow title="Unlock device" description="Uses the passcode stored on the server.">
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            onClick={() => openSheet('unlock')}
-                            disabled={!connected}
-                        >
+                <SheetGroup kit title="Lock screen">
+                    <SheetRow kit title="Unlock device" description="Uses the passcode stored on the server.">
+                        <Button size="compact" onClick={() => openSheet('unlock')} disabled={!connected}>
                             Unlock
-                        </button>
+                        </Button>
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup title="iPhone settings">
+                <SheetGroup kit title="iPhone settings">
                     <SheetRow
+                        kit
                         title="Scheduled unlock"
                         description="The two daily unlocks, the passcode and the last run."
                     >
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            aria-label="Open Scheduled unlock"
+                        <Button
+                            size="compact"
+                            attributes={{ 'aria-label': 'Open Scheduled unlock' }}
                             onClick={() => {
                                 closeAllSheets();
                                 openApplSettingsSheet(client.getDeviceUdid());
                             }}
                         >
                             Open
-                        </button>
+                        </Button>
                     </SheetRow>
                 </SheetGroup>
 
                 <SheetGroup
+                    kit
                     title="Clipboard"
                     status={
                         draftTooLong ? (
-                            <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
+                            <SheetStatus kit tone="error">
+                                {CLIPBOARD_TOO_LONG_NOTE}
+                            </SheetStatus>
                         ) : (
-                            clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
+                            clipboardNote && <SheetStatus kit>{clipboardNote}</SheetStatus>
                         )
                     }
                 >
                     <SheetRow
+                        kit
                         title="Read the phone's clipboard"
                         description="Copy from the phone to this browser."
                         layout="pair"
                     >
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            onClick={onReadClipboard}
-                            disabled={!connected || reading}
-                        >
+                        <Button size="compact" onClick={onReadClipboard} disabled={!connected || reading}>
                             {reading ? 'Reading…' : 'Read'}
-                        </button>
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            onClick={onCopyHere}
-                            disabled={received === undefined}
-                        >
+                        </Button>
+                        <Button size="compact" onClick={onCopyHere} disabled={received === undefined}>
                             Copy here
-                        </button>
+                        </Button>
                     </SheetRow>
                     {received !== undefined && (
-                        <div class="sheet-row stack">
-                            <textarea
-                                class="sheet-readout actions-clipboard-readout"
-                                aria-label="Phone clipboard"
+                        <div class="kit-row kit-row-stack">
+                            <TextAreaField
+                                label="Phone clipboard"
+                                labelHidden
                                 value={received}
                                 placeholder="The phone clipboard is empty"
                                 readOnly
@@ -429,61 +410,66 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         </div>
                     )}
                     <SheetRow
+                        kit
                         title="Send text to the phone"
                         description="Copy to the phone, then paste in a field."
                         layout="stack"
                     >
-                        <textarea
-                            id="ios-clipboard-text"
-                            class="sheet-input actions-paste-input"
-                            aria-label="Text for the phone clipboard"
+                        <TextAreaField
+                            label="Text for the phone clipboard"
+                            labelHidden
                             placeholder="Type or paste text…"
                             value={clipboardDraft}
                             rows={3}
                             onInput={(event) => setClipboardDraft(event.currentTarget.value)}
                         />
-                        <button
-                            type="button"
-                            class="sheet-button primary"
+                        <Button
                             onClick={onSendClipboard}
                             disabled={!connected || !clipboardDraft || draftTooLong || sendingClipboard}
                         >
                             Send to phone
-                        </button>
+                        </Button>
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup title="Phone" hint={phoneSummary} status={power && <SheetStatus>{power}</SheetStatus>}>
+                <SheetGroup
+                    kit
+                    title="Phone"
+                    hint={phoneSummary}
+                    status={power && <SheetStatus kit>{power}</SheetStatus>}
+                >
                     <SheetRow
+                        kit
                         title="Reboot"
                         description="Reconnects after restarting. If a passcode is set, unlock on the phone."
                     >
-                        <button
-                            type="button"
-                            class="sheet-button danger"
+                        <Button
+                            size="compact"
+                            variant="danger"
                             onClick={(event) => {
                                 setPower('');
                                 confirm.arm('reboot', event.currentTarget);
                             }}
                         >
                             Reboot
-                        </button>
+                        </Button>
                     </SheetRow>
-                    <SheetRow title="Shut down" description="Power it on using the phone’s button.">
-                        <button
-                            type="button"
-                            class="sheet-button danger"
+                    <SheetRow kit title="Shut down" description="Power it on using the phone’s button.">
+                        <Button
+                            size="compact"
+                            variant="danger"
                             onClick={(event) => {
                                 setPower('');
                                 confirm.arm('shutdown', event.currentTarget);
                             }}
                         >
                             Shut down
-                        </button>
+                        </Button>
                     </SheetRow>
                 </SheetGroup>
                 {confirm.armed === 'reboot' && (
                     <ConfirmPrompt
+                        kit
                         action={confirm}
                         question={`Reboot ${phoneName}?`}
                         consequence="It reconnects after restarting. If a passcode is set, it has to be entered on the phone."
@@ -494,6 +480,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 )}
                 {confirm.armed === 'shutdown' && (
                     <ConfirmPrompt
+                        kit
                         action={confirm}
                         question={`Shut down ${phoneName}?`}
                         consequence="You cannot turn it back on from here."
@@ -503,59 +490,60 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     />
                 )}
 
-                <AnimatedDetails class="sheet-details">
-                    <summary>
-                        Troubleshooting<span>services and diagnostics</span>
-                    </summary>
-                    <dl class="sheet-facts device-debug-facts">
-                        <dt>Decoder</dt>
-                        <dd>{client.getDecoderKind() ?? 'none yet'}</dd>
-                        <dt>Session</dt>
-                        <dd>{descriptor?.session ?? 'unknown'}</dd>
-                        <dt>Connection</dt>
-                        <dd>{connected ? 'connected' : 'disconnected'}</dd>
-                        <dt>Screen</dt>
-                        <dd>{descriptor?.['screen.power'] ?? 'unknown'}</dd>
-                        <dt>Lock</dt>
-                        <dd>
+                <Disclosure title="Troubleshooting" note="services and diagnostics">
+                    <SheetRow kit title="Decoder">
+                        <span class="kit-row-value">{client.getDecoderKind() ?? 'none yet'}</span>
+                    </SheetRow>
+                    <SheetRow kit title="Session">
+                        <span class="kit-row-value">{descriptor?.session ?? 'unknown'}</span>
+                    </SheetRow>
+                    <SheetRow kit title="Connection">
+                        <span class="kit-row-value">{connected ? 'connected' : 'disconnected'}</span>
+                    </SheetRow>
+                    <SheetRow kit title="Screen">
+                        <span class="kit-row-value">{descriptor?.['screen.power'] ?? 'unknown'}</span>
+                    </SheetRow>
+                    <SheetRow kit title="Lock">
+                        <span class="kit-row-value">
                             {descriptor?.['device.locked'] === true
                                 ? 'locked'
                                 : descriptor?.['device.locked'] === false
                                   ? 'unlocked'
                                   : 'unknown'}
-                        </dd>
-                    </dl>
+                        </span>
+                    </SheetRow>
                     <SheetRow
+                        kit
                         title="Restart services"
                         description="Use if touch, keyboard or clipboard stop responding. Ends the phone session for every viewer."
                     >
-                        <button
-                            type="button"
-                            class="sheet-button danger"
+                        <Button
+                            size="compact"
+                            variant="danger"
                             disabled={debugBusy}
                             onClick={(event) => confirm.arm('restart', event.currentTarget)}
                         >
                             Restart services
-                        </button>
+                        </Button>
                     </SheetRow>
                     <SheetRow
+                        kit
                         title="Remount developer image"
                         description="Use if the screen will not start. Ends the phone session first."
                     >
-                        <button
-                            type="button"
-                            class="sheet-button danger"
-                            aria-label="Remount developer image"
+                        <Button
+                            size="compact"
+                            variant="danger"
+                            attributes={{ 'aria-label': 'Remount developer image' }}
                             disabled={debugBusy}
                             onClick={(event) => confirm.arm('remount', event.currentTarget)}
                         >
                             Remount
-                        </button>
+                        </Button>
                     </SheetRow>
-                    <SheetRow title="Refresh info" description="Check pairing and Developer Mode.">
-                        <button
-                            type="button"
-                            class="sheet-button"
+                    <SheetRow kit title="Refresh info" description="Check pairing and Developer Mode.">
+                        <Button
+                            size="compact"
                             disabled={debugBusy}
                             onClick={() =>
                                 onServiceCommand(
@@ -566,10 +554,11 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             }
                         >
                             Refresh
-                        </button>
+                        </Button>
                     </SheetRow>
                     {confirm.armed === 'restart' && (
                         <ConfirmPrompt
+                            kit
                             action={confirm}
                             question={`Restart services on ${phoneName}?`}
                             consequence="The phone session ends for every viewer. The next viewer gets a new one."
@@ -586,6 +575,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     )}
                     {confirm.armed === 'remount' && (
                         <ConfirmPrompt
+                            kit
                             action={confirm}
                             question={`Remount the developer image on ${phoneName}?`}
                             consequence="The phone session ends for every viewer while the image is reloaded."
@@ -600,9 +590,9 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             }
                         />
                     )}
-                    {debugNote && <SheetStatus>{debugNote}</SheetStatus>}
-                </AnimatedDetails>
+                    {debugNote && <SheetStatus kit>{debugNote}</SheetStatus>}
+                </Disclosure>
             </div>
-        </BottomSheet>
+        </Sheet>
     );
 }

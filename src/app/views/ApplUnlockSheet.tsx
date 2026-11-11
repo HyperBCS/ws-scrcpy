@@ -6,7 +6,9 @@ import { streamConnected, unlockSheetOpen } from '../state/stream';
 import { runUnlockNow } from '../state/unlockSchedule';
 import { unlockOutcomeText, UnlockRunResult } from '../../common/IosUnlockSchedule';
 import ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
-import { BottomSheet } from '../ui/BottomSheet';
+import { Button } from '../ui/Button';
+import { InlineStatus } from '../ui/InlineStatus';
+import { Sheet } from '../ui/Sheet';
 import '../../style/views/UnlockSheet.css';
 
 type Phase = 'idle' | 'running' | 'confirmed' | 'failed';
@@ -82,42 +84,50 @@ export function ApplUnlockSheet({ client }: { client: StreamClientCoreDevice }) 
         : note || (locked === false ? 'This phone reports that it is unlocked.' : unusable);
 
     return (
-        <BottomSheet
+        <Sheet
             open={open}
             onClose={() => (unlockSheetOpen.value = false)}
             title="Unlock device"
             subtitle={entry ? deviceName(entry) : undefined}
+            footer={
+                unusable ? (
+                    <Button variant="primary" onClick={openSettings}>
+                        Open Settings
+                    </Button>
+                ) : (
+                    <Button
+                        variant="primary"
+                        disabled={!connected || !tracker || running || locked === false}
+                        onClick={unlock}
+                    >
+                        {running ? 'Unlocking…' : 'Unlock with stored passcode'}
+                    </Button>
+                )
+            }
         >
-            <div class="unlock-sheet-content">
-                <p class="unlock-sheet-intro">
+            <div class="unlock-form">
+                <p class="unlock-intro">
                     The server types the passcode stored for this phone. It is never sent to or kept in this browser.
                 </p>
-                <div
-                    class={`unlock-sheet-feedback ${phase === 'failed' || (!note && unusable) ? 'warning' : ''}`}
-                    role="status"
-                    aria-live="polite"
-                    data-unlock-state={!connected ? 'disconnected' : phase}
-                >
-                    {stateMessage}
-                </div>
-                <div class="unlock-sheet-actions">
-                    {unusable ? (
-                        <button type="button" class="primary" onClick={openSettings}>
-                            Open Settings
-                        </button>
-                    ) : (
-                        <button
-                            type="button"
-                            class="primary"
-                            disabled={!connected || !tracker || running || locked === false}
-                            onClick={unlock}
+                <div class="unlock-feedback" data-unlock-state={!connected ? 'disconnected' : phase}>
+                    {stateMessage && (
+                        <InlineStatus
+                            tone={
+                                phase === 'failed'
+                                    ? 'error'
+                                    : !note && unusable
+                                      ? 'warning'
+                                      : phase === 'confirmed'
+                                        ? 'success'
+                                        : 'neutral'
+                            }
                         >
-                            {running ? 'Unlocking…' : 'Unlock with stored passcode'}
-                        </button>
+                            {stateMessage}
+                        </InlineStatus>
                     )}
                 </div>
-                <p class="unlock-sheet-hint">After a restart, unlock once on the phone.</p>
+                <p class="unlock-hint">After a restart, unlock once on the phone.</p>
             </div>
-        </BottomSheet>
+        </Sheet>
     );
 }

@@ -1,170 +1,82 @@
 @layer tokens, base, components, views;
 
 @layer views {
+/* The notice above the picture while the phone shows its lock screen
+   (views/LockScreenNotice.tsx). Its buttons are the kit's. */
 .lock-screen-notice {
     position: relative;
-    z-index: 6;
+    /* One above the header's level: the cover over a sleeping phone must not dim the notice. */
+    z-index: calc(var(--z-header) + 1);
     display: flex;
     flex: 0 0 auto;
     align-items: center;
-    gap: 8px;
-    padding: 4px max(8px, env(safe-area-inset-right, 0px)) 4px max(16px, env(safe-area-inset-left, 0px));
-    color: var(--text-color);
-    background: var(--header-bg-color);
-    border-bottom: 1px solid var(--device-border-color);
-    font-size: 13px;
+    gap: var(--space-8);
+    padding: var(--space-4) max(var(--space-8), env(safe-area-inset-right, 0px)) var(--space-4)
+        max(var(--space-16), env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-raised);
+    color: var(--text);
+    font-size: var(--font-size-13);
+    line-height: 1.4;
 }
 .lock-screen-notice > span {
     flex: 1;
     min-width: 0;
 }
-.lock-screen-notice button,
-.unlock-sheet-actions button {
-    min-height: 44px;
-    border: 1px solid var(--button-border-color);
-    border-radius: 12px;
-    padding: 0 14px;
-    color: var(--text-color);
-    background: var(--main-bg-color);
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-}
-.lock-screen-notice .lock-screen-unlock,
-.unlock-sheet-actions .primary {
-    background: #2563eb;
-    border-color: #2563eb;
-    color: white;
-}
-.lock-screen-notice .lock-screen-dismiss {
-    width: 44px;
-    padding: 0;
-    display: grid;
-    place-items: center;
-    border-color: transparent;
-    background: transparent;
-}
-.unlock-sheet-content {
+
+/* The two Unlock sheets (views/UnlockSheet.tsx, views/ApplUnlockSheet.tsx): text, a field and a
+   status in one column. The controls are the kit's. */
+.unlock-form {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--space-12);
     min-width: 0;
 }
-.unlock-sheet-content p {
+.unlock-intro,
+.unlock-hint {
     margin: 0;
+    line-height: 1.4;
     overflow-wrap: anywhere;
-    line-height: 1.5;
 }
-.unlock-sheet-intro {
-    font-size: 15px;
+.unlock-intro {
+    font-size: var(--font-size-15);
 }
-.unlock-sheet-hint {
-    font-size: 13px;
-    color: var(--text-color-light);
+.unlock-hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
 }
-.unlock-remember {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 44px;
-    font-size: 15px;
-    cursor: pointer;
+/* The masked field is scrolled to the middle of what an on-screen keyboard leaves in view. */
+.unlock-field {
+    scroll-margin-bottom: var(--space-32);
 }
-.unlock-remember input {
-    flex: 0 0 auto;
-    width: 20px;
-    height: 20px;
+/* The outcome of an attempt stands in the column like the other parts. */
+.unlock-feedback > .kit-status {
     margin: 0;
-    accent-color: #2563eb;
 }
-.unlock-sheet-modes {
-    display: flex;
-    gap: 12px;
-    border: 0;
-    padding: 0;
-    margin: 0;
-    min-width: 0;
-}
-.unlock-sheet-modes legend {
-    margin-bottom: 8px;
-    font-size: 13px;
-    font-weight: 600;
-}
-.unlock-sheet-modes label {
-    display: flex;
-    flex: 1;
-    gap: 8px;
-    align-items: center;
-    min-height: 48px;
-    padding: 0 12px;
-    border: 1px solid var(--button-border-color);
-    border-radius: 12px;
-    cursor: pointer;
-}
-.unlock-sheet-modes label:has(input:checked) {
-    border-color: #2563eb;
-    background: var(--progress-background-color);
-}
-.unlock-sheet-modes input {
-    width: 18px;
-    height: 18px;
-    margin: 0;
-    accent-color: #2563eb;
-}
-.unlock-sheet-field {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    font-weight: 600;
-}
-.unlock-sheet-field input {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    min-height: 52px;
-    padding: 12px 14px;
-    font: inherit;
-    font-size: 18px;
-    letter-spacing: 2.7px;
-    border: 1px solid var(--control-border-color);
-    border-radius: 12px;
-    color: var(--text-color);
-    background: var(--header-bg-color);
-    scroll-margin-bottom: 88px;
-}
-.unlock-sheet-feedback {
-    padding: 12px;
-    border-radius: 12px;
-    font-size: 14px;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-    background: var(--progress-background-color);
-}
-.unlock-sheet-feedback:empty {
+.unlock-feedback:empty {
     display: none;
 }
-.unlock-sheet-feedback.warning {
-    background: var(--progress-background-error-color);
-}
-.unlock-sheet-actions {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
+
+/* The actions in the footer: side by side, and one under the other where the two labels do not
+   fit. */
+.unlock-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
-    margin-inline: calc(-1 * var(--sheet-gutter));
-    padding: 12px var(--sheet-gutter);
-    background: var(--main-bg-color);
-    border-top: 1px solid var(--device-border-color);
+    gap: var(--space-8);
+    min-width: 0;
 }
-.unlock-sheet-actions button {
-    flex: 1;
-    min-width: 120px;
-    min-height: 48px;
+.kit-sheet-footer > .unlock-actions {
+    flex: 1 1 auto;
 }
-.unlock-sheet-content :disabled {
-    cursor: default;
-    opacity: 0.55;
+.unlock-actions > .kit-button {
+    flex: 1 1 auto;
+}
+@media (min-width: 600px) {
+    .unlock-actions {
+        justify-content: flex-end;
+    }
+    .unlock-actions > .kit-button {
+        flex: 0 0 auto;
+    }
 }
 }

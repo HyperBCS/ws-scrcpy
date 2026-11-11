@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import '../../style/views/UnlockSheet.css';
+import { Button } from '../ui/Button';
+import { IconButton } from '../ui/IconButton';
 import { Presence } from '../ui/Presence';
 
 export type DeviceLockValue = boolean | 'unknown';
@@ -20,27 +22,16 @@ export function LockScreenNotice({ udid, connected, locked, keyguardShowing, onU
     return (
         <Presence show={visible} kind="collapse" class="lock-screen-notice" role="status">
             <span>{locked === true ? 'Device locked' : 'Lock screen active'}</span>
-            <button type="button" class="lock-screen-unlock" onClick={onUnlock}>
+            <Button variant="primary" class="lock-screen-unlock" onClick={onUnlock}>
                 Unlock
-            </button>
-            <button
-                type="button"
+            </Button>
+            <IconButton
+                icon="close"
+                variant="bare"
                 class="lock-screen-dismiss"
-                aria-label="Dismiss lock notice"
+                label="Dismiss lock notice"
                 onClick={() => setDismissed(true)}
-            >
-                <svg
-                    viewBox="0 0 24 24"
-                    width="18"
-                    height="18"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    aria-hidden="true"
-                >
-                    <path d="m6 6 12 12M18 6 6 18" />
-                </svg>
-            </button>
+            />
         </Presence>
     );
 }

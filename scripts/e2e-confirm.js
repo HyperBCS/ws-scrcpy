@@ -93,9 +93,13 @@ async function start(browser, { mobile = true, dark = false, device = iphone(), 
 }
 
 const prompt = (scope, name) => scope.getByRole('alertdialog', { name, exact: true });
+// The buttons of a prompt, in the kit look (the sheets) and in the older one (the cards).
+const PROMPT_BUTTONS = '.confirm-prompt-button, .kit-confirm-actions .kit-button';
+const READY_PROMPT_BUTTON = '.confirm-prompt-button:not([aria-disabled]), .kit-confirm-actions .kit-button:not([aria-disabled])';
+const READY_DANGER_BUTTON = '.confirm-prompt-button.danger:not([aria-disabled]), .kit-confirm-danger .kit-confirm-go:not([aria-disabled])';
 // A trigger can share its name with the confirm button it arms ("Reboot"); this is the trigger.
 const trigger = (scope, name) =>
-    scope.getByRole('button', { name, exact: true }).and(scope.page().locator(':not(.confirm-prompt-button)'));
+    scope.getByRole('button', { name, exact: true }).and(scope.page().locator(`:not(:is(${PROMPT_BUTTONS}))`));
 const center = (box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
 const overlaps = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
@@ -116,7 +120,7 @@ async function doubleTap(test, locator) {
 /** The confirm button ignores presses until the guard has passed; Playwright waits for that. */
 async function confirmAfterGuard(dialog, name) {
     const button = dialog.getByRole('button', { name, exact: true });
-    await dialog.locator('.confirm-prompt-button:not([aria-disabled])').first().waitFor();
+    await dialog.locator(READY_PROMPT_BUTTON).first().waitFor();
     await button.click();
 }
 
@@ -163,8 +167,8 @@ async function openActions(test) {
 async function shot(page, name) {
     fs.mkdirSync(OUT, { recursive: true });
     // An armed prompt is captured once it has been scrolled into view and its guard has passed.
-    if (await page.locator('.confirm-prompt').count()) {
-        await page.locator('.confirm-prompt-button.danger:not([aria-disabled])').waitFor({ timeout: 2000 }).catch(() => undefined);
+    if (await page.locator('.confirm-prompt, .kit-confirm').count()) {
+        await page.locator(READY_DANGER_BUTTON).waitFor({ timeout: 2000 }).catch(() => undefined);
     }
     await settleMotion(page);
     await page.screenshot({ path: path.join(OUT, `${name}.png`), animations: 'disabled' });
@@ -235,7 +239,8 @@ async function powerActions(browser, mobile) {
             await dialog.waitFor();
             assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Cancel');
             await page.keyboard.press('Shift+Tab');
-            assert.equal(await page.evaluate(() => document.activeElement?.className), 'confirm-prompt-button danger');
+            assert.equal(await page.evaluate(() => document.activeElement?.className), 'kit-button kit-confirm-go');
+            assert.equal(await page.evaluate(() => !!document.activeElement?.closest('.kit-confirm-danger')), true, 'the confirm button of a danger prompt');
             await page.keyboard.press('Enter');
             assert.equal(power(), 0, 'Enter on the confirm button inside the guard sends nothing');
             await pause(GUARD_MS + 100);
@@ -458,7 +463,7 @@ async function removePasscode(browser, mobile) {
             command.type === 'clear_unlock_passcode' ? { result: JSON.stringify({ ...status, hasPasscode: false, nextRunAt: undefined }) } : undefined;
         await remove.click();
         await confirmAfterGuard(dialog, 'Remove passcode');
-        await sheet.locator('.sheet-status.warning', { hasText: 'Scheduled unlock is on but cannot run until a passcode is stored.' }).waitFor();
+        await sheet.locator('.kit-status.kit-status-warning', { hasText: 'Scheduled unlock is on but cannot run until a passcode is stored.' }).waitFor();
         assert.deepEqual(ofType('clear_unlock_passcode').map((command) => command.data), [{ udid: UDID }]);
         await sheet.getByLabel('Passcode for scheduled unlock').waitFor();
         assert.deepEqual(test.errors, []);

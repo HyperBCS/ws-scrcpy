@@ -419,7 +419,7 @@ async function sheetsCloseWithTheRoute(browser) {
         await page.goBack();
         await page.locator('#devices').waitFor();
         await card(page, `android:${PIXEL}`).getByRole('button', { name: 'Settings for Google Pixel 9', exact: true }).click();
-        const sheet = page.locator('.bottom-sheet-root.open');
+        const sheet = page.locator('dialog.kit-sheet[open]');
         await sheet.waitFor();
         await settleMotion(page);
         // The sheet has a history entry, so nothing is ahead for Forward. The address arrives
@@ -428,7 +428,7 @@ async function sheetsCloseWithTheRoute(browser) {
         await page.locator('.notifications-page').waitFor();
         await sheet.waitFor({ state: 'hidden' });
         await settleMotion(page);
-        assert.equal(await page.locator('.bottom-sheet-root.open').count(), 0, 'the settings sheet does not stay open over Notifications');
+        assert.equal(await page.locator('dialog.kit-sheet[open]').count(), 0, 'the settings sheet does not stay open over Notifications');
         assert.deepEqual(test.errors, []);
         console.log('PASS a sheet opened from the list closes when the browser moves to another page');
     } finally { await test.context.close(); }

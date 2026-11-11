@@ -130,7 +130,7 @@ async function start(browser, { mobile = true, flags = LOCKED, holdQuery = 0, st
         },
     };
 }
-const field = (page) => page.locator('.unlock-sheet-field input');
+const field = (page) => page.locator('.unlock-field');
 const status = (page) => page.locator('[data-unlock-state]');
 async function open(page) {
     await page.locator('.lock-screen-notice').getByRole('button', { name: 'Unlock', exact: true }).click();
@@ -184,7 +184,7 @@ async function main() {
             assert.equal(test.hidReports.length, 0, 'Masked local typing never sends HID key reports');
             await page.getByRole('button', { name: 'Send PIN', exact: true }).click();
             assert.equal(await field(page).inputValue(), '', 'Clear the draft before preflight completes');
-            await page.locator('.unlock-sheet-content').evaluate((form) => {
+            await page.locator('.unlock-form').evaluate((form) => {
                 form.requestSubmit();
                 form.requestSubmit();
             });
@@ -236,7 +236,7 @@ async function main() {
             assert.deepEqual(test.texts, [PIN, PASSWORD], 'Password mode preserves ASCII letters, symbols and spaces');
             assert(
                 await page
-                    .locator('.bottom-sheet-root.open .bottom-sheet-body')
+                    .locator('dialog.kit-sheet[open] .kit-sheet-body')
                     .evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
                 'No horizontal form overflow',
             );
@@ -290,10 +290,10 @@ async function main() {
             }, height);
             await keyboard.page.waitForTimeout(100);
             const geometry = await keyboard.page.evaluate(() => {
-                const body = document.querySelector('.bottom-sheet-root.open .bottom-sheet-body');
-                const input = document.querySelector('.unlock-sheet-field input');
-                const actions = document.querySelector('.unlock-sheet-actions');
-                const send = actions.querySelector('.primary');
+                const body = document.querySelector('dialog.kit-sheet[open] .kit-sheet-body');
+                const input = document.querySelector('.unlock-field');
+                const actions = document.querySelector('dialog.kit-sheet[open] .kit-sheet-footer');
+                const send = actions.querySelector('.kit-button-primary');
                 const target = send.getBoundingClientRect();
                 return {
                     body: body.getBoundingClientRect().toJSON(),
@@ -321,9 +321,9 @@ async function main() {
             );
         }
         const cdp = await keyboard.context.newCDPSession(keyboard.page);
-        const body = keyboard.page.locator('.bottom-sheet-root.open .bottom-sheet-body');
+        const body = keyboard.page.locator('dialog.kit-sheet[open] .kit-sheet-body');
         const before = await body.evaluate((el) => el.scrollTop);
-        const actions = await keyboard.page.locator('.unlock-sheet-actions').boundingBox();
+        const actions = await keyboard.page.locator('dialog.kit-sheet[open] .kit-sheet-footer').boundingBox();
         const gestureY = actions.y - 8;
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, x: 8, y: gestureY }] });
         for (let i = 1; i <= 10; i++) {
@@ -390,7 +390,7 @@ async function main() {
         await changedClient.page.evaluate(() => {
             location.hash = location.hash.replace('player=mse', 'player=webcodecs');
         });
-        await changedClient.page.locator('.bottom-sheet-root.open').waitFor({ state: 'hidden' });
+        await changedClient.page.locator('dialog.kit-sheet[open]').waitFor({ state: 'hidden' });
         changedClient.release();
         await changedClient.page.waitForTimeout(1000);
         assert.deepEqual(changedClient.texts, [], 'Replacing the stream client cancels an old pending passcode');

@@ -586,7 +586,7 @@ async function playerChangeReplaces(browser) {
         await page.getByText('Connected', { exact: true }).first().waitFor();
         const opened = await place(page);
         await page.locator('.control-buttons-list [title="Settings"]').click();
-        const sheet = page.locator('.bottom-sheet-root.open');
+        const sheet = page.locator('dialog.kit-sheet[open]');
         await sheet.waitFor();
         await settleMotion(page);
         await sheet.locator('.settings-playback > summary').click();

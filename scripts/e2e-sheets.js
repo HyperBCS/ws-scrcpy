@@ -12,7 +12,8 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function settle(page) {
     await page
-        .locator('.bottom-sheet')
+        // Both sheet containers: the switcher suite shares this helper.
+        .locator('.kit-sheet-panel, .bottom-sheet')
         .evaluateAll((panels) =>
             Promise.all(panels.flatMap((panel) => panel.getAnimations().map((animation) => animation.finished))),
         );
@@ -31,15 +32,15 @@ async function gesture(cdp, { x, y }, dx, dy, end = 'touchEnd', during) {
 }
 async function handlePoint(page, fromHeader = false) {
     const box = await page
-        .locator('.bottom-sheet-root.open ' + (fromHeader ? '.bottom-sheet-title' : '.bottom-sheet-handle'))
+        .locator('dialog.kit-sheet[open] ' + (fromHeader ? '.kit-sheet-title' : '.kit-sheet-handle'))
         .boundingBox();
     return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 async function assertResting(page, label) {
     await settle(page);
-    const result = await page.locator('.bottom-sheet-root.open').evaluate((root) => {
-        const panel = root.querySelector('.bottom-sheet');
-        const body = root.querySelector('.bottom-sheet-body');
+    const result = await page.locator('dialog.kit-sheet[open]').evaluate((root) => {
+        const panel = root.querySelector('.kit-sheet-panel');
+        const body = root.querySelector('.kit-sheet-body');
         body.scrollLeft = 100;
         return {
             dragging: root.classList.contains('dragging'),
@@ -92,6 +93,8 @@ async function main() {
                 colorScheme: 'dark',
             });
             const page = await context.newPage();
+            // The kit's sheet is a bottom sheet below 600px and a dialog from there, whatever the pointer.
+            const docked = width < 600;
             const cdp = await context.newCDPSession(page);
             const errors = [];
             page.on('pageerror', (error) => errors.push(error.message));
@@ -137,15 +140,15 @@ async function main() {
             assert(savedTop > 100, 'fixture starts on a scrolled real component');
             const open = async () => {
                 await trigger.click();
-                await page.locator('.bottom-sheet-root.open').waitFor();
+                await page.locator('dialog.kit-sheet[open]').waitFor();
                 await page.waitForFunction(
-                    (value) => document.querySelector('.settings-encoder-row select')?.value === value,
+                    (value) => document.querySelector('[data-setting="encoder"] select')?.value === value,
                     ENCODER,
                 );
                 await settle(page);
             };
             const closed = async () => {
-                await page.locator('.bottom-sheet-root.open').waitFor({ state: 'hidden' });
+                await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'hidden' });
                 assert.equal(
                     await list.evaluate((el) => el.scrollTop),
                     savedTop,
@@ -166,12 +169,12 @@ async function main() {
             const close = page.getByRole('button', { name: 'Close Stream settings', exact: true });
             const closeBox = await close.boundingBox();
             const iconBox = await close.locator('svg').boundingBox();
-            assert(closeBox.width >= 48 && closeBox.height >= 48, 'close has a48px target');
+            assert(closeBox.width >= 44 && closeBox.height >= 44, 'close has a 44px target');
             assert(iconBox.width === 24 && iconBox.height === 24, 'close icon is clearly visible');
             assert.equal(
                 // Scoped to the open sheet: closed sheets (the iPhone settings sheet too) stay mounted, hidden.
-                await page.locator('.bottom-sheet-root.open .bottom-sheet-handle').isVisible(),
-                touch,
+                await page.locator('dialog.kit-sheet[open] .kit-sheet-handle').isVisible(),
+                docked,
                 'only bottom sheets expose the drag affordance',
             );
             await page.screenshot({ path: path.join(OUT, label + '-popup.png') });
@@ -179,8 +182,8 @@ async function main() {
             else await close.click();
             await closed();
             await open();
-            if (touch) {
-                const panel = page.locator('.bottom-sheet-root.open .bottom-sheet');
+            if (docked) {
+                const panel = page.locator('dialog.kit-sheet[open] .kit-sheet-panel');
                 const originalTop = (await panel.boundingBox()).y;
                 await gesture(cdp, await handlePoint(page), 0, 32, 'touchEnd', async () => {
                     assert((await panel.boundingBox()).y > originalTop + 25, 'drag visibly follows the finger');
@@ -190,13 +193,15 @@ async function main() {
                 await assertResting(page, 'native pointer cancellation');
                 await gesture(cdp, await handlePoint(page), 70, 20);
                 await assertResting(page, 'horizontal drag');
+            }
+            if (touch) {
                 await page
                     .locator('.settings-advanced')
                     .first()
                     .evaluate((el) => {
                         el.open = true;
                     });
-                const body = page.locator('.bottom-sheet-root.open .bottom-sheet-body');
+                const body = page.locator('dialog.kit-sheet[open] .kit-sheet-body');
                 const bodyBox = await body.boundingBox();
                 await gesture(cdp, { x: width / 2, y: bodyBox.y + Math.min(bodyBox.height - 110, 230) }, 0, -90);
                 assert(await body.evaluate((el) => el.scrollTop > 20), 'body gesture scrolls its content');
@@ -206,11 +211,18 @@ async function main() {
                     savedTop,
                     'body gesture leaves background still',
                 );
-                await gesture(cdp, await handlePoint(page, true), 0, 130);
+                if (docked) {
+                    await gesture(cdp, await handlePoint(page, true), 0, 130);
+                } else {
+                    // A dialog does not follow a drag on its header.
+                    await gesture(cdp, await handlePoint(page, true), 0, 130);
+                    await assertResting(page, 'drag on a dialog');
+                    await page.touchscreen.tap(closeBox.x + closeBox.width / 2, closeBox.y + closeBox.height / 2);
+                }
                 await closed();
                 await open();
             }
-            await page.getByRole('button', { name: /Data saver/ }).click();
+            await page.getByRole('radio', { name: 'Data saver', exact: true }).click();
             await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
             await page.getByRole('button', { name: 'Apply & restart', exact: true }).click();
             await page
@@ -218,27 +230,29 @@ async function main() {
                 .waitFor();
             assert(await close.isDisabled(), 'Apply disables Close');
             if (touch) {
-                await gesture(cdp, await handlePoint(page), 0, 140);
+                await gesture(cdp, await handlePoint(page, true), 0, 140);
                 await assertResting(page, 'locked Apply drag');
                 await page.touchscreen.tap(closeBox.x + closeBox.width / 2, closeBox.y + closeBox.height / 2);
             }
             await page.keyboard.press('Escape');
-            await page.locator('.bottom-sheet-root.open .bottom-sheet-backdrop').dispatchEvent('click');
+            await page.locator('dialog.kit-sheet[open] .kit-sheet-backdrop').dispatchEvent('click');
+            // Chrome on Android sends Back to an open modal dialog as a close request.
+            await page.locator('dialog.kit-sheet[open]').dispatchEvent('cancel', { cancelable: true });
             // The browser's Back is refused too: the tab ends on the sheet's history entry again.
             const entries = await page.evaluate(() => history.length);
             await page.goBack();
             await page.waitForFunction(() => history.state?.nav?.overlay === 1);
             await pause(150);
             assert.equal(
-                await page.locator('.bottom-sheet-root.open').count(),
+                await page.locator('dialog.kit-sheet[open]:not([data-exiting])').count(),
                 1,
-                'Apply ignores Escape/backdrop/close/Back',
+                'Apply ignores Escape/backdrop/close/a close request/Back',
             );
             assert.equal(await page.evaluate(() => history.length), entries, 'Back during Apply adds no history entry');
             assert.equal(await page.locator('#devices').count(), 1, 'Back during Apply stays on the list');
             assert(completeApply, 'Apply reached only fixture');
             completeApply();
-            await page.locator('.settings-sheet-apply-bar [role="alert"]').waitFor();
+            await page.locator('.kit-sheet-footer [role="alert"]').waitFor();
             assert(!(await close.isDisabled()), 'Close works again once Apply has ended');
             // Once Apply has ended, Back closes the sheet and the list stays.
             await page.goBack();
@@ -275,12 +289,12 @@ async function main() {
             );
             if (touch) await page.getByRole('button', { name: 'Show controls', exact: true }).click();
             await page.getByRole('button', { name: 'Settings', exact: true }).click();
-            await page.locator('.bottom-sheet-root.open').waitFor();
+            await page.locator('dialog.kit-sheet[open]').waitFor();
             await settle(page);
             const touchesBefore = remotePackets.filter((packet) => packet[0] === 2).length;
-            if (touch) await gesture(cdp, await handlePoint(page), 0, 130);
+            if (docked) await gesture(cdp, await handlePoint(page), 0, 130);
             else await page.getByRole('button', { name: 'Close Stream settings', exact: true }).click();
-            await page.locator('.bottom-sheet-root.open').waitFor({ state: 'hidden' });
+            await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'hidden' });
             assert.equal(
                 remotePackets.filter((packet) => packet[0] === 2).length,
                 touchesBefore,
@@ -298,7 +312,7 @@ async function main() {
             if (!(await actions.isVisible()))
                 await page.getByRole('button', { name: 'Show controls', exact: true }).click();
             await actions.click();
-            await page.locator('.bottom-sheet-root.open').waitFor();
+            await page.locator('dialog.kit-sheet[open]').waitFor();
             await settle(page);
             const draft = page.getByLabel('Text to paste on the phone');
             const paste = page.getByRole('button', { name: 'Paste', exact: true });

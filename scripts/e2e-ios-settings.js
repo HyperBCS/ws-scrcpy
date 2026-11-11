@@ -153,20 +153,20 @@ async function panelFlow(browser) {
             await dialog.getByRole('heading', { name, exact: true }).waitFor();
         }
         assert.equal(await dialog.getByRole('heading', { name: 'Status', exact: true }).count(), 0);
-        assert.match(await dialog.getByText('Developer Mode').locator('..').textContent(), /on/);
-        const toggle = dialog.getByRole('checkbox', { name: 'Unlock twice a day' });
+        assert.match(await dialog.locator('.kit-row', { hasText: 'Developer Mode' }).textContent(), /on$/);
+        const toggle = dialog.getByRole('switch', { name: 'Unlock twice a day' });
         assert.equal(await toggle.isDisabled(), true, 'the toggle waits for a stored passcode');
         assert.equal(await toggle.isChecked(), false);
         // The group opens with one row for state and last result.
         const summary = dialog.locator('[data-unlock-summary]');
         assert.equal(await summary.getAttribute('data-unlock-summary'), 'off');
-        assert.equal(await summary.locator('.sheet-row-title').textContent(), 'Off');
-        assert.equal(await summary.locator('.sheet-row-desc').textContent(), 'No run yet');
-        assert.equal(await dialog.locator('.sheet-row').first().getAttribute('data-unlock-summary'), 'off', 'it is the first row');
+        assert.equal(await summary.locator('.kit-row-title').textContent(), 'Off');
+        assert.equal(await summary.locator('.kit-row-desc').textContent(), 'No run yet');
+        assert.equal(await dialog.locator('.kit-row').first().getAttribute('data-unlock-summary'), 'off', 'it is the first row');
         await dialog.getByText('No run yet.', { exact: true }).waitFor();
         // A schedule saved before zones were stored is server time, and says so.
         const timeRow = dialog.locator('[data-unlock-time]');
-        assert.equal(await timeRow.locator('.sheet-row-desc').textContent(), 'Server time (UTC)');
+        assert.equal(await timeRow.locator('.kit-row-desc').textContent(), 'Server time (UTC)');
         await dialog.getByText(`The time is server time, saved before time zones were stored. This browser is in ${ZONE}.`, { exact: true }).waitFor();
         await page.screenshot({ path: path.join(OUT, 'panel-390.png') });
         assert.equal(await dialog.getByText('saved in this browser', { exact: false }).count(), 0, 'no offer to copy a browser passcode');
@@ -192,7 +192,7 @@ async function panelFlow(browser) {
         await save.click();
         await dialog.getByText('Passcode stored on the server.', { exact: true }).waitFor();
         assert.deepEqual(ofType(commands, 'set_unlock_passcode').map((command) => command.data), [{ udid: UDID, passcode: PASSCODE }]);
-        await dialog.locator('.sheet-row-desc', { hasText: 'Stored on the server.' }).waitFor();
+        await dialog.locator('.kit-row-desc', { hasText: 'Stored on the server.' }).waitFor();
         assert.equal(await field.count(), 0, 'the stored passcode is shown as Replace / Remove');
         await dialog.getByRole('button', { name: 'Replace', exact: true }).click();
         assert.equal(await field.inputValue(), '', 'the field is empty after the reply');
@@ -208,16 +208,16 @@ async function panelFlow(browser) {
         status = { enabled: true, time: '03:00', hasPasscode: true, timeZone: ZONE, nextRunAt };
         handlers.onCommand = (command) => (command.type === 'update_unlock_schedule' ? { result: JSON.stringify(status) } : undefined);
         await toggle.click();
-        await page.waitForFunction(() => document.querySelector('[role="dialog"] .sheet-switch')?.checked === true);
+        await page.waitForFunction(() => document.querySelector('dialog.kit-sheet[open] .kit-switch')?.checked === true);
         assert.deepEqual(ofType(commands, 'update_unlock_schedule').map((command) => command.data), [{ udid: UDID, schedule: { enabled: true, timeZone: ZONE } }]);
         await dialog.getByText('Scheduled unlock is on.', { exact: true }).waitFor();
         assert.equal(await summary.getAttribute('data-unlock-summary'), 'on');
-        assert.equal(await summary.locator('.sheet-row-title').textContent(), 'On');
-        assert.equal(await summary.locator('.sheet-row-desc').textContent(), 'Next run Wed 11 Nov, 03:00 · No run yet', 'the next run is shown in the schedule zone');
+        assert.equal(await summary.locator('.kit-row-title').textContent(), 'On');
+        assert.equal(await summary.locator('.kit-row-desc').textContent(), 'Next run Wed 11 Nov, 03:00 · No run yet', 'the next run is shown in the schedule zone');
         // The schedule is explained in two sentences, and the switch names both times.
         await dialog.getByText('Unlocks the iPhone twice a day, at the set time and 12 hours later, then locks it again. The iPhone stops accepting connections 24 hours after the passcode was last entered.', { exact: true }).waitFor();
-        assert.equal(await dialog.locator('.sheet-toggle-row .sheet-row-desc').textContent(), 'At 03:00 and 15:00.');
-        assert.equal(await timeRow.locator('.sheet-row-desc').textContent(), ZONE, 'the zone is named next to the time');
+        assert.equal(await dialog.locator('.kit-row-toggle .kit-row-desc').textContent(), 'At 03:00 and 15:00.');
+        assert.equal(await timeRow.locator('.kit-row-desc').textContent(), ZONE, 'the zone is named next to the time');
         assert.equal(await dialog.getByRole('button', { name: `Use ${ZONE}`, exact: true }).count(), 0, 'nothing to adopt once the zones agree');
 
         // Run now: disabled until the reply, then the outcome.
@@ -231,7 +231,7 @@ async function panelFlow(browser) {
         assert.equal(await summary.getAttribute('data-unlock-summary'), 'running');
         assert.deepEqual(ofType(commands, 'run_unlock_now').map((command) => command.data), [{ udid: UDID }]);
         release({ result: JSON.stringify({ at: Date.now(), trigger: 'manual', outcome: 'unlocked', message: 'Locked again' }) });
-        await dialog.locator('.sheet-status.success', { hasText: 'Unlocked. Locked again' }).waitFor();
+        await dialog.locator('.kit-status.kit-status-success', { hasText: 'Unlocked. Locked again' }).waitFor();
         await dialog.getByRole('button', { name: 'Run now', exact: true }).waitFor();
         // A run the server refuses (too soon after the last) says when it can run.
         handlers.onCommand = (command) =>
@@ -244,9 +244,9 @@ async function panelFlow(browser) {
         test.sendDevice(iphone(status));
         const lastRun = dialog.locator('[data-outcome]');
         await dialog.locator('[data-outcome="skipped-recent"]').waitFor();
-        assert.equal(await lastRun.locator('.sheet-row-desc').textContent(), 'Skipped: the server entered the passcode less than 11 hours earlier · Tue 10 Nov, 03:00');
+        assert.equal(await lastRun.locator('.kit-row-desc').textContent(), 'Skipped: the server entered the passcode less than 11 hours earlier · Tue 10 Nov, 03:00');
         assert.equal(await lastRun.getAttribute('data-tone'), null, 'a skip that needs nothing is not an error');
-        const neutral = await colorOf(lastRun.locator('.sheet-row-desc'));
+        const neutral = await colorOf(lastRun.locator('.kit-row-desc'));
         await iosCard.locator('.device-unlock-schedule').waitFor({ state: 'attached' });
         assert.equal(await iosCard.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock · next 03:00 · last 2 h ago');
         assert.equal(await iosCard.locator('.device-unlock-schedule').getAttribute('title'), `Scheduled unlock at 03:00 and 15:00, ${ZONE}`);
@@ -255,20 +255,20 @@ async function panelFlow(browser) {
         // A failed run reads as a failure: error tone and an icon in the sheet, and on the card.
         test.sendDevice(iphone({ ...status, lastRun: { at: Date.UTC(2026, 10, 10, 8, 0, 20), trigger: 'schedule', outcome: 'failed-wake', message: 'The screen stayed dark after Home and Lock' } }));
         await dialog.locator('[data-outcome="failed-wake"][data-tone="error"]').waitFor();
-        assert.equal(await lastRun.locator('.sheet-row-desc').textContent(), 'Failed: the screen did not wake · Tue 10 Nov, 03:00. The screen stayed dark after Home and Lock');
-        assert.notEqual(await colorOf(lastRun.locator('.sheet-row-desc')), neutral, 'a failure is not the grey of a success');
-        assert.equal(await lastRun.locator('svg.sheet-problem-icon').count(), 1);
+        assert.equal(await lastRun.locator('.kit-row-desc').textContent(), 'Failed: the screen did not wake · Tue 10 Nov, 03:00. The screen stayed dark after Home and Lock');
+        assert.notEqual(await colorOf(lastRun.locator('.kit-row-desc')), neutral, 'a failure is not the grey of a success');
+        assert.equal(await lastRun.locator('.settings-problem svg').count(), 1);
         assert.equal(await summary.getAttribute('data-tone'), 'error');
-        assert.match(await summary.locator('.sheet-row-desc').textContent(), /Last run: Failed: the screen did not wake$/);
+        assert.match(await summary.locator('.kit-row-desc').textContent(), /Last run: Failed: the screen did not wake$/);
         assert.equal(await iosCard.locator('.device-unlock-schedule.problem').textContent(), 'Scheduled unlock · Failed: the screen did not wake · next 03:00');
         await page.screenshot({ path: path.join(OUT, 'panel-390-failed.png') });
 
         // A rejected passcode pauses the schedule, and the panel and the card say so.
         test.sendDevice(iphone({ ...status, passcodeRejected: true, nextRunAt: undefined, lastRun: { at: Date.UTC(2026, 10, 10, 8, 0, 20), trigger: 'schedule', outcome: 'failed-rejected', message: 'Scheduled unlock is paused until the passcode is saved again' } }));
         await dialog.locator('[data-unlock-summary="paused"][data-tone="error"]').waitFor();
-        assert.equal(await summary.locator('.sheet-row-title').textContent(), 'Paused');
-        assert.match(await summary.locator('.sheet-row-desc').textContent(), /rejected the stored passcode/);
-        await dialog.locator('.sheet-row-desc', { hasText: 'Rejected by the phone. Replace it to resume the schedule.' }).waitFor();
+        assert.equal(await summary.locator('.kit-row-title').textContent(), 'Paused');
+        assert.match(await summary.locator('.kit-row-desc').textContent(), /rejected the stored passcode/);
+        await dialog.locator('.kit-row-desc', { hasText: 'Rejected by the phone. Replace it to resume the schedule.' }).waitFor();
         assert.equal(await iosCard.locator('.device-unlock-schedule.problem').textContent(), 'Scheduled unlock paused: passcode rejected');
         test.sendDevice(iphone(status));
         await dialog.locator('[data-unlock-summary="on"]').waitFor();
@@ -298,7 +298,7 @@ async function panelFlow(browser) {
         await dialog.getByRole('button', { name: 'Remove', exact: true }).click();
         // Remove only arms a confirm prompt; its button ignores presses for the first 500 ms.
         const removal = dialog.getByRole('alertdialog');
-        await removal.locator('.confirm-prompt-button:not([aria-disabled])').first().waitFor();
+        await removal.locator('.kit-confirm-actions .kit-button:not([aria-disabled])').first().waitFor();
         assert.equal(ofType(commands, 'clear_unlock_passcode').length, 0, 'Remove alone sends nothing');
         await removal.getByRole('button', { name: 'Remove passcode', exact: true }).click();
         await field.waitFor();
@@ -307,10 +307,10 @@ async function panelFlow(browser) {
 
         // Removing the passcode leaves the switch on: the panel and the card say it cannot run.
         test.sendDevice(iphone({ ...status, hasPasscode: false, enabled: true, nextRunAt: undefined }));
-        await page.waitForFunction(() => document.querySelector('[role="dialog"] .sheet-switch')?.checked === true);
+        await page.waitForFunction(() => document.querySelector('dialog.kit-sheet[open] .kit-switch')?.checked === true);
         assert.equal(await toggle.isDisabled(), false, 'a switch left on can be turned off without a passcode');
         assert.equal(await summary.getAttribute('data-unlock-summary'), 'blocked');
-        assert.equal(await summary.locator('.sheet-row-title').textContent(), 'On, but cannot run');
+        assert.equal(await summary.locator('.kit-row-title').textContent(), 'On, but cannot run');
         assert.equal(await iosCard.locator('.device-unlock-schedule.problem').textContent(), 'Scheduled unlock cannot run: no passcode');
         handlers.onCommand = (command) =>
             command.type === 'update_unlock_schedule' ? { result: JSON.stringify({ ...status, hasPasscode: false, enabled: false, nextRunAt: undefined }) } : undefined;
@@ -340,7 +340,7 @@ async function timeTypingFlow(browser) {
     try {
         const dialog = await openPanel(page);
         const time = dialog.getByLabel('Unlock time');
-        const description = dialog.locator('[data-unlock-time] .sheet-row-desc');
+        const description = dialog.locator('[data-unlock-time] .kit-row-desc');
         const isFocused = () => time.evaluate((el) => document.activeElement === el);
         assert.equal(await description.textContent(), 'Europe/Berlin');
         // The schedule was saved from another zone: both are named, and nothing changes unasked.
@@ -366,9 +366,9 @@ async function timeTypingFlow(browser) {
         assert.equal(await isFocused(), true);
         assert.equal(await time.inputValue(), '04:30', 'and it does not jump back to the old time while saving');
         release({ result: JSON.stringify({ ...status, time: '04:30', timeZone: ZONE, nextRunAt: Date.UTC(2026, 10, 11, 9, 30) }) });
-        await page.waitForFunction(() => document.querySelector('[data-unlock-time] .sheet-row-desc')?.textContent.includes('· saved'));
+        await page.waitForFunction(() => document.querySelector('[data-unlock-time] .kit-row-desc')?.textContent.includes('· saved'));
         assert.equal(await description.textContent(), `${ZONE} · saved, next run Wed 11 Nov, 04:30`, 'confirmed in the row, with the next run');
-        assert.equal(await dialog.locator('.sheet-status').count(), 0, 'no separate line for a saved time');
+        assert.equal(await dialog.locator('.kit-status').count(), 0, 'no separate line for a saved time');
 
         // Arrow keys step a segment; leaving the field saves the result once.
         handlers.onCommand = (command) => (command.type === 'update_unlock_schedule' ? { result: JSON.stringify({ ...status, time: command.data.schedule.time, timeZone: ZONE }) } : undefined);
@@ -379,7 +379,7 @@ async function timeTypingFlow(browser) {
         assert.notEqual(stepped, '04:30');
         // Tab alone stops on the field's own picker button; leaving the field is what saves.
         await time.evaluate((el) => el.blur());
-        await page.waitForFunction(() => document.querySelector('[data-unlock-time] .sheet-row-desc')?.textContent.includes('· saved'));
+        await page.waitForFunction(() => document.querySelector('[data-unlock-time] .kit-row-desc')?.textContent.includes('· saved'));
         assert.deepEqual(ofType(commands, 'update_unlock_schedule').map((command) => command.data.schedule.time), ['04:30', stepped]);
         assert.equal(await time.inputValue(), stepped);
 
@@ -449,8 +449,8 @@ async function themeFlow(browser) {
                 await page.screenshot({ path: path.join(OUT, `device-list-failed-${width}-${colorScheme}.png`) });
                 const dialog = await openPanel(page);
                 const lastRun = dialog.locator('[data-outcome="failed-rejected"]');
-                const runNow = dialog.locator('.sheet-row', { hasText: 'Run now' }).locator('.sheet-row-desc');
-                assert.notEqual(await colorOf(lastRun.locator('.sheet-row-desc')), await colorOf(runNow), `${colorScheme}: a failure is not the neutral grey`);
+                const runNow = dialog.locator('.kit-row', { hasText: 'Run now' }).locator('.kit-row-desc');
+                assert.notEqual(await colorOf(lastRun.locator('.kit-row-desc')), await colorOf(runNow), `${colorScheme}: a failure is not the neutral grey`);
                 assert.equal(await dialog.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false, `${width} ${colorScheme}: no horizontal overflow`);
                 assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
                 await page.screenshot({ path: path.join(OUT, `panel-failed-${width}-${colorScheme}.png`) });
@@ -526,7 +526,7 @@ async function streamUnlockFlow(browser) {
             await dialog.locator('[data-unlock-state="confirmed"]').waitFor();
             assert.equal(await state.textContent(), 'Unlocked.');
             test.sendDevice(iphone(stored, { session: 'ready', 'screen.power': 'on', 'device.locked': false }));
-            await page.waitForFunction(() => document.querySelector('.unlock-sheet-actions .primary')?.disabled === true);
+            await page.waitForFunction(() => document.querySelector('dialog.kit-sheet[open] .kit-sheet-footer .kit-button-primary')?.disabled === true);
             await page.getByRole('button', { name: 'Close Unlock device' }).click();
             test.sendDevice(iphone(stored, { session: 'ready', 'screen.power': 'on' }));
 
@@ -593,7 +593,7 @@ async function disconnectedFlow(browser) {
                 assert.match(await dialog.locator('[data-outcome="skipped-disconnected"]').textContent(), /Last run/);
                 const run = dialog.locator('[data-unlock-run]');
                 assert.equal(await run.getAttribute('data-unlock-run'), 'unavailable');
-                assert.equal(await run.locator('.sheet-row-desc').textContent(), 'Not available while the phone is not connected.');
+                assert.equal(await run.locator('.kit-row-desc').textContent(), 'Not available while the phone is not connected.');
                 assert.equal(await run.getByRole('button', { name: 'Run now', exact: true }).isDisabled(), true, `${label}: no run without a phone`);
                 assert.equal(await dialog.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false, `${label}: no horizontal overflow`);
                 await run.scrollIntoViewIfNeeded();
@@ -602,7 +602,7 @@ async function disconnectedFlow(browser) {
                 // The schedule can still be turned off: the command needs the server, not the phone.
                 handlers.onCommand = (command) =>
                     command.type === 'update_unlock_schedule' ? { result: JSON.stringify({ ...status, enabled: false, nextRunAt: undefined }) } : undefined;
-                await dialog.getByRole('checkbox', { name: 'Unlock twice a day' }).click();
+                await dialog.getByRole('switch', { name: 'Unlock twice a day' }).click();
                 await dialog.getByText('Scheduled unlock is off.').waitFor();
                 assert.deepEqual(ofType(commands, 'update_unlock_schedule').map((command) => command.data.schedule), [{ enabled: false }]);
                 assert.equal(ofType(commands, 'run_unlock_now').length, 0);
@@ -649,9 +649,9 @@ async function lostRunReplyFlow(browser) {
         test.sendDevice(iphone({ ...status, lastRun: finished }));
         await dialog.getByRole('button', { name: 'Run now', exact: true }).waitFor();
         assert.equal(await button.isEnabled(), true, 'the button is not left on Running for three minutes');
-        assert.match(await dialog.locator('.sheet-status').last().textContent(), /Failed: the screen did not wake\. The screen stayed dark/);
+        assert.match(await dialog.locator('.kit-status').last().textContent(), /Failed: the screen did not wake\. The screen stayed dark/);
         // The other controls are released with it.
-        assert.equal(await dialog.getByRole('checkbox', { name: 'Unlock twice a day' }).isEnabled(), true);
+        assert.equal(await dialog.getByRole('switch', { name: 'Unlock twice a day' }).isEnabled(), true);
         assert.deepEqual(test.errors, []);
         console.log('PASS iOS Run now ends with the device update when its reply is lost');
     } finally {
@@ -694,7 +694,7 @@ async function streamSheetsFlow(browser) {
             // The Actions sheet leads there too, and one sheet replaces the other.
             await control('Actions');
             await actionsDialog.waitFor();
-            const scheduled = actionsDialog.locator('.sheet-row', { hasText: 'Scheduled unlock' });
+            const scheduled = actionsDialog.locator('.kit-row', { hasText: 'Scheduled unlock' });
             await scheduled.scrollIntoViewIfNeeded();
             await page.screenshot({ path: path.join(OUT, `stream-actions-settings-row-${width}.png`) });
             await scheduled.getByRole('button', { name: 'Open Scheduled unlock', exact: true }).click();
@@ -706,7 +706,7 @@ async function streamSheetsFlow(browser) {
             // Restart video: the server answers, also when it refuses a second restart.
             await control('Actions');
             await actionsDialog.waitFor();
-            const restart = actionsDialog.locator('.sheet-row', { hasText: 'Restart video' }).getByRole('button', { name: 'Restart video', exact: true });
+            const restart = actionsDialog.locator('.kit-row', { hasText: 'Restart video' }).getByRole('button', { name: 'Restart video', exact: true });
             handlers.onStream = (message) => (message.type === 'restart' ? { type: 'result', id: message.id, ok: true } : undefined);
             await restart.click();
             await actionsDialog.getByText('The video was restarted.', { exact: true }).waitFor();
@@ -735,7 +735,7 @@ async function streamSheetsFlow(browser) {
             await page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'), undefined, { timeout: 10000 });
             assert.notEqual(sockets.stream, before, 'the stream reconnected');
             await page.waitForFunction(() => {
-                const button = Array.from(document.querySelectorAll('.bottom-sheet-root.open button')).find((el) => el.textContent.trim() === 'Send to phone');
+                const button = Array.from(document.querySelectorAll('dialog.kit-sheet[open] button')).find((el) => el.textContent.trim() === 'Send to phone');
                 return button && !button.disabled;
             });
 
@@ -753,12 +753,12 @@ async function streamSheetsFlow(browser) {
             for (const name of ['Restart services', 'Remount developer image']) {
                 assert.equal(await actionsDialog.getByRole('button', { name, exact: true }).isEnabled(), true, `${label}: ${name} is usable again`);
             }
-            assert.equal(await actionsDialog.locator('.sheet-row', { hasText: 'Refresh info' }).getByRole('button').isEnabled(), true);
+            assert.equal(await actionsDialog.locator('.kit-row', { hasText: 'Refresh info' }).getByRole('button').isEnabled(), true);
 
             // With the tracker back, a command is answered by request id and its text is shown.
             await page.waitForFunction(() => !!document.querySelector('.stream-header-device strong')?.textContent.includes('iPhone fixture'), undefined, { timeout: 10000 });
             handlers.onCommand = (command) => (command.type === 'refresh_device' ? { result: null } : undefined);
-            const refresh = actionsDialog.locator('.sheet-row', { hasText: 'Refresh info' }).getByRole('button');
+            const refresh = actionsDialog.locator('.kit-row', { hasText: 'Refresh info' }).getByRole('button');
             await page.waitForTimeout(2500);
             await refresh.click();
             await actionsDialog.getByText('Phone info refreshed.', { exact: true }).waitFor({ timeout: 10000 });
@@ -804,15 +804,15 @@ async function lockoutFlow(browser) {
                 const summary = dialog.locator('[data-unlock-summary]');
                 assert.equal(await summary.getAttribute('data-unlock-summary'), 'by-hand');
                 assert.equal(await summary.getAttribute('data-tone'), 'error');
-                assert.equal(await summary.locator('.sheet-row-title').textContent(), 'Unlock the iPhone by hand');
-                assert.equal(await summary.locator('.sheet-row-desc').textContent(), `${SENTENCE} Next try Wed 11 Nov, 15:00.`);
-                assert.equal(await summary.locator('svg.sheet-problem-icon').count(), 1);
-                assert.equal(await dialog.locator('.sheet-toggle-row .sheet-row-desc').textContent(), 'At 03:00 and 15:00.');
+                assert.equal(await summary.locator('.kit-row-title').textContent(), 'Unlock the iPhone by hand');
+                assert.equal(await summary.locator('.kit-row-desc').textContent(), `${SENTENCE} Next try Wed 11 Nov, 15:00.`);
+                assert.equal(await summary.locator('.settings-problem svg').count(), 1);
+                assert.equal(await dialog.locator('.kit-row-toggle .kit-row-desc').textContent(), 'At 03:00 and 15:00.');
                 const lastRun = dialog.locator('[data-outcome="needs-manual-unlock"]');
                 assert.equal(await lastRun.getAttribute('data-tone'), 'error');
-                assert.equal(await lastRun.locator('.sheet-row-desc').textContent(), 'The iPhone stopped accepting connections · Wed 11 Nov, 03:00. Enter the passcode on the phone.');
-                const neutral = dialog.locator('.sheet-row', { hasText: 'Run now' }).locator('.sheet-row-desc');
-                assert.notEqual(await colorOf(summary.locator('.sheet-row-desc')), await colorOf(neutral), `${label}: the state is not the neutral grey`);
+                assert.equal(await lastRun.locator('.kit-row-desc').textContent(), 'The iPhone stopped accepting connections · Wed 11 Nov, 03:00. Enter the passcode on the phone.');
+                const neutral = dialog.locator('.kit-row', { hasText: 'Run now' }).locator('.kit-row-desc');
+                assert.notEqual(await colorOf(summary.locator('.kit-row-desc')), await colorOf(neutral), `${label}: the state is not the neutral grey`);
                 assert.equal(await dialog.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false, `${label}: no horizontal overflow`);
                 assert.equal(await dialog.getByText(/device/i).count(), 0, `${label}: the panel says phone or iPhone`);
                 await page.screenshot({ path: path.join(OUT, `panel-by-hand-${width}-${colorScheme}.png`) });
@@ -821,8 +821,8 @@ async function lockoutFlow(browser) {
                 handlers.onCommand = (command) =>
                     command.type === 'run_unlock_now' ? { result: JSON.stringify({ ...refused, at: Date.now(), trigger: 'manual' }) } : undefined;
                 await dialog.getByRole('button', { name: 'Run now', exact: true }).click();
-                await dialog.locator('.sheet-status.error', { hasText: SENTENCE }).waitFor();
-                assert.equal(await dialog.locator('.sheet-status.error').textContent(), SENTENCE);
+                await dialog.locator('.kit-status.kit-status-error', { hasText: SENTENCE }).waitFor();
+                assert.equal(await dialog.locator('.kit-status.kit-status-error').textContent(), SENTENCE);
                 assert.equal(ofType(commands, 'run_unlock_now').length, 1);
 
                 // The passcode was entered on the phone: the server clears the state. The last run
@@ -831,14 +831,14 @@ async function lockoutFlow(browser) {
                 test.sendDevice(iphone(reachable));
                 await dialog.locator('[data-unlock-summary="on"]').waitFor();
                 assert.equal(await summary.getAttribute('data-tone'), 'neutral');
-                assert.equal(await summary.locator('.sheet-row-desc').textContent(), 'Next run Wed 11 Nov, 15:00 · Last run: The iPhone stopped accepting connections');
+                assert.equal(await summary.locator('.kit-row-desc').textContent(), 'Next run Wed 11 Nov, 15:00 · Last run: The iPhone stopped accepting connections');
                 assert.equal(await lastRun.getAttribute('data-tone'), null);
                 assert.equal(await card.locator('.device-unlock-schedule.problem').count(), 0);
                 assert.equal(await card.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock · next 15:00 · last 2 h ago');
 
                 // A slot that arrived while the phone was in use waits for it to be locked.
                 test.sendDevice(iphone({ ...reachable, waitingForLock: true }, { 'device.locked': false, 'screen.power': 'on' }));
-                await dialog.locator('.sheet-row-desc', { hasText: 'Runs when the phone is next locked' }).waitFor();
+                await dialog.locator('.kit-row-desc', { hasText: 'Runs when the phone is next locked' }).waitFor();
                 assert.equal(await card.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock · runs when the phone is locked');
                 assert.equal(await card.locator('.device-unlock-schedule.problem').count(), 0);
                 assert.deepEqual(test.errors, []);
