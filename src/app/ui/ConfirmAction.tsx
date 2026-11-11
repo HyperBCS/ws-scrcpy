@@ -106,7 +106,7 @@ interface ConfirmPromptProps {
      * `stack`: full-width buttons with Cancel last, for sheets that grow from the bottom edge.
      */
     layout?: 'row' | 'stack';
-    /** The look of the design kit. Left off, the prompt looks as it always has. */
+    /** The kit look: other class names, the same behaviour. Without it nothing changes. */
     kit?: boolean;
     onConfirm: () => void;
 }
