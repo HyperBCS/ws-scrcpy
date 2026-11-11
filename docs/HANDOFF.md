@@ -337,7 +337,8 @@ session packets and the release of keys a departed viewer held.
 `scripts/test-stream-clients.js` runs the browser-side stream code against mocked browser APIs:
 scroll encoding, decoder recovery, touches beside the picture, player statistics, held keys and
 buttons, and the stream settings target. `node scripts/test-browser.js android-stream` drives the
-Android stream page in Chromium with mocked sockets (rotation, an edge swipe, the wheel).
+Android stream page in Chromium with mocked sockets (a real decoder error, rotation, an edge swipe,
+the wheel).
 Audio coverage includes fragmented headers, timestamp flags, late-join codec config, capture
 failure isolation and fallback, PCM conversion, unlock/mute/background/reconnect, bounded
 buffering, and stale decoder output cleanup. The player tests mock browser APIs; they do not
@@ -1955,7 +1956,7 @@ Pictures), and adbd removing a cancelled partial file.
 answer that loses nothing. The iPhone card shows one scheduled-unlock line, from
 `unlockCardLine()`; the separate "has no passcode" warning from p1-confirm was folded into it.
 
-### Android stream client after the 2026-11-10 review (unit-tested only, not checked on a device)
+### Android stream client after the 2026-11-10 review (tested without a device)
 
 **Rotation.** See §3: session packets are read, and `WebsocketProxy` sends a second
 `scrcpy_initial` when the size changes. `StreamClientScrcpy.onDisplayInfo` gives the new
