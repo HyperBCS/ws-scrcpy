@@ -3,7 +3,8 @@
 // Routes and history against socket fixtures. The in-app back control goes back to the list and
 // the browser's Back after it never shows a phone's stream again; every open of a screen makes
 // exactly one stream socket, also from an older link and from a link that names only the phone;
-// older links and delivered push links open the right page; a sheet closes with its page.
+// older links and delivered push links open the right page; a sheet closes with its page; the
+// history entries of overlays behave in a real browser as in scripts/test-routes.js.
 // No device, adb or pymobiledevice3 is involved.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -425,6 +426,107 @@ async function sheetsCloseWithTheRoute(browser) {
     } finally { await test.context.close(); }
 }
 
+/**
+ * The history entries of overlays against a real session history. No view uses the hook until
+ * step 3b, so the router is loaded on its own, from source, into a page of this origin; what
+ * is under test is how the browser orders Back, Forward, `history.go` and their events.
+ */
+async function overlayEntries(browser) {
+    const ts = require('typescript');
+    const source = (file) =>
+        ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src', file), 'utf8'), { compilerOptions: { module: 'commonjs', target: 'es2020' } }).outputText;
+    const sources = {
+        router: source('app/state/router.ts'), './routes': source('app/state/routes.ts'),
+        '../ui/storage': source('app/ui/storage.ts'), '../../common/Action': source('common/Action.ts'),
+    };
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    // Runs in every document of the context, so also after a reload.
+    await context.addInitScript((modules) => {
+        const signal = (value) => {
+            const listeners = new Set();
+            return {
+                get value() { return value; },
+                set value(next) { value = next; listeners.forEach((listener) => listener(next)); },
+                subscribe(listener) { listeners.add(listener); listener(value); },
+            };
+        };
+        const loaded = {};
+        const load = (name) => {
+            if (name === '@preact/signals') return { signal };
+            if (!loaded[name]) {
+                loaded[name] = { exports: {} };
+                new Function('require', 'module', 'exports', modules[name])(load, loaded[name], loaded[name].exports);
+            }
+            return loaded[name].exports;
+        };
+        window.router = load('router');
+        window.overlaysClosed = [];
+        window.routes = [];
+        window.router.route.subscribe((value) => window.routes.push(value.toString()));
+        window.openOverlay = (name) => { window.overlay = window.router.pushOverlay(() => window.overlaysClosed.push(name)); };
+    }, sources);
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    try {
+        await page.goto(BASE + 'manifest.json');
+        const at = () => page.evaluate(() => ({ index: history.state?.nav?.index, overlay: history.state?.nav?.overlay || 0, hash: location.hash, entries: history.length, closed: [...overlaysClosed] }));
+        const until = (check, arg) => page.waitForFunction(check, arg);
+        const phone = (udid) => `#!action=device&udid=${udid}&view=screen`;
+        const start = (await at()).entries;
+
+        await page.evaluate(() => router.openRoute({ action: 'device', udid: 'A', view: 'screen' }));
+        await page.evaluate(() => openOverlay('sheet'));
+        assert.deepEqual(await at(), { index: 2, overlay: 1, hash: phone('A'), entries: start + 2, closed: [] }, 'an open overlay has an entry under the address of its page');
+        const shown = await page.evaluate(() => routes.length);
+
+        // Back closes the overlay and stays on the page.
+        await page.goBack();
+        await until(() => overlaysClosed.length === 1);
+        assert.deepEqual(await at(), { index: 1, overlay: 0, hash: phone('A'), entries: start + 2, closed: ['sheet'] });
+        assert.equal(await page.evaluate(() => routes.length), shown, 'the route did not change: a stream under the sheet is not touched');
+        // Forward lands on the entry of an overlay that is gone, and is taken back to the page.
+        await page.goForward();
+        await until(() => history.state?.nav?.index === 1);
+        await page.waitForTimeout(150);
+        assert.deepEqual(await at(), { index: 1, overlay: 0, hash: phone('A'), entries: start + 2, closed: ['sheet'] });
+
+        // An overlay that closes by itself (close button, backdrop, Escape) steps back over its entry.
+        await page.evaluate(() => openOverlay('menu'));
+        assert.equal((await at()).index, 2);
+        await page.evaluate(() => overlay.release());
+        await until(() => history.state?.nav?.index === 1);
+        // One sheet replaces another in the same task.
+        await page.evaluate(() => { openOverlay('first'); overlay.release(); openOverlay('second'); });
+        await until(() => history.state?.nav?.index === 2 && history.state.nav.overlay === 1);
+        assert.deepEqual((await at()).closed, ['sheet'], 'an overlay that closed by itself is not told to close');
+
+        // Switch from inside an overlay (Switch phone is a sheet): the page's entry changes, not the sheet's.
+        await page.evaluate(() => router.switchRoute({ action: 'device', udid: 'B', view: 'screen' }));
+        await until((hash) => location.hash === hash, phone('B'));
+        assert.deepEqual(await at(), { index: 1, overlay: 0, hash: phone('B'), entries: start + 2, closed: ['sheet', 'second'] }, 'the entry at the page is the one that changed; the overlay entry is ahead of it now');
+        assert.deepEqual(await page.evaluate(() => routes.slice(-2)), ['action=device&udid=A&view=screen', 'action=device&udid=B&view=screen']);
+
+        // A page reloaded with an overlay open starts on the overlay's entry and goes back to the page's.
+        await page.evaluate(() => openOverlay('settings'));
+        assert.equal((await at()).overlay, 1);
+        await page.reload();
+        await until(() => window.router && history.state?.nav?.index === 1);
+        assert.deepEqual(await at(), { index: 1, overlay: 0, hash: phone('B'), entries: start + 2, closed: [] }, 'Back is not spent on an overlay that is no longer open');
+
+        // Up from inside an overlay: the list, and nothing of phone A or B behind it.
+        await page.evaluate(() => openOverlay('actions'));
+        await page.evaluate(() => router.goUp());
+        await until(() => history.state?.nav?.index === 0 && overlaysClosed.length === 1);
+        assert.equal((await at()).hash, '');
+        assert.deepEqual(await page.evaluate(() => routes.slice(-1)), ['']);
+        await page.goBack();
+        assert.equal(page.url(), 'about:blank', 'Back from the list leaves the app');
+        assert.deepEqual(errors, []);
+        console.log('PASS overlay entries in a real session history: Back closes, Forward is undone, release steps back, a route change lands on the page entry, a reload recovers');
+    } finally { await context.close(); }
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch();
@@ -436,6 +538,7 @@ async function main() {
         await linksOpenOnce(browser);
         await phoneNotListed(browser);
         await sheetsCloseWithTheRoute(browser);
+        await overlayEntries(browser);
     } finally {
         await browser.close();
     }
