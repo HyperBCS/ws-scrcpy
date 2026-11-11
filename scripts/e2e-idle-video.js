@@ -80,7 +80,7 @@ async function checkPlayer(context, player, realHref) {
     try {
         await page.goto(url.toString());
         await page.waitForFunction(
-            () => document.querySelector('.stream-header-status')?.textContent.includes('Connected'),
+            () => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'),
             undefined,
             { timeout: 45000 },
         );
