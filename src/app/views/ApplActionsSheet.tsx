@@ -192,7 +192,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     )}
                 </SheetGroup>
 
-                <SheetGroup title="Screen">
+                <SheetGroup title="Screen" status={screenNote && <SheetStatus>{screenNote}</SheetStatus>}>
                     <SheetRow title="Rotate" description="Apps with a fixed orientation may ignore this." layout="pair">
                         <button
                             type="button"
@@ -249,7 +249,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         </button>
                     </SheetRow>
                 </SheetGroup>
-                {screenNote && <SheetStatus>{screenNote}</SheetStatus>}
 
                 <SheetGroup title="Keyboard">
                     <SheetRow title="Type text">
@@ -283,7 +282,16 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup title="Clipboard">
+                <SheetGroup
+                    title="Clipboard"
+                    status={
+                        draftTooLong ? (
+                            <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
+                        ) : (
+                            clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
+                        )
+                    }
+                >
                     <SheetRow
                         title="Read the phone's clipboard"
                         description="Copy from the phone to this browser."
@@ -342,13 +350,8 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         </button>
                     </SheetRow>
                 </SheetGroup>
-                {draftTooLong ? (
-                    <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
-                ) : (
-                    clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
-                )}
 
-                <SheetGroup title="Phone" hint={phoneSummary}>
+                <SheetGroup title="Phone" hint={phoneSummary} status={power && <SheetStatus>{power}</SheetStatus>}>
                     <SheetRow
                         title="Reboot"
                         description="Reconnects after restarting. If a passcode is set, unlock on the phone."
@@ -397,7 +400,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         onConfirm={() => onPower('shutdown')}
                     />
                 )}
-                {power && <SheetStatus>{power}</SheetStatus>}
 
                 <AnimatedDetails class="sheet-details">
                     <summary>

@@ -410,8 +410,9 @@ export function ApplSettingsSheet() {
                 )}
 
                 <SheetGroup
-                    title="Scheduled unlock"
+                    title="Schedule"
                     hint="Unlocks the phone once a day so iOS does not restart it after 72 hours without an unlock, then locks it again. Skipped if the phone was unlocked in the last 22 hours."
+                    status={note && <SheetStatus tone={note.tone}>{note.text}</SheetStatus>}
                 >
                     <SheetRow
                         title={
@@ -590,9 +591,11 @@ export function ApplSettingsSheet() {
                         onConfirm={onClearPasscode}
                     />
                 )}
-                {note && <SheetStatus tone={note.tone}>{note.text}</SheetStatus>}
 
-                <SheetGroup title="Runs">
+                <SheetGroup
+                    title="Runs"
+                    status={runNote && <SheetStatus tone={runNote.tone}>{runNote.text}</SheetStatus>}
+                >
                     <SheetRow
                         title={
                             <>
@@ -615,7 +618,6 @@ export function ApplSettingsSheet() {
                         </button>
                     </SheetRow>
                 </SheetGroup>
-                {runNote && <SheetStatus tone={runNote.tone}>{runNote.text}</SheetStatus>}
 
                 <SheetGroup title="Phone">
                     <dl class="sheet-facts">
