@@ -1,4 +1,3 @@
-/* eslint-disable */
 // All device sockets are fixtures. No shell commands reach a real device.
 const assert = require('node:assert/strict');
 const { settleMotion } = require('./ui-motion');

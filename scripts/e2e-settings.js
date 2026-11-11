@@ -1,4 +1,3 @@
-/* eslint-disable */
 // BASE=http://127.0.0.1:8000 E2E_OUT=/tmp/ws-scrcpy-settings node scripts/e2e-settings.js
 // All WebSockets are fixtures: long device/encoder labels, audio errors, and Apply failures
 // exercise the real Settings component without reaching a device or changing real settings.

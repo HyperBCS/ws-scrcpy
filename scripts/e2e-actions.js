@@ -1,4 +1,3 @@
-/* eslint-disable */
 /** Exercises the Actions sheet against a real device: each button must change device state. */
 const { chromium } = require('/home/brandon/ws-scrcpy/node_modules/playwright');
 

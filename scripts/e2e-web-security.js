@@ -1,4 +1,3 @@
-/* eslint-disable */
 // E2E_OUT=/tmp/ws-scrcpy-web-security node scripts/test-browser.js web-security
 // Where the browser may connect. An Android card has one route, through the server, whatever
 // addresses the phone reports and whatever this browser saved earlier. A stream link cannot name

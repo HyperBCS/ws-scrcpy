@@ -1,4 +1,3 @@
-/* eslint-disable */
 /**
  * End-to-end smoke test for the phone UI: device list -> stream -> touch.
  *

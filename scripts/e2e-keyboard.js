@@ -1,4 +1,3 @@
-/* eslint-disable */
 /**
  * Verifies the browser keyboard reaches the device as a real (UHID) keyboard: opens a stream,
  * types with Playwright's keyboard, and reads back what the DEVICE's focused field received.

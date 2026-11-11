@@ -1,4 +1,3 @@
-/* eslint-disable */
 // node scripts/test-browser.js ios-reconnect
 // The iPhone stream page when the session will not start. Fixture sockets close the way
 // CoreDeviceProxy does (4009 a start failed, 4011 the start budget is used up); nothing reaches a

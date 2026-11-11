@@ -1,4 +1,3 @@
-/* eslint-disable */
 // BASE=http://127.0.0.1:8000 E2E_OUT=/tmp/ws-scrcpy-ios-settings node scripts/e2e-ios-settings.js
 // The iPhone settings panel (Settings button on the iOS card, scheduled unlock rows, passcode
 // fields) and the stream page's Unlock sheet, against fixture sockets: every tracker command is

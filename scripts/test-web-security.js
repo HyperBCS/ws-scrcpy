@@ -417,6 +417,27 @@ test('client chunks carry a content hash and only the client directory is cleane
     assert.notEqual(path.relative(SERVER_DIST_PATH, CLIENT_DIST_PATH), '', 'the two builds have separate directories');
 });
 
+// ------------------------------------------------------------------ Lint coverage (C-server-core-15)
+
+test('lint checks the test scripts and the service worker', async () => {
+    const { ESLint } = require('eslint');
+    const root = path.join(__dirname, '..');
+    const eslint = new ESLint({ cwd: root });
+    const rulesFor = async (file, code) => {
+        const [result] = await eslint.lintText(code, { filePath: path.join(root, file) });
+        return result.messages.map((message) => message.ruleId);
+    };
+    // A misspelt name in a test used to pass lint, because every .js file was ignored.
+    assert.deepEqual(await rulesFor('scripts/test-example.js', 'asert.equal(1, 1);\n'), ['no-undef']);
+    assert.deepEqual(await rulesFor('scripts/e2e-example.js', 'const unused = document.title;\n'), ['no-unused-vars']);
+    assert.deepEqual(await rulesFor('src/public/sw.js', 'self.addEventListener("push", () => missing());\n'), [
+        'no-undef',
+    ]);
+    assert.deepEqual(await rulesFor('scripts/e2e-example.js', 'console.log(location.href, process.env.BASE);\n'), []);
+    const scripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts;
+    assert.match(scripts.lint, /\bscripts\//, 'npm run lint covers scripts/');
+});
+
 // ------------------------------------------------------------------ adb server (C-server-core-4)
 
 /** Speaks enough of the adb host protocol for forwards. Each connection carries one request. */

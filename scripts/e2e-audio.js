@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Hardware check: serve scripts/fixtures/audio.html to the Android phone as TONE_URL.
 // SERIAL=... TONE_URL=http://host:8099/audio.html BASE=http://host:8000 npm run test:audio
 // Add DESKTOP=1 to exercise the mouse sidebar in a short desktop window.

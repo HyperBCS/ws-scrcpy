@@ -1,4 +1,3 @@
-/* eslint-disable */
 // BASE=http://127.0.0.1:8000 SERIAL=<optional serial> node scripts/e2e-pwa.js
 // Reads the device list/settings only. Remote gestures use an intercepted WebSocket and never
 // reach hardware. Inert cloned cards make list scrolling independent of attached-device count.

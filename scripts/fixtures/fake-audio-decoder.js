@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable */
 // Stand-in for ffmpeg in CoreDeviceAudioRelay tests (IOS_AUDIO_DECODER): for every `mdat` box
 // that arrives on stdin it writes 480 samples (1920 bytes) of a fixed s16le stereo pattern, so a
 // test can check packetisation and timestamps without a real decoder.

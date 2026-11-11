@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Real-device regression: keyboard input must survive a quality restart, and settings read back.
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');

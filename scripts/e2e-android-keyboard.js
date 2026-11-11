@@ -1,4 +1,3 @@
-/* eslint-disable */
 // BASE=http://127.0.0.1:8010/ BROWSER=chromium node scripts/e2e-android-keyboard.js
 // All sockets/APIs are fixtures. No Android device, ADB command, or real input is used.
 const assert = require('node:assert/strict');
