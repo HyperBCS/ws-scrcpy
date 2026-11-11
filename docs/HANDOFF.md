@@ -868,7 +868,8 @@ validation* below for what was observed and what had to change.
   `KeyboardEvent.code` to HID usages (`hidKeyboard.ts`, US layout; `keyboardReportsForText`
   types ASCII and reports what it skipped). Touch is single-contact by protocol
   (`CoreDeviceInteractionHandler` follows the first pointer only, rAF-coalesced).
-- **Tracking.** The appl `ControlCenter` polls `usbmux list --simple --usb` every 3 s. A new
+- **Tracking.** The appl `ControlCenter` polls `usbmux list --simple --usb` every 3 s (since
+  2026-11-11 only where usbmuxd's event feed is not available; see "Fewer Python processes"). A new
   UDID is `unauthorized`/`paired:false` until `lockdown info` answers (that is what an
   un-Trusted phone looks like); then `amfi developer-mode-status` fills `developerMode`. The
   card offers **Enable** (`amfi enable-developer-mode`, which reboots the phone) and mirrors the
@@ -1748,6 +1749,32 @@ marker in both places. `npm run dev` runs `patch:ios` first when the venv exists
 added a patch step ("ws-scrcpy input queue bound": `/touch` and `/key` answer 503 once 512 reports
 are queued), so a venv patched before it needs `npm run patch:ios` again. Dependencies of
 pymobiledevice3 are still not pinned.
+
+**Fewer Python processes (2026-11-11, phase 2, fixture-tested only).** One idle iPhone used to
+cost about 43,000 `pymobiledevice3` launches a day: `usbmux list` every 3 s, and the backlight
+plus (27.2+) `notification get-state` every 15 s, or every 4 s while streaming, where each
+get-state brought up a userspace tunnel beside serve-web's. Two changes:
+
+- `UsbmuxListener` holds one connection to usbmuxd's socket with a `Listen` request. Its
+  messages are only a signal: on any of them the tracker runs `usbmux list` at once (150 ms
+  debounce). While the feed is up the regular poll is every 60 s, not 3 s. The list itself still
+  comes from the CLI, so a feed that misbehaves can only make an attach or detach show up to a
+  minute late; it cannot hide a phone. No socket, a refused `Listen` or `IOS_USBMUX_LISTEN=0`
+  leave the 3 s poll in place. The framing is written from the usbmuxd protocol and tested
+  against a fake socket only. First thing to check on hardware: the log has no
+  "[UsbmuxListener] ... polling for iPhones instead" line, and a replug shows within a second.
+- `DeviceStateMonitor` trusts the observer once it has stayed up for 10 s (`entry.observed`). From
+  then the screen is read on the timer every 5 minutes when idle (4 s while a session is up, as
+  before: that read is lockdown only, no tunnel), and the 27.2+ lock is read on the timer at
+  most every 3 minutes. Events, button and input pokes, `refresh` and `waitForLock` still read
+  at once, except that a button press on 27.2+ no longer forces a get-state while the observer
+  is running and the phone is known unlocked and awake. When the observer exits, or was never
+  started (`IOS_STATE_NOTIFICATIONS=0`), the old cadence returns. This rests on the observer
+  delivering `lockstate` with `State` on 27.2+, which the September notes record; a deaf observer
+  now means a badge that is up to 5 minutes stale, where it was 15 s.
+
+`ControlCenter.refreshDetails` also re-checks after each read that the tracker is still running
+and the phone still attached, so a release during a read no longer recreates the monitor.
 
 ### Scheduled unlock and passcode handling after the 2026-11-10 review (fixture-tested only)
 

@@ -22,6 +22,8 @@ process.env.IOS_SESSION_START_LIMIT = '0';
 process.env.IOS_SESSION_COOLDOWN_MS = '0';
 // Clear of 18100, where a server running on this machine keeps its own serve-web.
 process.env.IOS_SERVE_WEB_BASE_PORT = '18300';
+// The tracker must not listen on this machine's real usbmuxd socket from a test.
+process.env.IOS_USBMUX_LISTEN = '0';
 after(() => {
     // A failed assertion skips a test's own `runner.release()`; without this the fake serve-web
     // and its ffmpeg child would outlive the run.
@@ -2796,6 +2798,80 @@ test('direct lock polling recovers missed events and respects the lock opt-out',
         });
     } finally {
         monitor.release();
+    }
+});
+
+test('with the observer running the timers slow down, and polling returns when it stops', async (t) => {
+    const monitor = new DeviceStateMonitor();
+    const reads = { screen: 0, lock: 0 };
+    t.mock.method(PyMobileDevice, 'runJson', async (args) => {
+        if (args[0] === 'notification') {
+            reads.lock++;
+            return { 'com.apple.springboard.lockstate': 0 };
+        }
+        reads.screen++;
+        return { IODisplayParameters: { brightness: { value: 1 } } };
+    });
+    t.mock.method(PyMobileDevice, 'runProbeJson', () => { throw new Error('unexpected accessibility walk'); });
+    const observers = [];
+    t.mock.method(PyMobileDevice, 'spawnDetached', () => {
+        const child = Object.assign(new EventEmitter(), {
+            stdout: new EventEmitter(),
+            stderr: new EventEmitter(),
+            exitCode: null,
+            signalCode: null,
+            kill() {},
+        });
+        observers.push(child);
+        return child;
+    });
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const advance = async (ms) => {
+        t.mock.timers.tick(ms);
+        for (let i = 0; i < 6; i++) await tick();
+    };
+    try {
+        monitor.watch('observed', { version: '27.2' });
+        await advance(1);
+        assert.deepEqual(reads, { screen: 1, lock: 1 }, 'both are read when the phone is first watched');
+        assert.equal(observers.length, 1);
+        // The observer has stayed up: one more read, then events are trusted.
+        await advance(10000);
+        assert.deepEqual(reads, { screen: 2, lock: 2 });
+        await advance(240000);
+        assert.deepEqual(reads, { screen: 2, lock: 2 }, 'four idle minutes start no process at all (it was 16 of each)');
+        await advance(61000);
+        assert.deepEqual(reads, { screen: 3, lock: 3 }, 'a read every five minutes recovers a missed event');
+
+        // A viewer: the screen is polled every 4 s, the lock is not.
+        monitor.setSessionActive('observed', true);
+        await advance(1);
+        for (let i = 0; i < 10; i++) await advance(4000);
+        assert.equal(reads.screen, 14);
+        assert.equal(reads.lock, 3, 'no tunnel beside serve-web every 4 s');
+        for (let i = 0; i < 40; i++) await advance(4000);
+        assert.equal(reads.lock, 4, 'the lock is read directly once every three minutes');
+        const before = { ...reads };
+        monitor.pokeButton('observed');
+        await advance(1500);
+        assert.equal(reads.lock, before.lock, 'a button press on an unlocked phone leaves the lock to the observer');
+        assert.equal(reads.screen, before.screen + 1);
+        // An event still updates the state at once.
+        observers[0].stdout.emit('data', '{"Command":"RelayNotification","Name":"com.apple.springboard.lockstate","State":1}\n');
+        assert.equal(monitor.getState('observed')['device.locked'], true);
+
+        // The observer dies: polling takes over until a new one has settled.
+        monitor.setSessionActive('observed', false);
+        observers[0].emit('close');
+        const idle = { ...reads };
+        await advance(4500);
+        assert.equal(reads.screen, idle.screen, 'idle again: not the 4 s cadence');
+        await advance(10600);
+        assert.deepEqual(reads, { screen: idle.screen + 1, lock: idle.lock + 1 }, 'the 15 s poll reads both again');
+        assert.equal(observers.length, 2, 'and the observer was started again');
+    } finally {
+        monitor.release();
+        t.mock.timers.reset();
     }
 });
 

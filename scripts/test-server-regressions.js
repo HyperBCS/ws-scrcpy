@@ -16,6 +16,10 @@ process.env.WS_SCRCPY_STREAM_CONFIG_PATH = path.join(temporary, 'stream-config.j
 // The iOS tracker starts the unlock scheduler, whose store creates the data directory.
 const previousDataDir = process.env.WS_NOTIFICATION_DATA;
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
+// The tracker must not listen on this machine's real usbmuxd socket from a test, and the state
+// monitor must not start the installed pymobiledevice3 as its notification observer.
+process.env.IOS_USBMUX_LISTEN = '0';
+process.env.IOS_STATE_NOTIFICATIONS = '0';
 require('ts-node').register({ transpileOnly: true });
 // Webpack treats these imports as assets. Node only needs the surrounding server classes.
 require.extensions['.jar'] = () => {};
@@ -1340,6 +1344,215 @@ test('iOS tracking: unplugging stops the screen session and releasing stops poll
     await tracker.poll();
     assert.equal(polls, 0, 'a released tracker never spawns another pymobiledevice3 process');
     CoreDeviceRunner.getInstance().release();
+});
+
+function fakeUsbmuxd(t) {
+    // Speaks usbmuxd's plist framing: a 16-byte little-endian header, then an XML property list.
+    const directory = fs.mkdtempSync(path.join(temporary, 'usbmuxd-'));
+    const socketPath = path.join(directory, 'usbmuxd');
+    const frame = (dict) => {
+        const body = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>${dict}</dict></plist>`);
+        const header = Buffer.alloc(16);
+        header.writeUInt32LE(16 + body.length, 0);
+        header.writeUInt32LE(1, 4);
+        header.writeUInt32LE(8, 8);
+        return Buffer.concat([header, body]);
+    };
+    const daemon = { socketPath, requests: [], clients: [], result: 0 };
+    daemon.attached = (serial) =>
+        frame(
+            '<key>MessageType</key><string>Attached</string><key>DeviceID</key><integer>4</integer>' +
+                `<key>Properties</key><dict><key>ConnectionType</key><string>USB</string><key>SerialNumber</key><string>${serial}</string></dict>`,
+        );
+    daemon.detached = () => frame('<key>MessageType</key><string>Detached</string><key>DeviceID</key><integer>4</integer>');
+    daemon.send = (data) => daemon.clients.forEach((client) => client.write(data));
+    const server = createServer((client) => {
+        daemon.clients.push(client);
+        client.on('error', () => undefined);
+        client.once('data', (data) => {
+            daemon.requests.push({ length: data.readUInt32LE(0), type: data.readUInt32LE(8), body: data.subarray(16).toString() });
+            client.write(frame(`<key>MessageType</key><string>Result</string><key>Number</key><integer>${daemon.result}</integer>`));
+        });
+    });
+    daemon.close = () => {
+        daemon.clients.forEach((client) => client.destroy());
+        return new Promise((resolve) => server.close(resolve));
+    };
+    t.after(() => daemon.close());
+    return new Promise((resolve) => server.listen(socketPath, () => resolve(daemon)));
+}
+
+test('iOS tracking: a tracker released while a phone is being read does not start watching it', async (t) => {
+    const { DeviceStateMonitor } = require('../src/server/appl-device/services/DeviceStateMonitor');
+    const developerMode = deferred();
+    t.mock.method(PyMobileDevice, 'runJson', async (args) => {
+        if (args[0] === 'usbmux') return ['iphone-late'];
+        if (args[0] === 'lockdown') return { DeviceName: 'Late', ProductType: 'iPhone14,5', ProductVersion: '27.2' };
+        if (args[0] === 'amfi') return developerMode.promise;
+        throw new Error(`unexpected ${args.join(' ')}`);
+    });
+    const tracker = new IosControlCenter();
+    await tracker.init();
+    await tick();
+    assert.equal(tracker.getDescriptor('iphone-late').state, 'Connected');
+    tracker.release();
+    assert.equal(DeviceStateMonitor.hasInstance(), false);
+    developerMode.resolve(true);
+    await tick();
+    await tick();
+    assert.equal(DeviceStateMonitor.hasInstance(), false, 'the monitor was not created again for a released tracker');
+});
+
+test('usbmuxd listener: reports ready after Listen is accepted, then every attach and detach', async (t) => {
+    const { UsbmuxListener } = require('../src/server/appl-device/services/UsbmuxListener');
+    const daemon = await fakeUsbmuxd(t);
+    const previous = { socket: process.env.IOS_USBMUXD_SOCKET, listen: process.env.IOS_USBMUX_LISTEN };
+    process.env.IOS_USBMUXD_SOCKET = daemon.socketPath;
+    delete process.env.IOS_USBMUX_LISTEN;
+    const listener = new UsbmuxListener();
+    const events = [];
+    listener.on('ready', (ready) => events.push(`ready ${ready}`));
+    listener.on('change', () => events.push('change'));
+    const until = async (check) => {
+        for (let i = 0; i < 200 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+        assert(check(), `timed out; saw ${JSON.stringify(events)}`);
+    };
+    try {
+        listener.start();
+        await until(() => listener.isReady());
+        assert.equal(daemon.requests.length, 1);
+        assert.equal(daemon.requests[0].type, 8, 'a plist message');
+        assert.equal(daemon.requests[0].length, 16 + Buffer.byteLength(daemon.requests[0].body));
+        assert.match(daemon.requests[0].body, /<key>MessageType<\/key><string>Listen<\/string>/);
+        assert.deepEqual(events, ['ready true']);
+        // One message split across two writes, then two in one write.
+        const attached = daemon.attached('00008110-000A11112222801E');
+        daemon.send(attached.subarray(0, 21));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.deepEqual(events, ['ready true'], 'half a message is not an event');
+        daemon.send(attached.subarray(21));
+        await until(() => events.length === 2);
+        daemon.send(Buffer.concat([daemon.detached(), attached]));
+        await until(() => events.length === 4);
+        assert.deepEqual(events.slice(1), ['change', 'change', 'change']);
+        // usbmuxd went away: the tracker is told, so it polls again.
+        daemon.clients.forEach((client) => client.destroy());
+        await until(() => !listener.isReady());
+        assert.equal(events.at(-1), 'ready false');
+    } finally {
+        listener.stop();
+        if (previous.socket === undefined) delete process.env.IOS_USBMUXD_SOCKET;
+        else process.env.IOS_USBMUXD_SOCKET = previous.socket;
+        process.env.IOS_USBMUX_LISTEN = previous.listen;
+    }
+});
+
+test('usbmuxd listener: a refused Listen or a missing socket leaves the tracker on polling', async (t) => {
+    const { UsbmuxListener } = require('../src/server/appl-device/services/UsbmuxListener');
+    const daemon = await fakeUsbmuxd(t);
+    daemon.result = 1;
+    const errors = t.mock.method(console, 'error', () => undefined);
+    const previous = { socket: process.env.IOS_USBMUXD_SOCKET, listen: process.env.IOS_USBMUX_LISTEN };
+    assert.equal(UsbmuxListener.isEnabled(), false, 'IOS_USBMUX_LISTEN=0 turns it off');
+    delete process.env.IOS_USBMUX_LISTEN;
+    try {
+        for (const socketPath of [daemon.socketPath, path.join(temporary, 'no-usbmuxd-here')]) {
+            process.env.IOS_USBMUXD_SOCKET = socketPath;
+            const listener = new UsbmuxListener();
+            let changes = 0;
+            listener.on('change', () => changes++);
+            const before = errors.mock.callCount();
+            listener.start();
+            for (let i = 0; i < 200 && errors.mock.callCount() === before; i++) {
+                await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            daemon.send(daemon.attached('00008110-000A11112222801E'));
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            assert.equal(listener.isReady(), false);
+            assert.equal(changes, 0);
+            assert.equal(errors.mock.callCount(), before + 1, 'said once');
+            assert.match(errors.mock.calls.at(-1).arguments[0], /polling for iPhones instead/);
+            listener.stop();
+        }
+    } finally {
+        if (previous.socket === undefined) delete process.env.IOS_USBMUXD_SOCKET;
+        else process.env.IOS_USBMUXD_SOCKET = previous.socket;
+        process.env.IOS_USBMUX_LISTEN = previous.listen;
+    }
+});
+
+test('iOS tracking: usbmuxd events replace the 3 s poll, which returns when the feed is lost', async (t) => {
+    let listed = [];
+    let lists = 0;
+    t.mock.method(PyMobileDevice, 'runJson', async (args) => {
+        if (args[0] === 'usbmux') {
+            lists++;
+            return listed;
+        }
+        if (args[0] === 'lockdown') return { DeviceName: 'Nine', ProductType: 'iPhone14,5', ProductVersion: '27.0' };
+        if (args[0] === 'amfi') return true;
+        throw new Error(`unexpected ${args.join(' ')}`);
+    });
+    t.mock.method(CoreDeviceRunner.getInstance(), 'stopSession', () => undefined);
+    const feed = Object.assign(new EventEmitter(), {
+        ready: false,
+        isReady: () => feed.ready,
+        start: () => (feed.started = true),
+        stop: () => (feed.stopped = true),
+    });
+    class Tracker extends IosControlCenter {
+        createListener() {
+            return feed;
+        }
+    }
+    const tracker = new Tracker();
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const advance = async (ms) => {
+        t.mock.timers.tick(ms);
+        for (let i = 0; i < 6; i++) await tick();
+    };
+    try {
+        await tracker.init();
+        assert.equal(feed.started, true);
+        assert.equal(lists, 1);
+        // No feed yet: the list is polled as before.
+        await advance(3000);
+        await advance(3000);
+        assert.equal(lists, 3);
+        feed.ready = true;
+        feed.emit('ready', true);
+        await advance(30000);
+        assert.equal(lists, 3, 'with the feed up, 30 s pass without a single usbmux list');
+        // A phone is plugged in: usbmuxd says so, twice, and the list is read once, at once.
+        listed = ['iphone-9'];
+        feed.emit('change');
+        feed.emit('change');
+        await advance(150);
+        assert.equal(lists, 4);
+        assert.equal(tracker.getDescriptor('iphone-9').state, 'Connected');
+        listed = [];
+        feed.emit('change');
+        await advance(150);
+        assert.equal(lists, 5);
+        assert.equal(tracker.getDescriptor('iphone-9').state, 'disconnected');
+        // The timer that remains covers a feed that went quiet without closing.
+        await advance(59000);
+        assert.equal(lists, 5);
+        await advance(1000);
+        assert.equal(lists, 6);
+        feed.ready = false;
+        feed.emit('ready', false);
+        await advance(3000);
+        await advance(3000);
+        assert.equal(lists, 8, 'without the feed the 3 s poll is back');
+    } finally {
+        tracker.release();
+        t.mock.timers.reset();
+        CoreDeviceRunner.getInstance().release();
+    }
+    assert.equal(feed.stopped, true);
+    feed.emit('change');
+    assert.equal(lists, 8, 'a released tracker ignores the feed');
 });
 
 test('iOS device list: a socket that closes while the tracker starts leaves no listener behind', async (t) => {

@@ -325,7 +325,9 @@ machine the setup script says so; pick another with
 | `IOS_PATCH_CHECK` | `0` turns off the check that the installed `pymobiledevice3` has every patch from `python/patches` |
 | `IOS_STATE_PROBE` | `0` turns the screen/lock state monitor off (the badges and the sleep overlay stay silent) |
 | `IOS_LOCK_PROBE` | `0` disables lock detection (direct state on iOS 27.2+, accessibility on older versions) and keeps screen detection |
-| `IOS_STATE_NOTIFICATIONS` | `0` disables the per-device `notification observe` process; state then changes only at the poll interval |
+| `IOS_STATE_NOTIFICATIONS` | `0` disables the per-device `notification observe` process; state then changes only at the poll interval (15 s idle, 4 s while streaming). With the observer running, the timers only recover a missed event: the screen every 5 minutes when idle, the lock every 3 minutes |
+| `IOS_USBMUX_LISTEN` | `0` stops the tracker listening to usbmuxd for attach and detach events; it then runs `usbmux list` every 3 s, as it does where the socket is not available |
+| `IOS_USBMUXD_SOCKET` | Path of usbmuxd's socket for those events (default `/var/run/usbmuxd`) |
 | `IOS_LOCKED_CAPTIONS` | Comma-separated lock-screen captions for the older accessibility probe (e.g. `Gesperrt,Code eingeben`); not needed on iOS 27.2+ |
 | `WS_IOS_SETTINGS_KEY` | 64 hex characters: the key for the stored unlock passcode, instead of `ios-settings.key` in the data directory. Read once at startup and not passed to child processes |
 | `WS_IOS_SETTINGS_KEY_FILE` | Path of the key file, to keep it outside the data directory (a Docker secret, for example). 32 bytes or 64 hex characters |

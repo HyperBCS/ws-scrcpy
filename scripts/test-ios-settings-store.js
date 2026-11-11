@@ -17,6 +17,8 @@ const previousEnv = {
 // The store defaults to the data directory; the monitor must not probe anything from here.
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
 process.env.IOS_STATE_PROBE = '0';
+// The tracker must not listen on this machine's real usbmuxd socket from a test.
+process.env.IOS_USBMUX_LISTEN = '0';
 
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
 
