@@ -18,8 +18,8 @@ import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import FilePushHandler, { DragAndPushListener, PlannedUpload, PushUpdateParams } from '../filePush/FilePushHandler';
 import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
 import { ConflictAnswer, ConflictChoice, Resolution, resolveNameConflicts } from '../filePush/nameConflicts';
-import { fileListingTool } from './deviceTools';
-import { pushRoute } from '../../state/router';
+import { DEFAULT_FILES_PATH, fileListingTool } from './deviceTools';
+import { pushRoute, replaceRoute } from '../../state/router';
 import { formatMode, formatModified, formatSize, iconMarkup, kindOf, typeLabel } from './fileTypes';
 
 type Request = {
@@ -166,8 +166,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private filter = '';
     private preferences = readPreferences();
     private selectionMode = false;
-    private backStack: string[] = [];
-    private forwardStack: string[] = [];
+    /**
+     * The browser's history is the only history. Each entry this explorer creates is tagged with
+     * its position, so the toolbar knows whether Back and Forward have somewhere to go; the
+     * buttons themselves call `history.back()` and `history.forward()`.
+     */
+    private historyId = '';
+    private historyIndex = 0;
+    private historyTop = 0;
     private readonly historyKey: string;
     private generation = 0;
     private loading = false;
@@ -195,15 +201,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.serial = params.udid;
         this.path = path.resolve('/', params.path);
         this.historyKey = `ws-scrcpy.files.history.${this.serial}`;
-        try {
-            const stored = JSON.parse(sessionStorage.getItem(this.historyKey) || '{}');
-            const paths = (list: unknown) =>
-                Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string') : [];
-            this.backStack = paths(stored.back);
-            this.forwardStack = paths(stored.forward);
-        } catch {
-            // Session storage can be unavailable; history then simply starts empty.
-        }
+        this.adoptHistory();
         const fragment = html`<section class="file-listing-client file-explorer" aria-label="Device files">
             <div class="fx-chrome">
                 <div class="fx-history">
@@ -709,8 +707,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 button.disabled = !value;
             }
         };
-        enable('back', !!this.backStack.length);
-        enable('forward', !!this.forwardStack.length);
+        enable('back', this.historyIndex > 0);
+        enable('forward', this.historyIndex < this.historyTop);
         enable('up', this.path !== '/');
         enable('refresh', !this.stopped && this.hasConnection() && !this.loading);
         enable('upload', ready);
@@ -1307,10 +1305,15 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 | 'selection-mode'
         ) {
             case 'back':
-                this.step(this.backStack);
+                // Never past the entry Files was opened on: that Back belongs to the browser.
+                if (this.historyIndex > 0) {
+                    history.back();
+                }
                 return;
             case 'forward':
-                this.step(this.forwardStack);
+                if (this.historyIndex < this.historyTop) {
+                    history.forward();
+                }
                 return;
             case 'up':
                 if (this.path !== '/') {
@@ -1407,13 +1410,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             case 'properties':
                 this.showProperties();
                 return;
-        }
-    }
-
-    private step(stack: string[]): void {
-        const destination = stack[stack.length - 1];
-        if (destination) {
-            this.navigate(destination);
         }
     }
 
@@ -1969,10 +1965,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 this.report('This path is unavailable. Choose another folder or refresh.', true);
                 this.finishListing(request);
             } else if (entry.isDirectory()) {
-                this.list(request.path);
+                this.list(request.path, request.path);
             } else if (entry.isFile()) {
                 this.download(request.path, entry);
-                this.list(path.dirname(request.path));
+                this.list(path.dirname(request.path), request.path);
             } else {
                 request.failed = true;
                 this.report('This item is not a regular file or folder.', true);
@@ -2019,7 +2015,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.report('');
     }
 
-    private list(destination: string): void {
+    /** `requested` is the path that was asked for; a file's path lists the folder it is in. */
+    private list(destination: string, requested: string): void {
         this.path = destination;
         this.entries = [];
         this.selection.clear();
@@ -2029,16 +2026,97 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         // them first made every folder change flash an empty list.
         this.wrapper.classList.add('fx-loading');
         this.updateControls();
-        const params = new URLSearchParams(location.hash.replace(/^#!/, ''));
-        if (
-            params.get('action') === ACTION.FILE_LISTING &&
-            params.get('udid') === this.serial &&
-            params.get('path') !== destination
-        ) {
+        const params = this.routeParams();
+        const shown = params?.get('path');
+        if (params && shown !== destination) {
             params.set('path', destination);
-            pushRoute(params);
+            if (path.resolve('/', shown || DEFAULT_FILES_PATH) === requested) {
+                // The address already asked for this place; it only spells it differently (a
+                // trailing slash, or a file inside the folder). Correct it without a new entry.
+                replaceRoute(params);
+            } else {
+                this.historyIndex++;
+                this.historyTop = this.historyIndex;
+                pushRoute(params, this.historyState());
+                this.storeHistory();
+            }
+            this.updateControls();
         }
         this.request('list', destination);
+    }
+
+    /** The current address, when it is this device's Files route. */
+    private routeParams(): URLSearchParams | undefined {
+        const params = new URLSearchParams(location.hash.replace(/^#!/, ''));
+        return params.get('action') === ACTION.FILE_LISTING && params.get('udid') === this.serial ? params : undefined;
+    }
+
+    private historyState(): unknown {
+        return { ...(history.state || {}), files: { id: this.historyId, index: this.historyIndex } };
+    }
+
+    private storeHistory(): void {
+        try {
+            sessionStorage.setItem(this.historyKey, JSON.stringify({ id: this.historyId, top: this.historyTop }));
+        } catch {
+            // Without it Forward is only forgotten by a page reload.
+        }
+    }
+
+    /**
+     * Picks up where this tab's history stands. An entry tagged by an earlier explorer in this
+     * tab (a reload, or Back into Files) continues that run; anything else starts a new one
+     * with nothing behind it.
+     */
+    private adoptHistory(): void {
+        const tag = history.state?.files;
+        let stored: { id?: unknown; top?: unknown } = {};
+        try {
+            stored = JSON.parse(sessionStorage.getItem(this.historyKey) || '{}') || {};
+        } catch {
+            // Session storage can be unavailable; Forward then starts disabled.
+        }
+        if (tag && typeof tag.id === 'string' && Number.isInteger(tag.index) && tag.index >= 0) {
+            this.historyId = tag.id;
+            this.historyIndex = tag.index;
+            this.historyTop =
+                stored.id === tag.id && typeof stored.top === 'number' ? Math.max(stored.top, tag.index) : tag.index;
+            return;
+        }
+        this.historyId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+        this.historyIndex = 0;
+        this.historyTop = 0;
+        const params = this.routeParams();
+        if (params) {
+            replaceRoute(params, this.historyState());
+        }
+        this.storeHistory();
+    }
+
+    /**
+     * Called for every path change. The browser's Back and Forward land on a tagged entry; an
+     * entry without this run's tag was pushed by something else (a typed address, a link), so
+     * it counts as one step forward and is tagged now.
+     */
+    private syncHistory(): void {
+        const tag = history.state?.files;
+        if (tag && typeof tag.id === 'string' && Number.isInteger(tag.index)) {
+            if (tag.id !== this.historyId) {
+                // An entry from an earlier run in this tab: continue that run from here.
+                this.historyId = tag.id;
+                this.historyTop = tag.index;
+            }
+            this.historyIndex = tag.index;
+            this.historyTop = Math.max(this.historyTop, tag.index);
+            return;
+        }
+        const params = this.routeParams();
+        if (params) {
+            this.historyIndex++;
+            this.historyTop = this.historyIndex;
+            replaceRoute(params, this.historyState());
+            this.storeHistory();
+        }
     }
 
     private link(destination: string): string {
@@ -2081,41 +2159,25 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     /**
-     * Every path change funnels through here: shortcut clicks, the address bar, the history
-     * buttons and the browser's own Back/Forward (which reach it through the hash router). The
-     * destination tells the stacks apart -- matching the top of one stack means the user went
-     * that way, anything else is a new visit.
+     * Every path change funnels through here: shortcut clicks, the address bar, and the
+     * browser's Back and Forward (which reach it through the hash router, as the toolbar's
+     * Back and Forward do too).
      */
     public navigate(destination: string): void {
         const normalized = path.resolve('/', destination);
         if (this.stopped) {
             return;
         }
+        this.syncHistory();
         if (!this.hasConnection()) {
             this.path = normalized;
             this.renderBreadcrumb();
+            this.updateControls();
             return;
         }
         if (normalized === this.path) {
+            this.updateControls();
             return;
-        }
-        if (this.backStack[this.backStack.length - 1] === normalized) {
-            this.backStack.pop();
-            this.forwardStack.push(this.path);
-        } else if (this.forwardStack[this.forwardStack.length - 1] === normalized) {
-            this.forwardStack.pop();
-            this.backStack.push(this.path);
-        } else {
-            this.backStack.push(this.path);
-            this.forwardStack = [];
-        }
-        try {
-            sessionStorage.setItem(
-                this.historyKey,
-                JSON.stringify({ back: this.backStack.slice(-50), forward: this.forwardStack.slice(-50) }),
-            );
-        } catch {
-            // Remembering history is a convenience; a full or blocked store must not stop navigation.
         }
         this.load(normalized);
     }
@@ -2274,7 +2336,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             ...typed,
             action: ACTION.FILE_LISTING,
             udid: Util.parseString(params, 'udid', true),
-            path: params.get('path') || '/data/local/tmp',
+            path: params.get('path') || DEFAULT_FILES_PATH,
         };
     }
     protected buildDirectWebSocketUrl(): URL {

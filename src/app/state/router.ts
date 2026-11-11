@@ -50,11 +50,24 @@ export function goToDeviceList(): void {
  * `pushState` is not. The browser still fires `hashchange` for Back/Forward between these
  * entries, so the listener above keeps `route` in step.
  */
-export function pushRoute(params: URLSearchParams): void {
+export function pushRoute(params: URLSearchParams, state: unknown = null): void {
     const hash = `#!${params.toString()}`;
     if (location.hash === hash) {
         return;
     }
-    history.pushState(null, '', hash);
+    history.pushState(state, '', hash);
     route.value = parseHash();
+}
+
+/**
+ * Rewrites the current history entry: the same place under a corrected address, or the same
+ * address with `state` attached. Back and Forward are unaffected.
+ */
+export function replaceRoute(params: URLSearchParams, state: unknown = history.state): void {
+    const hash = `#!${params.toString()}`;
+    const changed = location.hash !== hash;
+    history.replaceState(state, '', hash);
+    if (changed) {
+        route.value = parseHash();
+    }
 }

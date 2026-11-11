@@ -4,6 +4,7 @@ import { ACTION } from '../../common/Action';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { BaseClient } from '../client/BaseClient';
 import { deviceName, DeviceEntry } from '../state/devices';
+import { DEFAULT_FILES_PATH } from '../googDevice/client/deviceTools';
 import { findDeviceForTool } from '../state/toolDevice';
 import { buildLinkHref } from '../state/links';
 import { goToDeviceList } from '../state/router';
@@ -121,7 +122,7 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                 }
                 mounted = client;
                 clientRef.current = client;
-                client.navigate?.(routeRef.current.get('path') || '/data/local/tmp/');
+                client.navigate?.(routeRef.current.get('path') || DEFAULT_FILES_PATH);
                 setLoaded(true);
                 wasConnected = client.hasConnection();
                 setConnected(wasConnected);
@@ -146,7 +147,7 @@ export function ToolView({ params }: { params: URLSearchParams }) {
     }, [identity, attempt]);
 
     useEffect(() => {
-        clientRef.current?.navigate?.(params.get('path') || '/data/local/tmp/');
+        clientRef.current?.navigate?.(params.get('path') || DEFAULT_FILES_PATH);
     }, [params.get('path')]);
 
     const switchTool = (nextAction: ACTION, nextEntry = entry) => {
@@ -156,7 +157,7 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                     {
                         action: nextAction,
                         udid: nextEntry.descriptor.udid,
-                        path: nextAction === ACTION.FILE_LISTING ? '/data/local/tmp/' : undefined,
+                        path: nextAction === ACTION.FILE_LISTING ? DEFAULT_FILES_PATH : undefined,
                     },
                     nextEntry.params,
                 ),
@@ -164,7 +165,7 @@ export function ToolView({ params }: { params: URLSearchParams }) {
         } else {
             const next = new URLSearchParams(params);
             next.set('action', nextAction);
-            if (nextAction === ACTION.FILE_LISTING) next.set('path', '/data/local/tmp/');
+            if (nextAction === ACTION.FILE_LISTING) next.set('path', DEFAULT_FILES_PATH);
             else next.delete('path');
             location.hash = `!${next}`;
         }
