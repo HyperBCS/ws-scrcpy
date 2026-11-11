@@ -11,21 +11,8 @@ export class ExtendedClient extends Client {
 
     public async pipeReadDir(serial: string, pathString: string, stream: Multiplexer): Promise<void> {
         const sync = await this.pipeSyncService(serial);
-        return sync.pipeReadDir(pathString, stream).then(() => {
-            sync.end();
-        });
-    }
-
-    public async pipePull(serial: string, path: string, stream: Multiplexer): Promise<void> {
-        const sync = await this.pipeSyncService(serial);
-        return sync.pipePull(path, stream).then(() => {
-            sync.end();
-        });
-    }
-
-    public async pipeStat(serial: string, path: string, stream: Multiplexer): Promise<void> {
-        const sync = await this.pipeSyncService(serial);
-        return sync.pipeStat(path, stream).then(() => {
+        // Also on a closed channel or a protocol error, or the adb connection stays open.
+        return sync.pipeReadDir(pathString, stream).finally(() => {
             sync.end();
         });
     }
