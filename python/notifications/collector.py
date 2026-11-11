@@ -9,6 +9,7 @@ import os
 import signal
 import sys
 import time
+import traceback
 import uuid
 import struct
 import dbus
@@ -363,6 +364,14 @@ def refresh_advert():
         advert_ready = False
 
 
+def stop_after(error):
+    # PyGObject drops a timer or watch whose callback raises and keeps the process running, so
+    # Bluetooth would never be polled again. Quit instead; the server starts a new collector.
+    traceback.print_exc()
+    emit('error', message=f'Bluetooth collector stopped after an internal error ({type(error).__name__})')
+    loop.quit()
+
+
 def tick():
     global objects, advert_ready, advert_pending, confirmation
     try:
@@ -411,6 +420,9 @@ def tick():
         emit('error', message='Bluetooth unavailable: ' + str(error))
         loop.quit()  # Parent restarts us; registrations are rebuilt after a daemon restart.
         return False
+    except Exception as error:
+        stop_after(error)
+        return False
     return True
 
 
@@ -449,14 +461,18 @@ def handle_command(line):
 
 
 def command_input(source, condition):
-    chunk = os.read(sys.stdin.fileno(), 8192)
-    if not chunk: loop.quit(); return False
-    input_buffer.extend(chunk)
-    if len(input_buffer) > 65536: loop.quit(); return False
-    while b'\n' in input_buffer:
-        line, _, tail = input_buffer.partition(b'\n')
-        input_buffer[:] = tail
-        handle_command(line)
+    try:
+        chunk = os.read(sys.stdin.fileno(), 8192)
+        if not chunk: loop.quit(); return False
+        input_buffer.extend(chunk)
+        if len(input_buffer) > 65536: loop.quit(); return False
+        while b'\n' in input_buffer:
+            line, _, tail = input_buffer.partition(b'\n')
+            input_buffer[:] = tail
+            handle_command(line)
+    except Exception as error:
+        stop_after(error)
+        return False
     return True
 
 

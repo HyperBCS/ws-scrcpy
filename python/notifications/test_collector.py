@@ -1,10 +1,13 @@
 """Exercise the collector state machine without importing BlueZ or opening D-Bus."""
 import ast
 from collections import deque
+import contextlib
+import io
 import json
 from pathlib import Path
 import struct
 import time
+import traceback
 import unittest
 import uuid
 
@@ -19,13 +22,18 @@ class CollectorTests(unittest.TestCase):
         self.write_errors = []
         self.write_replies = []
         self.unregistered = []
+        self.registered = []
         self.subscriptions = []
+        self.managed = dict
+        self.quits = []
+        self.stdin = []
         test = self
 
         class DBus:
             Array = staticmethod(lambda value, **kwargs: value)
             Dictionary = staticmethod(lambda value, **kwargs: value)
-            DBusException = Exception
+
+            class DBusException(Exception): pass
 
             class service:
                 Object = object
@@ -37,6 +45,9 @@ class CollectorTests(unittest.TestCase):
                 test.write_errors.append(error_handler)
                 test.write_replies.append(reply_handler)
 
+            def GetManagedObjects(self, **kwargs):
+                return test.managed()
+
             def StartNotify(self, reply_handler, error_handler):
                 test.subscriptions.append((reply_handler, error_handler))
 
@@ -46,13 +57,26 @@ class CollectorTests(unittest.TestCase):
             def UnregisterAdvertisement(self, path):
                 test.unregistered.append(path)
 
+            def RegisterAdvertisement(self, path, options, reply_handler, error_handler):
+                test.registered.append(path)
+
         # Import only Client: the module's executable section owns a live system
         # bus and GLib loop. The class itself runs against these controlled stubs.
         tree = ast.parse(Path(__file__).with_name('collector.py').read_text())
         declarations = [node for node in tree.body if
                         isinstance(node, (ast.ClassDef, ast.FunctionDef)) and
                         node.name in ('Client', 'property_changed', 'handle_command', 'refresh_advert',
-                                      'Rejected', 'Agent')]
+                                      'Rejected', 'Agent', 'tick', 'command_input', 'stop_after')]
+
+        class Loop:
+            quit = staticmethod(lambda: test.quits.append(True))
+
+        class Os:
+            read = staticmethod(lambda descriptor, size: test.stdin.pop(0))
+
+        class Sys:
+            class stdin:
+                fileno = staticmethod(lambda: 0)
         self.scope = {
             'time': time, 'uuid': uuid, 'struct': struct, 'deque': deque, 'json': json,
             'ANCS': ANCS, 'SOURCE': SOURCE, 'DATA': DATA, 'CONTROL': CONTROL,
@@ -62,7 +86,8 @@ class CollectorTests(unittest.TestCase):
             'objects': {}, 'owned_notifications': set(),
             'advert_ready': False, 'advert_since': 0, 'ADVERT_REFRESH': 120, 'ADAPTER': '/hci0', 'ADVERT': '/advert',
             'pair_until': 0, 'confirmation': None, 'RESET_HOLDOFF': 35,
-            'MAX_UIDS': 512, 'MAX_QUEUED_ACTIONS': 32,
+            'MAX_UIDS': 512, 'MAX_QUEUED_ACTIONS': 32, 'pair_attempts': {}, 'advert_pending': False,
+            'loop': Loop, 'os': Os, 'sys': Sys, 'traceback': traceback, 'input_buffer': bytearray(),
             'emit': lambda kind, **fields: self.events.append(dict(kind=kind, **fields)),
             'iface': lambda *args: Interface(),
         }
@@ -131,6 +156,45 @@ class CollectorTests(unittest.TestCase):
         self.assertFalse(self.scope['advert_ready'])
         refresh()
         self.assertEqual(self.unregistered, ['/advert'])
+
+    def test_poll_reports_devices_and_keeps_its_timer(self):
+        self.assertIs(self.scope['tick'](), True)
+        self.assertEqual(self.events[-1], dict(kind='devices', devices=[], pairingOpen=False))
+        self.assertEqual(self.registered, ['/advert'])
+        self.assertEqual(self.quits, [])
+
+    def test_unexpected_error_in_the_poll_stops_the_process_for_a_restart(self):
+        def broken(): raise RuntimeError('unexpected')
+        self.managed = broken
+        output = io.StringIO()
+        with contextlib.redirect_stderr(output):
+            self.assertIs(self.scope['tick'](), False)
+        self.assertEqual(self.events[-1], dict(
+            kind='error', message='Bluetooth collector stopped after an internal error (RuntimeError)'))
+        self.assertEqual(self.quits, [True], 'a dropped timer must not leave the process idle')
+        self.assertIn('RuntimeError: unexpected', output.getvalue(), 'the traceback goes to the server log')
+
+    def test_bluetooth_error_in_the_poll_still_reports_bluetooth_unavailable(self):
+        def unavailable(): raise self.scope['dbus'].DBusException('org.bluez was not provided')
+        self.managed = unavailable
+        self.assertIs(self.scope['tick'](), False)
+        self.assertEqual(self.events[-1], dict(kind='error', message='Bluetooth unavailable: org.bluez was not provided'))
+        self.assertEqual(self.quits, [True])
+
+    def test_unexpected_error_in_a_command_stops_the_process_for_a_restart(self):
+        handled = []
+        self.scope['handle_command'] = handled.append
+        self.stdin = [b'{"type":"pa', b'ir"}\n{"type":"confirm"}\n']
+        self.assertIs(self.scope['command_input'](None, None), True)
+        self.assertIs(self.scope['command_input'](None, None), True)
+        self.assertEqual(handled, [b'{"type":"pair"}', b'{"type":"confirm"}'])
+        def broken(line): raise RuntimeError('unexpected')
+        self.scope['handle_command'] = broken
+        self.stdin = [b'{}\n']
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIs(self.scope['command_input'](None, None), False)
+        self.assertEqual(self.events[-1]['kind'], 'error')
+        self.assertEqual(self.quits, [True])
 
     def confirm_pairing(self):
         errors = []

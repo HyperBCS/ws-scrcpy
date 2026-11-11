@@ -32,6 +32,8 @@ export class NotificationStorage {
     constructor(
         readonly directory: string,
         private readonly onError: (message: string) => void,
+        // Called after each history write that reached the disk.
+        private readonly onSaved: () => void = () => undefined,
     ) {}
 
     private read(name: string): unknown {
@@ -180,5 +182,6 @@ export class NotificationStorage {
         if (!this.pending) return;
         this.write('notification-history.json', { version: 1, items: this.pending() });
         this.pending = undefined;
+        this.onSaved();
     }
 }

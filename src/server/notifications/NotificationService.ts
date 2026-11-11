@@ -27,6 +27,22 @@ export type { FeedItem } from './NotificationStorage';
 const PAIRING_WINDOW_MS = 120000;
 // How long the setup page explains a pairing request that arrived with no window open.
 const PAIRING_REJECTED_NOTICE_MS = 10 * 60000;
+// The collector reports every two seconds and the Setup page reads the status every five. A
+// collector error stays until the collector has reported for this long without a new one.
+const COLLECTOR_ERROR_HOLD_MS = 30000;
+// Collector restarts: 3 s after the first failure, doubling up to one minute. A collector that
+// stays up for COLLECTOR_STABLE_MS counts as recovered.
+const COLLECTOR_RESTART_MS = 3000;
+const COLLECTOR_RESTART_MAX_MS = 60000;
+const COLLECTOR_STABLE_MS = 60000;
+// How much of one collector process's stderr goes to the server log. A traceback is a few kilobytes.
+const COLLECTOR_LOG_LIMIT = 16384;
+
+const sentences = (parts: string[]): string =>
+    parts
+        .filter(Boolean)
+        .map((part) => part.replace(/\.$/, ''))
+        .join('. ');
 
 export function validateSubscription(value: unknown): PushSubscription {
     const sub = value as PushSubscription;
@@ -86,9 +102,16 @@ export class NotificationService implements Service {
         return !!this.instance;
     }
     private dataDir = resolveDataDir();
-    private storage = new NotificationStorage(this.dataDir, (message) => {
-        this.error = message;
-    });
+    private storage = new NotificationStorage(
+        this.dataDir,
+        (message) => {
+            this.storageError = message;
+            console.error(`[NotificationService] ${message}`);
+        },
+        () => {
+            this.storageError = '';
+        },
+    );
     private icons = new NotificationIcons(this.dataDir);
     private sessions = new Map<string, string>();
     private bulkSources = new Set<string>();
@@ -123,7 +146,20 @@ export class NotificationService implements Service {
     // When the window opened by Start Bluetooth pairing ends; outlives collector restarts.
     private pairUntil = 0;
     private pairingRejectedAt = 0;
-    private error = '';
+    // Three separate causes, so that a healthy collector report cannot clear a storage or pairing
+    // problem. The Setup page shows them joined as `error`.
+    // Cleared once the collector has reported for COLLECTOR_ERROR_HOLD_MS without a new error.
+    private collectorError = '';
+    private collectorErrorAt = 0;
+    // Cleared by the next history save that succeeds.
+    private storageError = '';
+    // Kept for PAIRING_REJECTED_NOTICE_MS, or until pairing is started again.
+    private pairingError: { message: string; at: number } | null = null;
+    // Consecutive collector failures; zero again after COLLECTOR_STABLE_MS of uptime.
+    private collectorRestarts = 0;
+    private collectorStarted = 0;
+    // The child this service stopped on purpose (a changed or removed phone).
+    private expectedExit?: ChildProcessWithoutNullStreams;
     // Set when the settings file cannot be used. The service then keeps an empty store in memory,
     // reads and writes nothing, and answers every change with this text.
     private disabled = '';
@@ -174,7 +210,12 @@ export class NotificationService implements Service {
     }
     private saveHistory(immediate = false): void {
         if (this.disabled) return;
-        this.storage.saveHistory(() => [...this.feed.values()], immediate);
+        try {
+            this.storage.saveHistory(() => [...this.feed.values()], immediate);
+        } catch (error) {
+            this.storageError = 'Notification history could not be saved';
+            throw error;
+        }
     }
     private save(): void {
         if (this.disabled) return;
@@ -194,7 +235,7 @@ export class NotificationService implements Service {
             this.storage.flush();
         } catch {
             // A full or read-only disk must not keep the collector and the push queue running.
-            this.error = 'Notification history could not be saved';
+            this.storageError = 'Notification history could not be saved';
         }
         if (this.restart) clearTimeout(this.restart);
         this.child?.kill();
@@ -213,11 +254,13 @@ export class NotificationService implements Service {
         ];
         const script = candidates.find((p) => fs.existsSync(p));
         if (!script) {
-            this.error = 'Bluetooth collector is not installed';
+            this.collectorFault('Bluetooth collector is not installed');
             return;
         }
         const child = spawn(process.env.WS_BLUETOOTH_PYTHON || '/usr/bin/python3', [script], { stdio: 'pipe' });
         this.child = child;
+        const started = Date.now();
+        this.collectorStarted = started;
         this.statuses = Object.fromEntries(this.store.sources.map((s) => [s.id, 'Waiting for Bluetooth connection']));
         let pending = '';
         child.stdout.setEncoding('utf8');
@@ -235,16 +278,25 @@ export class NotificationService implements Service {
                 try {
                     this.handleCollector(JSON.parse(line));
                 } catch {
-                    this.error = 'Invalid Bluetooth collector event';
+                    this.collectorFault('Invalid Bluetooth collector event');
                 }
             }
         });
-        child.stderr.on('data', () => {
-            this.error = 'Bluetooth collector failed; check host BlueZ and D-Bus access';
+        let logged = 0;
+        child.stderr.setEncoding('utf8');
+        child.stderr.on('data', (chunk: string) => {
+            this.collectorFault('Bluetooth collector failed; check host BlueZ and D-Bus access');
+            // The text (a Python traceback, usually) is the only record of what went wrong.
+            if (logged >= COLLECTOR_LOG_LIMIT) return;
+            const text = chunk.slice(0, COLLECTOR_LOG_LIMIT - logged);
+            logged += text.length;
+            console.error(`[NotificationService] collector: ${text.trimEnd()}`);
+            if (logged >= COLLECTOR_LOG_LIMIT)
+                console.error('[NotificationService] collector: further output from this process is not logged');
         });
         child.stdin.on('error', () => undefined);
         child.on('error', () => {
-            this.error = 'Could not start Bluetooth collector';
+            this.collectorFault('Could not start Bluetooth collector');
         });
         child.on('close', () => {
             if (this.child === child) {
@@ -253,9 +305,50 @@ export class NotificationService implements Service {
             }
             this.pairing = null;
             this.pairingOpen = false;
-            if (!this.closed) this.restart = setTimeout(() => this.startCollector(), 3000);
+            const expected = this.expectedExit === child;
+            if (expected) this.expectedExit = undefined;
+            if (this.closed) return;
+            if (!expected && this.collectorErrorAt < started) this.collectorFault('Bluetooth collector stopped');
+            this.restart = setTimeout(() => this.startCollector(), this.restartDelay(expected, Date.now() - started));
         });
         for (const command of this.startCommands()) child.stdin.write(JSON.stringify(command) + '\n');
+    }
+    private collectorFault(message: string): void {
+        this.collectorError = message;
+        this.collectorErrorAt = Date.now();
+    }
+    /**
+     * How long to wait before the next collector start. A collector that fails as soon as it
+     * starts (no D-Bus, BlueZ down) used to be started again every 3 s without end.
+     */
+    private restartDelay(expected: boolean, uptime: number): number {
+        if (expected) return COLLECTOR_RESTART_MS;
+        if (uptime >= COLLECTOR_STABLE_MS) this.collectorRestarts = 0;
+        return Math.min(COLLECTOR_RESTART_MAX_MS, COLLECTOR_RESTART_MS * 2 ** this.collectorRestarts++);
+    }
+    private restartCount(): number {
+        if (this.child && Date.now() - this.collectorStarted >= COLLECTOR_STABLE_MS) this.collectorRestarts = 0;
+        return this.collectorRestarts;
+    }
+    /** Stops the collector so that it starts again with the current phones. Not a failure. */
+    private restartCollector(): void {
+        this.expectedExit = this.child;
+        this.child?.kill();
+    }
+    private recentPairingError(): { message: string; at: number } | null {
+        return this.pairingError && Date.now() - this.pairingError.at < PAIRING_REJECTED_NOTICE_MS
+            ? this.pairingError
+            : null;
+    }
+    /** Everything the Setup page should show as one notice. */
+    private errorText(): string {
+        const restarts = this.restartCount();
+        return sentences([
+            this.storageError,
+            this.collectorError,
+            this.collectorError && restarts > 1 ? `The collector has been restarted ${restarts} times` : '',
+            this.recentPairingError()?.message || '',
+        ]);
     }
     // Removing or relinking a source restarts the collector; reopen a pairing window it would close.
     private startCommands(): object[] {
@@ -301,7 +394,7 @@ export class NotificationService implements Service {
             case 'devices':
                 this.bluetooth = message.devices as unknown[];
                 this.pairingOpen = !!message.pairingOpen;
-                this.error = '';
+                if (Date.now() - this.collectorErrorAt >= COLLECTOR_ERROR_HOLD_MS) this.collectorError = '';
                 break;
             case 'status': {
                 const source = String(message.source);
@@ -316,12 +409,19 @@ export class NotificationService implements Service {
                 if (String(message.status).includes('disconnected')) this.invalidateSources(source);
                 break;
             }
-            case 'error':
-                this.error = String(message.message);
+            case 'error': {
+                const text = String(message.message).slice(0, 500);
+                // One failed attempt, not a state of the collector: nothing later reports that it is over.
+                if (text.startsWith('Pairing failed')) this.pairingError = { message: text, at: Date.now() };
+                else this.collectorFault(text);
                 break;
+            }
             case 'pairing':
                 this.pairing = message.code ? { address: String(message.address), code: String(message.code) } : null;
-                if (message.code) this.pairingRejectedAt = 0;
+                if (message.code) {
+                    this.pairingRejectedAt = 0;
+                    this.pairingError = null;
+                }
                 break;
             case 'pairing-rejected':
                 this.pairingRejectedAt = Date.now();
@@ -640,7 +740,11 @@ export class NotificationService implements Service {
                 pairing: this.pairing,
                 pairingOpen: this.pairingOpen,
                 pairingRejected: Date.now() - this.pairingRejectedAt < PAIRING_REJECTED_NOTICE_MS,
-                error: this.disabled || this.error,
+                error: this.disabled || this.errorText(),
+                collectorError: this.collectorError,
+                collectorRestarts: this.restartCount(),
+                storageError: this.storageError,
+                pairingError: this.recentPairingError(),
                 delivery: this.delivery,
                 notifications: [...this.feed.values()]
                     .reverse()
@@ -850,6 +954,7 @@ export class NotificationService implements Service {
             this.command({ type: 'pair' });
             this.pairUntil = Date.now() + PAIRING_WINDOW_MS;
             this.pairingRejectedAt = 0;
+            this.pairingError = null;
             res.json({ ok: true });
         });
         route('post', '/confirm', (req, res) => {
@@ -889,7 +994,7 @@ export class NotificationService implements Service {
                 if (item.source === id && !preview) Object.assign(item, { title: '', subtitle: '', body: '' });
             this.saveHistory(true);
             this.save();
-            if (connectionChanged) this.child?.kill();
+            if (connectionChanged) this.restartCollector();
             res.json({ ok: true });
         });
         route('delete', '/sources/:id', (req, res) => {
@@ -902,7 +1007,7 @@ export class NotificationService implements Service {
             this.icons.removeSource(id);
             this.saveHistory(true);
             this.save();
-            this.child?.kill();
+            this.restartCollector();
             res.json({ ok: true });
         });
         route('post', '/subscriptions', (req, res) => {
