@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 .settings-sheet-content {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -464,4 +467,5 @@
 .appl-settings-sheet .sheet-problem-icon {
     margin-right: 6px;
     vertical-align: -2px;
+}
 }

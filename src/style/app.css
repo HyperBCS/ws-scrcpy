@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer base {
 html {
     height: 100%;
     overflow: hidden;
@@ -105,10 +108,6 @@ body.list {
     padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
         env(safe-area-inset-left, 0px);
     width: 100%;
-    overflow: hidden;
-}
-
-body.sheet-open #devices {
     overflow: hidden;
 }
 
@@ -349,9 +348,6 @@ details > summary {
     opacity: 0;
     transform: rotate(90deg) scale(0.7);
 }
-.floating-toolbar-panel[data-exiting] {
-    pointer-events: none;
-}
 .live-text-overlay[data-exiting] .live-text-backdrop {
     opacity: 0;
 }
@@ -403,4 +399,5 @@ details > summary {
 
 .settings-sheet-apply-bar.auto-height {
     overflow: visible;
+}
 }

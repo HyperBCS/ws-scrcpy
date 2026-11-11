@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 /* The shared confirm prompt. It sets its own button styles so it looks the same in a sheet,
    on a device card and on the notifications page, whose own button rules differ. */
 .confirm-prompt {
@@ -100,4 +103,5 @@
 /* Inside a disclosure card the rows carry their own side padding. */
 .sheet-details .confirm-prompt {
     margin: 8px 14px 12px;
+}
 }

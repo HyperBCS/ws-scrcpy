@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 /* Grouped setting rows shared by the Actions and Settings sheets (see ui/SheetControls.tsx). */
 .sheet-group {
     margin: 0 0 22px;
@@ -284,4 +287,5 @@
     .sheet-switch::after {
         transition: none;
     }
+}
 }

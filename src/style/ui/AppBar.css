@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 /* The header of every page below the list (`ui/AppBar.tsx`): back, title, one status line,
    actions. These are the stream header's rules, moved here unchanged with the component, which
    the stream, tool and refused-tool views now draw. `views/StreamView.css` imports this file
@@ -74,4 +77,5 @@
 .stream-header-switch {
     padding: 0 12px;
     font-weight: 600 !important;
+}
 }

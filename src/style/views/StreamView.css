@@ -1,6 +1,8 @@
+@layer tokens, base, components, views;
 /* The header rules live with the component that owns the markup now. */
 @import '../ui/AppBar.css';
 
+@layer views {
 .stream-view {
     height: 100%;
     width: 100%;
@@ -335,4 +337,5 @@
     font: inherit;
     font-weight: 600;
     cursor: pointer;
+}
 }

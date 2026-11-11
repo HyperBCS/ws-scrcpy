@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 /* Device file explorer. Compact by default on a mouse, and every control grows to a 44px touch
    target on coarse pointers -- the phone browser is the primary client, so the layout follows the
    input device rather than the viewport width. */
@@ -1324,4 +1327,5 @@ body.file-listing-page {
 .fx-menu[data-exiting],
 .fx-dialog[data-exiting] {
     pointer-events: none;
+}
 }

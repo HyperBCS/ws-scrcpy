@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 .live-text-overlay {
     position: fixed;
     left: 0;
@@ -185,4 +188,5 @@
         grid-column: 1 / -1;
         margin: 0;
     }
+}
 }

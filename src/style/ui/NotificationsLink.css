@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 .notifications-link,
 .notifications-link:visited {
     position: relative;
@@ -60,4 +63,5 @@
     .notifications-link:hover {
         border-color: var(--button-text-color);
     }
+}
 }

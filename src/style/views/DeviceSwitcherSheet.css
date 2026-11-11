@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 .bottom-sheet-body.device-switcher-body {
     /* Only the device rows scroll. Keep search outside that scroll region, with
        an unbroken min-height:0 chain down from the viewport-constrained sheet. */
@@ -116,4 +119,5 @@
     flex-shrink: 0;
     font-size: 10.5px;
     color: var(--button-text-color);
+}
 }

@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 /* The banner itself is styled with the device card (views/DeviceList.css). */
 #devices .device-asleep-text {
     min-width: 0;
@@ -6,7 +9,6 @@
 #devices .device-asleep-banner .wake-button {
     flex: 0 0 auto;
 }
-#devices .device-asleep-banner .wake-button:disabled {
-    opacity: 0.6;
-    cursor: default;
+/* The look of the button while a wake is sent is with the button's own rule, in
+   views/DeviceList.css: it has to win over that rule, and from this layer it could not. */
 }

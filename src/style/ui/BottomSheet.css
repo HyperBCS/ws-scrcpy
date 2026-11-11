@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 .bottom-sheet-root {
     position: fixed;
     inset: 0;
@@ -348,4 +351,5 @@
     to {
         opacity: 1;
     }
+}
 }

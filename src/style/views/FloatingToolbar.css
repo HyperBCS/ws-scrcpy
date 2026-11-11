@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 .floating-toolbar {
     position: fixed;
     z-index: 8;
@@ -74,6 +77,10 @@
 
 .floating-toolbar-panel[hidden] {
     display: none;
+}
+/* A panel that is closing takes no press. */
+.floating-toolbar-panel[data-exiting] {
+    pointer-events: none;
 }
 
 .floating-toolbar.desktop {
@@ -211,4 +218,5 @@
     .floating-toolbar-fab {
         transition: none;
     }
+}
 }

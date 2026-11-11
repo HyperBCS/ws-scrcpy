@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 #devices {
     width: 100%;
     height: 100%;
@@ -5,6 +8,11 @@
     overscroll-behavior-y: contain;
     box-sizing: border-box;
     padding: 20px 16px 24px;
+}
+/* A sheet over the list holds the list still. This rule is here, and not with the page rules
+   in app.css, because a rule of a lower layer cannot win over the one above. */
+body.sheet-open #devices {
+    overflow: hidden;
 }
 
 .devices-content {
@@ -266,6 +274,11 @@
     font-weight: 600;
     white-space: nowrap;
     cursor: pointer;
+}
+/* While a wake is being sent. */
+#devices .device-asleep-banner .wake-button:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
 #devices .services {
     display: flex;
@@ -564,4 +577,5 @@
 }
 #devices .device-secondary-actions + .device-trouble {
     margin-top: 10px;
+}
 }

@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 .device-icon {
     flex: 0 0 var(--device-icon-width, 40px);
     width: var(--device-icon-width, 40px);
@@ -12,4 +15,5 @@
 .device-icon svg {
     width: var(--device-icon-glyph-width, 25px);
     height: var(--device-icon-glyph-height, 28px);
+}
 }

@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 /* The shared header stays in place; the page under it scrolls. */
 .notifications-view {
     display: flex;
@@ -39,7 +42,12 @@
     line-height: 1.4;
     margin: 0;
 }
-.notifications-page p {
+/* The page styles its own elements by tag. A shared part inside the page (a confirm prompt, a
+   toast) won over these rules by naming two classes, and a layer order does not look at that:
+   every rule here would win. So each rule by tag leaves out the elements of a shared part.
+   `:where()` adds nothing to the weight of the rule, so its place among the page's own rules is
+   what it was. The prompt sets its paragraphs' margins itself. */
+.notifications-page p:where(:not(.confirm-prompt-question, .confirm-prompt-consequence)) {
     margin: 8px 0 14px;
 }
 .notification-page-header p {
@@ -137,7 +145,9 @@
     font-size: 13px;
     font-weight: normal;
 }
-.notifications-page button,
+/* Not the buttons of a confirm prompt, which sets every one of these itself, and not a toast's
+   close button, which the block after these rules covers. */
+.notifications-page button:where(:not(.confirm-prompt-button, .toast-close)),
 .notifications-page .notification-link-button {
     box-sizing: border-box;
     padding: 11px 14px;
@@ -155,9 +165,40 @@
     opacity: 0.5;
     cursor: default;
 }
-.notifications-page a {
+/* Not a link drawn as a button: the block after this rule covers it. */
+.notifications-page a:where(:not(.ui-button)) {
     color: var(--link-color);
 }
+}
+
+/* The two rules above, for the elements they leave out, in the layer of the rule that has to
+   keep winning over them. A toast's close button takes the page's button box and keeps the
+   colour Toast.css gives it. A link drawn as a button takes the link colour until it has been
+   visited, as `.ui-button:visited` in app.css decides. Both go when the page stops styling
+   elements by tag. */
+@layer components {
+.notifications-page button:where(.toast-close) {
+    box-sizing: border-box;
+    padding: 11px 14px;
+    border: 1px solid var(--button-border-color);
+    border-radius: 10px;
+    background: var(--control-buttons-bg-color);
+    color: var(--text-color);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    min-height: 44px;
+}
+}
+
+@layer base {
+.notifications-page a:where(.ui-button) {
+    color: var(--link-color);
+}
+}
+
+@layer views {
 .notifications-page .notification-primary {
     color: #fff;
     border-color: var(--accent-solid);
@@ -873,4 +914,5 @@
     .notification-swipe-row .notification-history-item {
         transition: none;
     }
+}
 }

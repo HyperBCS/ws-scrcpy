@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 .stream-service-status {
     --service-state-color: var(--text-color-light);
     --service-state-fill: var(--text-color-light);
@@ -42,4 +45,5 @@
 
 .device > .stream-service-status {
     margin: 0;
+}
 }

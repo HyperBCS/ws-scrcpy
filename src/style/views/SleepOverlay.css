@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 .sleep-overlay {
     /* `fixed`, not `absolute`: this is rendered by Preact as a sibling of the imperative
        vanilla-DOM tree `StreamClientScrcpy` builds (`.device-view`, `.video`, the control bar),
@@ -98,4 +101,5 @@
     font-size: 11.9px;
     opacity: 0.8;
     line-height: 1.5;
+}
 }

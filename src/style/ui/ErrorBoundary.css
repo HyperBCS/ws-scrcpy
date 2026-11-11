@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 /* The screen shown when a view could not be drawn (ui/ErrorBoundary.tsx). */
 .screen-failed {
     box-sizing: border-box;
@@ -68,4 +71,5 @@
     border-radius: var(--radius-panel);
     background: var(--device-list-default-color);
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+}
 }

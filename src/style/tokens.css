@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer tokens {
 /* Role tokens. New rules use these. Nothing reads them yet: each screen moves to them in its own
    step, and the older names further down keep their values until the last screen has moved.
    The colours here are the light theme; the dark theme is the block after this one. */
@@ -219,4 +222,5 @@
         --status-offline-text: hsl(0, 0%, 66%);
         --status-unauthorized-text: hsl(0, 84%, 74%);
     }
+}
 }
