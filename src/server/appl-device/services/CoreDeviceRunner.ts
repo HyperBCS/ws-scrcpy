@@ -160,6 +160,7 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
     private static lastToken = 0;
     private static exitHooked = false;
     private static deviceCheck?: (udid: string) => boolean;
+    private static shutdownCheck?: () => boolean;
     private readonly sessions = new Map<string, Session>();
     private readonly budget = new StartBudget();
     // Per phone: no new start before `until`, after a session that failed once serve-web ran.
@@ -188,6 +189,15 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
      */
     public static setDeviceCheck(check?: (udid: string) => boolean): void {
         CoreDeviceRunner.deviceCheck = check;
+    }
+
+    /**
+     * Lets the server say that it is stopping. From then on `acquire()` starts nothing, on this
+     * runner or on one built later: a serve-web started during shutdown is one nobody stops, and
+     * it would leave a display session open on the phone.
+     */
+    public static setShutdownCheck(check?: () => boolean): void {
+        CoreDeviceRunner.shutdownCheck = check;
     }
 
     /** Whether any serve-web process is still running, including ones that are shutting down. */
@@ -257,7 +267,7 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
      * Throws `StartRefusedError` when a new serve-web may not be started for this phone now.
      */
     public async acquire(udid: string): Promise<SessionHold> {
-        if (this.released) {
+        if (this.released || CoreDeviceRunner.shutdownCheck?.()) {
             throw new Error('Server is shutting down');
         }
         let session = this.sessions.get(udid);
@@ -310,10 +320,14 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
 
     /**
      * With a udid: gives back one hold. With a `hold` it only counts against the session that hold
-     * came from. Without arguments: service shutdown, which stops every session.
+     * came from. Without arguments: service shutdown, which stops every session. A second
+     * shutdown does nothing, so it cannot drop a runner that was built since.
      */
     public release(udid?: string, hold?: SessionHold): void {
         if (udid === undefined) {
+            if (this.released) {
+                return;
+            }
             // Service shutdown. The exit hook stays: it covers a serve-web that is still waiting
             // for its signal handler when Node exits.
             this.released = true;
@@ -321,7 +335,9 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
                 this.stopSession(key);
             }
             this.agent.destroy();
-            CoreDeviceRunner.instance = undefined;
+            if (CoreDeviceRunner.instance === this) {
+                CoreDeviceRunner.instance = undefined;
+            }
             return;
         }
         const session = this.sessions.get(udid);

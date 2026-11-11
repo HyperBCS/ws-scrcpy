@@ -508,3 +508,63 @@ test('a burst of relayed alerts does not push a queued system alert out', async 
         webpush.sendNotification = originalSend;
     }
 });
+
+// ------------------------------------------------------------------ shutdown order
+
+// Shutdown releases the services in reverse start order. The iPhone tracker holds listeners on
+// the session runner and releases the state monitor, so it has to stop before the runner does.
+// index.ts starts the server when it is loaded, so its service list is read as text.
+test('index.ts starts the iPhone session runner before the tracker and tells it when the server is stopping', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'server', 'index.ts'), 'utf8');
+    const appl = source.slice(source.indexOf('async function loadApplModules'));
+    const runner = appl.indexOf('servicesToStart.push(CoreDeviceRunner)');
+    const tracker = appl.indexOf('servicesToStart.push(ControlCenter)');
+    assert.ok(runner >= 0 && tracker >= 0, 'both services are in the list');
+    assert.ok(runner < tracker, 'the runner starts first, so it stops after the tracker');
+    assert.match(appl, /CoreDeviceRunner\.setShutdownCheck\(\(\) => shutdown\.isStopping\(\)\)/);
+});
+
+test('once the server is stopping the iPhone session runner runs no command for a new session', async (t) => {
+    const { PyMobileDevice } = require('../src/server/appl-device/services/PyMobileDevice');
+    const { CoreDeviceRunner } = require('../src/server/appl-device/services/CoreDeviceRunner');
+    // Nothing here may reach a phone, whatever the runner does.
+    const commands = [
+        t.mock.method(PyMobileDevice, 'helperProblem', async () => undefined),
+        t.mock.method(PyMobileDevice, 'runOneShot', async () => ({ code: 1, stdout: '', stderr: 'not run in a test' })),
+        t.mock.method(PyMobileDevice, 'spawnDetached', () => {
+            throw new Error('not run in a test');
+        }),
+    ];
+    const previousPort = process.env.IOS_SERVE_WEB_BASE_PORT;
+    process.env.IOS_SERVE_WEB_BASE_PORT = '18600';
+    let stopping = false;
+    CoreDeviceRunner.setShutdownCheck(() => stopping);
+    try {
+        const runner = CoreDeviceRunner.getInstance();
+        stopping = true;
+        runner.release();
+        runner.release();
+        assert.equal(CoreDeviceRunner.hasInstance(), false);
+        // A caller that still asks for the singleton gets a new runner, and a refusal from it.
+        const late = CoreDeviceRunner.getInstance();
+        await assert.rejects(late.acquire('iphone-a'), /Server is shutting down/);
+        assert.equal(late.getStatus('iphone-a').state, 'stopped', 'no session was created');
+        assert.equal(
+            commands.reduce((count, command) => count + command.mock.callCount(), 0),
+            0,
+            'nothing was checked, mounted or spawned',
+        );
+        assert.equal(CoreDeviceRunner.hasChildren(), false);
+        late.release();
+        // A second release of the first runner leaves a newer one alone.
+        const next = CoreDeviceRunner.getInstance();
+        runner.release();
+        assert.equal(CoreDeviceRunner.getInstance(), next);
+        next.release();
+    } finally {
+        CoreDeviceRunner.setShutdownCheck(undefined);
+        if (CoreDeviceRunner.hasInstance()) CoreDeviceRunner.getInstance().release();
+        if (previousPort === undefined) delete process.env.IOS_SERVE_WEB_BASE_PORT;
+        else process.env.IOS_SERVE_WEB_BASE_PORT = previousPort;
+    }
+});

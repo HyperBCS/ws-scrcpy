@@ -104,6 +104,14 @@ export class CoreDeviceProxy extends Mw {
         return CoreDeviceProxy.touchOwners.has(udid) || CoreDeviceProxy.keyboardOwners.has(udid);
     }
 
+    /**
+     * The state monitor, if there is one. Input that finishes after the tracker has released the
+     * monitor (a viewer still connected while the server stops) must not build a new one.
+     */
+    private static monitor(): DeviceStateMonitor | undefined {
+        return DeviceStateMonitor.hasInstance() ? DeviceStateMonitor.getInstance() : undefined;
+    }
+
     public static processRequest(ws: WS, params: RequestParameters): CoreDeviceProxy | undefined {
         if (params.action !== ACTION.PROXY_COREDEVICE) {
             return;
@@ -527,7 +535,7 @@ export class CoreDeviceProxy extends Mw {
                     // Once teardown starts it keeps ownership until its all-fingers-up
                     // report completes, even if a normal release was already in flight.
                     if (!this.released) CoreDeviceProxy.touchOwners.delete(this.udid);
-                    DeviceStateMonitor.getInstance().pokeInput(this.udid);
+                    CoreDeviceProxy.monitor()?.pokeInput(this.udid);
                 }
                 return;
             }
@@ -551,7 +559,7 @@ export class CoreDeviceProxy extends Mw {
                 if (message.op !== 'contact') {
                     if (!this.released) CoreDeviceProxy.touchOwners.delete(this.udid);
                     // A finger lifting on the lock screen is a swipe that may have unlocked it.
-                    DeviceStateMonitor.getInstance().pokeInput(this.udid);
+                    CoreDeviceProxy.monitor()?.pokeInput(this.udid);
                 }
                 return;
             }
@@ -586,7 +594,7 @@ export class CoreDeviceProxy extends Mw {
                 }
                 if (usages.length === 0) {
                     // A release ends a keystroke; on a locked phone that may have been a passcode digit.
-                    DeviceStateMonitor.getInstance().pokeInput(this.udid);
+                    CoreDeviceProxy.monitor()?.pokeInput(this.udid);
                 }
                 return;
             }
@@ -619,7 +627,7 @@ export class CoreDeviceProxy extends Mw {
                         // eventually answers the long press with Siri.
                         await send('up');
                     }
-                    DeviceStateMonitor.getInstance().pokeButton(this.udid);
+                    CoreDeviceProxy.monitor()?.pokeButton(this.udid);
                     return;
                 }
                 if (state === 'down') {
@@ -640,7 +648,7 @@ export class CoreDeviceProxy extends Mw {
                 }
                 if (state !== 'down') {
                     // Lock sleeps or wakes the phone, Home leaves the lock screen once unlocked.
-                    DeviceStateMonitor.getInstance().pokeButton(this.udid);
+                    CoreDeviceProxy.monitor()?.pokeButton(this.udid);
                 }
                 return;
             }

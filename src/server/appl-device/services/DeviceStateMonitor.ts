@@ -357,11 +357,14 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
         });
     }
 
+    /** Stops watching every phone. A second call cannot drop a monitor that was built since. */
     public release(): void {
         for (const udid of Array.from(this.watched.keys())) {
             this.unwatch(udid);
         }
-        DeviceStateMonitor.instance = undefined;
+        if (DeviceStateMonitor.instance === this) {
+            DeviceStateMonitor.instance = undefined;
+        }
     }
 
     // ------------------------------------------------------------------ scheduling
