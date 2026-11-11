@@ -30,20 +30,25 @@ interface CoreDeviceStreamViewProps {
     params: ParamsStreamCoreDevice;
 }
 
-const SESSION_LABEL: Record<CoreDeviceSessionState, string> = {
-    starting: 'Starting the phone stream…',
-    ready: 'Connected',
-    error: 'Stream unavailable',
-    stopped: 'Stream stopped',
+type SessionStatus = { state: CoreDeviceSessionState; message?: string; retrying?: boolean };
+// A session that failed or was stopped. Kept while the client tries again, so the card stays put
+// between attempts and does not blink in and out with each one.
+type Failure = { state: 'error' | 'stopped'; message?: string; retrying: boolean };
+
+const FAILURE_TITLE = { error: 'Stream unavailable', stopped: 'Stream stopped' };
+const FAILURE_FALLBACK = {
+    error: 'The phone stream could not be started.',
+    stopped: 'The screen session on the phone was stopped.',
 };
 
 /** The iOS stream page: same header, stage and floating controls as the Android `StreamView`. */
 export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [error, setError] = useState('');
-    const [session, setSession] = useState<{ state: CoreDeviceSessionState; message?: string; retrying?: boolean }>({
-        state: 'starting',
-    });
+    const [session, setSession] = useState<SessionStatus>({ state: 'starting' });
+    const [failure, setFailure] = useState<Failure>();
+    const [decoderError, setDecoderError] = useState('');
+    const [linkOpen, setLinkOpen] = useState(false);
 
     useEffect(() => {
         const container = containerRef.current;
@@ -56,6 +61,9 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
         streamNotice.value = '';
         setError('');
         setSession({ state: 'starting' });
+        setFailure(undefined);
+        setDecoderError('');
+        setLinkOpen(false);
         let client: StreamClientCoreDevice;
         try {
             client = StreamClientCoreDevice.start(params, container);
@@ -64,12 +72,24 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
             setError(cause instanceof Error ? cause.message : 'The stream could not be started.');
             return;
         }
-        const onSession = (status: { state: CoreDeviceSessionState; message?: string; retrying?: boolean }) =>
+        const onSession = (status: SessionStatus) => {
             setSession(status);
+            if (status.state === 'ready') {
+                setFailure(undefined);
+            } else if (status.state === 'error' || status.state === 'stopped') {
+                setFailure({ state: status.state, message: status.message, retrying: status.retrying !== false });
+            }
+        };
+        const onDecoderError = ({ message }: { message: string }) => setDecoderError(message);
+        const onLink = ({ open }: { open: boolean }) => setLinkOpen(open);
         client.on('session', onSession);
+        client.on('decoderError', onDecoderError);
+        client.on('link', onLink);
         activeCoreDeviceStream.value = { params, client };
         return () => {
             client.off('session', onSession);
+            client.off('decoderError', onDecoderError);
+            client.off('link', onLink);
             client.stop();
             activeCoreDeviceStream.value = undefined;
             closeAllSheets();
@@ -93,13 +113,43 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
     // where that is disabled, which must never show as asleep or locked.
     const locked = descriptor?.['device.locked'] ?? 'unknown';
     const screenOff = descriptor?.['screen.power'] === 'off';
-    // After a failed start the socket stays closed until the next try, which can be a minute
-    // away or wait for Retry; "Connecting" would be wrong for that long.
+    // One card on the stage for every state without a picture: the reason, and what can be done.
+    // A browser without a decoder cannot be retried into having one, so it gets no Retry.
+    const trying = !!failure && session.state === 'starting';
+    const problem = error
+        ? { kind: 'start', title: 'Unable to start this stream', message: error, note: '', retry: false }
+        : decoderError
+          ? {
+                kind: 'decoder',
+                title: 'This browser cannot show the stream',
+                message: decoderError,
+                note: '',
+                retry: false,
+            }
+          : failure
+            ? {
+                  kind: failure.state,
+                  title: FAILURE_TITLE[failure.state],
+                  message: failure.message || FAILURE_FALLBACK[failure.state],
+                  note: trying ? 'Trying again…' : failure.retrying ? 'Trying again shortly.' : '',
+                  retry: true,
+              }
+            : undefined;
+    // "Connected" needs a picture. After a failed start the socket stays closed until the next
+    // try, which can be a minute away or wait for Retry; "Connecting" would be wrong for that long.
     const statusText = error
         ? 'Unable to connect'
-        : !streamConnected.value && session.state !== 'error'
-          ? 'Connecting…'
-          : SESSION_LABEL[session.state];
+        : decoderError
+          ? 'No picture'
+          : failure
+            ? trying
+                ? 'Trying again…'
+                : FAILURE_TITLE[failure.state]
+            : connected
+              ? 'Connected'
+              : linkOpen && session.state === 'starting'
+                ? 'Starting the phone stream…'
+                : 'Connecting…';
 
     return (
         <div class="stream-view">
@@ -149,19 +199,15 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                 keyguardShowing="unknown"
                 onUnlock={() => openSheet('unlock')}
             />
+            {/* Progress of a first start ("Preparing the device"). A failure has the card below. */}
             <Presence
-                show={(session.state === 'error' || session.state === 'starting') && !!session.message && !error}
+                show={session.state === 'starting' && !!session.message && !problem}
                 kind="collapse"
                 key="session-notice"
-                class={`stream-notice ${session.state === 'error' ? 'error' : ''}`}
+                class="stream-notice"
                 role="status"
             >
                 <span>{session.message}</span>
-                {session.state === 'error' && active && (
-                    <button type="button" onClick={() => active.client.retry()}>
-                        Retry
-                    </button>
-                )}
             </Presence>
             <Presence show={!!streamNotice.value} kind="collapse" key="notice" class="stream-notice" role="status">
                 <span>{streamNotice.value}</span>
@@ -175,13 +221,26 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                     {active && active.params.udid === params.udid && <FloatingToolbar client={active.client} />}
                 </aside>
             </div>
-            {error && (
-                <div class="stream-start-error" role="alert">
-                    <h2>Unable to start this stream</h2>
-                    <p>{error}</p>
-                    <button type="button" class="sheet-button" onClick={goToDeviceList}>
-                        Back to devices
-                    </button>
+            {problem && (
+                <div class="stream-start-error" role="alert" data-stream-problem={problem.kind}>
+                    <h2>{problem.title}</h2>
+                    <p>{problem.message}</p>
+                    {/* Changes with every attempt; not read out again each time. */}
+                    {problem.note && (
+                        <p class="stream-start-error-note" aria-live="off">
+                            {problem.note}
+                        </p>
+                    )}
+                    <div class="stream-start-error-actions">
+                        {problem.retry && active && (
+                            <button type="button" class="sheet-button primary" onClick={() => active.client.retry()}>
+                                Retry
+                            </button>
+                        )}
+                        <button type="button" class="sheet-button" onClick={goToDeviceList}>
+                            Back to devices
+                        </button>
+                    </div>
                 </div>
             )}
             {active && active.params.udid === params.udid && (
@@ -190,9 +249,9 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                     <ApplUnlockSheet client={active.client} />
                     <DeviceSwitcherSheet />
                     {/* A short Side-button tap wakes the display (the proxy sends the down/up pair).
-                        Left out once the client has stopped retrying: its "Reconnecting" would be
-                        untrue, and the error notice above carries Retry. */}
-                    {!(session.state === 'error' && session.retrying === false) && (
+                        Left out while the stage shows a problem: its "Reconnecting" would cover
+                        the card, and the card carries Retry. */}
+                    {!problem && (
                         <SleepOverlay
                             sessionKey={active.client}
                             screenOff={screenOff}

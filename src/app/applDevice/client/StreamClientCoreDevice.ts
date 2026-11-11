@@ -24,6 +24,11 @@ export interface CoreDeviceClientEvents {
     session: { state: CoreDeviceSessionState; message?: string; retrying?: boolean };
     result: { id: number; ok: boolean; error?: string; data?: unknown };
     decoder: { kind: DecoderKind };
+    // The stream socket opened or closed. The session's own state arrives as `session`.
+    link: { open: boolean };
+    // Why this browser cannot show the phone's video, or '' once it can. The view shows it in
+    // place of the picture; the socket stays up.
+    decoderError: { message: string };
 }
 
 export type DecoderKind = 'hevc' | 'mse';
@@ -79,6 +84,8 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     private readonly pressedUsages = new Set<number>();
     private deviceName: string;
     private sessionState: CoreDeviceSessionState = 'starting';
+    private socketOpen = false;
+    private decoderProblem = '';
     private nextRequestId = 1;
     private stopped = false;
     private typing = Promise.resolve();
@@ -362,12 +369,35 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
 
     // ------------------------------------------------------------------ receiver events
 
+    /**
+     * `streamConnected` is what enables the controls and the header's "Connected". An open socket
+     * is not enough for either: the server accepts the socket before the session starts, and
+     * keeps it open for a moment after the session stopped or failed. It is true only while the
+     * session is ready and this browser can show the picture.
+     */
+    private updateConnected(): void {
+        streamConnected.value = this.socketOpen && this.sessionState === 'ready' && !this.decoderProblem;
+    }
+
+    private setDecoderProblem(message: string): void {
+        if (this.decoderProblem === message) {
+            return;
+        }
+        this.decoderProblem = message;
+        this.updateConnected();
+        this.emit('decoderError', { message });
+    }
+
     private onConnected = (): void => {
-        streamConnected.value = true;
+        this.socketOpen = true;
+        this.updateConnected();
+        this.emit('link', { open: true });
     };
 
     private onDisconnected = (): void => {
-        streamConnected.value = false;
+        this.socketOpen = false;
+        this.updateConnected();
+        this.emit('link', { open: false });
         this.player?.pause();
         this.touchHandler?.releaseActiveTouch();
         this.releaseAllKeys();
@@ -375,8 +405,9 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
 
     private onStatus = (status: { state: CoreDeviceSessionState; message?: string; retrying?: boolean }): void => {
         this.sessionState = status.state;
-        // The view shows a session error in its own notice, with Retry. It is not copied to the
-        // dismissible notice as well: that one sits in the same place and covered the button.
+        this.updateConnected();
+        // The view shows a session error in its own card, with Retry. It is not copied to the
+        // dismissible notice as well: that one sat in the same place and covered the button.
         this.emit('session', status);
     };
 
@@ -389,7 +420,8 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
             return;
         }
         if (!kind) {
-            streamNotice.value = StreamClientCoreDevice.explainNoDecoder(codec);
+            // Shown where the picture would be, not as a dismissible notice over a black stage.
+            this.setDecoderProblem(StreamClientCoreDevice.explainNoDecoder(codec));
             return;
         }
         if (this.player && this.decoderKind !== kind) {
@@ -401,9 +433,10 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         try {
             this.player?.configure(codec, description);
         } catch (error) {
-            streamNotice.value = (error as Error).message;
+            this.setDecoderProblem((error as Error).message);
             return;
         }
+        this.setDecoderProblem('');
         this.player?.play();
     };
 
@@ -527,6 +560,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.player?.stop();
         this.player = undefined;
         this.deviceView.remove();
+        this.socketOpen = false;
         streamConnected.value = false;
         console.log(TAG, 'stopped');
     };
