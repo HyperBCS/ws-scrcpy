@@ -17,6 +17,7 @@ import { goToDeviceList } from '../state/router';
 import { ControlMessage } from '../controlMessage/ControlMessage';
 import { CommandControlMessage, CopyKey } from '../controlMessage/CommandControlMessage';
 import { CLIPBOARD_TOO_LONG_NOTE, clipboardTextTooLong } from '../ui/clipboardLimit';
+import { copyPhoneClipboardHere } from '../ui/copyText';
 import '../../style/views/ActionsSheet.css';
 
 interface ActionsSheetProps {
@@ -27,7 +28,6 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
     const [clipboardDraft, setClipboardDraft] = useState('');
     const [clipboardNote, setClipboardNote] = useState('');
     const [reading, setReading] = useState(false);
-    const [copying, setCopying] = useState(false);
     const received = deviceClipboard.value;
     const draftTooLong = clipboardTextTooLong(clipboardDraft);
     const connected = streamConnected.value;
@@ -70,24 +70,9 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
         client.sendMessage(CommandControlMessage.createGetClipboardCommand(CopyKey.NONE));
     };
 
-    const onCopy = async () => {
-        if (received === undefined) {
-            return;
-        }
-        if (!navigator.clipboard?.writeText) {
-            setClipboardNote('Select the clipboard text above and copy it. Browser clipboard access needs HTTPS.');
-            return;
-        }
-        setCopying(true);
-        try {
-            await navigator.clipboard.writeText(received);
-            setClipboardNote('Copied to this browser.');
-        } catch {
-            setClipboardNote('This browser declined clipboard access. Select the text above and copy it.');
-        } finally {
-            setCopying(false);
-        }
-    };
+    // The same helper as the iPhone sheet: on plain HTTP, where `navigator.clipboard` does not
+    // exist, it copies through a hidden text area.
+    const onCopy = async () => setClipboardNote(await copyPhoneClipboardHere(received));
 
     const onPaste = () => {
         if (clipboardDraft && !draftTooLong && streamConnected.value) {
@@ -119,13 +104,8 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                         >
                             {reading ? 'Reading…' : 'Read'}
                         </button>
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            onClick={onCopy}
-                            disabled={received === undefined || copying}
-                        >
-                            {copying ? 'Copying…' : 'Copy here'}
+                        <button type="button" class="sheet-button" onClick={onCopy} disabled={received === undefined}>
+                            Copy here
                         </button>
                     </SheetRow>
                     {received !== undefined && (

@@ -9,7 +9,7 @@ import { activeAudioSession, audioAvailability } from '../state/audio';
 import { goToDeviceList } from '../state/router';
 import { deviceName, findDeviceByUdid } from '../state/devices';
 import { ControlCenterCommand } from '../../common/ControlCenterCommand';
-import { copyTextToClipboard } from '../ui/copyText';
+import { copyPhoneClipboardHere } from '../ui/copyText';
 import { CLIPBOARD_TOO_LONG_NOTE, clipboardTextTooLong } from '../ui/clipboardLimit';
 import ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
 import '../../style/views/ActionsSheet.css';
@@ -109,19 +109,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
         client.requestClipboard();
     };
 
-    const onCopyHere = async () => {
-        if (!received) {
-            setClipboardNote(
-                received === undefined ? 'Read the phone clipboard first.' : 'The phone clipboard is empty.',
-            );
-            return;
-        }
-        setClipboardNote(
-            (await copyTextToClipboard(received))
-                ? 'Copied to this browser.'
-                : 'This browser blocked copying. Select the text above and copy it.',
-        );
-    };
+    const onCopyHere = async () => setClipboardNote(await copyPhoneClipboardHere(received));
 
     const onSendClipboard = () => {
         if (!clipboardDraft || draftTooLong) {
