@@ -240,7 +240,7 @@ async function fixture(browser, options = {}) {
             state.statusPolls++;
             if (state.statusError) return route.fulfill({ status: 502, json: { error: state.statusError } });
             reply = {
-                publicKey: state.publicKey, sources: state.sources, bluetooth: [],
+                publicKey: state.publicKey, sources: state.sources, bluetooth: options.bluetooth || [],
                 statuses: Object.fromEntries(state.sources.map(s => [s.id, state.statuses[s.id] ?? 'Receiving notifications'])), pairing: null,
                 pairingOpen: state.pairingOpen, pairingRejected: state.pairingRejected, error: state.feedError, delivery: { sent: 0, failed: 0, lastError: '' },
                 // 'saved': the devices the page registered, as the server would list them.
@@ -1147,6 +1147,43 @@ async function unlinkedDeepLink(browser) {
         await article(f.page, 'Coffee at four?').waitFor();
         await assertClean(f);
         console.log('PASS an unlinked iPhone opens the linking steps while the inbox stays open for the linked ones');
+    } finally { await f.context.close(); }
+}
+
+/** A link to an iPhone that is not linked opens Setup, and the page stays there once it is linked. */
+async function linkingStaysOnSetup(browser) {
+    const bluetooth = [{ address: 'AA:BB:CC:DD:EE:0C', name: 'Phone C', paired: true, connected: true }];
+    const f = await fixture(browser, { history: true, notifications: historyItems(), devices: true, bluetooth });
+    try {
+        await article(f.page, 'Coffee at four?').waitFor();
+        await f.page.evaluate(() => { location.hash = '#!action=notifications&source=phone-c'; });
+        await f.page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
+        // The address names the panel that is shown, in the entry the link made.
+        await f.page.waitForFunction(() => location.hash === '#!action=notifications&source=phone-c&panel=setup');
+        const entries = await f.page.evaluate(() => history.length);
+        const add = f.page.locator('details.notification-pairing');
+        await f.page.waitForFunction(() => document.querySelector('details.notification-pairing')?.open);
+        assert.equal(await add.getByRole('combobox', { name: 'iPhone connected to the NUC by USB', exact: true }).inputValue(), 'phone-c');
+        await add.getByRole('combobox', { name: 'The same iPhone in Bluetooth', exact: true }).selectOption('AA:BB:CC:DD:EE:0C');
+        await add.getByRole('button', { name: 'Use this iPhone', exact: true }).click();
+        await f.page.getByText('iPhone connected. Now enable notifications on the device receiving them.', { exact: true }).waitFor();
+        assert.ok(f.sources.some(source => source.id === 'phone-c'), 'the iPhone is linked');
+        await sleep(300);
+        // The next step, receiving on this device, is on Setup.
+        assert.equal(await pressed(f.page, 'Setup & delivery'), 'true', 'the page stays on Setup once the iPhone is linked');
+        assert.equal(await f.page.locator('#notification-history-heading').count(), 0);
+        assert.equal(await f.page.evaluate(() => location.hash), '#!action=notifications&source=phone-c&panel=setup');
+        // A reload stays there too, and its inbox is one press away.
+        await f.page.reload();
+        await f.page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
+        assert.equal(await pressed(f.page, 'Setup & delivery'), 'true');
+        await f.page.getByRole('button', { name: 'Inbox', exact: true }).click();
+        await f.page.locator('#notification-history-heading').waitFor();
+        assert.equal(await f.page.getByRole('combobox', { name: 'Device', exact: true }).inputValue(), 'phone-c');
+        await f.page.waitForFunction(() => location.hash === '#!action=notifications&source=phone-c');
+        assert.equal(await f.page.evaluate(() => history.length), entries, 'no history entry was added');
+        await assertClean(f);
+        console.log('PASS a link to an iPhone that is not linked opens Setup, and the page stays on Setup once it is linked');
     } finally { await f.context.close(); }
 }
 
@@ -2139,7 +2176,7 @@ async function main() {
             notificationDeepLink, deepLinkScrollsAndFades, unlinkedDeepLink, feedStatusInInbox, openScreenFromInbox, phoneActionsOutlastDefaultTimeout, bulkArchiveAndUndo, bulkDismissPhone, compactLongNotification, stickyBarsReachScrollTop, accessibleActionMenus, richNotificationMedia,
             searchAndFilters, bulkRespectsFilters, swipeAndUndo, swipeMotionAndFailure, delayedActionDoesNotCrossDevices, standaloneTouchNotifications,
             compatibilityPointerEventsDoNotDoubleAct, nativeTouchCancellationAndMultifinger, hangingRegistrationCleanup,
-            hangingNotificationCleanup, hangingWorkerDeepLink, sharedHeader, viewStateInAddress];
+            hangingNotificationCleanup, hangingWorkerDeepLink, sharedHeader, viewStateInAddress, linkingStaysOnSetup];
         const selected = process.env.SCENARIO ? cases.filter(run => run.name === process.env.SCENARIO) : cases;
         assert.ok(selected.length, 'SCENARIO must name an existing fixture case');
         for (const run of selected) await run(browser);

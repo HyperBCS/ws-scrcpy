@@ -374,6 +374,11 @@ export function NotificationsView() {
     }, [requestedSource, !!status]);
     // Inbox drops the unlinked iPhone from the address, so Setup is shown until then.
     const activePanel = !historySource || unlinkedRequest ? 'setup' : page.panel;
+    // The address says Setup too, so the page stays there once that iPhone is linked: the next
+    // step, receiving on this device, is on Setup.
+    useEffect(() => {
+        if (unlinkedRequest && page.panel !== 'setup') changeNotificationPage({ panel: 'setup' });
+    }, [unlinkedRequest]);
     const openInbox = () =>
         changeNotificationPage(
             unlinkedRequest
