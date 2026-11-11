@@ -114,15 +114,27 @@ async function main() {
             await page.locator('.stream-service-status[data-stream-service="running"]').waitFor();
             await page.getByRole('button',{name:'Tab',exact:true}).click();
             const ctrl = page.getByRole('button',{name:'Ctrl',exact:true});
+            // Ctrl is one-shot. Left on, it would turn "ls" and Enter into ^L ^S, which clears
+            // the screen and freezes output.
+            const pressed = () => ctrl.getAttribute('aria-pressed');
             await ctrl.click();
-            assert.equal(await ctrl.getAttribute('aria-pressed'),'true','Ctrl shows as held');
+            assert.equal(await pressed(),'true','Ctrl shows as held');
             await page.keyboard.type('c');
+            await until(async()=>await pressed()==='false','Ctrl releases after one character');
             await page.keyboard.type('l');
             await ctrl.click();
-            assert.equal(await ctrl.getAttribute('aria-pressed'),'false','Ctrl releases on the second tap');
+            await page.keyboard.press('ArrowUp');
+            await page.waitForTimeout(50);
+            assert.equal(await pressed(),'true','an arrow key leaves Ctrl waiting for a character');
+            await page.keyboard.type('d');
+            await until(async()=>await pressed()==='false','Ctrl releases after the next character');
+            await ctrl.click();
+            await ctrl.click();
+            assert.equal(await pressed(),'false','a second tap cancels Ctrl');
             await page.keyboard.type('c');
             await page.waitForTimeout(50);
-            assert.deepEqual(state.input,['\t','\x03','\x0c','c'],'Ctrl rewrites every key while held and nothing after');
+            const typed = ['\t','\x03','l','\x1b[A','\x04','c'];
+            assert.deepEqual(state.input,typed,'Ctrl changes one character and never an escape sequence');
             // The remote pty follows the terminal. The phone keyboard and a shorter window change
             // the rows, a narrower window the columns.
             const shownRows = () => page.locator('.terminal-container .xterm-rows > div').count();
@@ -141,7 +153,7 @@ async function main() {
             await page.setViewportSize({width,height});
             await page.waitForFunction(()=>Math.abs(document.querySelector('.tool-view').getBoundingClientRect().height-visualViewport.height)<1);
             await until(()=>{ const last=state.resizes.at(-1); return last.cols===started.cols && last.rows===started.rows; },'the restored size reaches the device');
-            assert.deepEqual(state.input,['\t','\x03','\x0c','c'],'a resize is never typed into the shell');
+            assert.deepEqual(state.input,typed,'a resize is never typed into the shell');
             await page.getByRole('button',{name:'Switch',exact:true}).click();
             const sheet=page.locator('.bottom-sheet-root.open');
             await sheet.getByRole('button',{name:/Phone B/}).click();

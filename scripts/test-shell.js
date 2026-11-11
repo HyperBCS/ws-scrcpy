@@ -1,6 +1,7 @@
 // Run with: node --test scripts/test-shell.js
-// The Shell tool: what the server accepts from the browser. adb and its pty are replaced by a
-// fake, and the socket is an object the tests drive by hand. No device and no port is used.
+// The Shell tool: what the server accepts from the browser, and how the toolbar Ctrl key changes
+// typed input. adb and its pty are replaced by a fake, and the socket is an object the tests
+// drive by hand. No device and no port is used.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
@@ -189,4 +190,43 @@ test('a stop message in a binary frame ends the session', () => {
     socket.message(binary(shellMessage({ type: 'stop' })));
     assert.equal(terminal.killed, 1);
     assert.equal(socket.readyState, socket.CLOSED);
+});
+
+// ------------------------------------------------------------------ toolbar Ctrl key
+
+const { applyControl, withControl } = require('../src/app/googDevice/client/shellInput');
+
+test('Ctrl changes the next single character and is then released', () => {
+    assert.deepEqual(applyControl('c', true), { data: '\x03', armed: false });
+    assert.deepEqual(applyControl('D', true), { data: '\x04', armed: false });
+    assert.deepEqual(applyControl('[', true), { data: '\x1b', armed: false });
+    assert.deepEqual(applyControl('1', true), { data: '1', armed: false }, 'a key without a control code still uses it');
+    // Typing "ls" and Enter after a forgotten Ctrl used to send ^L ^S: clear screen, then freeze.
+    let armed = true;
+    const sent = ['l', 's', '\r'].map((key) => {
+        const next = applyControl(key, armed);
+        armed = next.armed;
+        return next.data;
+    });
+    assert.deepEqual(sent, ['\x0c', 's', '\r']);
+});
+
+test('Ctrl never rewrites an escape sequence or pasted text', () => {
+    assert.deepEqual(applyControl('\x1b[A', true), { data: '\x1b[A', armed: true }, 'a hardware Up arrow');
+    assert.deepEqual(applyControl('rm -rf [a]', true), { data: 'rm -rf [a]', armed: true }, 'a paste');
+    assert.deepEqual(applyControl('', true), { data: '', armed: true });
+});
+
+test('input is untouched while Ctrl is off', () => {
+    assert.deepEqual(applyControl('c', false), { data: 'c', armed: false });
+    assert.deepEqual(applyControl('\x1b[A', false), { data: '\x1b[A', armed: false });
+});
+
+test('letters and the punctuation with a control code map as a Ctrl key would', () => {
+    assert.equal(withControl('a'), '\x01');
+    assert.equal(withControl('z'), '\x1a');
+    assert.equal(withControl('@'), '\x00');
+    assert.equal(withControl('\\'), '\x1c');
+    assert.equal(withControl('?'), '\x7f');
+    assert.equal(withControl('é'), 'é');
 });

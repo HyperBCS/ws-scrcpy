@@ -158,7 +158,7 @@
     font-size: 12px;
 }
 
-/* The Ctrl toggle reads as a held key while it is on. */
+/* Ctrl reads as a held key until the next character uses it. */
 .shell-shortcuts button[aria-pressed='true'] {
     color: var(--button-text-color);
     border-color: var(--button-text-color);

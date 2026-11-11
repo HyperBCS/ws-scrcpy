@@ -10,37 +10,11 @@ import Util from '../../Util';
 import { ChannelCode } from '../../../common/ChannelCode';
 import { ToolEntry } from '../../client/Tool';
 import { shellTool } from './deviceTools';
+import { applyControl } from './shellInput';
 
 const TAG = '[ShellClient]';
 // A window drag or the phone keyboard sliding in refits the terminal many times in a row.
 const RESIZE_DEBOUNCE_MS = 100;
-
-/**
- * Maps typed text to the control characters a physical Ctrl key would produce. Phone keyboards
- * have no Ctrl, so the toolbar offers one as a toggle; while it is on, every letter is sent as
- * its control code (c -> ^C, d -> ^D, l -> ^L...) and the punctuation that has a control code
- * follows the same rule. Anything else passes through unchanged.
- */
-export function withControl(data: string): string {
-    return Array.from(data)
-        .map((char) => {
-            if (/^[a-z]$/i.test(char)) {
-                return String.fromCharCode(char.toUpperCase().charCodeAt(0) - 64);
-            }
-            const punctuation: Record<string, string> = {
-                '@': '\x00',
-                ' ': '\x00',
-                '[': '\x1b',
-                '\\': '\x1c',
-                ']': '\x1d',
-                '^': '\x1e',
-                _: '\x1f',
-                '?': '\x7f',
-            };
-            return punctuation[char] ?? char;
-        })
-        .join('');
-}
 
 export class ShellClient extends ManagerClient<ParamsShell, never> {
     public static ACTION = ACTION.SHELL;
@@ -57,6 +31,7 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
     private started = false;
     private resizeTimer?: number;
     private controlActive = false;
+    private controlListener?: (active: boolean) => void;
 
     constructor(params: ParamsShell, mount?: HTMLElement) {
         super(params);
@@ -76,9 +51,9 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         this.resizeObserver = new ResizeObserver(this.updateTerminalSize);
         this.resizeObserver.observe(this.container);
         this.openNewConnection();
-        // Typed input goes through `send` rather than the attach addon so the Ctrl toggle can
-        // rewrite it; output is written back in `onSocketMessage`.
-        this.term.onData((data) => this.send(this.controlActive ? withControl(data) : data));
+        // Typed input goes through `send` rather than the attach addon so the toolbar Ctrl key
+        // can change it; output is written back in `onSocketMessage`.
+        this.term.onData(this.onInput);
         this.term.onBinary((data) => this.send(data));
         this.term.onResize(this.scheduleResize);
         // On phones, opening a tool should not immediately cover it with the keyboard.
@@ -131,9 +106,23 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         }
     }
 
-    /** The toolbar Ctrl toggle: on until switched off, like a held modifier. */
+    private onInput = (data: string): void => {
+        const next = applyControl(data, this.controlActive);
+        this.send(next.data);
+        if (next.armed !== this.controlActive) {
+            this.controlActive = next.armed;
+            this.controlListener?.(next.armed);
+        }
+    };
+
+    /** The toolbar Ctrl key. It applies to the next single character and then releases itself. */
     public setControl(active: boolean): void {
         this.controlActive = active;
+    }
+
+    /** Called when typing releases Ctrl, so the toolbar button can follow. */
+    public onControlChange(listener: (active: boolean) => void): void {
+        this.controlListener = listener;
     }
 
     public startShell(udid: string): void {

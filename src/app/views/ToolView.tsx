@@ -20,6 +20,7 @@ interface MountedTool {
     focus?(): void;
     sendInput?(text: string): void;
     setControl?(active: boolean): void;
+    onControlChange?(listener: (active: boolean) => void): void;
 }
 
 export const deviceTools = [
@@ -121,6 +122,7 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                 }
                 mounted = client;
                 clientRef.current = client;
+                client.onControlChange?.(setControl);
                 client.navigate?.(routeRef.current.get('path') || '/data/local/tmp/');
                 setLoaded(true);
                 wasConnected = client.hasConnection();
@@ -263,7 +265,7 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                             type="button"
                             disabled={!connected}
                             aria-pressed={control}
-                            title="Hold Ctrl for the next keys"
+                            title="Ctrl for the next key"
                             onClick={() => {
                                 const next = !control;
                                 setControl(next);
