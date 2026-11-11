@@ -6,6 +6,7 @@ import {
     UNLOCK_RETRY_MS,
     UNLOCK_SESSION_CAP,
     UNLOCK_SESSION_CAP_WINDOW_MS,
+    UNLOCK_SKIP_MARGIN_MS,
     UNLOCK_SKIP_WINDOW_MS,
     UNLOCK_UNCONFIRMED_LIMIT,
     UNLOCK_WARN_MS,
@@ -16,6 +17,7 @@ import {
     UnlockSchedulePatch,
     UnlockScheduleStatus,
     lastUnlockSlotAt,
+    nextUnlockRunAt,
     unlockOutcomeText,
 } from '../../../common/IosUnlockSchedule';
 import { KnownBoolean } from '../../../types/AndroidLockState';
@@ -276,7 +278,8 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
      * `UPDATE_UNLOCK_SCHEDULE`. The patch is already validated by `ControlCenterCommand`. When
      * the schedule is turned on or its time or zone changes, the slot that has already passed is
      * marked used and a pending retry is dropped, so the first run is the next slot shown as
-     * "Next run" and nothing starts within a minute of the change.
+     * "Next run" and nothing starts within a minute of the change, unless that next slot comes
+     * too late for the 24-hour limit (`skipPassedSlot`).
      */
     public updateSchedule(udid: string, patch: UnlockSchedulePatch): UnlockScheduleStatus {
         const before = this.store.getSchedule(udid);
@@ -352,13 +355,23 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
         return Math.max(0, waitMs);
     }
 
-    /** Mark the slot that has already passed as used and drop what it still owed. */
+    /**
+     * Mark the slot that has already passed as used and drop what it still owed, so the first
+     * run is the next slot. Not when that slot comes 23 hours or more after the server last typed
+     * the passcode: a time moved to just before the current minute would otherwise leave almost
+     * 24 hours. The passed slot's run is then owed now, and the skip rule decides as usual.
+     */
     private skipPassedSlot(udid: string, status: UnlockScheduleStatus): void {
-        const passed = lastUnlockSlotAt(status.time, this.now(), status.timeZone);
-        const { lastSlotAt } = this.store.getRunState(udid);
+        const now = this.now();
+        const passed = lastUnlockSlotAt(status.time, now, status.timeZone);
+        const { lastSlotAt, lastTypedUnlockAt } = this.store.getRunState(udid);
+        const late =
+            lastTypedUnlockAt !== undefined &&
+            nextUnlockRunAt(status.time, now, status.timeZone) - lastTypedUnlockAt >=
+                UNLOCK_PASSCODE_LIMIT_MS - UNLOCK_SKIP_MARGIN_MS;
         this.store.setRunState(udid, {
             lastSlotAt: Math.max(passed, lastSlotAt ?? passed),
-            retryAt: undefined,
+            retryAt: late ? now : undefined,
             slotAttempts: undefined,
         });
     }

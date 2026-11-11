@@ -1945,6 +1945,52 @@ test('scheduler: turning the schedule on, or changing its time, after the slot d
     }
 });
 
+test('scheduler: a time saved just after its own slot runs that slot when the next one would be 23 hours or more after the last typed unlock', async () => {
+    const slot = Date.UTC(2026, 10, 12, 3, 0);
+    const ctx = makeScheduler({ time: slot });
+    const udid = 'iphone-moved';
+    const at = async (clock) => {
+        ctx.setClock(clock);
+        ctx.tick();
+        await ctx.settle();
+    };
+    try {
+        armed(ctx, udid);
+        await at(slot + 30000);
+        const record = ctx.store.devices.get(udid);
+        assert.equal(record.lastTypedUnlockAt, slot + 30000);
+        // At 14:59:30 the time is moved to 02:59. Its 14:59 slot has just passed, and the next
+        // one, 02:59 tomorrow, would be 23 h 58 min after the passcode was typed.
+        ctx.setClock(Date.UTC(2026, 10, 12, 14, 59, 30));
+        ctx.scheduler.updateSchedule(udid, { time: '02:59', timeZone: ZONE });
+        await at(Date.UTC(2026, 10, 12, 15, 0));
+        assert.equal(ctx.driver.calls.length, 2, 'the passed slot runs at the next tick');
+        assert.equal(record.lastRun.outcome, 'unlocked');
+        assert.equal(record.lastSlotAt, Date.UTC(2026, 10, 12, 14, 59));
+        assert.equal(record.retryAt, undefined);
+
+        // An hour later the time is moved to 04:30: 16:30 today comes soon enough, and its own
+        // slot of 04:30 is not run.
+        ctx.setClock(Date.UTC(2026, 10, 12, 16, 0));
+        ctx.scheduler.updateSchedule(udid, { time: '04:30', timeZone: ZONE });
+        await at(Date.UTC(2026, 10, 12, 16, 1));
+        assert.equal(ctx.driver.calls.length, 2, 'nothing starts within a minute of the change');
+        assert.equal(record.retryAt, undefined);
+
+        // Turned off for two days and on again: the server last typed the passcode 50 hours ago,
+        // so the slot that passed runs now rather than at 16:30.
+        ctx.scheduler.updateSchedule(udid, { enabled: false });
+        ctx.setClock(Date.UTC(2026, 10, 14, 15, 0));
+        ctx.scheduler.updateSchedule(udid, { enabled: true });
+        await at(Date.UTC(2026, 10, 14, 15, 1));
+        assert.equal(ctx.driver.calls.length, 3);
+        assert.equal(record.lastRun.at, Date.UTC(2026, 10, 14, 15, 1));
+        assert.equal(ctx.pushes.length, 0);
+    } finally {
+        ctx.scheduler.release();
+    }
+});
+
 test('schedule: two slots a day in the stored time zone, across both daylight-saving changes', () => {
     const utc = (...fields) => Date.UTC(...fields);
     const noon = utc(2026, 10, 10, 12, 0);
@@ -2037,11 +2083,13 @@ test("scheduler: a schedule with a zone runs at that zone's time, and changing t
         assert.equal(ctx.driver.calls.length, 1, 'a minute after 03:00 in Kolkata');
         assert.equal(ctx.store.devices.get(udid).lastSlotAt, slot);
 
-        // Re-saved from a browser in another zone, right after that zone's 03:00.
+        // Re-saved from a browser in another zone, right after that zone's slot, an hour after a
+        // Run now typed the passcode (with none, the next slot would be too late to wait for).
         const other = 'America/New_York';
         const otherSlot = lastUnlockSlotAt('03:00', ctx.now() + 24 * HOUR, other);
         ctx.setClock(otherSlot + MINUTE);
         delete ctx.store.devices.get(udid).lastUnlockedAt;
+        ctx.store.devices.get(udid).lastTypedUnlockAt = otherSlot - HOUR;
         const status = ctx.scheduler.updateSchedule(udid, { time: '03:00', timeZone: other });
         assert.equal(status.timeZone, other);
         assert.equal(status.nextRunAt, nextUnlockRunAt('03:00', ctx.now(), other));

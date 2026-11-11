@@ -2073,6 +2073,10 @@ runs does not open a session at every restart. The result then decides:
   failure and an hour on after each later one (`slotAttempts` counts them). A retry that fails
   with the same outcome and message as the run before is not pushed again;
 - `already-unlocked`: the slot stays owed (see "Phone in use").
+Saving the time or zone, turning the schedule on, or saving the passcode still marks the slot
+that has just passed as used, as in the 2026-11-10 section, except when the next slot would come
+23 hours or more after `lastTypedUnlockAt`: then the passed slot's run is owed at once. Without
+that, a time moved at 14:59 to 02:59 left the next run 23 h 58 min after the last typed unlock.
 The next slot replaces whatever the one before still owed. There is no slot window any more: a
 slot the server was down for runs when the server is back, because waiting for the next slot
 can pass the 24 hours. Every start still goes through `CoreDeviceRunner.acquire`, so the start
