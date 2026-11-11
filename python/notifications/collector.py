@@ -137,9 +137,12 @@ class Client:
         self.current = None
         self.wait(RESET_HOLDOFF)
         self.last_probe = 0  # Probe as soon as the wait ends, so the status recovers then.
-        self.fail_actions('The iPhone did not answer in time; the action was not confirmed')
+        # A queued action was never written. Only the one in flight may have been performed.
         for key, queued in list(self.queue.items()):
-            if queued['action_failed']: del self.queue[key]
+            if queued['action_failed']:
+                del self.queue[key]
+                queued['action_failed']('Bluetooth was busy; the action was not sent')
+        self.fail_actions('The iPhone did not answer in time; the action was not confirmed')
         self.status(reason)
         if job and not job['action_failed'] and (not job['valid'] or job['valid']()):
             if job['attempts'] < 3: self.queue[job['key']] = job

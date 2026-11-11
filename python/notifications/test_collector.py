@@ -498,12 +498,16 @@ class CollectorTests(unittest.TestCase):
         self.reply(action='Clear')
         self.dismiss()
         self.source(0, uid=43, flags=16)
-        self.dismiss(requestId='request-2', uid=43)
+        self.client.active_notifications[44] = dict(canDismiss=True, negativeActionLabel='Clear')
+        self.dismiss(requestId='request-2', uid=44)
+        self.assertEqual(self.action_results(), [], 'the second action waits behind the first')
         self.time_out()
         self.assertEqual(self.disconnections, [], 'the iPhone does not reconnect after we drop it')
         self.assertIs(self.scope['clients'].get('phone'), self.client)
         self.assertGreater(self.client.retry_at, time.monotonic() + 30)
-        self.assertEqual([result['ok'] for result in self.action_results()], [False, False])
+        self.assertEqual([(result['requestId'], result['ok'], result['error']) for result in self.action_results()], [
+            ('request-2', False, 'Bluetooth was busy; the action was not sent'),
+            ('request-1', False, 'The iPhone did not answer in time; the action was not confirmed')])
         self.write_replies[-1]()
         self.assertEqual(len(self.action_results()), 2)
         self.resume()
