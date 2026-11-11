@@ -2,9 +2,12 @@
 
 @layer components {
 /* A condition that blocks a page or a sheet, at its top, with at most one action
-   (`ui/Banner.tsx`). The tone is a tint with its own text colour; an error is solid. */
+   (`ui/Banner.tsx`). The tone is a tint with its own text colour; an error is solid.
+   The message keeps at least 160px. Where the action does not fit beside that, it goes under
+   the message, at the end of the line. */
 .kit-banner {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-8);
     box-sizing: border-box;
@@ -23,11 +26,6 @@
 .kit-banner-error {
     background: var(--danger-fill);
     color: var(--on-accent);
-}
-/* The message keeps at least 160px. Where the action does not fit beside that, it goes under
-   the message, at the end of the line. */
-.kit-banner {
-    flex-wrap: wrap;
 }
 .kit-banner-text {
     flex: 1 1 160px;
