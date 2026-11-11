@@ -5,7 +5,8 @@ import { BottomSheet } from '../ui/BottomSheet';
 import { VolumeSlider } from '../ui/SheetControls';
 import { closeSettingsSheet, settingsSheetTarget } from '../state/settingsSheet';
 import { activeStream } from '../state/stream';
-import { devices, deviceName, findDeviceByUdid } from '../state/devices';
+import { deviceName } from '../state/devices';
+import { findDeviceForSettings } from '../state/streamDevice';
 import { activeAudioSession, audioAvailability, isAudioAvailable } from '../state/audio';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import { ControlCenterCommand } from '../../common/ControlCenterCommand';
@@ -78,11 +79,8 @@ export function SettingsSheet() {
     }
     // Retain content through the closing animation. Each opening gets a fresh request below.
     const renderTarget = target ?? previousTarget.current;
-    const entry = renderTarget?.deviceKey
-        ? devices.value.get(renderTarget.deviceKey)
-        : renderTarget
-          ? findDeviceByUdid(renderTarget.udid)
-          : undefined;
+    // The stream opens this sheet with a serial alone, and two hosts can each have that serial.
+    const entry = renderTarget ? findDeviceForSettings(renderTarget, session?.params) : undefined;
     const tracker = target ? entry?.tracker : undefined;
     const client: StreamClientScrcpy | undefined =
         renderTarget && session?.params.udid === renderTarget.udid ? session.client : undefined;

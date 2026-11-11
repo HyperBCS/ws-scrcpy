@@ -295,6 +295,8 @@ const packet = (bytes) => new Uint8Array(bytes);
 
 function webCodecsPlayer(t) {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 3_000_000 });
+    // The players log every decoder error; these tests cause them on purpose.
+    t.mock.method(console, 'error', () => {});
     const { WebCodecsPlayer } = require('../src/app/player/WebCodecsPlayer');
     const { BasePlayer } = require('../src/app/player/BasePlayer');
     MockDecoder.instances.length = 0;
@@ -404,6 +406,7 @@ test('a new SPS mid-stream still reconfigures the decoder and replaces the cache
 test('the H264 Converter player reports a media error and starts again at the next SPS', (t) => {
     const { MsePlayer } = require('../src/app/player/MsePlayer');
     const { BasePlayer } = require('../src/app/player/BasePlayer');
+    t.mock.method(console, 'error', () => {});
     const tag = element({ buffered: { length: 0 }, currentTime: 0 });
     const player = new MsePlayer('android-mse-error', undefined, 'H264 Converter', tag);
     t.after(() => player.stop());
@@ -539,6 +542,7 @@ test('the iPhone client asks for a key frame when its decoder reports an error',
     t.mock.method(ApplToolBox, 'createToolBox', () => ({ getHolderElement: () => element(), release() {}, forgetHeldButtons() {} }));
     const sent = [];
     t.mock.method(CoreDeviceReceiver.prototype, 'send', (message) => sent.push(message));
+    t.mock.method(console, 'error', () => {});
     MockDecoder.instances.length = 0;
     const client = StreamClientCoreDevice.start({ action: 'stream-coredevice', udid: 'iphone-decoder', captureKeyboard: false }, element());
     t.after(() => client.stop());
@@ -913,4 +917,55 @@ test('both stream clients drop their toolbar holds when the stream disconnects',
     t.after(() => client.stop());
     client.receiver.emit('disconnected', { code: 1006 });
     assert.deepEqual(forgotten, ['android', 'iphone']);
+});
+
+// ---------------------------------------------------------------- stream settings target
+
+test('stream settings resolve the device through the stream socket when two hosts share a serial', (t) => {
+    const { devices } = require('../src/app/state/devices');
+    const { findDeviceForSettings } = require('../src/app/state/streamDevice');
+    const { buildInterfaceOptions } = require('../src/app/googDevice/client/deviceInterfaces');
+    const previous = devices.value;
+    t.after(() => (devices.value = previous));
+    const entry = (trackerId, hostname, udid) => ({
+        key: `${trackerId}:${udid}`,
+        trackerId,
+        trackerName: hostname,
+        params: { type: 'android', hostname, port: 8000, pathname: '/', secure: false },
+        descriptor: { udid, state: 'device', interfaces: [] },
+        tracker: { id: trackerId },
+    });
+    const first = entry('host-a', 'host-a.test', 'emulator-5554');
+    const second = entry('host-b', 'host-b.test', 'emulator-5554');
+    const other = entry('host-a', 'host-a.test', 'pixel-serial');
+    devices.value = new Map([first, second, other].map((item) => [item.key, item]));
+    const streamOf = (item) => ({
+        action: 'stream',
+        udid: item.descriptor.udid,
+        player: 'webcodecs',
+        ws: buildInterfaceOptions(item.descriptor, item.params).find((option) => option.name === 'proxy').url,
+    });
+
+    // The toolbar and the Actions sheet open the sheet with the serial alone.
+    const target = { udid: 'emulator-5554' };
+    assert.equal(
+        findDeviceForSettings(target, streamOf(second)),
+        second,
+        "the second host's stream gets the second host's device, not the first match in the list",
+    );
+    assert.equal(findDeviceForSettings(target, streamOf(first)), first);
+    assert.equal(findDeviceForSettings(target, streamOf(second)).tracker.id, 'host-b', 'so Apply restarts the right stream');
+
+    // A device card names its device outright.
+    assert.equal(findDeviceForSettings({ udid: 'emulator-5554', deviceKey: second.key }, streamOf(first)), second);
+
+    // Without a stream to bind to, a serial that two hosts share names neither of them.
+    assert.equal(findDeviceForSettings(target), undefined);
+    assert.equal(findDeviceForSettings(target, streamOf(other)), undefined);
+    assert.equal(findDeviceForSettings(target, { ...streamOf(second), ws: 'ws://elsewhere.test:8000/' }), undefined);
+
+    // A serial only one host has still resolves while the stream's own entry cannot be matched.
+    assert.equal(findDeviceForSettings({ udid: 'pixel-serial' }), other);
+    assert.equal(findDeviceForSettings({ udid: 'pixel-serial' }, { ...streamOf(other), ws: 'not a url' }), other);
+    assert.equal(findDeviceForSettings({ udid: 'unknown-serial' }), undefined);
 });
