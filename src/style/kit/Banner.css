@@ -1,0 +1,42 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* A condition that blocks a page or a sheet, at its top, with at most one action
+   (`ui/Banner.tsx`). The tone is a tint with its own text colour; an error is solid. */
+.kit-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    box-sizing: border-box;
+    min-width: 0;
+    padding: var(--space-8) var(--space-12);
+    border-radius: var(--radius-sm);
+    background: var(--warning-fill);
+    color: var(--warning-text);
+    font-size: var(--font-size-13);
+    line-height: 1.4;
+}
+.kit-banner-info {
+    background: var(--info-fill);
+    color: var(--info-text);
+}
+.kit-banner-error {
+    background: var(--danger-fill);
+    color: var(--on-accent);
+}
+/* The message keeps at least 160px. Where the action does not fit beside that, it goes under
+   the message, at the end of the line. */
+.kit-banner {
+    flex-wrap: wrap;
+}
+.kit-banner-text {
+    flex: 1 1 160px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+/* The action is a compact button on the tint. It keeps the button's own colours. */
+.kit-banner > .kit-button {
+    flex: none;
+    margin-left: auto;
+}
+}
