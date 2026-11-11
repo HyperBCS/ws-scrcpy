@@ -627,6 +627,7 @@ async function iphonePage(browser, viewport, colorScheme) {
         const header = page.locator('header.kit-bar');
         assert.equal(await header.count(), 1);
         assert.equal(await header.locator('h1.kit-bar-name').textContent(), 'Bench iPhone');
+        assert.equal(await page.locator('h1').count(), 1, `${label}: the name in the bar is the page's one h1`);
         assert.equal(await header.locator('.kit-bar-back').getAttribute('aria-label'), 'Phones');
         // The fixture's socket opens and says nothing more, so the session never starts.
         assert.match(await header.locator('.kit-bar-status').innerText(), /^(Connecting…|Starting the phone stream…)$/);
@@ -807,6 +808,13 @@ async function toolAddressForIphone(browser) {
         await page.getByRole('heading', { name: 'Shell is not available for this device', exact: true }).waitFor();
         assert.equal(await page.locator('.kit-bar-back').getAttribute('aria-label'), 'Phones');
         assert.equal(await page.locator('nav.kit-tabs').count(), 0);
+        assert.deepEqual(await page.locator('h1').evaluateAll((list) => list.map((h1) => h1.className)), ['kit-bar-name'], 'refused tool: one h1, the name in the bar');
+        // Both actions of the page are the kit's buttons: Open screen, a link, is the primary one.
+        assert.deepEqual(
+            await page.locator('.tool-unavailable-actions > *').evaluateAll((list) => list.map((item) => `${item.tagName.toLowerCase()}.${item.className}`)),
+            ['a.kit-button kit-button-primary', 'button.kit-button'],
+            'refused tool: the kit buttons',
+        );
         const links = await checkLinks(page, 'refused tool');
         assert.deepEqual(links.map((link) => [link.text, link.hash]), [['Open screen', `#!action=device&udid=${IPHONE}&view=screen`]]);
         const before = await entries(page);
