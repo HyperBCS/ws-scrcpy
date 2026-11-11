@@ -82,7 +82,10 @@ self.addEventListener('notificationclick', event => {
         const windows = (await self.clients.matchAll({ type: 'window' })).filter(client => {
             try { const url = new URL(client.url); return url.origin === target.origin && url.pathname.startsWith(scope.pathname); } catch (_) { return false; }
         });
-        // A window showing a stream, a shell or a file list is left alone: navigating it ends that session.
+        // A window on a phone's page (its screen, its files or its shell) is left alone: navigating
+        // it ends that session. Both forms of that address carry `udid` (#!action=device&udid=...
+        // and the older #!action=stream&udid=...); the list and Notifications do not. The check
+        // must hold for both: this worker also serves pages that were loaded before a deploy.
         const existing = windows.find(client => windowRoute(client).get('action') === 'notifications')
             || windows.find(client => !windowRoute(client).get('udid'));
         if (existing) {

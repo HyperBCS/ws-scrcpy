@@ -1,15 +1,123 @@
 import { signal } from '@preact/signals';
+import { canonicalRoute, parseRoute, rememberPhone } from './routes';
 
 // The app has always used `#!key=value&...` deep links (documented in the README, produced by
 // `BaseDeviceTracker.buildLink` historically). Keeping `location.hash` as the source of truth
 // means bookmarked/shared links keep working with zero server-side routing.
+//
+// This module is the only one that writes history. It has three verbs:
+//
+//   openRoute    a new entry       list to a phone, list to Notifications, a notification to a screen
+//   switchRoute  the same entry    a tab, another phone, a filter, a corrected address
+//   goUp         back to the list  the back control of every header
+//
+// The list is the root: `goUp` steps back to the list entry instead of adding one, so the
+// browser's Back from the list leaves the app and never reopens a phone's stream.
+//
+// `history.state` is shared. The router keeps `nav`, Files keeps `files`; both survive each
+// other's writes. An overlay (a sheet, a dialog, a menu) has an entry of its own under the same
+// address, marked in `nav`, so the browser's Back closes it.
 export type RouteParams = URLSearchParams;
+export type NavigateParams = Record<string, string | number | boolean | undefined>;
+export type RouteTarget = URLSearchParams | NavigateParams;
 
-function parseHash(): RouteParams {
-    return new URLSearchParams(location.hash.replace(/^#!/, ''));
+/** Where an entry sits, kept in `history.state.nav`. */
+interface Nav {
+    /** Counted from the first entry the app has in this tab. */
+    index: number;
+    /** The index of the nearest list entry below this one, -1 when there is none. */
+    below: number;
+    /** On an overlay's entry: how many overlay entries sit on the page, this one included. */
+    overlay?: number;
 }
 
-export const route = signal<RouteParams>(parseHash());
+interface Overlay {
+    onLeave: () => void;
+    /** The index of its history entry, once that is made. */
+    index?: number;
+}
+
+/** A history entry that belongs to an open overlay. */
+export interface OverlayEntry {
+    /** The overlay closed by itself: its entry is stepped back over. Safe to call twice. */
+    release(): void;
+}
+
+/** How long a step through history may take before the router stops waiting for it. */
+const LANDING_MS = 1000;
+
+function hashParams(hash: string = location.hash): RouteParams {
+    return new URLSearchParams(hash.replace(/^#!/, ''));
+}
+
+function hashOf(params: RouteParams): string {
+    return `#!${params.toString()}`;
+}
+
+function toSearchParams(target: RouteTarget): RouteParams {
+    if (target instanceof URLSearchParams) {
+        return target;
+    }
+    const usp = new URLSearchParams();
+    Object.entries(target).forEach(([key, value]) => {
+        if (value !== undefined) {
+            usp.set(key, String(value));
+        }
+    });
+    return usp;
+}
+
+/**
+ * The address the app keeps for `params`: an older phone address in its new form. The older
+ * address of a screen named the platform, which the new one does not, so it is remembered here.
+ */
+function canonical(params: RouteParams): RouteParams {
+    const target = parseRoute(params);
+    if (target.page === 'device' && target.view === 'screen' && target.platform) {
+        rememberPhone(target.udid, target.platform);
+    }
+    return canonicalRoute(params);
+}
+
+function isList(hash: string): boolean {
+    return parseRoute(hashParams(hash)).page === 'list';
+}
+
+function readNav(state: unknown): Nav | undefined {
+    const nav = (state as { nav?: Partial<Nav> } | null)?.nav;
+    if (!nav || !Number.isInteger(nav.index) || !Number.isInteger(nav.below)) {
+        return undefined;
+    }
+    const overlay = Number.isInteger(nav.overlay) && (nav.overlay as number) > 0 ? nav.overlay : undefined;
+    return { index: nav.index as number, below: nav.below as number, ...(overlay ? { overlay } : {}) };
+}
+
+function withNav(state: unknown, nav: Nav): Record<string, unknown> {
+    return { ...(state && typeof state === 'object' ? state : {}), nav };
+}
+
+function position(): Nav {
+    return readNav(history.state) ?? { index: 0, below: -1 };
+}
+
+/** `below` for an entry made on top of the entry `nav`, whose address is `hash`. */
+function belowAfter(nav: Nav, hash: string): number {
+    return isList(hash) && !nav.overlay ? nav.index : nav.below;
+}
+
+// A link opened in this tab, a reload, or a return from another site. An older address is
+// rewritten before anything reads the route, so the first view to mount is the only one: a
+// stream view that mounted under the old address and again under the new one would start two
+// sessions on the phone.
+{
+    const params = hashParams();
+    const next = canonical(params);
+    if (next !== params || !readNav(history.state)) {
+        history.replaceState(withNav(history.state, position()), '', next !== params ? hashOf(next) : undefined);
+    }
+}
+
+export const route = signal<RouteParams>(hashParams());
 
 /**
  * Something on the current page that must not be dropped without asking, such as uploads in
@@ -36,55 +144,304 @@ export function clearLeaveGuard(guard: LeaveGuard): void {
     }
 }
 
-function accept(): void {
-    shown = { hash: location.hash, state: history.state };
-    route.value = parseHash();
+const overlays: Overlay[] = [];
+
+/** Closes every open overlay. Their history entries are left to the caller. */
+function closeOverlays(): void {
+    overlays
+        .splice(0)
+        .reverse()
+        .forEach((overlay) => overlay.onLeave());
 }
 
-window.addEventListener('hashchange', () => {
+function accept(): void {
+    if (location.hash !== shown.hash) {
+        // An overlay belongs to the page it was opened on.
+        closeOverlays();
+    }
+    shown = { hash: location.hash, state: history.state };
+    route.value = hashParams();
+}
+
+// `history.go()` and `history.back()` finish later, in a task of their own. Until the browser
+// reports the entry they were heading for, anything else that would write history waits here:
+// an entry pushed in between would be the one stepped back over.
+let landing: number | undefined;
+let landingTimer: ReturnType<typeof setTimeout> | undefined;
+const waiting: Array<() => void> = [];
+
+function landed(): void {
+    clearTimeout(landingTimer);
+    landing = undefined;
+    while (waiting.length && landing === undefined) {
+        waiting.shift()?.();
+    }
+}
+
+/** Steps through history. `then` runs on arrival, before anything that was already waiting. */
+function travel(delta: number, then?: () => void): void {
+    if (!delta) {
+        // `history.go(0)` would reload the page.
+        then?.();
+        return;
+    }
+    landing = (landing ?? position().index) + delta;
+    if (then) {
+        waiting.unshift(then);
+    }
+    clearTimeout(landingTimer);
+    // A step the browser never reports must not hold the app up for good.
+    landingTimer = setTimeout(landed, LANDING_MS);
+    history.go(delta);
+}
+
+function whenLanded(run: () => void): void {
+    if (landing === undefined && !waiting.length) {
+        run();
+    } else {
+        waiting.push(run);
+    }
+}
+
+/**
+ * Closes the open overlays and steps back over their entries, then runs `then` on the entry of
+ * the page itself. A route written from an overlay's entry would leave the page's own entry
+ * below it, and Back would show that page again.
+ */
+function leaveOverlays(then: () => void): void {
+    closeOverlays();
+    whenLanded(() => {
+        const over = position().overlay;
+        if (over) {
+            travel(-over, then);
+        } else {
+            then();
+        }
+    });
+}
+
+function write(next: RouteParams, mode: 'push' | 'replace', state: unknown): void {
+    const hash = hashOf(next);
+    const here = position();
+    if (mode === 'replace') {
+        history.replaceState(withNav(state, { index: here.index, below: here.below }), '', hash);
+    } else if (location.hash !== hash) {
+        const nav = { index: here.index + 1, below: belowAfter(here, location.hash) };
+        history.pushState(withNav(state, nav), '', hash);
+    }
+    if (mode === 'push' || location.hash !== shown.hash) {
+        accept();
+    } else {
+        shown = { hash: location.hash, state: history.state };
+    }
+}
+
+function commit(target: RouteTarget, mode: 'push' | 'replace', state: unknown): void {
+    const next = canonical(toSearchParams(target));
     const guard = leaveGuard;
-    if (guard?.blocks(parseHash())) {
-        // The browser has already moved: Back, a link, or a typed address. Put the address of
-        // the page that is still shown back on top, and leave only if the owner says so. The
-        // destination is then the entry right behind it, whichever way it was reached.
-        history.pushState(shown.state, '', shown.hash);
+    if (guard?.blocks(next)) {
         void guard.ask().then((leave) => {
             if (leave) {
                 clearLeaveGuard(guard);
-                history.back();
+                commit(next, mode, state);
             }
         });
         return;
     }
+    if (mode === 'replace' && hashOf(next) === location.hash && !position().overlay) {
+        // The same address with other state (Files tags its entries): no page is left.
+        write(next, mode, state);
+        return;
+    }
+    leaveOverlays(() => write(next, mode, state));
+}
+
+/** Opens a page as a new history entry, so the browser's Back returns to this one. */
+export function openRoute(target: RouteTarget): void {
+    commit(target, 'push', undefined);
+}
+
+/** Shows another address in the current history entry. Back and Forward are unaffected. */
+export function switchRoute(target: RouteTarget): void {
+    commit(target, 'replace', undefined);
+}
+
+function showList(): void {
+    if (!isList(location.hash)) {
+        write(new URLSearchParams(), 'replace', undefined);
+    } else if (location.hash !== shown.hash) {
+        accept();
+    }
+}
+
+/**
+ * Goes to the list without adding an entry: back to the list entry below this page, or, when
+ * the tab was opened on this page, to the first entry the app has, which becomes the list.
+ */
+export function goUp(): void {
+    const guard = leaveGuard;
+    if (guard?.blocks(new URLSearchParams())) {
+        void guard.ask().then((leave) => {
+            if (leave) {
+                clearLeaveGuard(guard);
+                goUp();
+            }
+        });
+        return;
+    }
+    leaveOverlays(() => {
+        const here = position();
+        const target = here.below >= 0 ? here.below : 0;
+        if (!isList(location.hash) && target < here.index) {
+            // On arrival the entry is checked: if it is not the list any more, it becomes it.
+            travel(target - here.index, showList);
+        } else {
+            showList();
+        }
+    });
+}
+
+/**
+ * Gives an open overlay a history entry under the same address. `onLeave` runs when that entry
+ * is left: by the browser's Back, or because the route changed. An overlay that closes by
+ * itself calls `release`. Views use `ui/overlayHistory.ts`.
+ */
+export function pushOverlay(onLeave: () => void): OverlayEntry {
+    const overlay: Overlay = { onLeave };
+    overlays.push(overlay);
+    whenLanded(() => {
+        if (!overlays.includes(overlay)) {
+            return;
+        }
+        const here = position();
+        const nav = {
+            index: here.index + 1,
+            below: belowAfter(here, location.hash),
+            overlay: (here.overlay ?? 0) + 1,
+        };
+        history.pushState(withNav(history.state, nav), '');
+        overlay.index = nav.index;
+    });
+    return {
+        release: () => {
+            const at = overlays.indexOf(overlay);
+            if (at < 0) {
+                return;
+            }
+            // An overlay opened from this one sits on top of it and goes with it. Its entry is
+            // stepped back over too, so it is told to close, as Back would tell it; left open,
+            // it would have no entry and stay open over the next page.
+            const gone = overlays.splice(at);
+            gone.slice(1)
+                .reverse()
+                .forEach((above) => above.onLeave());
+            const first = gone.find((item) => item.index !== undefined)?.index;
+            whenLanded(() => {
+                const here = position();
+                if (first !== undefined && here.overlay && here.index >= first) {
+                    travel(first - 1 - here.index);
+                }
+            });
+        },
+    };
+}
+
+/** An entry a link or an assigned hash made has no `nav` yet: it follows the page that was shown. */
+function tagEntry(): Nav {
+    const nav = readNav(history.state);
+    if (nav) {
+        return nav;
+    }
+    const from = readNav(shown.state) ?? { index: 0, below: -1 };
+    const above = overlays.filter((overlay) => overlay.index !== undefined).length;
+    const tagged = { index: from.index + above + 1, below: belowAfter(from, shown.hash) };
+    history.replaceState(withNav(history.state, tagged), '');
+    return tagged;
+}
+
+window.addEventListener('popstate', () => {
+    const here = readNav(history.state);
+    if (landing !== undefined) {
+        if (here?.index === landing) {
+            landed();
+        }
+        return;
+    }
+    if (!here) {
+        return;
+    }
+    // Back from an overlay: the overlays whose entries were left close.
+    while (overlays.length) {
+        const top = overlays[overlays.length - 1];
+        if (top.index === undefined || top.index <= here.index) {
+            break;
+        }
+        overlays.pop();
+        top.onLeave();
+    }
+    // An overlay's entry without its overlay (after a reload, or reached by Forward) is skipped.
+    const open = overlays.filter((overlay) => overlay.index !== undefined).length;
+    if (here.overlay && here.overlay > open) {
+        travel(open - here.overlay);
+    }
+});
+
+window.addEventListener('hashchange', () => {
+    if (location.hash === shown.hash) {
+        return;
+    }
+    const made = !readNav(history.state);
+    const here = tagEntry();
+    const params = hashParams();
+    const next = canonical(params);
+    const guard = leaveGuard;
+    if (guard?.blocks(next)) {
+        // The browser has already moved: Back, a link, or a typed address. Return to the entry
+        // of the page that is still shown, and go where the browser went only if the owner says
+        // so. History is left as it was, so a refused tab is not what Back leads to afterwards.
+        const stay = readNav(shown.state)?.index ?? here.index;
+        travel(stay - here.index);
+        void guard.ask().then((leave) => {
+            if (!leave) {
+                return;
+            }
+            clearLeaveGuard(guard);
+            leaveOverlays(() => {
+                if (made || here.index > stay) {
+                    // A new entry, or one that was ahead: anything pushed since has removed it.
+                    write(next, 'push', undefined);
+                } else {
+                    travel(here.index - position().index);
+                }
+            });
+        });
+        return;
+    }
+    if (next !== params) {
+        history.replaceState(history.state, '', hashOf(next));
+    }
     accept();
 });
 
-export type NavigateParams = Record<string, string | number | boolean | undefined>;
-
-function toSearchParams(params: NavigateParams): URLSearchParams {
-    const usp = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-        if (value !== undefined) {
-            usp.set(key, String(value));
-        }
-    });
-    return usp;
-}
-
-// Pushes a new hash so the UI can switch device/action in place instead of opening a new tab.
-// `hashchange` fires from this (browsers do not fire it for same-document JS-only navigation
-// unless the hash actually changes), which updates `route` above.
-export function navigate(params: NavigateParams): void {
-    const hash = `#!${toSearchParams(params).toString()}`;
-    if (location.hash === hash) {
-        accept();
-        return;
+// A page reloaded while an overlay was open sits on that overlay's entry.
+{
+    const over = position().overlay;
+    if (over) {
+        travel(-over);
     }
-    location.hash = hash;
 }
 
+// The exports below are the router's earlier interface. They stay for the views that still call
+// them and do the same as before, except that returning to the list no longer adds an entry.
+
+/** Opens a page given as plain values. Same as `openRoute`. */
+export function navigate(params: NavigateParams): void {
+    openRoute(params);
+}
+
+/** Same as `goUp`. */
 export function goToDeviceList(): void {
-    navigate({});
+    goUp();
 }
 
 /**
@@ -95,12 +452,10 @@ export function goToDeviceList(): void {
  * entries, so the listener above keeps `route` in step.
  */
 export function pushRoute(params: URLSearchParams, state: unknown = null): void {
-    const hash = `#!${params.toString()}`;
-    if (location.hash === hash) {
+    if (location.hash === hashOf(canonicalRoute(params))) {
         return;
     }
-    history.pushState(state, '', hash);
-    accept();
+    commit(params, 'push', state);
 }
 
 /**
@@ -108,12 +463,5 @@ export function pushRoute(params: URLSearchParams, state: unknown = null): void 
  * address with `state` attached. Back and Forward are unaffected.
  */
 export function replaceRoute(params: URLSearchParams, state: unknown = history.state): void {
-    const hash = `#!${params.toString()}`;
-    const changed = location.hash !== hash;
-    history.replaceState(state, '', hash);
-    if (changed) {
-        accept();
-    } else {
-        shown = { hash: location.hash, state: history.state };
-    }
+    commit(params, 'replace', state);
 }

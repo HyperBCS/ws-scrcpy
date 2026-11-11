@@ -305,6 +305,43 @@ test('notification clicks prefer the window already on Notifications and leave d
     }
 });
 
+test('the worker reads a phone page in the new form of its address as well as the older one', async () => {
+    // The worker replaces itself at once on a deploy and then serves pages loaded before it, so
+    // it meets both forms. A phone's page has `udid` in both; the list and Notifications do not.
+    const target = 'https://example.test/app/#!action=notifications&source=phone&notification=history-key';
+    const list = 'https://example.test/app/#!';
+    const inbox = 'https://example.test/app/#!action=notifications&source=phone';
+    const phonePages = [
+        'https://example.test/app/#!action=device&udid=phone&view=screen',
+        'https://example.test/app/#!action=device&udid=android&view=screen&player=mse',
+        'https://example.test/app/#!action=device&udid=android&view=files&path=%2Fsdcard',
+        'https://example.test/app/#!action=device&udid=android&view=shell',
+        'https://example.test/app/#!action=stream-coredevice&udid=phone',
+        'https://example.test/app/#!action=list-files&udid=android&path=%2Fsdcard',
+    ];
+    for (const busy of phonePages) {
+        const alone = worker({ windows: [busy] });
+        await alone.click(target);
+        assert.deepEqual(alone.navigated, [], `${busy} keeps its session`);
+        assert.deepEqual(alone.focused, []);
+        assert.deepEqual(alone.opened, [target], 'the notification opens in a window of its own');
+
+        const beside = worker({ windows: [busy, list] });
+        await beside.click(target);
+        assert.deepEqual(beside.navigated, [{ window: list, target }], 'the list beside it is the window to use');
+    }
+    const preferred = worker({ windows: [...phonePages, list, inbox] });
+    await preferred.click(target);
+    assert.deepEqual(preferred.navigated, [{ window: inbox, target }], 'a window on Notifications is still the first choice');
+
+    // The links in push banners are unchanged: a stored banner and a new one open the same page.
+    for (const url of ['#!action=notifications&source=phone&notification=history-key', '#!action=']) {
+        const context = worker();
+        await context.push({ title: 'Mail', body: 'New message', url });
+        assert.equal(context.shown.at(-1).data.url, `https://example.test/app/${url}`);
+    }
+});
+
 test('a window this worker does not control falls back to a new window', async () => {
     const inbox = 'https://example.test/app/#!action=notifications';
     const target = 'https://example.test/app/#!action=notifications&notification=history-key';

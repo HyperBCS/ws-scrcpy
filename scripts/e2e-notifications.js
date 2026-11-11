@@ -1018,6 +1018,8 @@ async function feedStatusInInbox(browser) {
 
 async function openScreenFromInbox(browser) {
     const streamHash = '#!action=stream-coredevice&udid=phone-a';
+    // The link is still written in the older form; the router rewrites the address it opens.
+    const screenHash = '#!action=device&udid=phone-a&view=screen';
     // The iPhones are connected by USB.
     let f = await fixture(browser, { history: true, notifications: historyItems(), devices: true });
     try {
@@ -1042,7 +1044,7 @@ async function openScreenFromInbox(browser) {
         assert.match(f.page.url(), /action=notifications/);
         await card.focus();
         await f.page.keyboard.press('Enter');
-        await f.page.waitForFunction(hash => location.hash === hash, streamHash);
+        await f.page.waitForFunction(hash => location.hash === hash, screenHash);
         // The iPhone's screen links back to its notifications, with the unread count.
         const back = f.page.locator('.stream-header .notifications-link');
         await back.waitFor();
@@ -1053,7 +1055,7 @@ async function openScreenFromInbox(browser) {
         await f.page.locator('#notification-history-heading').waitFor();
         // A mouse double-click on a card opens it too.
         await article(f.page, 'Design review').locator('h3').dblclick();
-        await f.page.waitForFunction(hash => location.hash === hash, streamHash);
+        await f.page.waitForFunction(hash => location.hash === hash, screenHash);
         assert.deepEqual(f.errors, []);
     } finally { await f.context.close(); }
 

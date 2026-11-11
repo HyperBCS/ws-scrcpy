@@ -4,21 +4,28 @@ import '../ui/viewport';
 import { route } from '../state/router';
 import { devices } from '../state/devices';
 import { pageTitle } from '../state/pageTitle';
-import { ToolRoute } from './ToolRoute';
+// `DevicePage` mounts the tool and stream views. They are still named here, where `App` used to
+// import them, because the order of these imports is the order of their styles in the bundle,
+// and rules of equal weight are decided by that order.
+import './ToolRoute';
 import { DeviceList } from './DeviceList';
-import { StreamView } from './StreamView';
-import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
+import './StreamView';
 import { SettingsSheet } from './SettingsSheet';
 import { ApplSettingsSheet } from './ApplSettingsSheet';
 import { startHostTracker } from '../state/hosts';
 import { isToolAction } from './ToolView';
-import { CoreDeviceStreamView } from './CoreDeviceStreamView';
-import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
-import { ACTION } from '../../common/Action';
+import './CoreDeviceStreamView';
+import { DevicePage } from './DevicePage';
 import { startNotificationSummary } from '../state/notifications';
 import { ErrorBoundary, ScreenFailed } from '../ui/ErrorBoundary';
 import { goToDeviceList } from '../state/router';
+import { clientParams, parseRoute } from '../state/routes';
 import { closeAllSheets } from '../state/stream';
+
+// The sheets are signals, not history entries, and several are mounted here, above the pages.
+// They close with the page they were opened on, as the overlays the router knows about do.
+// Before this, a sheet opened from the list stayed open over the page Back led to.
+route.subscribe(() => closeAllSheets());
 
 /**
  * The one place a tab title is set; see `state/pageTitle.ts`. Its own component, so a device
@@ -43,30 +50,17 @@ export function App() {
     }, []);
 
     const params = route.value;
+    const page = parseRoute(params);
     let view;
-    if (params.get('action') === 'notifications') view = <NotificationsView />;
-
-    if (params.get('action') === StreamClientScrcpy.ACTION && params.get('udid')) {
-        try {
-            view = <StreamView params={StreamClientScrcpy.parseParameters(params)} />;
-        } catch (error) {
-            console.error('[App]', error);
-        }
-    }
-
-    if (!view && params.get('action') === ACTION.STREAM_COREDEVICE && params.get('udid')) {
-        try {
-            view = <CoreDeviceStreamView params={StreamClientCoreDevice.parseParameters(params)} />;
-        } catch (error) {
-            console.error('[App]', error);
-        }
-    }
-
-    if (!view && isToolAction(params.get('action')) && params.get('udid')) {
-        view = <ToolRoute params={params} />;
-    }
-
-    if (!view) {
+    if (page.page === 'notifications') {
+        view = <NotificationsView />;
+    } else if (
+        page.page === 'device' &&
+        // A build without Files or Shell has no page for them.
+        (page.view === 'screen' || isToolAction(clientParams(params).get('action')))
+    ) {
+        view = <DevicePage params={params} />;
+    } else {
         view = <DeviceList />;
     }
 

@@ -6,6 +6,7 @@ import KeyEvent from '../googDevice/android/KeyEvent';
 import { keyPress, passcodeMessages, validatePasscode, UnlockRequestError } from '../googDevice/client/passcode';
 import { activeStream, unlockSheetOpen } from './stream';
 import { findDeviceForStream } from './streamDevice';
+import { parseRoute } from './routes';
 
 type LockReply = Partial<AndroidLockStateReply> & { udid: string; requestId: number; error?: string };
 
@@ -98,20 +99,26 @@ export async function submitDevicePasscode(
     const initialSession = activeStream.peek();
     const entry = initialSession ? findDeviceForStream(initialSession.params) : undefined;
     const clientId = client.getClientId();
+    // The page this was sent from: this phone's screen, under either form of its address. A
+    // player or socket the address names must be the one this stream runs on.
+    const address = location.hash;
+    const query = new URLSearchParams(address.replace(/^#!/, ''));
+    const page = parseRoute(query);
+    const named = (key: 'ws' | 'player') => !query.has(key) || query.get(key) === initialSession?.params[key];
+    const onScreen =
+        page.page === 'device' && page.view === 'screen' && page.udid === udid && named('ws') && named('player');
     const stillCurrent = () => {
         const session = activeStream.peek();
         // Hash navigation changes synchronously; Preact tears the old client down later.
-        // Compare the actual URL too, so a late lock reply cannot win that interval.
-        const route = new URLSearchParams(location.hash.replace(/^#!/, ''));
+        // Compare the actual URL too, so a late lock reply cannot win that interval. Any change
+        // of address counts: another phone, another view, another player or socket.
         if (
             signal.aborted ||
             !unlockSheetOpen.peek() ||
             session?.client !== client ||
             session.params.udid !== udid ||
-            route.get('action') !== 'stream' ||
-            route.get('udid') !== udid ||
-            route.get('ws') !== session.params.ws ||
-            route.get('player') !== session.params.player ||
+            !onScreen ||
+            location.hash !== address ||
             !client.isControlReady() ||
             client.getClientId() !== clientId ||
             findDeviceForStream(session.params)?.tracker !== entry?.tracker

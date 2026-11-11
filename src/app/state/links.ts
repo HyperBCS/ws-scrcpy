@@ -1,5 +1,6 @@
 import { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
-import { NavigateParams } from './router';
+import { NavigateParams, openRoute, switchRoute } from './router';
+import { deviceRoute, DeviceView } from './routes';
 
 // Same URL-building rules `BaseDeviceTracker.buildLink` used to bake into an `<a>` tag: a device
 // tracked through a remote host must link back to that host directly, unless the connection is
@@ -42,4 +43,35 @@ export function isLocalLink(params: ParamsDeviceTracker): boolean {
     const port = String(params.port ?? (params.secure ? 443 : 80));
     const locationPort = location.port || (location.protocol === 'https:' ? '443' : '80');
     return protocol === location.protocol && params.hostname === location.hostname && port === locationPort;
+}
+
+/**
+ * The link to one phone's page: the phone and the view, nothing else. The player and the socket
+ * are found when the stream starts, so a bookmark does not break when either changes.
+ */
+export function deviceHref(
+    udid: string,
+    view: DeviceView,
+    params: ParamsDeviceTracker,
+    extra: NavigateParams = {},
+): string {
+    return buildLinkHref(Object.fromEntries(deviceRoute(udid, view, extra)), params);
+}
+
+/**
+ * Follows a link built above. One that stays in the app goes through the router: `open` adds a
+ * history entry, `switch` changes the current one. Any other link is a browser navigation.
+ */
+export function followLink(href: string, how: 'open' | 'switch'): void {
+    const url = new URL(href, location.href);
+    if (url.origin !== location.origin || url.pathname !== location.pathname) {
+        location.assign(url.toString());
+        return;
+    }
+    const target = new URLSearchParams(url.hash.replace(/^#!/, ''));
+    if (how === 'open') {
+        openRoute(target);
+    } else {
+        switchRoute(target);
+    }
 }
