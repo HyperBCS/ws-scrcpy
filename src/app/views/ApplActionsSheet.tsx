@@ -1,10 +1,19 @@
 import { AnimatedDetails } from '../ui/AnimatedDetails';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { SheetGroup, SheetRow, SheetStatus, SheetToggleRow, SoundRows } from '../ui/SheetControls';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
-import { deviceClipboard, deviceClipboardError, openSheet, streamConnected, toolsSheetOpen } from '../state/stream';
+import {
+    closeAllSheets,
+    deviceClipboard,
+    deviceClipboardError,
+    openSheet,
+    streamConnected,
+    toolsSheetOpen,
+} from '../state/stream';
+import { openApplSettingsSheet } from '../state/settingsSheet';
+import { replyText, sendServiceCommand, TrackerCommandAborted } from '../client/trackerCommand';
 import { activeAudioSession, audioAvailability } from '../state/audio';
 import { goToDeviceList } from '../state/router';
 import { deviceName, findDeviceByUdid } from '../state/devices';
@@ -19,12 +28,22 @@ interface ApplActionsSheetProps {
     descriptor?: ApplDeviceDescriptor;
 }
 
-type PendingRequest = { id: number; kind: 'rotate' | 'clipboard' };
+type RequestKind = 'rotate' | 'clipboard' | 'restart';
+type RequestResult = { id: number; ok: boolean; error?: string; data?: unknown };
 
 // When the phone's clipboard service wedges the server restarts it and asks again, which takes
 // about ten seconds all told; these bracket that rather than the happy path's ~50 ms.
 const CLIPBOARD_RECOVERY_NOTE_MS = 9000;
 const CLIPBOARD_GIVE_UP_MS = 25000;
+// A request over the stream socket is answered on that socket. The server's own limit for one
+// request to the phone is 15 s; past these the answer is not coming.
+const REQUEST_GIVE_UP_MS: Record<RequestKind, number> = {
+    rotate: 20000,
+    restart: 20000,
+    clipboard: CLIPBOARD_GIVE_UP_MS,
+};
+const NO_ANSWER_NOTE = 'No answer from the phone. Check that it is still connected.';
+const NOT_SENT_NOTE = 'Not connected to the phone. Try again once the stream is back.';
 
 /** The iOS "Actions" sheet: sound, screen recovery, keyboard, lock screen, clipboard, power. */
 export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) {
@@ -32,7 +51,10 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
     const [screenNote, setScreenNote] = useState('');
     const [clipboardNote, setClipboardNote] = useState('');
     const [reading, setReading] = useState(false);
-    const [pending, setPending] = useState<PendingRequest>();
+    // Requests waiting for a `result` on the stream socket, by id. Each has a time limit, and all
+    // of them end when the socket drops: the answer to a request sent on the old socket is gone.
+    const requests = useRef(new Map<number, { kind: RequestKind; timer: ReturnType<typeof setTimeout> }>());
+    const [sendingClipboard, setSendingClipboard] = useState(false);
     const [keyboard, setKeyboard] = useState(client.isHandlingKeyboardEvents());
     // Reboot and shut down are hard to undo from here, and the two service actions end the phone
     // session for every viewer, so each is confirmed in a separate prompt. The armed state ends
@@ -52,24 +74,80 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
         setScreenNote('');
         setClipboardNote('');
         setReading(false);
+        setSendingClipboard(false);
         setKeyboard(client.isHandlingKeyboardEvents());
-        const onResult = (result: { id: number; ok: boolean; error?: string; data?: unknown }) => {
-            setPending((current) => {
-                if (current?.id !== result.id) {
-                    return current;
-                }
-                const note = result.ok ? 'Done.' : result.error || 'The phone refused that action.';
-                if (current.kind === 'rotate') {
-                    setScreenNote(note);
-                } else {
-                    setClipboardNote(result.ok ? 'Sent. Long-press a field on the phone and choose Paste.' : note);
-                }
-                return undefined;
-            });
-        };
+        const onResult = (result: RequestResult) => settleRequest(result.id, result);
         client.on('result', onResult);
-        return () => client.off('result', onResult);
+        return () => {
+            client.off('result', onResult);
+            endRequests();
+        };
     }, [client]);
+
+    /** Shows the outcome of one request where its button is, and forgets the request. */
+    const settleRequest = (id: number, result: { ok: boolean; error?: string }) => {
+        const request = requests.current.get(id);
+        if (!request) {
+            return;
+        }
+        clearTimeout(request.timer);
+        requests.current.delete(id);
+        const failure = result.error || 'The phone refused that action.';
+        if (request.kind === 'clipboard') {
+            setSendingClipboard(false);
+            setClipboardNote(result.ok ? 'Sent. Long-press a field on the phone and choose Paste.' : failure);
+        } else if (request.kind === 'restart') {
+            setScreenNote(result.ok ? 'The picture was restarted.' : failure);
+        } else {
+            setScreenNote(result.ok ? 'Done.' : failure);
+        }
+    };
+
+    /** `id` is undefined when the stream socket was closed and nothing was sent. */
+    const trackRequest = (id: number | undefined, kind: RequestKind) => {
+        if (id === undefined) {
+            if (kind === 'clipboard') {
+                setClipboardNote(NOT_SENT_NOTE);
+            } else {
+                setScreenNote(NOT_SENT_NOTE);
+            }
+            return;
+        }
+        if (kind === 'clipboard') {
+            setSendingClipboard(true);
+        }
+        const timer = setTimeout(
+            () => settleRequest(id, { ok: false, error: NO_ANSWER_NOTE }),
+            REQUEST_GIVE_UP_MS[kind],
+        );
+        requests.current.set(id, { kind, timer });
+    };
+
+    const endRequests = (error?: string) => {
+        for (const id of Array.from(requests.current.keys())) {
+            if (error) {
+                settleRequest(id, { ok: false, error });
+            } else {
+                clearTimeout(requests.current.get(id)?.timer);
+                requests.current.delete(id);
+            }
+        }
+    };
+
+    useEffect(() => {
+        if (!connected) {
+            endRequests('The connection dropped before the phone answered. Try again once the stream is back.');
+        }
+    }, [connected]);
+
+    // Tracker commands (power, service recovery) end with a reply, an error, a closed socket or a
+    // time limit. Closing the stream page withdraws them.
+    const leaving = useRef<AbortController>();
+    useEffect(() => {
+        const controller = new AbortController();
+        leaving.current = controller;
+        return () => controller.abort();
+    }, []);
 
     useEffect(() => {
         if (!reading) {
@@ -128,12 +206,17 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
             return;
         }
         setClipboardNote('Sending to the phone clipboard…');
-        setPending({ id: client.setClipboard(clipboardDraft), kind: 'clipboard' });
+        trackRequest(client.setClipboard(clipboardDraft), 'clipboard');
     };
 
     const onRotate = (direction: 'left' | 'right') => {
         setScreenNote('Rotating…');
-        setPending({ id: client.rotate(direction), kind: 'rotate' });
+        trackRequest(client.rotate(direction), 'rotate');
+    };
+
+    const onRestartPicture = () => {
+        setScreenNote('Restarting the picture…');
+        trackRequest(client.restartStream(), 'restart');
     };
 
     const onPower = (action: 'reboot' | 'shutdown') => {
@@ -143,16 +226,15 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
             return;
         }
         const command = action === 'reboot' ? ControlCenterCommand.REBOOT_DEVICE : ControlCenterCommand.SHUTDOWN_DEVICE;
-        const onReply = (data: { udid?: string; error?: string }) => {
-            if (data.udid !== client.getDeviceUdid()) {
-                return;
-            }
-            entry.tracker.off(command as never, onReply as never);
-            setPower(data.error ? data.error : action === 'reboot' ? 'Rebooting…' : 'Shutting down…');
-        };
-        entry.tracker.on(command as never, onReply as never);
-        entry.tracker.sendCommand(command, { udid: client.getDeviceUdid() });
         setPower(action === 'reboot' ? 'Asking the phone to reboot…' : 'Asking the phone to shut down…');
+        sendServiceCommand(entry.tracker, command, client.getDeviceUdid(), leaving.current?.signal).then(
+            () => setPower(action === 'reboot' ? 'Rebooting…' : 'Shutting down…'),
+            (error: Error) => {
+                if (!(error instanceof TrackerCommandAborted)) {
+                    setPower(error.message);
+                }
+            },
+        );
     };
 
     /** Service-level recovery that does not depend on the stream socket still working. */
@@ -164,16 +246,18 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
         }
         setDebugBusy(true);
         setDebugNote(`${label}…`);
-        const onReply = (data: { udid?: string; error?: string; result?: unknown }) => {
-            if (data.udid !== client.getDeviceUdid()) {
-                return;
-            }
-            entry.tracker.off(command as never, onReply as never);
-            setDebugBusy(false);
-            setDebugNote(data.error || (typeof data.result === 'string' && data.result) || done);
-        };
-        entry.tracker.on(command as never, onReply as never);
-        entry.tracker.sendCommand(command, { udid: client.getDeviceUdid() });
+        sendServiceCommand(entry.tracker, command, client.getDeviceUdid(), leaving.current?.signal).then(
+            (result) => {
+                setDebugBusy(false);
+                setDebugNote(replyText(result, done));
+            },
+            (error: Error) => {
+                if (!(error instanceof TrackerCommandAborted)) {
+                    setDebugBusy(false);
+                    setDebugNote(error.message);
+                }
+            },
+        );
     };
 
     const onKeyboardToggle = (next: boolean) => {
@@ -192,7 +276,9 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
             <div class="actions-sheet">
                 {!connected && (
                     <SheetStatus tone="warning">
-                        Reconnecting to the phone. Actions that need the stream are paused until it is back.
+                        {client.getDecoderProblem()
+                            ? 'This browser cannot show the phone’s video. Actions that need the stream are off.'
+                            : 'Reconnecting to the phone. Actions that need the stream are paused until it is back.'}
                     </SheetStatus>
                 )}
 
@@ -237,14 +323,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         </button>
                     </SheetRow>
                     <SheetRow title="Restart picture" description="Restart frozen or broken video.">
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            onClick={() => {
-                                setScreenNote('Restarting the picture…');
-                                client.restartStream();
-                            }}
-                        >
+                        <button type="button" class="sheet-button" onClick={onRestartPicture}>
                             Restart
                         </button>
                     </SheetRow>
@@ -291,6 +370,21 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             disabled={!connected}
                         >
                             Unlock
+                        </button>
+                    </SheetRow>
+                </SheetGroup>
+
+                <SheetGroup title="iPhone settings">
+                    <SheetRow title="Scheduled unlock" description="The daily unlock, its passcode and the last run.">
+                        <button
+                            type="button"
+                            class="sheet-button"
+                            onClick={() => {
+                                closeAllSheets();
+                                openApplSettingsSheet(client.getDeviceUdid());
+                            }}
+                        >
+                            Open
                         </button>
                     </SheetRow>
                 </SheetGroup>
@@ -348,7 +442,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             type="button"
                             class="sheet-button primary"
                             onClick={onSendClipboard}
-                            disabled={!connected || !clipboardDraft || draftTooLong || pending?.kind === 'clipboard'}
+                            disabled={!connected || !clipboardDraft || draftTooLong || sendingClipboard}
                         >
                             Send to phone
                         </button>

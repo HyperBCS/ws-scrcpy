@@ -202,6 +202,29 @@
     gap: 8px;
 }
 
+/* Above the black stage and the sleep overlay, below sheets and the controls button. */
+.stream-start-error {
+    z-index: 3;
+}
+
+.stream-start-error-note {
+    margin: 0;
+    color: var(--text-color-light);
+    font-size: 14px;
+}
+
+.stream-start-error-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.stream-start-error-actions .sheet-button {
+    min-height: 44px;
+}
+
 .device-view {
     display: flex;
     flex-direction: row;

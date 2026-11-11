@@ -896,7 +896,8 @@ validation* below for what was observed and what had to change.
   `KeyboardEvent.code` to HID usages (`hidKeyboard.ts`, US layout; `keyboardReportsForText`
   types ASCII and reports what it skipped). Touch is single-contact by protocol
   (`CoreDeviceInteractionHandler` follows the first pointer only, rAF-coalesced).
-- **Tracking.** The appl `ControlCenter` polls `usbmux list --simple --usb` every 3 s. A new
+- **Tracking.** The appl `ControlCenter` polls `usbmux list --simple --usb` every 3 s (since
+  2026-11-11 only where usbmuxd's event feed is not available; see "Fewer Python processes"). A new
   UDID is `unauthorized`/`paired:false` until `lockdown info` answers (that is what an
   un-Trusted phone looks like); then `amfi developer-mode-status` fills `developerMode`. The
   card offers **Enable** (`amfi enable-developer-mode`, which reboots the phone) and mirrors the
@@ -1763,12 +1764,77 @@ shutdown-harness.js` runs one fake session under the real `Shutdown` so the cras
 exit paths can be tested in a child process. test-coredevice.js turns the budget and the cooldown
 off for its other tests and uses port base 18300, clear of a server running on the same machine.
 
-**Still open.** A hardware check of the early-signal patch, which this machine's `python/venv`
-does not have yet. A test that the installed `screen_stream.py` carries every patch marker: on
-this machine's `python/venv` it would fail, because the file has neither the early-stop marker nor
-"ws-scrcpy button completion": `/button` is still answered when the request is queued, not when
-the phone has the edge. Running `npm run patch:ios` there would add both. The Docker image builds
-its own venv from the Dockerfile, which runs every patch, and was not checked.
+**Still open.** A hardware check of the early-signal patch.
+
+**Patch check (2026-11-11, phase 2).** `python/patches/check_patches.py` lists the marker every
+patch leaves and compares the two copied modules with their source. The server runs it with the
+venv's interpreter before a session's mount (`PyMobileDevice.helperProblem()`, called from
+`CoreDeviceRunner.bringUp`) and fails the start with "missing patches: ... Run npm run patch:ios".
+That is a failure before serve-web ran, so the viewer gets 4010 and keeps asking; a stale answer is
+not cached, so patching is noticed without a server restart. A check that cannot be run (no venv
+next to the CLI, the script missing, `IOS_PATCH_CHECK=0`, a Python error, or a `python` next to the
+CLI that has no pymobiledevice3 of its own) allows the session.
+`python/patches/test_check_patches.py` fails when `python/venv` is behind `python/patches`, and
+ties the marker list to the patch scripts. A patch that changes an already patched file needs a new
+marker in both places. `npm run dev` runs `patch:ios` first when the venv exists; if that fails
+it says so and starts anyway, so Android keeps working and iPhone sessions are refused. The same phase
+added a patch step ("ws-scrcpy input queue bound": `/touch` and `/key` answer 503 once 512 reports
+are queued), so a venv patched before it needs `npm run patch:ios` again. Dependencies of
+pymobiledevice3 are still not pinned.
+
+**Fewer Python processes (2026-11-11, phase 2, fixture-tested only).** One idle iPhone used to
+cost about 43,000 `pymobiledevice3` launches a day: `usbmux list` every 3 s, and the backlight
+plus (27.2+) `notification get-state` every 15 s, or every 4 s while streaming, where each
+get-state brought up a userspace tunnel beside serve-web's. Two changes:
+
+- `UsbmuxListener` holds one connection to usbmuxd's socket with a `Listen` request. Its
+  messages are only a signal: on any of them the tracker runs `usbmux list` at once (150 ms
+  debounce). While the feed is up the regular poll is every 60 s, not 3 s, except while an
+  attached phone has not answered lockdown yet (untrusted, or still booting): usbmuxd sends
+  nothing when "Trust This Computer" is accepted, so that phone keeps the 3 s poll and its
+  lockdown retry every 10 s until it answers. The list itself still
+  comes from the CLI, so a feed that misbehaves can only make an attach or detach show up to a
+  minute late; it cannot hide a phone. No socket, a refused `Listen` or `IOS_USBMUX_LISTEN=0`
+  leave the 3 s poll in place. The framing is written from the usbmuxd protocol and tested
+  against a fake socket only. First thing to check on hardware: the log has no
+  "[UsbmuxListener] ... polling for iPhones instead" line, and a replug shows within a second.
+- `DeviceStateMonitor` trusts the observer once it has stayed up for 10 s (`entry.observed`). From
+  then the screen is read on the timer every 5 minutes when idle (4 s while a session is up, as
+  before: that read is lockdown only, no tunnel), and the 27.2+ lock is read on the timer at
+  most every 3 minutes. Events, button and input pokes, `refresh` and `waitForLock` still read
+  at once, except that a button press on 27.2+ no longer forces a get-state while the observer
+  is running and the phone is known unlocked and awake. When the observer exits, or was never
+  started (`IOS_STATE_NOTIFICATIONS=0`), the old cadence returns. This rests on the observer
+  delivering `lockstate` with `State` on 27.2+, which the September notes record; a deaf observer
+  now means a badge that is up to 5 minutes stale, where it was 15 s.
+
+`ControlCenter.refreshDetails` also re-checks after each read that the tracker is still running
+and the phone still attached, so a release during a read no longer recreates the monitor.
+
+**iPhone client requests and failure states (2026-11-11, phase 2).**
+
+- Every tracker command from the iPhone card, the Actions sheet and the settings panel goes
+  through `sendTrackerCommand` (`src/app/client/trackerCommand.ts`). It matches the reply on udid
+  and request id and always settles: refused at once when the tracker socket is closed
+  (`BaseDeviceTracker.sendCommand` sends nothing then and does not throw), when the socket closes
+  while waiting (`onceClosed`; the server answers only on the socket the command came in on),
+  after a per-command limit (`serviceCommandTimeoutMs`), or when the view goes away. Before, a
+  server restart during Remount left all three Troubleshooting buttons disabled.
+- Run now also ends when a device update shows a run that finished after the click (`lastRun.at`
+  differs and `running` is false). The reply is lost when the tracker reconnects mid-run.
+- Stream-socket requests (rotate, Send to phone, Restart picture) carry an id, have a time limit
+  and end when the stream socket drops. `restart` is now answered: done, or "restarted a moment
+  ago, try again in N s" when the 30 s limit refuses it.
+- `streamConnected` means the socket is open, the session is `ready` and this browser has a
+  decoder. It used to mean "socket open", so the header said Connected and the hardware buttons
+  were live over a stopped session or a stream the browser could not decode. Failed, stopped and
+  no-decoder are one card on the stage (`.stream-start-error`, the card "Unable to start this
+  stream" already used) with the reason, Retry where it can help, and Back to devices. The card
+  stays up between automatic retries and says "Trying again". The progress notice is only for a
+  first start.
+- The iPhone settings panel opens from the stream controls and the Actions sheet as well as the
+  card, and from the card of a disconnected phone. The sheets are titled "iPhone settings" and
+  "Stream settings".
 
 ### Scheduled unlock and passcode handling after the 2026-11-10 review (fixture-tested only)
 

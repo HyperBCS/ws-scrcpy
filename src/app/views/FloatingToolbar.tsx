@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { deviceSwitcherOpen, liveTextOpen, streamConnected, toolsSheetOpen, unlockSheetOpen } from '../state/stream';
-import { settingsSheetTarget } from '../state/settingsSheet';
+import { applSettingsSheetTarget, settingsSheetTarget } from '../state/settingsSheet';
 import '../../style/views/FloatingToolbar.css';
 import { usePresence } from '../ui/Presence';
 
@@ -103,7 +103,8 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
         deviceSwitcherOpen.value ||
         liveTextOpen.value ||
         unlockSheetOpen.value ||
-        !!settingsSheetTarget.value;
+        !!settingsSheetTarget.value ||
+        !!applSettingsSheetTarget.value;
     const connected = streamConnected.value;
 
     useLayoutEffect(() => {

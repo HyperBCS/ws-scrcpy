@@ -245,6 +245,25 @@ class NativeQueueTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(stopping, sending)
         self.assertEqual(self.server._keyboard.events[-1], 'send-finished')
 
+    async def test_a_full_input_queue_refuses_touch_and_key_reports(self):
+        # No worker: the queue only grows, as it does when the HID worker hangs on a report.
+        request, writer = await self.request('/touch', b'{"type":"tap","x":1,"y":1}')
+        await request
+        self.assertTrue(writer.data.startswith(b'HTTP/1.1 200 OK\r\n'))
+        self.assertEqual(self.server._hid_queue.qsize(), 1)
+        while self.server._hid_queue.qsize() < patch.HID_QUEUE_LIMIT:
+            self.server._hid_queue.put_nowait(('/key', b'{"usages":[4]}'))
+        for path, body in (('/touch', b'{"type":"tap","x":1,"y":1}'), ('/key', b'{"usages":[]}')):
+            request, writer = await self.request(path, body)
+            await request
+            self.assertTrue(writer.data.startswith(b'HTTP/1.1 503 '), path)
+            self.assertIn(b'Device input queue is full', writer.data)
+            self.assertTrue(writer.closed)
+        self.assertEqual(self.server._hid_queue.qsize(), patch.HID_QUEUE_LIMIT)
+        # A keyboard detach is still taken: it waits for its own completion and has its own timeout.
+        await self.request('/keyboard/detach')
+        self.assertEqual(self.server._hid_queue.qsize(), patch.HID_QUEUE_LIMIT + 1)
+
     async def test_patch_upgrade_is_compilable_and_idempotent(self):
         source = patch.patch_stream(native_paths[0].read_text())
         compile(source, '<native patched stream>', 'exec')

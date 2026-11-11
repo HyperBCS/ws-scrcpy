@@ -49,6 +49,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     protected id = '';
     private messageId = 0;
     private reconnectTimer?: ReturnType<typeof setTimeout>;
+    private readonly closeListeners = new Set<() => void>();
 
     protected constructor(
         params: ParamsDeviceTracker,
@@ -86,6 +87,29 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         return message.id;
     }
 
+    /** Whether a command sent now would leave this browser. `sendCommand` drops it silently otherwise. */
+    public isOpen(): boolean {
+        return !!this.ws && this.ws.readyState === this.ws.OPEN;
+    }
+
+    /**
+     * Calls `listener` once, the next time this tracker's socket closes. A command waiting for
+     * its reply uses it: the server answers on the socket the command came in on, so after a
+     * close the answer cannot arrive. Returns a function that withdraws the listener.
+     */
+    public onceClosed(listener: () => void): () => void {
+        this.closeListeners.add(listener);
+        return () => {
+            this.closeListeners.delete(listener);
+        };
+    }
+
+    private notifyClosed(): void {
+        const listeners = Array.from(this.closeListeners);
+        this.closeListeners.clear();
+        listeners.forEach((listener) => listener());
+    }
+
     protected publishDevices(): void {
         if (this.destroyed) {
             return;
@@ -94,6 +118,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     }
 
     protected onSocketClose(event: CloseEvent): void {
+        this.notifyClosed();
         if (this.destroyed) {
             return;
         }
@@ -195,6 +220,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
             this.reconnectTimer = undefined;
         }
         super.destroy();
+        this.notifyClosed();
         this.descriptors = [];
         // Two URLs can resolve to the same server id; destroying the duplicate must not
         // remove the surviving tracker's cards.

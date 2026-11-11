@@ -10,10 +10,16 @@ import { PyMobileDevice } from './PyMobileDevice';
 import { CoreDeviceRunner } from './CoreDeviceRunner';
 import { AppleRuntimeState, DeviceStateMonitor } from './DeviceStateMonitor';
 import { UnlockScheduler, UnlockSchedulerEvents } from './UnlockScheduler';
+import { UsbmuxListener } from './UsbmuxListener';
 
 const TAG = '[ControlCenter]';
 const MOUNT_TIMEOUT_MS = 180000;
 const POLL_INTERVAL_MS = 3000;
+// While usbmuxd's own feed announces every attach and detach, the list is read on those events.
+// The timer then only covers a feed that has gone quiet without closing.
+const POLL_LISTENING_MS = 60000;
+// usbmuxd sends one message per device; several in a row are one read of the list.
+const CHANGE_DEBOUNCE_MS = 150;
 // An untrusted phone answers lockdown with a pairing error until its "Trust This Computer"
 // prompt is accepted; asking again every poll would only spam the log.
 const UNPAIRED_RETRY_MS = 10000;
@@ -38,8 +44,11 @@ interface Tracked {
 /**
  * iOS device tracking through `pymobiledevice3` over usbmuxd.
  *
- * `usbmux list --simple --usb` is polled for the set of attached UDIDs (no lockdown, so an
- * untrusted phone still shows up), and each new device gets one `lockdown info` (which raises
+ * `usbmux list --simple --usb` gives the set of attached UDIDs (no lockdown, so an untrusted
+ * phone still shows up). It is read when usbmuxd reports a change (`UsbmuxListener`) and once a
+ * minute, or every 3 s where that feed is not available or a phone has not answered lockdown yet
+ * (`waitingForLockdown`). At 3 s it was 28,800 Python processes a day for a server with nothing
+ * plugged in. Each new device gets one `lockdown info` (which raises
  * the Trust prompt through pymobiledevice3's autopair) plus `amfi developer-mode-status`. The
  * emitted `ApplDeviceDescriptor` also mirrors the screen-session state from `CoreDeviceRunner`
  * so the device list can show Starting/Running like it does for scrcpy, and the screen/lock
@@ -51,6 +60,9 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
     private initialized = false;
     private pollTimer?: NodeJS.Timeout;
     private polling = false;
+    private pollQueued = false;
+    private changeTimer?: NodeJS.Timeout;
+    private listener?: UsbmuxListener;
     private readonly tracked = new Map<string, Tracked>();
     private readonly id: string;
     private onSessionStatus?: (event: { udid: string; state: string; message?: string }) => void;
@@ -116,8 +128,58 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
         };
         DeviceStateMonitor.getInstance().on('state', this.onRuntimeState);
         this.startScheduler();
+        this.startListener();
         await this.poll();
         this.schedulePoll();
+    }
+
+    /** Test seam: the feed of attach and detach events. */
+    protected createListener(): UsbmuxListener | undefined {
+        return UsbmuxListener.isEnabled() ? new UsbmuxListener() : undefined;
+    }
+
+    private startListener(): void {
+        const listener = this.createListener();
+        if (!listener) {
+            return;
+        }
+        this.listener = listener;
+        listener.on('change', () => {
+            if (!this.initialized || this.changeTimer) {
+                return;
+            }
+            this.changeTimer = setTimeout(() => {
+                this.changeTimer = undefined;
+                this.pollNow();
+            }, CHANGE_DEBOUNCE_MS);
+        });
+        // The feed came up or went away: the wait until the next regular poll changes with it.
+        listener.on('ready', () => {
+            if (this.initialized && this.pollTimer) {
+                clearTimeout(this.pollTimer);
+                this.pollTimer = undefined;
+                this.schedulePoll();
+            }
+        });
+        listener.start();
+    }
+
+    /** Reads the list now, or again as soon as the read in progress has finished. */
+    private pollNow(): void {
+        if (!this.initialized) {
+            return;
+        }
+        if (this.polling) {
+            this.pollQueued = true;
+            return;
+        }
+        if (this.pollTimer) {
+            clearTimeout(this.pollTimer);
+            this.pollTimer = undefined;
+        }
+        this.poll()
+            .catch((error: Error) => console.error(`${TAG} ${error.message}`))
+            .finally(() => this.schedulePoll());
     }
 
     /**
@@ -176,12 +238,29 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
         if (!this.initialized || this.pollTimer) {
             return;
         }
-        this.pollTimer = setTimeout(() => {
-            this.pollTimer = undefined;
-            this.poll()
-                .catch((error: Error) => console.error(`${TAG} ${error.message}`))
-                .finally(() => this.schedulePoll());
-        }, POLL_INTERVAL_MS);
+        this.pollTimer = setTimeout(
+            () => {
+                this.pollTimer = undefined;
+                this.poll()
+                    .catch((error: Error) => console.error(`${TAG} ${error.message}`))
+                    .finally(() => this.schedulePoll());
+            },
+            this.listener?.isReady() && !this.waitingForLockdown() ? POLL_LISTENING_MS : POLL_INTERVAL_MS,
+        );
+    }
+
+    /**
+     * An attached phone that lockdown has not answered for yet: untrusted, or still booting. Its
+     * next lockdown read is due UNPAIRED_RETRY_MS later and comes from a poll, and usbmuxd sends
+     * nothing when "Trust This Computer" is accepted, so the short poll stays until it answers.
+     */
+    private waitingForLockdown(): boolean {
+        for (const item of this.tracked.values()) {
+            if (item.descriptor.state !== DeviceState.DISCONNECTED && !item.descriptor.paired) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** One pass: reconcile attached UDIDs with what is tracked. Test seam via `listUdids`. */
@@ -245,6 +324,11 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
             }
         } finally {
             this.polling = false;
+            if (this.pollQueued) {
+                // A change was reported while this read was running, so it may already be out of date.
+                this.pollQueued = false;
+                setImmediate(() => this.pollNow());
+            }
         }
     }
 
@@ -300,14 +384,24 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
             item.descriptor.version = info.ProductVersion || item.descriptor.version;
             item.descriptor.paired = true;
             item.descriptor.state = DeviceState.CONNECTED;
-            item.descriptor.developerMode = await this.fetchDeveloperMode(udid);
+            // The tracker can be released, or the phone unplugged, during either read below. A
+            // phone must not be watched after that: the monitor would be created again and keep
+            // an observer running for a phone nobody tracks.
+            const gone = () =>
+                !this.initialized || this.tracked.get(udid) !== item || item.descriptor.state !== DeviceState.CONNECTED;
+            const developerMode = await this.fetchDeveloperMode(udid);
+            if (gone()) {
+                return;
+            }
+            item.descriptor.developerMode = developerMode;
             item.descriptor.session = CoreDeviceRunner.getInstance().getStatus(udid).state;
             const monitor = DeviceStateMonitor.getInstance();
             if (!monitor.isWatching(udid)) {
-                monitor.watch(udid, {
-                    version: item.descriptor.version,
-                    language: await this.fetchLanguage(udid),
-                });
+                const language = await this.fetchLanguage(udid);
+                if (gone()) {
+                    return;
+                }
+                monitor.watch(udid, { version: item.descriptor.version, language });
             }
             Object.assign(item.descriptor, monitor.getState(udid));
             item.descriptor.unlockSchedule = this.scheduler?.getStatus(udid);
@@ -354,6 +448,13 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
             clearTimeout(this.pollTimer);
             this.pollTimer = undefined;
         }
+        if (this.changeTimer) {
+            clearTimeout(this.changeTimer);
+            this.changeTimer = undefined;
+        }
+        this.pollQueued = false;
+        this.listener?.stop();
+        this.listener = undefined;
         if (this.onSessionStatus) {
             CoreDeviceRunner.getInstance().off('status', this.onSessionStatus);
             this.onSessionStatus = undefined;

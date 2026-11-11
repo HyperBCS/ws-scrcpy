@@ -163,7 +163,7 @@ async function main() {
                 );
             };
             await open();
-            const close = page.getByRole('button', { name: 'Close Settings', exact: true });
+            const close = page.getByRole('button', { name: 'Close Stream settings', exact: true });
             const closeBox = await close.boundingBox();
             const iconBox = await close.locator('svg').boundingBox();
             assert(closeBox.width >= 48 && closeBox.height >= 48, 'close has a48px target');
@@ -268,7 +268,7 @@ async function main() {
             await settle(page);
             const touchesBefore = remotePackets.filter((packet) => packet[0] === 2).length;
             if (touch) await gesture(cdp, await handlePoint(page), 0, 130);
-            else await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
+            else await page.getByRole('button', { name: 'Close Stream settings', exact: true }).click();
             await page.locator('.bottom-sheet-root.open').waitFor({ state: 'hidden' });
             assert.equal(
                 remotePackets.filter((packet) => packet[0] === 2).length,

@@ -118,7 +118,7 @@ function commitsOnChange(): boolean {
 }
 
 /**
- * The iPhone "Settings" sheet: the scheduled unlock and read-only phone facts. Everything shown
+ * The "iPhone settings" sheet: the scheduled unlock and read-only phone facts. Everything shown
  * comes from `descriptor.unlockSchedule`, which the server keeps current through the normal
  * device broadcast; a command reply is used only until the next broadcast arrives. The passcode
  * lives in this component's state until Save and goes nowhere else in the browser.
@@ -154,6 +154,11 @@ export function ApplSettingsSheet() {
     const confirmRemove = useArmedAction<'passcode'>(!!target);
     // A reply that lands after the sheet closed, or reopened for another phone, is dropped.
     const generation = useRef(0);
+    // The request whose reply is still wanted. A run that a device update has already reported
+    // as finished gives its turn up, so its late reply cannot clear a newer request's state.
+    const request = useRef(0);
+    // `lastRun.at` when Run now was pressed; a different one in a later update is this run's result.
+    const runBaseline = useRef<number | undefined>(undefined);
 
     useEffect(() => {
         generation.current++;
@@ -190,23 +195,20 @@ export function ApplSettingsSheet() {
     const zoneLabel =
         schedule.timeZone ?? (schedule.serverTimeZone ? `Server time (${schedule.serverTimeZone})` : 'Server time');
 
-    function send<T>(
-        kind: Pending,
-        request: () => Promise<T>,
-        done: (result: T) => void,
-        fail: (message: string) => void,
-    ) {
+    function send<T>(kind: Pending, run: () => Promise<T>, done: (result: T) => void, fail: (message: string) => void) {
         const current = generation.current;
+        const turn = ++request.current;
+        const wanted = () => generation.current === current && request.current === turn;
         setPending(kind);
-        request().then(
+        run().then(
             (result) => {
-                if (generation.current === current) {
+                if (wanted()) {
                     setPending(undefined);
                     done(result);
                 }
             },
             (error: Error) => {
-                if (generation.current === current) {
+                if (wanted()) {
                     setPending(undefined);
                     fail(error.message);
                 }
@@ -357,10 +359,24 @@ export function ApplSettingsSheet() {
         );
     };
 
+    // The reply to Run now is lost when the tracker socket drops during the run, and the run goes
+    // on without it. Its result still arrives with the device update, so that ends the wait: the
+    // button does not read "Running" for three minutes after the run has finished.
+    useEffect(() => {
+        const last = broadcast?.lastRun;
+        if (pending !== 'run' || !broadcast || broadcast.running || !last || last.at === runBaseline.current) {
+            return;
+        }
+        request.current++;
+        setPending(undefined);
+        setRunNote({ text: describeRun(last), tone: runTone(last.outcome) });
+    }, [broadcast, pending]);
+
     const onRunNow = () => {
         if (!tracker || !renderTarget) {
             return;
         }
+        runBaseline.current = broadcast?.lastRun?.at;
         setRunNote({ text: 'Running. This takes about 30 seconds.', tone: 'neutral' });
         send(
             'run',
@@ -372,7 +388,7 @@ export function ApplSettingsSheet() {
 
     if (!renderTarget) {
         return (
-            <BottomSheet open={false} onClose={closeApplSettingsSheet} title="Settings">
+            <BottomSheet open={false} onClose={closeApplSettingsSheet} title="iPhone settings">
                 {null}
             </BottomSheet>
         );
@@ -394,7 +410,7 @@ export function ApplSettingsSheet() {
     const stopKeys = (event: KeyboardEvent) => event.stopPropagation();
 
     return (
-        <BottomSheet open={!!target} onClose={closeApplSettingsSheet} title="Settings">
+        <BottomSheet open={!!target} onClose={closeApplSettingsSheet} title="iPhone settings">
             <div class="appl-settings-sheet">
                 <div class="settings-device-context" title={renderTarget.udid}>
                     <span class="settings-device-dot" aria-hidden="true" />
@@ -608,9 +624,19 @@ export function ApplSettingsSheet() {
                     />
                     <SheetRow
                         title="Run now"
-                        description="Opens a screen session, unlocks, then locks. Takes about 30 seconds."
+                        description={
+                            connected || !tracker
+                                ? 'Opens a screen session, unlocks, then locks. Takes about 30 seconds.'
+                                : 'Not available while the phone is not connected.'
+                        }
+                        attributes={{ 'data-unlock-run': connected ? 'ready' : 'unavailable' }}
                     >
-                        <button type="button" class="sheet-button" disabled={locked || running} onClick={onRunNow}>
+                        <button
+                            type="button"
+                            class="sheet-button"
+                            disabled={locked || running || !connected}
+                            onClick={onRunNow}
+                        >
                             {running ? 'Running…' : 'Run now'}
                         </button>
                     </SheetRow>

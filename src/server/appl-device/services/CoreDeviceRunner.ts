@@ -238,7 +238,9 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
     }
 
     public async start(): Promise<void> {
-        // Sessions start on demand, when the first viewer connects.
+        // Sessions start on demand, when the first viewer connects. A helper that is behind the
+        // repository's patches is logged now, not when the first session is refused.
+        void PyMobileDevice.helperProblem();
     }
 
     public getStatus(udid: string): SessionStatus {
@@ -537,6 +539,14 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
 
     private async bringUp(session: Session): Promise<void> {
         const { udid } = session;
+        // Before anything reaches the phone: a helper without the current patches is not started.
+        const stale = await PyMobileDevice.helperProblem();
+        if (stale) {
+            throw new Error(stale);
+        }
+        if (this.sessions.get(udid) !== session) {
+            throw new Error('Session stopped');
+        }
         // The Developer Disk Image hosts the display and HID daemons; it never survives a reboot
         // and the CLI treats "already mounted" as success. Developer Mode being off is the one
         // failure worth naming, because the fix is a toggle on the phone.
@@ -552,7 +562,7 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
             throw new Error('Session stopped');
         }
         this.setState(session, 'starting', 'Starting the screen stream');
-        // `serve-web` has no --udid option (verified against 11.12.5): the RSD dependency reads
+        // `serve-web` has no --udid option (11.44.0, as in 11.12.5): the RSD dependency reads
         // the target from PYMOBILEDEVICE3_UDID when it brings the tunnel up itself.
         const child = PyMobileDevice.spawnDetached(
             [

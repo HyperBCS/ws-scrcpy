@@ -8,19 +8,18 @@ import {
     UnlockSchedulePatch,
     UnlockScheduleStatus,
 } from '../../common/IosUnlockSchedule';
-import type { DeviceEntry } from './devices';
+import { CommandTracker, sendTrackerCommand } from '../client/trackerCommand';
 
-type UnlockTracker = DeviceEntry['tracker'];
-type UnlockReply = { udid?: string; requestId?: number; result?: unknown; error?: string };
+type UnlockTracker = CommandTracker;
 
 /** Wait for a settings reply. A run (`RUN_UNLOCK_NOW`) gets `UNLOCK_RUN_TIMEOUT_MS` instead. */
 export const UNLOCK_SETTINGS_TIMEOUT_MS = 15000;
 
 /**
- * One scheduled-unlock command over the tracker socket, resolved with the parsed `result` of the
- * matching reply. Same shape as `requestLockState` in `unlockDevice.ts`: match `udid` and
- * `requestId`, reject on `error`, clean up the listener and the timer on every exit. `data` is
- * sent as given and neither kept nor logged here; `SET_UNLOCK_PASSCODE` relies on that.
+ * One scheduled-unlock command over the tracker socket (`sendTrackerCommand`), resolved with the
+ * parsed `result` of the matching reply. It rejects at once when the socket is closed, and when
+ * the socket closes while the reply is awaited: a run goes on without the browser, and its
+ * result arrives with the device update. `data` is sent as given and neither kept nor logged.
  */
 export function sendUnlockCommand<T>(
     tracker: UnlockTracker,
@@ -29,37 +28,11 @@ export function sendUnlockCommand<T>(
     data: Record<string, unknown>,
     timeoutMs: number,
 ): Promise<T> {
-    return new Promise((resolve, reject) => {
-        let requestId: number | undefined;
-        const cleanup = () => {
-            clearTimeout(timeout);
-            tracker.off(type, onReply);
-        };
-        const onReply = (reply: UnlockReply) => {
-            if (reply?.udid !== udid || reply.requestId !== requestId) {
-                return;
-            }
-            cleanup();
-            if (reply.error) {
-                reject(new Error(reply.error));
-                return;
-            }
-            try {
-                resolve((typeof reply.result === 'string' ? JSON.parse(reply.result) : reply.result) as T);
-            } catch {
-                reject(new Error('The server sent an unreadable reply.'));
-            }
-        };
-        const timeout = setTimeout(() => {
-            cleanup();
-            reject(new Error('No answer from the server. Check the connection and try again.'));
-        }, timeoutMs);
-        tracker.on(type, onReply);
+    return sendTrackerCommand(tracker, type, udid, data, timeoutMs).then((result) => {
         try {
-            requestId = tracker.sendCommand(type, { udid, ...data });
+            return (typeof result === 'string' ? JSON.parse(result) : result) as T;
         } catch {
-            cleanup();
-            reject(new Error('Could not reach the server. Reconnect and try again.'));
+            throw new Error('The server sent an unreadable reply.');
         }
     });
 }

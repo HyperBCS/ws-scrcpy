@@ -22,6 +22,8 @@ process.env.IOS_SESSION_START_LIMIT = '0';
 process.env.IOS_SESSION_COOLDOWN_MS = '0';
 // Clear of 18100, where a server running on this machine keeps its own serve-web.
 process.env.IOS_SERVE_WEB_BASE_PORT = '18300';
+// The tracker must not listen on this machine's real usbmuxd socket from a test.
+process.env.IOS_USBMUX_LISTEN = '0';
 after(() => {
     // A failed assertion skips a test's own `runner.release()`; without this the fake serve-web
     // and its ffmpeg child would outlive the run.
@@ -658,6 +660,30 @@ test('restart reaches serve-web once; a second one straight after is dropped', a
     });
 });
 
+test('a restart with an id is answered: done, or how long to wait when it comes too soon', async () => {
+    fs.rmSync(logFile, { force: true });
+    await withEnv({ FAKE_LOG: logFile }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const first = openViewer('iphone-restart-reply');
+        const second = openViewer('iphone-restart-reply');
+        await until(() => [first, second].every(({ socket }) => socket.texts().some((m) => m.type === 'codec')));
+        const results = ({ socket }) => socket.texts().filter((m) => m.type === 'result');
+        first.socket.message(JSON.stringify({ type: 'restart', id: 41 }));
+        assert(await until(() => results(first).length === 1));
+        assert.deepEqual(results(first)[0], { type: 'result', id: 41, ok: true });
+        // The Actions sheet used to stay on "Restarting the picture" here: no reply ever came.
+        second.socket.message(JSON.stringify({ type: 'restart', id: 7 }));
+        assert(await until(() => results(second).length === 1));
+        const refused = results(second)[0];
+        assert.equal(refused.id, 7);
+        assert.equal(refused.ok, false);
+        assert.match(refused.error, /^The picture was restarted a moment ago\. Try again in (30|29) s\.$/);
+        assert.equal(results(first).length, 1, 'the answer goes to the viewer that asked');
+        assert.equal(calls().filter((line) => line.startsWith('post /restart')).length, 1);
+        runner.release();
+    });
+});
+
 test('a stop during the preflight waits until serve-web can shut down in order', async () => {
     fs.rmSync(logFile, { force: true });
     await withEnv({ FAKE_LOG: logFile, FAKE_PREFLIGHT_MS: '600' }, async () => {
@@ -1143,6 +1169,102 @@ test('audio relay: the unpatched helper\'s 503 becomes a disabled status with th
         assert.ok(socket.binaries().some((frame) => Buffer.from(frame)[0] !== AUDIO_PREFIX), 'video still flows');
         socket.close(1000, 'bye');
         await tick();
+        runner.release();
+    });
+});
+
+test('a helper that is behind the repository patches is refused before anything reaches the phone', async (t) => {
+    fs.rmSync(logFile, { force: true });
+    // Stands in for python/patches/check_patches.py run by the venv interpreter.
+    const answer = (result) => ({ command: process.execPath, args: ['-e', `console.log(${JSON.stringify(JSON.stringify(result))})`] });
+    let result = { version: '11.44.0', missing: ['button completion', 'early stop'] };
+    let checks = 0;
+    t.mock.method(PyMobileDevice, 'patchCheckCommand', () => {
+        checks++;
+        return answer(result);
+    });
+    PyMobileDevice.useBin(shim);
+    await withEnv({ FAKE_LOG: logFile, IOS_AUDIO: '0' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        try {
+            await assert.rejects(runner.acquire('iphone-stale-helper'), (error) => {
+                assert.equal(error.name, 'SessionStartError');
+                assert.equal(error.serveWebStarted, false);
+                assert.match(error.message, /missing patches: button completion, early stop\. Run "npm run patch:ios"/);
+                return true;
+            });
+            assert.equal(runner.getStatus('iphone-stale-helper').state, 'error');
+            assert(!calls().some((line) => line.includes('mounter') || line.includes('serve-web')), 'nothing was run for the phone');
+            // The viewer is told why and may ask again: nothing was started on the phone.
+            const socket = new FakeSocket();
+            CoreDeviceProxy.processRequest(socket, {
+                action: 'proxy-coredevice',
+                url: new URL('ws://localhost/?action=proxy-coredevice&udid=iphone-stale-helper'),
+            });
+            for (let i = 0; i < 200 && socket.readyState !== socket.CLOSED; i++) await sleep(20);
+            assert.match(socket.texts().at(-1).message, /npm run patch:ios/);
+            assert.equal(socket.closes.at(-1).code, 4010);
+            // patch:ios has been run: the next start asks again and goes ahead, and a current
+            // helper is not asked about a second time.
+            result = { version: '11.44.0', missing: [] };
+            const before = checks;
+            runner.release('iphone-stale-helper', await runner.acquire('iphone-stale-helper'));
+            assert.equal(checks, before + 1);
+            runner.stopSession('iphone-stale-helper');
+            await CoreDeviceRunner.whenStopped('iphone-stale-helper');
+            runner.release('iphone-stale-helper', await runner.acquire('iphone-stale-helper'));
+            assert.equal(checks, before + 1);
+        } finally {
+            runner.release();
+            PyMobileDevice.useBin(shim);
+        }
+    });
+});
+
+test('the helper check is skipped where it cannot be run, and a check that fails allows the session', async (t) => {
+    // The fake CLI is not in a venv, so there is no interpreter to ask.
+    assert.equal(PyMobileDevice.patchCheckCommand(), undefined);
+    assert.equal(await PyMobileDevice.helperProblem(), undefined);
+    t.mock.method(PyMobileDevice, 'patchCheckCommand', () => ({ command: process.execPath, args: ['-e', 'process.exit(3)'] }));
+    t.mock.method(console, 'error', () => undefined);
+    PyMobileDevice.useBin(shim);
+    try {
+        assert.equal(await PyMobileDevice.helperProblem(), undefined, 'an unknown answer does not lock the phones out');
+        assert.match(console.error.mock.calls[0].arguments[0], /could not check the installed patches/);
+        // The interpreter found next to the CLI has no pymobiledevice3 of its own.
+        const answer = JSON.stringify(JSON.stringify({ version: null, found: false, missing: [] }));
+        t.mock.method(PyMobileDevice, 'patchCheckCommand', () => ({ command: process.execPath, args: ['-e', `console.log(${answer})`] }));
+        PyMobileDevice.useBin(shim);
+        assert.equal(await PyMobileDevice.helperProblem(), undefined, 'a package the check cannot see is not a missing patch');
+        assert.match(console.error.mock.calls.at(-1).arguments[0], /has no pymobiledevice3 to check/);
+    } finally {
+        PyMobileDevice.useBin(shim);
+    }
+});
+
+test('a serve-web whose input queue is full ends the viewer with an error instead of piling input up', async () => {
+    // /touch and /key are answered when queued, so a stuck HID worker never times a request out.
+    // The patched helper refuses reports past its queue bound, and that refusal is what the proxy sees.
+    await withEnv({ FAKE_HID_QUEUE_LIMIT: '2', IOS_AUDIO: '0' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const socket = new FakeSocket();
+        const proxy = CoreDeviceProxy.processRequest(socket, {
+            action: 'proxy-coredevice',
+            url: new URL('ws://localhost/?action=proxy-coredevice&udid=iphone-queue-full'),
+        });
+        assert(proxy);
+        for (let i = 0; i < 200 && !socket.binaries().length; i++) await sleep(20);
+        const tap = JSON.stringify({ type: 'touch', op: 'tap', x: 100, y: 100 });
+        socket.message(tap);
+        socket.message(tap);
+        await proxy.inputChain;
+        assert.equal(socket.readyState, socket.OPEN, 'reports under the bound are taken');
+        socket.message(tap);
+        await proxy.inputChain;
+        await tick();
+        assert.equal(socket.readyState, socket.CLOSED);
+        assert.match(socket.texts().at(-1).message, /Touch input failed/);
+        assert.equal(socket.closes.at(-1).code, 4009);
         runner.release();
     });
 });
@@ -2688,6 +2810,80 @@ test('direct lock polling recovers missed events and respects the lock opt-out',
         });
     } finally {
         monitor.release();
+    }
+});
+
+test('with the observer running the timers slow down, and polling returns when it stops', async (t) => {
+    const monitor = new DeviceStateMonitor();
+    const reads = { screen: 0, lock: 0 };
+    t.mock.method(PyMobileDevice, 'runJson', async (args) => {
+        if (args[0] === 'notification') {
+            reads.lock++;
+            return { 'com.apple.springboard.lockstate': 0 };
+        }
+        reads.screen++;
+        return { IODisplayParameters: { brightness: { value: 1 } } };
+    });
+    t.mock.method(PyMobileDevice, 'runProbeJson', () => { throw new Error('unexpected accessibility walk'); });
+    const observers = [];
+    t.mock.method(PyMobileDevice, 'spawnDetached', () => {
+        const child = Object.assign(new EventEmitter(), {
+            stdout: new EventEmitter(),
+            stderr: new EventEmitter(),
+            exitCode: null,
+            signalCode: null,
+            kill() {},
+        });
+        observers.push(child);
+        return child;
+    });
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const advance = async (ms) => {
+        t.mock.timers.tick(ms);
+        for (let i = 0; i < 6; i++) await tick();
+    };
+    try {
+        monitor.watch('observed', { version: '27.2' });
+        await advance(1);
+        assert.deepEqual(reads, { screen: 1, lock: 1 }, 'both are read when the phone is first watched');
+        assert.equal(observers.length, 1);
+        // The observer has stayed up: one more read, then events are trusted.
+        await advance(10000);
+        assert.deepEqual(reads, { screen: 2, lock: 2 });
+        await advance(240000);
+        assert.deepEqual(reads, { screen: 2, lock: 2 }, 'four idle minutes start no process at all (it was 16 of each)');
+        await advance(61000);
+        assert.deepEqual(reads, { screen: 3, lock: 3 }, 'a read every five minutes recovers a missed event');
+
+        // A viewer: the screen is polled every 4 s, the lock is not.
+        monitor.setSessionActive('observed', true);
+        await advance(1);
+        for (let i = 0; i < 10; i++) await advance(4000);
+        assert.equal(reads.screen, 14);
+        assert.equal(reads.lock, 3, 'no tunnel beside serve-web every 4 s');
+        for (let i = 0; i < 40; i++) await advance(4000);
+        assert.equal(reads.lock, 4, 'the lock is read directly once every three minutes');
+        const before = { ...reads };
+        monitor.pokeButton('observed');
+        await advance(1500);
+        assert.equal(reads.lock, before.lock, 'a button press on an unlocked phone leaves the lock to the observer');
+        assert.equal(reads.screen, before.screen + 1);
+        // An event still updates the state at once.
+        observers[0].stdout.emit('data', '{"Command":"RelayNotification","Name":"com.apple.springboard.lockstate","State":1}\n');
+        assert.equal(monitor.getState('observed')['device.locked'], true);
+
+        // The observer dies: polling takes over until a new one has settled.
+        monitor.setSessionActive('observed', false);
+        observers[0].emit('close');
+        const idle = { ...reads };
+        await advance(4500);
+        assert.equal(reads.screen, idle.screen, 'idle again: not the 4 s cadence');
+        await advance(10600);
+        assert.deepEqual(reads, { screen: idle.screen + 1, lock: idle.lock + 1 }, 'the 15 s poll reads both again');
+        assert.equal(observers.length, 2, 'and the observer was started again');
+    } finally {
+        monitor.release();
+        t.mock.timers.reset();
     }
 });
 

@@ -67,7 +67,9 @@ def _decide(caption: str) -> bool | None:
     lowered = caption.strip().lower()
     if not lowered:
         return None
-    if any(marker == lowered or marker in lowered for marker in locked_markers):
+    # Whole captions only, as the server reads them: "Unlocked" contains "locked", and so does
+    # "Blocked Contacts".
+    if any(marker == lowered for marker in locked_markers):
         return True
     if any(marker == lowered for marker in unlocked_markers):
         return False

@@ -10,6 +10,13 @@ const { devices } = require('../src/app/state/devices');
 const { findDeviceForStream } = require('../src/app/state/streamDevice');
 const { readSavedPasscode, savePasscode, forgetPasscode, purgeLegacyPasscodes } = require('../src/app/state/savedPasscode');
 const { sendUnlockCommand, runUnlockNow, unlockCardLine, formatUnlockMoment } = require('../src/app/state/unlockSchedule');
+const {
+    sendTrackerCommand,
+    sendServiceCommand,
+    serviceCommandTimeoutMs,
+    replyText,
+    TrackerCommandAborted,
+} = require('../src/app/client/trackerCommand');
 
 function fakeStorage(t) {
     const previous = Object.getOwnPropertyDescriptor(global, 'localStorage');
@@ -317,6 +324,90 @@ test('scheduled-unlock commands resolve on the matching reply only, parse the re
     closed.tracker.sendCommand = () => { throw Error('socket closed'); };
     await assert.rejects(sendUnlockCommand(closed.tracker, 'run_unlock_now', 'test', {}, 1000), /Could not reach the server/);
     assert.equal(closed.tracker.listenerCount('run_unlock_now'), 0);
+});
+
+// C-ios-unlock-11 and C-client-ui-9: `BaseDeviceTracker.sendCommand` sends nothing on a closed
+// socket and does not throw, and the server answers only on the socket a command came in on.
+function socketTracker() {
+    const { tracker, sent } = unlockTracker();
+    const closers = new Set();
+    tracker.open = true;
+    tracker.isOpen = () => tracker.open;
+    tracker.onceClosed = (listener) => {
+        closers.add(listener);
+        return () => closers.delete(listener);
+    };
+    tracker.close = () => {
+        tracker.open = false;
+        const listeners = [...closers];
+        closers.clear();
+        listeners.forEach((listener) => listener());
+    };
+    return { tracker, sent, closers };
+}
+
+test('a tracker command on a closed socket is refused at once, and one in flight ends when the socket closes', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const closed = socketTracker();
+    closed.tracker.open = false;
+    await assert.rejects(sendUnlockCommand(closed.tracker, 'run_unlock_now', 'test', {}, 180000), /Could not reach the server/);
+    assert.deepEqual(closed.sent, [], 'nothing is sent, so nothing is waited for');
+    assert.equal(closed.tracker.listenerCount('run_unlock_now'), 0);
+    assert.equal(closed.closers.size, 0);
+
+    const dropped = socketTracker();
+    let outcome;
+    const pending = sendUnlockCommand(dropped.tracker, 'run_unlock_now', 'test', {}, 180000).catch((error) => (outcome = error.message));
+    assert.equal(dropped.sent.length, 1);
+    assert.equal(dropped.closers.size, 1);
+    dropped.tracker.close();
+    await pending;
+    assert.match(outcome, /connection to the server dropped before it answered/);
+    assert.equal(dropped.tracker.listenerCount('run_unlock_now'), 0, 'the listener goes with the socket');
+    // The reply to the lost command, delivered after a reconnect, has no one waiting for it.
+    dropped.tracker.emit('run_unlock_now', { udid: 'test', requestId: 1, result: '{"outcome":"unlocked"}' });
+
+    const answered = socketTracker();
+    const done = sendTrackerCommand(answered.tracker, 'restart_session', 'test', {}, 1000);
+    answered.tracker.emit('restart_session', { udid: 'test', requestId: 1, result: 'Services restarted. Open the screen again.' });
+    assert.equal(await done, 'Services restarted. Open the screen again.', 'a service reply is plain text, not JSON');
+    assert.equal(answered.closers.size, 0, 'a settled command stops watching the socket');
+});
+
+test('service commands match by request id, have their own time limits and can be withdrawn', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    // Two cards, or a card and the Actions sheet, asking the same phone for the same thing.
+    const { tracker, sent } = socketTracker();
+    const first = sendServiceCommand(tracker, 'refresh_device', 'test');
+    const second = sendServiceCommand(tracker, 'refresh_device', 'test');
+    assert.deepEqual(sent.map((message) => message.data), [{ udid: 'test' }, { udid: 'test' }]);
+    tracker.emit('refresh_device', { udid: 'test', requestId: 2, error: 'Device with udid:"test" not found' });
+    await assert.rejects(second, /not found/);
+    tracker.emit('refresh_device', { udid: 'test', requestId: 1, result: null });
+    assert.equal(replyText(await first, 'Device info refreshed.'), 'Device info refreshed.');
+    assert.equal(replyText('Developer image mounted.', 'unused'), 'Developer image mounted.');
+
+    // A server that restarts mid-command never answers: the button must not stay disabled.
+    assert.ok(serviceCommandTimeoutMs('remount_ddi') > 250000, 'a remount may wait for the old session and then mount');
+    assert.ok(serviceCommandTimeoutMs('restart_session') < serviceCommandTimeoutMs('remount_ddi'));
+    let settled;
+    const remount = sendServiceCommand(tracker, 'remount_ddi', 'test').catch((error) => (settled = error.message));
+    t.mock.timers.tick(serviceCommandTimeoutMs('remount_ddi') - 1);
+    await Promise.resolve();
+    assert.equal(settled, undefined);
+    t.mock.timers.tick(1);
+    await remount;
+    assert.match(settled, /No answer from the server/);
+    assert.equal(tracker.listenerCount('remount_ddi'), 0);
+
+    // The view that asked has gone.
+    const leaving = new AbortController();
+    const withdrawn = sendServiceCommand(tracker, 'reboot_device', 'test', leaving.signal);
+    leaving.abort();
+    await assert.rejects(withdrawn, (error) => error instanceof TrackerCommandAborted);
+    assert.equal(tracker.listenerCount('reboot_device'), 0);
+    await assert.rejects(sendServiceCommand(tracker, 'reboot_device', 'test', leaving.signal), TrackerCommandAborted);
+    assert.equal(sent.filter((message) => message.type === 'reboot_device').length, 1, 'nothing is sent for a view that already left');
 });
 
 test('Run now sends keepUnlocked only for the stream page, and a refusal rejects with the server message', async () => {

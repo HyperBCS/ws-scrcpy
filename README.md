@@ -246,11 +246,22 @@ never sent back to a browser. It is stored AES-256-GCM encrypted in
 `ios-settings.key` next to it. The data directory is `data/` under the directory
 the server runs in (`dist/data` with `npm start`, so `npm run clean` deletes it)
 or the path in `WS_NOTIFICATION_DATA`; the notification relay keeps its files
-there too. Both files are written with mode 0600 in a 0700 directory and belong
-to the user the server runs as. When the server runs as root they are root-owned,
-and moving the server to another user means entering the passcode again. Set
-`WS_IOS_SETTINGS_KEY` to 64 hex characters to supply the key from the environment
-instead of the key file. If the key file is missing, the panel shows the stored
+there too. Both files are written with mode 0600 and the directory is set to
+0700; they belong to the user the server runs as. When the server runs as root
+they are root-owned, and moving the server to another user means entering the
+passcode again.
+
+With the key file next to the settings file, the encryption only stops a casual
+read of `ios-settings.json`. Anything that can read the data directory has both:
+a backup, `docker cp`, a copy of the `ws-scrcpy-data` volume. To keep the key
+out of the data directory, set `WS_IOS_SETTINGS_KEY_FILE` to a path elsewhere,
+for example a Docker secret (`/run/secrets/ios_settings_key`). The file holds 32
+random bytes or the same key as 64 hex characters; the server creates it on the
+first save if it does not exist and the location is writable. Or set
+`WS_IOS_SETTINGS_KEY` to 64 hex characters to supply the key from the
+environment. The server reads that variable once and removes it from its own
+environment, so the `pymobiledevice3`, ffmpeg and Bluetooth collector processes
+it starts do not inherit it. If the key file is missing, the panel shows the stored
 passcode as unreadable and no run starts until the passcode is entered again; a
 push says so when the server starts and at each scheduled time. A settings file
 that cannot be read is kept as `ios-settings.json.bad` and reported the same way.
@@ -315,11 +326,15 @@ machine the setup script says so; pick another with
 | `IOS_PYMOBILEDEVICE3` | Path to the `pymobiledevice3` executable (default: `python/venv/bin/pymobiledevice3`, then `PATH`) |
 | `IOS_TUNNEL` | How the iOS 17+ tunnel is reached: `userspace` (default, in-process, no root) or `tunneld` (use a running `sudo pymobiledevice3 remote tunneld`) |
 | `IOS_APP_SWITCHER` | How the App switcher button opens it: `gesture` (Face ID swipe-and-hold) or `home` (Home double press). Default: by product type |
+| `IOS_PATCH_CHECK` | `0` turns off the check that the installed `pymobiledevice3` has every patch from `python/patches` |
 | `IOS_STATE_PROBE` | `0` turns the screen/lock state monitor off (the badges and the sleep overlay stay silent) |
 | `IOS_LOCK_PROBE` | `0` disables lock detection (direct state on iOS 27.2+, accessibility on older versions) and keeps screen detection |
-| `IOS_STATE_NOTIFICATIONS` | `0` disables the per-device `notification observe` process; state then changes only at the poll interval |
+| `IOS_STATE_NOTIFICATIONS` | `0` disables the per-device `notification observe` process; state then changes only at the poll interval (15 s idle, 4 s while streaming). With the observer running, the timers only recover a missed event: the screen every 5 minutes when idle, the lock every 3 minutes |
+| `IOS_USBMUX_LISTEN` | `0` stops the tracker listening to usbmuxd for attach and detach events; it then runs `usbmux list` every 3 s, as it does where the socket is not available |
+| `IOS_USBMUXD_SOCKET` | Path of usbmuxd's socket for those events (default `/var/run/usbmuxd`) |
 | `IOS_LOCKED_CAPTIONS` | Comma-separated lock-screen captions for the older accessibility probe (e.g. `Gesperrt,Code eingeben`); not needed on iOS 27.2+ |
-| `WS_IOS_SETTINGS_KEY` | 64 hex characters: the key for the stored unlock passcode, instead of `ios-settings.key` in the data directory |
+| `WS_IOS_SETTINGS_KEY` | 64 hex characters: the key for the stored unlock passcode, instead of `ios-settings.key` in the data directory. Read once at startup and not passed to child processes |
+| `WS_IOS_SETTINGS_KEY_FILE` | Path of the key file, to keep it outside the data directory (a Docker secret, for example). 32 bytes or 64 hex characters |
 | `IOS_UNLOCK_FAST` | `1` shortens every pause in the scheduled unlock sequence to 5 ms; for the fixture tests only |
 | `IOS_SERVE_WEB_BASE_PORT` | First loopback port tried for each phone's `serve-web` (default 18100). `scripts/test-ios-unlock.js` sets it so it does not share ports with `scripts/test-coredevice.js` |
 | `IOS_SESSION_START_LIMIT` | How many screen sessions may be started for one iPhone per window (default 3). Further starts are refused with the time to wait. `0` turns the limit off |
@@ -568,8 +583,13 @@ Notifications cannot bypass those iOS settings. No private content is cached by
 the service worker.
 
 The iOS toolchain is pinned in `python/requirements.txt`. `npm run setup:ios`
-applies the raw-audio and five-contact HID patches; rerun it after recreating the
-virtual environment. `npm test` includes ANCS fragmentation, touch lifecycle,
+installs it and applies the patches in `python/patches`; `npm run patch:ios`
+applies them to an existing virtual environment, and `npm run dev` runs it first.
+Run it after pulling a change to `python/patches`. Before it starts an iPhone
+screen session the server checks that the installed helper has every patch
+(`python/patches/check_patches.py`). If one is missing, the session is refused
+with the names of the missing patches and the command to run. `npm test` fails
+for the same reason. `npm test` includes ANCS fragmentation, touch lifecycle,
 notification policy, persistence, and service-worker regression tests.
 
 

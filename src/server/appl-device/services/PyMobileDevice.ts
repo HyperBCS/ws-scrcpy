@@ -3,6 +3,10 @@ import * as path from 'path';
 import { ChildProcess, spawn } from 'child_process';
 
 const TAG = '[pymobiledevice3]';
+const PATCH_CHECK_SCRIPT = 'check_patches.py';
+const PATCH_CHECK_TIMEOUT_MS = 15000;
+// `IOS_SETTINGS_KEY_ENV` in IosSettingsStore.ts, repeated so this file does not import the store.
+const SETTINGS_KEY_ENV = 'WS_IOS_SETTINGS_KEY';
 
 export type OneShotResult = { stdout: string; stderr: string; code: number | null };
 
@@ -18,6 +22,7 @@ export type OneShotResult = { stdout: string; stderr: string; code: number | nul
  */
 export class PyMobileDevice {
     private static resolved?: string;
+    private static helperCheck?: Promise<string | undefined>;
 
     public static resolveBin(): string {
         if (this.resolved) {
@@ -39,6 +44,103 @@ export class PyMobileDevice {
     /** Test seam: lets the fixtures point at a fake CLI without touching the environment. */
     public static useBin(bin: string | undefined): void {
         this.resolved = bin;
+        this.helperCheck = undefined;
+    }
+
+    /** The interpreter of the venv the resolved CLI lives in, when there is one. */
+    private static venvPython(): string | undefined {
+        const suffix = process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python';
+        const python = path.join(path.dirname(path.dirname(this.resolveBin())), suffix);
+        return fs.existsSync(python) ? python : undefined;
+    }
+
+    /**
+     * How to run `python/patches/check_patches.py`, which says whether the installed helper has
+     * every patch from this repository. `undefined` when that cannot be asked: the check is turned
+     * off (`IOS_PATCH_CHECK=0`), the script is not next to the server, or the CLI is not in a venv
+     * (a system install, or the tests' fake), so there is no interpreter known to see the package.
+     */
+    public static patchCheckCommand(): { command: string; args: string[] } | undefined {
+        if (process.env.IOS_PATCH_CHECK === '0') {
+            return undefined;
+        }
+        const script = this.resolvePython('patches', PATCH_CHECK_SCRIPT);
+        const python = this.venvPython();
+        return script && python ? { command: python, args: [script] } : undefined;
+    }
+
+    /**
+     * Why iPhone screen sessions must not start with the installed helper, or `undefined` when it
+     * is current. The patches are applied once, by `npm run patch:ios`; a venv set up before a
+     * patch was added keeps the older helper, and the server used to start with it all the same
+     * (for example with `/button` acknowledged before the phone had the edge, so Lock and Home
+     * holds collapsed). A check that cannot be run allows the session: an unknown answer must not
+     * lock every phone out. A current helper is remembered; a stale one is asked about again on
+     * the next start, so patching does not need a server restart to be noticed.
+     */
+    public static helperProblem(): Promise<string | undefined> {
+        if (!this.helperCheck) {
+            const check = this.runPatchCheck().catch((error: Error) => {
+                console.error(`${TAG} could not check the installed patches: ${error.message}`);
+                return undefined;
+            });
+            this.helperCheck = check;
+            void check.then((problem) => {
+                if (problem) {
+                    console.error(`${TAG} ${problem}`);
+                    if (this.helperCheck === check) {
+                        this.helperCheck = undefined;
+                    }
+                }
+            });
+        }
+        return this.helperCheck;
+    }
+
+    private static async runPatchCheck(): Promise<string | undefined> {
+        const check = this.patchCheckCommand();
+        if (!check) {
+            return undefined;
+        }
+        const { stdout, stderr, code } = await new Promise<OneShotResult>((resolve, reject) => {
+            const child = spawn(check.command, check.args, {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                env: this.childEnv(),
+            });
+            let out = '';
+            let err = '';
+            const timer = setTimeout(() => {
+                child.kill('SIGKILL');
+                reject(new Error(`Timed out running "${PATCH_CHECK_SCRIPT}"`));
+            }, PATCH_CHECK_TIMEOUT_MS);
+            child.stdout?.on('data', (data) => (out += data));
+            child.stderr?.on('data', (data) => (err += data));
+            child.on('error', (error) => {
+                clearTimeout(timer);
+                reject(error);
+            });
+            child.on('close', (exit) => {
+                clearTimeout(timer);
+                resolve({ stdout: out, stderr: err, code: exit });
+            });
+        });
+        if (code !== 0) {
+            throw new Error(PyMobileDevice.explain(stderr) || `"${PATCH_CHECK_SCRIPT}" exited with ${code}`);
+        }
+        const result = JSON.parse(stdout.trim().split('\n').pop() || '') as { found?: unknown; missing?: unknown };
+        if (result.found === false) {
+            // An interpreter next to a CLI that is not its own (IOS_PYMOBILEDEVICE3 pointing into
+            // /usr/local/bin, say) cannot see the package. That is no reason to refuse sessions.
+            throw new Error(`${check.command} has no pymobiledevice3 to check`);
+        }
+        const missing = Array.isArray(result.missing) ? result.missing.map(String).filter(Boolean) : [];
+        if (!missing.length) {
+            return undefined;
+        }
+        return (
+            `The iPhone helper (pymobiledevice3) is missing patches: ${missing.slice(0, 8).join(', ')}. ` +
+            'Run "npm run patch:ios" on the server.'
+        ).slice(0, 300);
     }
 
     /**
@@ -46,8 +148,12 @@ export class PyMobileDevice {
      * so the parent is checked too, exactly as `resolveBin` does for the venv.
      */
     private static resolveProbe(name: string): string | undefined {
+        return this.resolvePython('probes', name);
+    }
+
+    private static resolvePython(directory: 'probes' | 'patches', name: string): string | undefined {
         for (const root of [process.cwd(), path.resolve(process.cwd(), '..')]) {
-            const candidate = path.join(root, 'python', 'probes', name);
+            const candidate = path.join(root, 'python', directory, name);
             if (fs.existsSync(candidate)) {
                 return candidate;
             }
@@ -79,11 +185,7 @@ export class PyMobileDevice {
         if (!script) {
             return undefined;
         }
-        const bin = this.resolveBin();
-        const suffix = process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python';
-        const venv = path.join(path.dirname(path.dirname(bin)), suffix);
-        const python = fs.existsSync(venv) ? venv : 'python3';
-        return { command: python, args: [script] };
+        return { command: this.venvPython() ?? 'python3', args: [script] };
     }
 
     /** Runs a probe from `python/probes/` and parses its single JSON line of stdout. */
@@ -100,7 +202,7 @@ export class PyMobileDevice {
         const result = await new Promise<OneShotResult>((resolve, reject) => {
             const child = spawn(probe.command, [...probe.args, ...args], {
                 stdio: ['ignore', 'pipe', 'pipe'],
-                env: { ...process.env, PYTHONUNBUFFERED: '1', ...env },
+                env: this.childEnv(env),
             });
             let stdout = '';
             let stderr = '';
@@ -144,11 +246,22 @@ export class PyMobileDevice {
         return JSON.parse(line) as T;
     }
 
+    /**
+     * The environment every child process gets: this server's, without the key that encrypts the
+     * stored passcodes. `IosSettingsStore` takes that key out of the environment when it loads;
+     * leaving it out here as well covers a variable that was set afterwards.
+     */
+    public static childEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+        const env: NodeJS.ProcessEnv = { ...process.env, PYTHONUNBUFFERED: '1', ...extra };
+        delete env[SETTINGS_KEY_ENV];
+        return env;
+    }
+
     public static spawnDetached(args: string[], env: NodeJS.ProcessEnv = {}): ChildProcess {
         return spawn(this.resolveBin(), ['--no-color', ...args], {
             stdio: ['ignore', 'pipe', 'pipe'],
             detached: process.platform !== 'win32',
-            env: { ...process.env, PYTHONUNBUFFERED: '1', ...env },
+            env: this.childEnv(env),
         });
     }
 
@@ -166,7 +279,7 @@ export class PyMobileDevice {
         return new Promise((resolve, reject) => {
             const child = spawn(this.resolveBin(), ['--no-color', ...args], {
                 stdio: ['ignore', 'pipe', 'pipe'],
-                env: { ...process.env, PYTHONUNBUFFERED: '1', ...env },
+                env: this.childEnv(env),
             });
             let stdout = '';
             let stderr = '';

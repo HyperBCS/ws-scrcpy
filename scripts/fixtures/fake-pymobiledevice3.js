@@ -46,6 +46,8 @@
 //   FAKE_LOG            file to append one line per invocation (args + POST bodies)
 //   FAKE_TOUCH_DROP_AFTER  drop the connection on every `/touch` past this many, so a gesture can
 //                       be cut off mid-swipe the way a wedged HID channel cuts one off
+//   FAKE_HID_QUEUE_LIMIT  the HID worker has stopped: /touch and /key are taken that many times and
+//                       then answered 503 "Device input queue is full", as the patched helper does
 //   FAKE_POST_FAIL      answer 500 to every POST whose "<path> <body>" contains this text, for
 //                       example "/keyboard/detach" or "\"name\":\"lock\"" (the POST is still logged)
 //   FAKE_POST_FAIL_COUNT  only that many matching POSTs fail; later ones answer normally
@@ -129,8 +131,7 @@ if (command === 'lockstate.py') {
     const captions = LOCK_SCENES[process.env.FAKE_LOCK || 'locked'] || LOCK_SCENES.locked;
     const decide = (caption) => {
         const lowered = caption.toLowerCase();
-        if (lowered.includes('locked') && !lowered.includes('unlocked')) return true;
-        if (lowered.includes('enter passcode')) return true;
+        if (lowered === 'locked' || lowered === 'enter passcode') return true;
         if (lowered === 'unlocked') return false;
         return null;
     };
@@ -199,7 +200,7 @@ if (command === 'mounter auto-mount') {
 }
 if (command === 'developer core-device display serve-web') {
     if (args.includes('--udid')) {
-        // The real CLI (11.12.5) rejects this: the tunnel target comes from PYMOBILEDEVICE3_UDID.
+        // The real CLI (11.44.0, as 11.12.5 did) rejects this: the tunnel target comes from PYMOBILEDEVICE3_UDID.
         process.stderr.write('Usage: pymobiledevice3 developer core-device display serve-web [OPTIONS]\n╭─ Error ─╮\n│ No such option: --udid │\n╰─╯\n');
         process.exit(2);
     }
@@ -227,6 +228,7 @@ if (command === 'developer core-device display serve-web') {
         return Buffer.concat([length, Buffer.from(bytes)]);
     };
     let touches = 0;
+    let queued = 0;
     let failedPosts = 0;
     const server = http.createServer((request, response) => {
         const path = request.url.split('?')[0];
@@ -345,6 +347,13 @@ if (command === 'developer core-device display serve-web') {
                 touches += 1;
                 if (touches > Number(process.env.FAKE_TOUCH_DROP_AFTER)) {
                     request.destroy();
+                    return;
+                }
+            }
+            if (['/touch', '/key'].includes(path) && process.env.FAKE_HID_QUEUE_LIMIT) {
+                queued += 1;
+                if (queued > Number(process.env.FAKE_HID_QUEUE_LIMIT)) {
+                    response.writeHead(503, { 'Content-Type': 'text/plain' }).end('Device input queue is full');
                     return;
                 }
             }

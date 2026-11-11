@@ -14,6 +14,7 @@ export class DeviceTracker extends Mw {
     public static readonly type = 'ios';
     private icc: ControlCenter = ControlCenter.getInstance();
     private readonly id: string;
+    private released = false;
 
     public static processChannel(ws: Multiplexer, code: string): Mw | undefined {
         if (code !== ChannelCode.ATRC) {
@@ -36,6 +37,11 @@ export class DeviceTracker extends Mw {
         this.icc
             .init()
             .then(() => {
+                if (this.released) {
+                    // The socket closed while the tracker was still starting. `release()` had no
+                    // listener to remove then, so none is added now.
+                    return;
+                }
                 this.icc.on('device', this.sendDeviceMessage);
                 this.buildAndSendMessage(this.icc.getDevices());
             })
@@ -121,6 +127,7 @@ export class DeviceTracker extends Mw {
     }
 
     public release(): void {
+        this.released = true;
         super.release();
         this.icc.off('device', this.sendDeviceMessage);
     }

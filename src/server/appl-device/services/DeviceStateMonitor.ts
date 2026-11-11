@@ -23,12 +23,25 @@ export interface WatchOptions {
     language?: string;
 }
 
-// The screen probe is one lockdown request (~0.6 s, no tunnel), cheap enough to keep the device
-// list honest while nobody is streaming. On iOS 27.2+ the lock is a direct notification-state
-// read and can be polled alongside it. Older phones need an accessibility walk, which only runs
-// on possible lock transitions or explicit requests, never on a timer or routine unlocked input.
+// Every probe is a new Python process (~0.6 s of CPU), and the lock read on iOS 27.2+ also brings
+// up a userspace tunnel next to serve-web's. Polled on a timer, an idle phone cost about 11,500
+// processes a day and a streaming one a tunnel every 4 s. The notification observer reports the
+// screen blanking and the lock changing within a second, so while it is running the timers below
+// only recover a missed event:
+// - the screen is read every 4 s while a session is up (a viewer or an unlock run is looking),
+//   every 5 minutes otherwise;
+// - the lock (27.2+) is read on the timer at most every 3 minutes.
+// Without a running observer (`IOS_STATE_NOTIFICATIONS=0`, or the phone refusing the service) the
+// old cadence applies: 15 s idle, and the lock with every screen read.
+// Older phones need an accessibility walk, which only runs on possible lock transitions or
+// explicit requests, never on a timer or routine unlocked input.
 const SCREEN_POLL_IDLE_MS = 15000;
 const SCREEN_POLL_ACTIVE_MS = 4000;
+const SCREEN_POLL_OBSERVED_MS = 300000;
+const LOCK_RESYNC_MS = 180000;
+// An observer that is still running after this long is taken to be delivering events. One that
+// the phone refuses exits within a second or two and never gets here.
+const OBSERVER_SETTLE_MS = 10000;
 // SpringBoard posts a notification the instant the screen blanks or the lock changes; the state
 // itself is read a moment later, once the transition has settled.
 const NOTIFICATION_DEBOUNCE_MS = 400;
@@ -73,6 +86,11 @@ interface Watched {
     screenTimer?: NodeJS.Timeout;
     lockProbeMissing?: boolean;
     observer?: ChildProcess;
+    // The observer has stayed up long enough to be trusted for events; see OBSERVER_SETTLE_MS.
+    observed: boolean;
+    observerSettleTimer?: NodeJS.Timeout;
+    // When the lock was last read directly (27.2+), for LOCK_RESYNC_MS.
+    lockReadAt: number;
     observerBuffer: string;
     observerRetryMs: number;
     observerRetryTimer?: NodeJS.Timeout;
@@ -98,7 +116,8 @@ interface Watched {
  * - **Triggers**: `notification observe` relays SpringBoard's Darwin notifications for screen
  *   blanking and lock changes, so a probe runs within a second of the phone changing instead of
  *   at the next poll. On iOS 27.2+, lockstate events update the lock directly; older events
- *   without a state trigger a probe instead. Periodic direct reads recover missed events.
+ *   without a state trigger a probe instead. Periodic direct reads recover missed events; how
+ *   often depends on whether the observer is running (see the constants above).
  *
  * `IOS_STATE_PROBE=0` turns all of this off, `IOS_LOCK_PROBE=0` only lock detection,
  * `IOS_STATE_NOTIFICATIONS=0` the observer process.
@@ -151,6 +170,8 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
             running: false,
             rerun: false,
             probeDueAt: 0,
+            observed: false,
+            lockReadAt: 0,
             observerBuffer: '',
             observerRetryMs: OBSERVER_RETRY_MIN_MS,
             stopped: false,
@@ -167,7 +188,12 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
         }
         this.watched.delete(udid);
         entry.stopped = true;
-        for (const timer of [entry.probeTimer, entry.screenTimer, entry.observerRetryTimer]) {
+        for (const timer of [
+            entry.probeTimer,
+            entry.screenTimer,
+            entry.observerRetryTimer,
+            entry.observerSettleTimer,
+        ]) {
             if (timer) {
                 clearTimeout(timer);
             }
@@ -185,7 +211,8 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
 
     /**
      * A screen session is up: someone is looking at the phone, so the screen is polled fast. The
-     * direct lock state is polled too; the older accessibility probe remains event-driven.
+     * lock is not: on 27.2+ it comes from the observer, with a direct read every few minutes, and
+     * the older accessibility probe remains event-driven.
      */
     public setSessionActive(udid: string, active: boolean): void {
         const entry = this.watched.get(udid);
@@ -213,14 +240,16 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
     /**
      * A hardware button went to the phone (Lock, Home, the app switcher). The screen may well
      * have changed; the lock only matters if it could have been dismissed, and locking the phone
-     * blanks the screen, which the notification observer catches on its own.
+     * blanks the screen, which the notification observer catches on its own. On 27.2+ a running
+     * observer also delivers the new lock state, so the direct read (a second tunnel beside
+     * serve-web's on every press) is kept for when there is no observer.
      */
     public pokeButton(udid: string): void {
         const entry = this.watched.get(udid);
         if (entry) {
             this.schedule(
                 entry,
-                { screen: true, lock: entry.notificationState || this.shouldProbeLock(entry) },
+                { screen: true, lock: (entry.notificationState && !entry.observed) || this.shouldProbeLock(entry) },
                 INPUT_SETTLE_MS,
             );
         }
@@ -360,6 +389,7 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
                 }
                 if (doLock && !entry.stopped && lockRevision === entry.lockRevision) {
                     locked = await this.probeLock(entry);
+                    entry.lockReadAt = Date.now();
                 }
                 if (entry.stopped) {
                     return;
@@ -403,9 +433,15 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
         entry.screenTimer = setTimeout(
             () => {
                 entry.screenTimer = undefined;
-                this.schedule(entry, { screen: true, lock: entry.notificationState }, 0);
+                const lock =
+                    entry.notificationState && (!entry.observed || Date.now() - entry.lockReadAt >= LOCK_RESYNC_MS);
+                this.schedule(entry, { screen: true, lock }, 0);
             },
-            entry.sessionActive ? SCREEN_POLL_ACTIVE_MS : SCREEN_POLL_IDLE_MS,
+            entry.sessionActive
+                ? SCREEN_POLL_ACTIVE_MS
+                : entry.observed
+                  ? SCREEN_POLL_OBSERVED_MS
+                  : SCREEN_POLL_IDLE_MS,
         );
     }
 
@@ -535,6 +571,16 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
         ]);
         entry.observer = child;
         entry.observerBuffer = '';
+        entry.observerSettleTimer = setTimeout(() => {
+            entry.observerSettleTimer = undefined;
+            if (entry.observer !== child || entry.stopped) {
+                return;
+            }
+            // From here the timers slow down. One read now picks up anything that changed between
+            // the last poll and the observer registering.
+            entry.observed = true;
+            this.schedule(entry, { screen: true, lock: true }, 0);
+        }, OBSERVER_SETTLE_MS);
         child.stdout?.on('data', (data) => this.onObserverOutput(entry, String(data)));
         child.stderr?.on('data', (data) => PyMobileDevice.log(`[${entry.udid}] notifications: ${data}`));
         const onExit = () => {
@@ -542,8 +588,17 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
                 return;
             }
             entry.observer = undefined;
+            if (entry.observerSettleTimer) {
+                clearTimeout(entry.observerSettleTimer);
+                entry.observerSettleTimer = undefined;
+            }
             if (entry.stopped) {
                 return;
+            }
+            if (entry.observed) {
+                // Events stop here: back to polling until an observer is up again.
+                entry.observed = false;
+                this.armScreenTimer(entry);
             }
             // A phone that is asleep and locked since boot, or mid-reboot, refuses the service;
             // come back later, more slowly each time, and reset once it works again.
@@ -611,6 +666,7 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
     private killObserver(entry: Watched): void {
         const child = entry.observer;
         entry.observer = undefined;
+        entry.observed = false;
         if (!child || child.exitCode !== null || child.signalCode !== null) {
             return;
         }

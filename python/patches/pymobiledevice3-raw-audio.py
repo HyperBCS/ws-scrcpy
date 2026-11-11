@@ -97,7 +97,7 @@ def main() -> int:
             print(
                 f"cannot patch {target}: expected exactly one match for a block starting "
                 f"{old.strip().splitlines()[0]!r} (found {source.count(old)}). "
-                "The installed pymobiledevice3 differs from the version this patch was written for (11.12.5).",
+                "The installed pymobiledevice3 differs from the version pinned in python/requirements.txt.",
                 file=sys.stderr,
             )
             return 2

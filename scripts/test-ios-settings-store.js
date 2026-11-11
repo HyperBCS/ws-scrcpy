@@ -17,6 +17,8 @@ const previousEnv = {
 // The store defaults to the data directory; the monitor must not probe anything from here.
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
 process.env.IOS_STATE_PROBE = '0';
+// The tracker must not listen on this machine's real usbmuxd socket from a test.
+process.env.IOS_USBMUX_LISTEN = '0';
 
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
 
@@ -26,6 +28,7 @@ const {
     IOS_SETTINGS_BAD_FILE,
     IOS_SETTINGS_KEY_FILE,
     IOS_SETTINGS_KEY_ENV,
+    IOS_SETTINGS_KEY_FILE_ENV,
 } = require('../src/server/appl-device/services/IosSettingsStore');
 const { DEFAULT_UNLOCK_TIME, nextUnlockRunAt, localTimeZone } = require('../src/common/IosUnlockSchedule');
 const { ControlCenterCommand } = require('../src/common/ControlCenterCommand');
@@ -230,7 +233,86 @@ test('WS_IOS_SETTINGS_KEY replaces the key file; an unusable value is reported, 
         );
     });
     // Without the env key the ciphertext is unreadable, which is reported and not thrown.
+    IosSettingsStore.forgetEnvKey();
     assert.equal(new IosSettingsStore(dir).getSchedule('iphone-env').hasPasscode, false);
+});
+
+test('WS_IOS_SETTINGS_KEY is taken out of the environment, so no child process inherits it', () => {
+    const dir = freshDir();
+    const hex = 'c'.repeat(64);
+    try {
+        withEnv({ [IOS_SETTINGS_KEY_ENV]: hex }, () => {
+            const store = new IosSettingsStore(dir);
+            store.setPasscode('iphone-child', '246810');
+            assert.equal(process.env[IOS_SETTINGS_KEY_ENV], undefined, 'removed once it has been read');
+            assert.equal(store.readPasscode('iphone-child'), '246810', 'the store keeps working without it');
+            assert.equal(new IosSettingsStore(dir).readPasscode('iphone-child'), '246810');
+            // Set again after the store read it, for example by code that runs later.
+            process.env[IOS_SETTINGS_KEY_ENV] = hex;
+            const env = PyMobileDevice.childEnv({ PYMOBILEDEVICE3_UDID: 'iphone-child' });
+            assert.equal(IOS_SETTINGS_KEY_ENV in env, false, 'never passed to pymobiledevice3 or a probe');
+            assert.equal(env.PYMOBILEDEVICE3_UDID, 'iphone-child');
+            assert.equal(env.PATH, process.env.PATH);
+        });
+    } finally {
+        IosSettingsStore.forgetEnvKey();
+    }
+});
+
+test('WS_IOS_SETTINGS_KEY_FILE keeps the key outside the data directory', () => {
+    const dir = freshDir();
+    const secrets = freshDir();
+    fs.mkdirSync(secrets, { recursive: true });
+    const keyFile = path.join(secrets, 'ios_settings_key');
+    withEnv({ [IOS_SETTINGS_KEY_FILE_ENV]: keyFile }, () => {
+        const store = new IosSettingsStore(dir);
+        store.setPasscode('iphone-secret', '13579');
+        assert.equal(fs.readFileSync(keyFile).length, 32);
+        assert.equal(fs.statSync(keyFile).mode & 0o777, 0o600);
+        assert.deepEqual(fs.readdirSync(dir), [IOS_SETTINGS_FILE], 'the data directory holds the ciphertext only');
+        assert.equal(new IosSettingsStore(dir).readPasscode('iphone-secret'), '13579');
+        // A secret written as text, the way a Docker secret usually is.
+        const hex = fs.readFileSync(keyFile).toString('hex');
+        fs.writeFileSync(keyFile, hex + '\n');
+        assert.equal(new IosSettingsStore(dir).readPasscode('iphone-secret'), '13579');
+        // A file that is not a key is never replaced: it may belong to other ciphertext.
+        fs.writeFileSync(keyFile, 'not a key');
+        assert.equal(new IosSettingsStore(dir).getSchedule('iphone-secret').hasPasscode, false);
+        assert.throws(
+            () => new IosSettingsStore(dir).setPasscode('iphone-secret', '13579'),
+            (error) => !error.message.includes('13579') && /not a key/.test(error.message),
+        );
+        assert.equal(fs.readFileSync(keyFile, 'utf8'), 'not a key');
+        fs.writeFileSync(keyFile, hex);
+    });
+    // A location that cannot be written (a read-only secrets mount) is reported without the path.
+    withEnv({ [IOS_SETTINGS_KEY_FILE_ENV]: path.join(secrets, 'missing', 'key') }, () => {
+        const errors = [];
+        const original = console.error;
+        console.error = (line) => errors.push(String(line));
+        try {
+            assert.throws(
+                () => new IosSettingsStore(freshDir()).setPasscode('iphone-secret', '13579'),
+                (error) => /could not be written/.test(error.message) && !error.message.includes(secrets),
+            );
+        } finally {
+            console.error = original;
+        }
+        assert.equal(errors.length, 1);
+    });
+    // A copy of the data directory alone cannot read the passcode.
+    assert.equal(new IosSettingsStore(dir).getSchedule('iphone-secret').hasPasscode, false);
+    assert.throws(() => new IosSettingsStore(dir).readPasscode('iphone-secret'), /key file missing/);
+});
+
+test('an existing data directory is made private, not only one the store creates', () => {
+    const dir = freshDir();
+    fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+    fs.chmodSync(dir, 0o755);
+    const store = new IosSettingsStore(dir);
+    store.setPasscode('iphone-mode', '1122');
+    assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(path.join(dir, IOS_SETTINGS_KEY_FILE)).mode & 0o777, 0o600);
 });
 
 test('ciphertext without its key is reported through the status and never thrown at startup', () => {
