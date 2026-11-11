@@ -74,6 +74,15 @@
     margin: 0 0 16px;
     overflow-wrap: anywhere;
 }
+/* A hint that follows a card or a collapsed section keeps clear of its border. */
+.settings-sheet-card + .settings-sheet-hint,
+.settings-advanced + .settings-sheet-hint {
+    margin-top: 12px;
+}
+.settings-sheet-section > .settings-sheet-hint:last-child,
+.settings-sheet-content > .settings-sheet-hint {
+    margin-bottom: 0;
+}
 .settings-quality-presets {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -300,14 +309,28 @@
     position: sticky;
     bottom: 0;
     z-index: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
     margin: 0;
     padding: 16px 0 4px;
     border-top: 1px solid var(--device-border-color);
     background: var(--device-list-default-color);
     box-shadow: 0 -8px 16px var(--device-list-default-color);
+}
+/* `AutoHeight` wraps the bar's children in one element, so the column and its gap go on that
+   element; on the bar itself the gap had a single child and did nothing. */
+.settings-sheet-apply-bar > .settings-sheet-apply-items {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+/* Nothing to apply and nothing to report: the bar takes no room. */
+.settings-sheet-apply-bar.empty {
+    margin-top: -24px;
+    padding: 0;
+    border-top: 0;
+    box-shadow: none;
+}
+.settings-sheet-apply-bar.empty::after {
+    display: none;
 }
 .settings-sheet-apply-bar::after {
     /* Continue the sticky surface through the shared scroller's bottom gutter,

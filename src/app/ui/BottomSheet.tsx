@@ -99,7 +99,18 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
             } else trapDialogTab(event, panel);
         };
         window.addEventListener('keydown', onKeyDown, true);
+        // A control that is removed or disabled while it has focus (a button replaced by its
+        // result) would leave focus on the page behind the sheet. Keep it in the sheet.
+        const keepFocus = new MutationObserver(() => {
+            const active = document.activeElement;
+            const lost = !active || active === document.body || (panel.contains(active) && active.matches(':disabled'));
+            if (openRef.current && lost) {
+                panel.focus({ preventScroll: true });
+            }
+        });
+        keepFocus.observe(panel, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
         return () => {
+            keepFocus.disconnect();
             interactionEvents.forEach((name) => root.removeEventListener(name, stopRemoteInteraction));
             backdrop?.removeEventListener('touchmove', preventBackdropScroll);
             backdrop?.removeEventListener('wheel', preventBackdropScroll);

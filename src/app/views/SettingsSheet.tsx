@@ -1,6 +1,6 @@
 import { AutoHeight } from '../ui/AutoHeight';
 import { AnimatedDetails } from '../ui/AnimatedDetails';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { VolumeSlider } from '../ui/SheetControls';
 import { closeSettingsSheet, settingsSheetTarget } from '../state/settingsSheet';
@@ -197,9 +197,29 @@ export function SettingsSheet() {
         setUseUhid(client?.isUsingUhidKeyboard() ?? true);
     }, [client, target]);
 
+    // The pressed button often leaves the apply bar (Apply changes, Apply & restart, Discard).
+    // Focus would then fall to the page behind the sheet, so it moves to what took the button's
+    // place: the error, else the next button, else the status line, else the sheet itself.
+    const contentRef = useRef<HTMLDivElement>(null);
+    const applyBar = () => contentRef.current?.querySelector<HTMLElement>('.settings-sheet-apply-bar');
+    const applyBarHadFocus = !!applyBar()?.contains(document.activeElement);
+    useLayoutEffect(() => {
+        const bar = applyBar();
+        const active = document.activeElement;
+        if (!applyBarHadFocus || !bar || !target || (bar.contains(active) && !active?.matches(':disabled'))) {
+            return;
+        }
+        const next =
+            bar.querySelector<HTMLElement>('[role="alert"]') ??
+            bar.querySelector<HTMLElement>('button:not(:disabled)') ??
+            bar.querySelector<HTMLElement>('[role="status"]') ??
+            bar.closest<HTMLElement>('[role="dialog"]');
+        next?.focus({ preventScroll: true });
+    });
+
     if (!renderTarget) {
         return (
-            <BottomSheet open={false} onClose={closeSettingsSheet} title="Settings">
+            <BottomSheet open={false} onClose={closeSettingsSheet} title="Stream settings">
                 {null}
             </BottomSheet>
         );
@@ -287,6 +307,8 @@ export function SettingsSheet() {
         });
     };
     const onConfirmApply = () => applyConfig(patch);
+    const savedShown = !!appliedNote && !hasChanges && !applying;
+    const applyBarEmpty = !applyError && !savedShown && !applying && !confirming && !hasChanges;
     const onPlayerChange = (event: Event) => {
         if (!session) {
             return;
@@ -730,19 +752,22 @@ export function SettingsSheet() {
                 ) : (
                     <p class="settings-sheet-hint">Open the screen for playback and keyboard settings.</p>
                 )}
-                <AutoHeight className="settings-sheet-apply-bar">
+                <AutoHeight
+                    className={`settings-sheet-apply-bar ${applyBarEmpty ? 'empty' : ''}`}
+                    innerClassName="settings-sheet-apply-items"
+                >
                     {applyError && (
-                        <div class="settings-sheet-banner error" role="alert">
+                        <div class="settings-sheet-banner error" role="alert" tabIndex={-1}>
                             {applyError}
                         </div>
                     )}
-                    {appliedNote && !hasChanges && !applying && (
-                        <div class="settings-sheet-banner success" role="status">
+                    {savedShown && (
+                        <div class="settings-sheet-banner success" role="status" tabIndex={-1}>
                             {appliedNote}
                         </div>
                     )}
                     {applying ? (
-                        <div class="settings-sheet-banner progress" role="status">
+                        <div class="settings-sheet-banner progress" role="status" tabIndex={-1}>
                             Saving and reconnecting…
                         </div>
                     ) : confirming ? (
@@ -759,29 +784,32 @@ export function SettingsSheet() {
                             </div>
                         </div>
                     ) : (
-                        <>
-                            {hasChanges && <p class="settings-apply-note">Applying restarts the stream.</p>}
-                            <div class="settings-sheet-button-row">
-                                <button
-                                    class="settings-sheet-button"
-                                    onClick={() => {
-                                        setPatch({});
-                                        setConfirming(false);
-                                        setApplyError(undefined);
-                                    }}
-                                    disabled={!hasChanges || locked}
-                                >
-                                    Discard
-                                </button>
-                                <button
-                                    class="settings-sheet-button primary"
-                                    onClick={() => setConfirming(true)}
-                                    disabled={!hasChanges || locked}
-                                >
-                                    Apply changes
-                                </button>
-                            </div>
-                        </>
+                        // Nothing to apply or discard until a setting has changed.
+                        hasChanges && (
+                            <>
+                                <p class="settings-apply-note">Applying restarts the stream.</p>
+                                <div class="settings-sheet-button-row">
+                                    <button
+                                        class="settings-sheet-button"
+                                        onClick={() => {
+                                            setPatch({});
+                                            setConfirming(false);
+                                            setApplyError(undefined);
+                                        }}
+                                        disabled={locked}
+                                    >
+                                        Discard
+                                    </button>
+                                    <button
+                                        class="settings-sheet-button primary"
+                                        onClick={() => setConfirming(true)}
+                                        disabled={locked}
+                                    >
+                                        Apply changes
+                                    </button>
+                                </div>
+                            </>
+                        )
                     )}
                 </AutoHeight>
             </div>
