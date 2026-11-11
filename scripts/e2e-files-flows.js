@@ -121,6 +121,102 @@ async function history(browser, layout) {
     await finish();
 }
 
+// Menus and dialogs have a history entry of their own: the browser's Back closes the top one
+// and leaves the folder alone. One that closes by itself leaves no entry behind.
+async function overlays(browser, layout) {
+    const { page, finish, traffic } = await start(browser, layout);
+    const card = page.locator('.device').filter({ hasText: 'Files test phone' });
+    await card.locator('summary').click();
+    await card.getByRole('link', { name: 'Files', exact: true }).click();
+    await ready(page);
+    // Two folder steps, so that the folder shown has another one behind it: tmp, archive, tmp.
+    await open(page, 'archive');
+    await crumb(page, 'archive');
+    await ready(page);
+    await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
+    await crumb(page, 'tmp');
+    await ready(page);
+    const menu = page.locator('.fx-menu');
+    const dialog = page.locator('.fx-dialog[open]');
+    const forward = page.getByRole('button', { name: 'Forward', exact: true });
+    const openMenu = async () => {
+        await page.getByRole('button', { name: layout.touch ? 'Actions' : 'View', exact: true }).click();
+        await menu.waitFor();
+    };
+    const rowCommand = async (command) => {
+        await row(page, 'notes.txt').locator('.fx-row-menu').click();
+        await menu.getByRole('menuitem', { name: command, exact: true }).click();
+    };
+    const folderKept = async (what) => {
+        assert.equal(await page.evaluate(() => location.hash), address(ROOT), `${what}: the address is the folder's`);
+        assert.equal(await page.evaluate(() => history.state.nav.overlay), undefined, `${what}: on the folder's own entry`);
+        await crumb(page, 'tmp');
+        assert.equal(await row(page, 'notes.txt').count(), 1, `${what}: the rows are still there`);
+    };
+
+    await openMenu();
+    await page.goBack();
+    await menu.waitFor({ state: 'hidden' });
+    await folderKept('Back with a menu open');
+
+    // A dialog opened from a menu: the menu's entry is gone by then, and Back closes the dialog.
+    await rowCommand('Properties');
+    await dialog.getByRole('heading', { name: 'Properties', exact: true }).waitFor();
+    await page.goBack();
+    await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+    await folderKept('Back with Properties open');
+
+    await rowCommand('Delete');
+    await dialog.getByRole('heading', { name: `Delete “notes.txt” from ${DEVICE}?`, exact: true }).waitFor();
+    await page.goBack();
+    await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+    await folderKept('Back with the delete question open');
+    assert.equal(traffic.operations.length, 0, 'Back answered the question with Cancel');
+
+    // Rename from a row's menu: the field keeps the keyboard while the menu's entry is left
+    // and the dialog's own is added.
+    await rowCommand('Rename');
+    const field = dialog.locator('input[name="value"]');
+    await field.waitFor();
+    await page.waitForFunction(() => history.state.nav.overlay === 1);
+    await page.keyboard.type('x');
+    assert.equal(await field.inputValue(), 'x.txt', 'typing replaces the selected name');
+    await page.goBack();
+    await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+    await folderKept('Back with Rename open');
+    assert.equal(traffic.operations.length, 0, 'nothing was renamed');
+
+    // A menu that is closed with Escape steps back over its own entry, so the next Back is a
+    // folder step, and Forward from there is the folder again.
+    await openMenu();
+    await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'hidden' });
+    await folderKept('Escape in a menu');
+    await page.goBack();
+    await crumb(page, 'archive');
+    await ready(page);
+    assert.equal(await forward.isDisabled(), false);
+    await forward.click();
+    await crumb(page, 'tmp');
+    await ready(page);
+
+    // A menu opened on an earlier folder takes the place of what Forward led to, as any new
+    // entry does. The toolbar's Forward says so instead of doing nothing.
+    await page.goBack();
+    await crumb(page, 'archive');
+    await ready(page);
+    assert.equal(await forward.isDisabled(), false);
+    await openMenu();
+    assert.equal(await forward.isDisabled(), true, 'Forward has nowhere to go once a menu is open');
+    await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await crumb(page, 'tmp');
+    await ready(page);
+    assert.equal(await page.locator('.file-listing-client').count(), 1, 'Files stayed open throughout');
+    await finish();
+}
+
 /** The element can be brought fully inside the tool frame, which clips everything else. */
 async function reachable(page, locator, what) {
     await locator.scrollIntoViewIfNeeded();
@@ -728,7 +824,8 @@ async function uploads(browser, layout, name, scheme) {
     const leave = page.locator('.fx-dialog[open]');
     const question = leave.getByRole('heading', { name: `Stop the upload to ${DEVICE}?`, exact: true });
     const files0 = await page.evaluate(() => location.hash);
-    for (const way of ['browser Back', 'Back to devices']) {
+    // The second Back is pressed with the question open: it closes the question and stays.
+    for (const way of ['browser Back', 'browser Back twice', 'Back to devices']) {
         if (way.startsWith('browser Back')) await page.goBack();
         if (way === 'Back to devices') await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
         await question.waitFor();
@@ -739,7 +836,8 @@ async function uploads(browser, layout, name, scheme) {
         );
         await settleMotion(page);
         if (way === 'browser Back') await page.screenshot({ path: path.join(OUT, `flows-leave-${name}.png`) });
-        await leave.getByRole('button', { name: 'Keep uploading', exact: true }).click();
+        if (way === 'browser Back twice') await page.goBack();
+        else await leave.getByRole('button', { name: 'Keep uploading', exact: true }).click();
         await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
         assert.equal(await page.evaluate(() => location.hash), files0, `${way}: the address is still Files`);
         assert.equal(await page.locator('.file-listing-client').count(), 1, `${way}: Files stays open`);
@@ -789,6 +887,8 @@ async function main() {
     const scenarios = [
         ['history desktop', () => history(browser, DESKTOP)],
         ['history phone', () => history(browser, PHONE)],
+        ['Back closes menus and dialogs desktop', () => overlays(browser, DESKTOP)],
+        ['Back closes menus and dialogs phone', () => overlays(browser, PHONE)],
         ['menus on short screens', () => menus(browser)],
         ['keyboard focus', () => keyboardFocus(browser)],
         ['columns', () => columns(browser)],

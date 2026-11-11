@@ -687,6 +687,52 @@ test('a Files tab that is shown again lists its folder again, reports what it mi
     assert.equal(wrapper.classList.contains('fx-selecting'), true, 'the selection is kept');
 });
 
+test('two questions in a row each have one history entry, and Back answers the one that is open', async (t) => {
+    const { tab, client, dialog, settle } = openFiles(t);
+    await settle();
+    const answer = (value) => dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value }) });
+    const asks = (name) => dialog.open && dialog.innerHTML.includes(`Replace “${name}”`);
+    const plan = client.planUploads([{ name: 'notes.txt' }, { name: 'photo.png' }, { name: 'new.txt' }]);
+    await settle();
+    assert.equal(asks('notes.txt'), true);
+    assert.equal(tab.history.state.nav.overlay, 1, 'the question has an entry on the folder');
+    // The next question opens as soon as this one is answered, before its entry is left.
+    answer('keep');
+    await settle();
+    assert.equal(asks('photo.png'), true, 'the second question stays open');
+    assert.equal(tab.history.state.nav.overlay, 1, 'on one entry of its own, not on the first one');
+    tab.history.back();
+    await settle();
+    assert.equal(dialog.open, false, 'Back closes it');
+    assert.equal(tab.location.hash, address('files', '&path=%2Fsdcard'), 'and leaves the folder alone');
+    assert.equal(tab.history.state.nav.overlay, undefined);
+    assert.deepEqual(
+        (await plan).map((upload) => upload.name),
+        ['notes (1).txt', 'new.txt'],
+        'Back is Skip for that one file',
+    );
+});
+
+test('an upload starts in the folder its name was checked against, not the one shown by then', async (t) => {
+    const { client, phone, settle } = openFiles(t);
+    await settle();
+    const { AdbkitFilePushStream } = require('../src/app/googDevice/filePush/AdbkitFilePushStream');
+    const stream = new AdbkitFilePushStream(phone.socket, client);
+    const sent = [];
+    stream.channels.set(7, { send: (data) => sent.push(CommandControlMessage.pushFileCommandFromBuffer(data)) });
+    client.navigate('/sdcard/Music');
+    await settle();
+    stream.sendEventStart({ id: 7, fileName: 'notes.txt', fileSize: 3, overwrite: true, folder: '/sdcard' });
+    stream.sendEventStart({ id: 7, fileName: 'notes.txt', fileSize: 3 });
+    assert.deepEqual(
+        sent.map(({ fileName, overwrite }) => ({ fileName, overwrite })),
+        [
+            { fileName: '/sdcard/notes.txt', overwrite: true },
+            { fileName: '/sdcard/Music/notes.txt', overwrite: false },
+        ],
+    );
+});
+
 test('uploads: a change of view on the same phone does not ask, leaving the phone does, also from another tab', async (t) => {
     const { tab, body, wrapper, client, router, deviceRoute, settle, upload, dialog } = openFiles(t);
     await settle();

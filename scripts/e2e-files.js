@@ -1029,36 +1029,21 @@ async function main() {
             assert.equal(files.get(ROOT + '/later.txt').toString(), 'Device copy');
             assert.equal(files.get(ROOT + '/on-time.txt').toString(), 'On time');
 
-            // An answer belongs to the folder it was given in. Here the explorer moves to another
-            // folder after the answer but before the upload starts: the file still goes to the
-            // folder that was checked, and the same name in the other folder is left alone.
-            files.set(ROOT + '/archive/notes.txt', Buffer.from('Never asked about'));
-            await pick(['notes.txt', 'Answered for tmp']);
+            // A question has a history entry of its own. The browser's Back closes it, which
+            // skips the file: nothing is sent, and the folder stays where it was. (That an
+            // upload starts in the folder its name was checked against is in test-files.js; the
+            // folder can no longer change under an open question.)
+            const startsBeforeBack = traffic.starts.length;
+            const notesBeforeBack = files.get(ROOT + '/notes.txt').toString();
+            await pick(['notes.txt', 'Never sent']);
             await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
-            traffic.holdStat = true;
-            await page.evaluate((target) => {
-                const params = new URLSearchParams(location.hash.replace(/^#!/, ''));
-                params.set('path', target);
-                location.hash = `#!${params}`;
-            }, ROOT + '/archive');
-            await until(page, () => traffic.releaseStat, 'the folder change');
-            traffic.holdStat = false;
-            traffic.hold = true;
-            await answer(page, 'Replace');
-            await until(page, () => traffic.pending, 'the upload to ask for a push id');
-            traffic.releaseStat();
-            await page.locator('.fx-crumb[aria-current="page"]').filter({ hasText: 'archive' }).waitFor();
-            traffic.hold = false;
-            traffic.pending.release();
-            traffic.pending = null;
-            await until(page, () => traffic.starts.length && traffic.starts.at(-1).overwrite, 'the START');
-            assert.deepEqual(traffic.starts.at(-1), { path: ROOT + '/notes.txt', overwrite: true });
-            await until(page, () => files.get(ROOT + '/notes.txt').toString() === 'Answered for tmp', 'the upload');
+            await page.goBack();
+            await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+            await page.locator('.app-toast .toast-message').filter({ hasText: 'Skipped notes.txt.' }).waitFor();
+            assert.equal(await page.evaluate(() => location.hash), address(ROOT), 'Back closed the question, not the folder');
+            assert.equal(traffic.starts.length, startsBeforeBack, 'nothing was sent');
+            assert.equal(files.get(ROOT + '/notes.txt').toString(), notesBeforeBack);
             await settled(page);
-            assert.equal(files.get(ROOT + '/archive/notes.txt').toString(), 'Never asked about');
-            files.delete(ROOT + '/archive/notes.txt');
-            await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
-            await row(page, 'notes.txt').waitFor();
             traffic.hold = true;
             await page.locator('input[type=file]').setInputFiles({
                 name: 'pending-upload.txt',

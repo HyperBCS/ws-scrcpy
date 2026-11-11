@@ -26,8 +26,9 @@ import {
     resolveNameConflicts,
 } from '../filePush/nameConflicts';
 import { DEFAULT_FILES_PATH, fileListingTool } from './deviceTools';
-import { clearLeaveGuard, LeaveGuard, pushRoute, replaceRoute, setLeaveGuard } from '../../state/router';
+import { clearLeaveGuard, LeaveGuard, OverlayEntry, pushRoute, replaceRoute, setLeaveGuard } from '../../state/router';
 import { deviceRoute, parseRoute } from '../../state/routes';
+import { openOverlay } from '../../ui/overlayHistory';
 import { formatMode, formatModified, formatSize, iconMarkup, kindOf, typeLabel } from './fileTypes';
 import { h, render } from 'preact';
 import { Toast } from '../../ui/Toast';
@@ -207,6 +208,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private active = true;
     /** The last result or failure reported while hidden, shown when the tab is shown again. */
     private missed?: { message: string; error: boolean };
+    /** The history entries of the open menu and the open dialog: Back closes the top one. */
+    private menuEntry?: OverlayEntry;
+    private dialogEntry?: OverlayEntry;
     /** Holds the dialog on the page itself while the question before leaving is open. */
     private dialogHolder?: HTMLElement;
     /** Results of the folder operations in flight, reported together when the last one answers. */
@@ -1408,6 +1412,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     private openMenu(build: () => string[], clientX: number, clientY: number): void {
         this.forgetMenuTargets();
+        if (!this.menuEntry) {
+            this.menuEntry = this.overlayEntry(() => this.closeMenu());
+        }
         this.menuBuilder = build;
         this.menuAnchor = { x: clientX, y: clientY };
         this.menu.innerHTML = build().join('');
@@ -1471,6 +1478,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (this.menu.hidden || this.menu.inert) {
             return;
         }
+        this.menuEntry?.release();
+        this.menuEntry = undefined;
         transitionVisibility(this.menu, false, () => {
             this.menu.innerHTML = '';
         });
@@ -2131,8 +2140,32 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private presentDialog(): void {
+        const entry = this.overlayEntry(() => this.closeDialog(''));
+        const closed = () => {
+            this.dialog.removeEventListener('close', closed);
+            if (this.dialogEntry === entry) {
+                this.dialogEntry = undefined;
+            }
+            entry.release();
+        };
+        this.dialogEntry = entry;
+        this.dialog.addEventListener('close', closed);
         transitionVisibility(this.dialog, true);
         this.dialog.showModal();
+    }
+
+    /**
+     * Gives an open menu or dialog a history entry, so the browser's Back closes it and leaves
+     * the folder alone. The entry is added after the one that is shown, which removes whatever
+     * Forward led to.
+     */
+    private overlayEntry(onClose: () => void): OverlayEntry {
+        if (this.active && this.historyTop !== this.historyIndex) {
+            this.historyTop = this.historyIndex;
+            this.storeHistory();
+            this.updateControls();
+        }
+        return openOverlay(onClose);
     }
 
     /** Closes an open dialog as cancelled. Its close event comes later, in a task of its own. */
@@ -2178,11 +2211,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 resolve(this.dialog.returnValue);
             };
             this.dialog.returnValue = '';
+            // Before `finish` is added, so the dialog's history entry is given up before the
+            // wait ends. Whoever waits may open the next dialog at once (promise callbacks run
+            // between two listeners of one event), and its entry must not sit on this one's.
+            this.presentDialog();
             this.dialog.addEventListener('close', finish);
             this.dialog.querySelector<HTMLButtonElement>('[data-dialog="cancel"]')?.addEventListener('click', () => {
                 this.closeDialog('');
             });
-            this.presentDialog();
             onOpen();
         });
     }
@@ -2924,6 +2960,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         cancelVisibility(this.menu);
         cancelVisibility(this.dialog);
         this.returnDialog();
+        this.dialogEntry?.release();
+        this.dialogEntry = undefined;
         this.dialog.removeEventListener('cancel', this.onDialogCancel);
         this.dialog.removeEventListener('submit', this.onDialogSubmit);
         this.dialog.removeEventListener('keydown', this.onDialogKeyDown);
