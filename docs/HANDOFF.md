@@ -2395,3 +2395,47 @@ keyboard for Type text; Chrome's close request for the notification sheet; the A
 stopping and starting across tabs on a phone, with the server's 30 s grace; one iPhone session per
 open after Switch and from a notification; Safari's pacing of `replaceState` for the search text;
 the safe-area inset of the Notifications header in the installed app.
+
+### Redesign step 6s: the iPhone services stop without building new ones (2026-11-11, fixture-tested only)
+
+Package p6-server-lifecycle, merged into `redesign` from `review/p6-server-lifecycle`. Server
+only: the client and the browser suites did not change. Nothing below has run on a phone or in
+the container.
+
+**Stop order.** `src/server/index.ts` lists `CoreDeviceRunner` before the iPhone `ControlCenter`.
+`Shutdown` releases the services in reverse start order and did not change, so the tracker stops
+first: it takes its listeners off the runner, releases the unlock scheduler, then the state
+monitor. The runner stops the sessions after it. The runner's `start()` (a check of the helper's
+patches, nothing on the phone) now runs before the tracker's first poll, so a stop during that
+poll releases the runner too.
+
+**Nothing is built again.** `ControlCenter` keeps the runner and the monitor it subscribed to in
+`init()` (`statusSource`, `stateSource`) and takes its listeners off those. It used to call
+`getInstance()` there, which built a new runner when the runner had stopped first. `release()` on
+`CoreDeviceRunner`, `DeviceStateMonitor` and `ControlCenter` does nothing the second time and
+clears the singleton only when it is that instance (`startServices` releases a service a second
+time when a stop arrives during its `start()`). `CoreDeviceProxy` pokes the monitor after input
+only if one exists.
+
+**No screen session after a stop.** `index.ts` calls
+`CoreDeviceRunner.setShutdownCheck(() => shutdown.isStopping())`. From then on `acquire()` throws
+the plain `Server is shutting down` error on any runner, before the device check, the port, the
+mount and the spawn. This covers a runner built after the stop by a caller that still asks for the
+singleton: `UnlockDriver.run()` does, for a run queued behind another. Such a run builds an empty
+runner and monitor, is refused, and the scheduler records `failed-session` as it did before for a
+run that reached the released runner. A session still starting when the stop comes is dropped by
+the runner's release, and `bringUp` sees that after the mount, before the spawn. The error is the
+one a released runner already threw, so the viewer's close code (4009) and the unlock outcomes did
+not change.
+
+**Left as it was.** `WebSocketServer.start()` attaches after `HttpServer.start()` listens, but in
+the same turn of the event loop (`listen(port)` binds at once and `listening` comes on nextTick),
+so no upgrade is dropped. Services still take their dependencies through `getInstance()`, as
+decided. The tests are in `scripts/test-coredevice.js` (with the `late` mode of
+`scripts/fixtures/shutdown-harness.js`) and `scripts/test-crash-paths.js`. The unlock comments in
+`UnlockScheduler.ts` and `IosSettingsStore.ts` no longer cite the plan or the W1/W2 workstreams;
+they name the methods, the types and the sections of this file. No unlock statement changed.
+
+**Not verified.** A container stop with an iPhone session open. The log should show
+`Stopping iDevice Tracker [...]`, then `Stopping iOS CoreDevice session runner`, then serve-web's
+`shutdown complete` for the phone, and Node should exit well inside the 80 s `stop_grace_period`.
