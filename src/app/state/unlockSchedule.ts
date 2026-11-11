@@ -118,9 +118,22 @@ export function formatUnlockMoment(at: number, timeZone?: string): string {
     }
 }
 
+/** The clock time of a moment, written like the stored `time` ("15:00"), in `timeZone` or this browser's zone. */
+function formatUnlockClock(at: number, timeZone?: string): string {
+    const options: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+    try {
+        return new Date(at).toLocaleTimeString('en-GB', { ...options, timeZone });
+    } catch {
+        // A zone this browser does not know.
+        return new Date(at).toLocaleTimeString('en-GB', options);
+    }
+}
+
 /**
  * The scheduled-unlock line of the iPhone card, or `undefined` while the schedule is off. A
  * schedule that is on but cannot run, or whose last run failed, is a problem and says why.
+ * The text names the next run, which is the next of the two daily times or a retry before it;
+ * the title names both times.
  */
 export function unlockCardLine(
     status: UnlockScheduleStatus,
@@ -142,18 +155,18 @@ export function unlockCardLine(
     if (!status.hasPasscode) {
         return { text: 'Scheduled unlock cannot run: no passcode', title, problem: true };
     }
+    const next = status.nextRunAt ? `next ${formatUnlockClock(status.nextRunAt, unlockDisplayZone(status))}` : '';
+    // Without a next run from the server, the two times stand in for it.
+    const line = (...parts: string[]) =>
+        [next ? 'Scheduled unlock' : `Scheduled unlock ${times}`, ...parts].filter(Boolean).join(' · ');
     if (status.lastRun && isUnlockProblem(status.lastRun.outcome)) {
-        return {
-            text: `Scheduled unlock ${times} · ${unlockOutcomeText(status.lastRun.outcome)}`,
-            title,
-            problem: true,
-        };
+        return { text: line(unlockOutcomeText(status.lastRun.outcome), next), title, problem: true };
     }
     if (status.waitingForLock) {
-        return { text: `Scheduled unlock ${times} · runs when the phone is locked`, title, problem: false };
+        return { text: line('runs when the phone is locked'), title, problem: false };
     }
-    const last = status.lastUnlockedAt ? ` · last ${relativeUnlockTime(status.lastUnlockedAt, now)}` : '';
-    return { text: `Scheduled unlock ${times}${last}`, title, problem: false };
+    const last = status.lastUnlockedAt ? `last ${relativeUnlockTime(status.lastUnlockedAt, now)}` : '';
+    return { text: line(next, last), title, problem: false };
 }
 
 /** "just now", "12 min ago", "3 h ago", "2 days ago"; for the card line. */

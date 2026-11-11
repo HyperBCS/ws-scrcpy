@@ -248,7 +248,7 @@ async function panelFlow(browser) {
         assert.equal(await lastRun.getAttribute('data-tone'), null, 'a skip that needs nothing is not an error');
         const neutral = await colorOf(lastRun.locator('.sheet-row-desc'));
         await iosCard.locator('.device-unlock-schedule').waitFor({ state: 'attached' });
-        assert.equal(await iosCard.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock 03:00 and 15:00 · last 2 h ago');
+        assert.equal(await iosCard.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock · next 03:00 · last 2 h ago');
         assert.equal(await iosCard.locator('.device-unlock-schedule').getAttribute('title'), `Scheduled unlock at 03:00 and 15:00, ${ZONE}`);
         assert.equal(await iosCard.locator('.device-unlock-schedule.problem').count(), 0);
 
@@ -260,7 +260,7 @@ async function panelFlow(browser) {
         assert.equal(await lastRun.locator('svg.sheet-problem-icon').count(), 1);
         assert.equal(await summary.getAttribute('data-tone'), 'error');
         assert.match(await summary.locator('.sheet-row-desc').textContent(), /Last run: Failed: the screen did not wake$/);
-        assert.equal(await iosCard.locator('.device-unlock-schedule.problem').textContent(), 'Scheduled unlock 03:00 and 15:00 · Failed: the screen did not wake');
+        assert.equal(await iosCard.locator('.device-unlock-schedule.problem').textContent(), 'Scheduled unlock · Failed: the screen did not wake · next 03:00');
         await page.screenshot({ path: path.join(OUT, 'panel-390-failed.png') });
 
         // A rejected passcode pauses the schedule, and the panel and the card say so.
@@ -834,12 +834,12 @@ async function lockoutFlow(browser) {
                 assert.equal(await summary.locator('.sheet-row-desc').textContent(), 'Next run Wed 11 Nov, 15:00 · Last run: The iPhone stopped accepting connections');
                 assert.equal(await lastRun.getAttribute('data-tone'), null);
                 assert.equal(await card.locator('.device-unlock-schedule.problem').count(), 0);
-                assert.equal(await card.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock 03:00 and 15:00 · last 2 h ago');
+                assert.equal(await card.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock · next 15:00 · last 2 h ago');
 
                 // A slot that arrived while the phone was in use waits for it to be locked.
                 test.sendDevice(iphone({ ...reachable, waitingForLock: true }, { 'device.locked': false, 'screen.power': 'on' }));
                 await dialog.locator('.sheet-row-desc', { hasText: 'Runs when the phone is next locked' }).waitFor();
-                assert.equal(await card.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock 03:00 and 15:00 · runs when the phone is locked');
+                assert.equal(await card.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock · runs when the phone is locked');
                 assert.equal(await card.locator('.device-unlock-schedule.problem').count(), 0);
                 assert.deepEqual(test.errors, []);
             } finally {

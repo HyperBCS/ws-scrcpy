@@ -2045,9 +2045,11 @@ each calendar day in the schedule's zone (server local time without one), and on
 to the next day's `time`. That is 12 hours later on every day but the two with a clock change,
 where the 23 or 25 hours are split evenly (11 h 30 min, 12 h 30 min). A second slot at a fixed
 12 hours or at a fixed clock time leaves one 13-hour gap in autumn, which the skip rule below
-has no margin for. The panel and the card name the second slot by its clock time
-(`secondUnlockTime`, "03:00 and 15:00"); on those two days the Next run line shows the real
-moment, half an hour off. The interval is `UNLOCK_INTERVAL_MS`, a constant.
+has no margin for. The panel's switch and the card line's title name the second slot by its
+clock time (`secondUnlockTime`, "03:00 and 15:00"). The panel's summary and the card line show
+the next run from `nextRunAt` ("next 15:00"): the next of the two slots, or a retry before it.
+On the two days with a clock change that is the real moment, half an hour off the named time.
+The interval is `UNLOCK_INTERVAL_MS`, a constant.
 
 **Start by the clock.** `UnlockScheduler.armTick` arms one timer for the next whole minute of
 the clock and re-arms it each time, so a run starts within a second of its slot whatever second
