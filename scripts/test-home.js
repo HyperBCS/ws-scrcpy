@@ -72,7 +72,7 @@ const route = (params) => new URLSearchParams(params);
 test('every page takes its tab title from one function with one format', () => {
     const list = [android('PIXEL-1'), iphone('IPHONE-1')];
     assert.equal(APP_NAME, 'ws-scrcpy');
-    assert.equal(pageTitle(route({}), list), 'Devices · ws-scrcpy');
+    assert.equal(pageTitle(route({}), list), 'Phones · ws-scrcpy');
     assert.equal(pageTitle(route({ action: 'notifications', source: 'IPHONE-1' }), list), 'Notifications · ws-scrcpy');
     assert.equal(
         pageTitle(route({ action: 'stream', udid: 'PIXEL-1', player: 'webcodecs' }), list),
@@ -100,9 +100,9 @@ test('every page takes its tab title from one function with one format', () => {
     assert.equal(pageTitle(route({ action: 'shell', udid: 'IPHONE-1' }), list), 'iPhone 13 Pro Max · Shell · ws-scrcpy');
     // A `title` parameter in a device link still replaces the whole title.
     assert.equal(pageTitle(route({ action: 'stream', udid: 'PIXEL-1', title: 'Kitchen tablet' }), list), 'Kitchen tablet');
-    assert.equal(pageTitle(route({ title: 'Ignored' }), list), 'Devices · ws-scrcpy');
+    assert.equal(pageTitle(route({ title: 'Ignored' }), list), 'Phones · ws-scrcpy');
     // An unknown action falls back to Devices, like the router does.
-    assert.equal(pageTitle(route({ action: 'devtools', udid: 'PIXEL-1' }), list), 'Devices · ws-scrcpy');
+    assert.equal(pageTitle(route({ action: 'devtools', udid: 'PIXEL-1' }), list), 'Phones · ws-scrcpy');
 });
 
 test('the Notifications control opens the inbox of the iPhone on screen, or the inbox with the total', () => {

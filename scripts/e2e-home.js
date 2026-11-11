@@ -131,7 +131,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         await card(page, 'ios:HOME-IPHONE-START').waitFor();
         await page.locator('.device-list-header .notification-unread-count').waitFor();
         await settleMotion(page);
-        assert.equal(await page.title(), 'Devices · ws-scrcpy');
+        assert.equal(await page.title(), 'Phones · ws-scrcpy');
 
         // Header: a Notifications entry with the total unread count, and a reload control.
         const header = page.locator('.device-list-header');
@@ -146,7 +146,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         }
         const pill = header.locator('.device-list-summary');
         assert.equal((await pill.textContent()).trim(), '9 available · 3 need attention');
-        const title = await header.getByRole('heading', { name: 'Devices', exact: true }).boundingBox();
+        const title = await header.getByRole('heading', { name: 'Phones', exact: true }).boundingBox();
         assert.ok(Math.abs((await inbox.boundingBox()).y + 22 - (title.y + title.height / 2)) < 16, `${label}: the actions sit on the heading row`);
         assert.equal(await noOverflow(page), true, `${label}: no horizontal page scroll`);
 
@@ -271,7 +271,7 @@ async function narrowRow(browser) {
         assert.equal(await row.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false);
         assert.equal(await noOverflow(page), true, 'no horizontal page scroll at 320px');
         const header = page.locator('.device-list-header');
-        const heading = await header.getByRole('heading', { name: 'Devices', exact: true }).boundingBox();
+        const heading = await header.getByRole('heading', { name: 'Phones', exact: true }).boundingBox();
         const inbox = await header.locator('.notifications-link').boundingBox();
         assert.ok(inbox.y < heading.y + heading.height, 'the header actions stay on the first row at 320px');
         await page.screenshot({ path: path.join(OUT, 'devices-320.png') });
@@ -327,8 +327,8 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await page.locator('.stream-view').waitFor();
         await page.waitForFunction(() => document.title === 'Google Extra 15 · Screen · ws-scrcpy');
         assert.equal(await page.locator('.stream-header-device > strong').textContent(), 'Google Extra 15', 'the stream header names the device like its card');
-        await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
-        await check('Back to devices');
+        await page.getByRole('button', { name: 'Phones', exact: true }).click();
+        await check('the back control');
         await leave(target.getByRole('link', { name: 'Open screen', exact: true }));
         await page.locator('.stream-view').waitFor();
         await page.goBack();
@@ -339,7 +339,7 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await page.locator('.tool-view').waitFor();
         await page.waitForFunction(() => document.title === 'Google Extra 15 · Files · ws-scrcpy');
         assert.equal(await page.locator('.stream-header-device > strong').textContent(), 'Google Extra 15');
-        await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+        await page.getByRole('button', { name: 'Phones', exact: true }).click();
         await check('Files');
 
         // Notifications and back. The header has scrolled away with the list; the link still works.
@@ -349,7 +349,7 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await page.waitForFunction(() => document.title === 'Notifications · ws-scrcpy');
         await page.getByRole('link', { name: '← Devices', exact: true }).click();
         await check('Notifications');
-        await page.waitForFunction(() => document.title === 'Devices · ws-scrcpy');
+        await page.waitForFunction(() => document.title === 'Phones · ws-scrcpy');
 
         // Closing a card is remembered too.
         await card(page, 'android:HOME-EXTRA-15').locator('summary').click();
@@ -393,7 +393,7 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         assert.equal(await headerLink.locator('.notification-unread-count').textContent(), '5');
         await fits('Android screen');
         await page.screenshot({ path: path.join(OUT, `stream-header-${label}.png`) });
-        await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+        await page.getByRole('button', { name: 'Phones', exact: true }).click();
 
         // iPhone screen: that iPhone's inbox and count, and the card's name in the header.
         await card(page, `ios:${LINKED}`).getByRole('link', { name: 'Open screen', exact: true }).click();
@@ -403,13 +403,13 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         assert.equal(await page.locator('.stream-header-device > strong').textContent(), 'iPhone linked');
         await page.waitForFunction(() => document.title === 'iPhone linked · Screen · ws-scrcpy');
         await fits('iPhone screen');
-        await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+        await page.getByRole('button', { name: 'Phones', exact: true }).click();
 
         // An iPhone that sends no notifications here: the inbox, not a setup page for it.
         await card(page, 'ios:HOME-IPHONE-STREAM').getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.locator('.stream-view').waitFor();
         assert.equal(await headerLink.getAttribute('href'), '#!action=notifications');
-        await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+        await page.getByRole('button', { name: 'Phones', exact: true }).click();
 
         // Shell: the same link, a tab title with the device name, and a switcher for this tool.
         await card(page, 'android:HOME-PIXEL-0001').getByRole('link', { name: 'Shell', exact: true }).click();
@@ -461,7 +461,7 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         await filesSheet.waitFor({ state: 'hidden' });
 
         // The stream switcher still lists every device and says it opens a screen.
-        await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+        await page.getByRole('button', { name: 'Phones', exact: true }).click();
         await card(page, 'android:HOME-PIXEL-0001').getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.locator('.touch-layer').waitFor({ state: 'visible' });
         await page.getByRole('button', { name: 'Switch', exact: true }).click();
@@ -498,8 +498,7 @@ async function toolLinkForIphone(browser, { width, height, mobile, colorScheme }
             await page.getByRole('link', { name: 'Open screen', exact: true }).click();
             await page.waitForFunction((udid) => location.hash.includes('view=screen') && location.hash.includes(udid), LINKED);
             await page.locator('.stream-view').waitFor();
-            await page.goBack();
-            await page.getByRole('button', { name: 'Back to devices', exact: true }).last().click();
+            await page.getByRole('button', { name: 'Phones', exact: true }).first().click();
             await page.locator('#devices').waitFor();
             assert.deepEqual(test.errors, []);
         } finally {
@@ -512,7 +511,7 @@ async function toolLinkForIphone(browser, { width, height, mobile, colorScheme }
         try {
             await test.page.getByRole('heading', { name: 'Shell is not available for this device', exact: true }).waitFor();
             assert.equal(await test.page.getByRole('link', { name: 'Open screen', exact: true }).count(), 0);
-            await test.page.getByRole('button', { name: 'Back to devices', exact: true }).last().waitFor();
+            await test.page.getByRole('button', { name: 'Phones', exact: true }).last().waitFor();
         } finally {
             await test.context.close();
         }

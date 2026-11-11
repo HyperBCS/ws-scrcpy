@@ -17,7 +17,9 @@ import {
 } from '../state/stream';
 import { deviceName, findDeviceByUdid } from '../state/devices';
 import { NotificationsLink } from '../ui/NotificationsLink';
-import { goToDeviceList } from '../state/router';
+import { goUp } from '../state/router';
+import { LIST_PAGE_NAME } from '../state/routes';
+import { AppBar, AppBarStatus } from '../ui/AppBar';
 import { FloatingToolbar } from './FloatingToolbar';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { ApplActionsSheet } from './ApplActionsSheet';
@@ -159,35 +161,7 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
 
     return (
         <div class="stream-view">
-            <header class="stream-header">
-                <button
-                    type="button"
-                    class="stream-header-back"
-                    onClick={goToDeviceList}
-                    aria-label="Back to devices"
-                    title="Back to devices"
-                >
-                    <svg
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                    >
-                        <path d="m15 6-6 6 6 6" />
-                    </svg>
-                </button>
-                <div class="stream-header-device">
-                    <strong title={String(name)}>{name}</strong>
-                    <span class={`stream-header-status ${connected ? 'connected' : ''}`} role="status">
-                        <span class="stream-header-status-dot" aria-hidden="true" />
-                        {statusText}
-                    </span>
-                </div>
+            <AppBar title={String(name)} status={<AppBarStatus connected={connected}>{statusText}</AppBarStatus>}>
                 <NotificationsLink compact udid={params.udid} />
                 <button
                     type="button"
@@ -197,7 +171,7 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                 >
                     Switch
                 </button>
-            </header>
+            </AppBar>
             <LockScreenNotice
                 key="lock-notice"
                 udid={params.udid}
@@ -244,8 +218,8 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                                 Retry
                             </button>
                         )}
-                        <button type="button" class="sheet-button" onClick={goToDeviceList}>
-                            Back to devices
+                        <button type="button" class="sheet-button" onClick={goUp}>
+                            {LIST_PAGE_NAME}
                         </button>
                     </div>
                 </div>

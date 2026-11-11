@@ -104,7 +104,7 @@ const card = (page, key) => page.locator(`article.device[data-device-key="${key}
 const hash = (page) => page.evaluate(() => location.hash);
 const streamsOf = (test, udid) => test.streams.filter((stream) => stream.udid === udid).length;
 const quiet = (page, ms = 350) => page.waitForTimeout(ms);
-const backControl = (page) => page.getByRole('button', { name: 'Back to devices', exact: true }).first();
+const backControl = (page) => page.getByRole('button', { name: 'Phones', exact: true }).first();
 
 /**
  * Presses the browser's Back until the app is left. No step may show a stream page or open a
@@ -177,7 +177,7 @@ async function backFromEveryPage(browser, viewport) {
     console.log(`PASS ${viewport.name} the back control of the screen, Files and Shell goes back to the list; Back from the list never shows a stream`);
 }
 
-/** Several phones and views in a row. The views still push an entry for each; the back control still ends on the list. */
+/** Several phones and views in a row. Switch and the tabs replace the entry; the back control ends on the list. */
 async function backAfterSwitching(browser, viewport) {
     const test = await start(browser, { viewport });
     const { page } = test;
@@ -185,6 +185,7 @@ async function backAfterSwitching(browser, viewport) {
     try {
         await card(page, `android:${PIXEL}`).getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.getByText('Connected', { exact: true }).first().waitFor();
+        const opened = await page.evaluate(() => history.length);
         const pick = async (name) => {
             await page.getByRole('button', { name: 'Switch', exact: true }).click();
             const sheet = page.locator('.bottom-sheet-root.open');
@@ -201,6 +202,7 @@ async function backAfterSwitching(browser, viewport) {
         await page.waitForFunction(() => document.title === 'Google Pixel 8 · Screen · ws-scrcpy');
         await quiet(page);
         assert.deepEqual(test.streams.map((stream) => stream.udid), [PIXEL, IPHONE, PIXEL_2], `${label}: one stream socket per phone opened`);
+        assert.equal(await page.evaluate(() => history.length), opened, `${label}: Switch adds no entry`);
         await backControl(page).click();
         await page.locator('#devices').waitFor();
         assert.equal(await page.evaluate(() => history.state.nav.index), 0, `${label}: the back control goes to the list entry, past the phones between`);
@@ -214,11 +216,13 @@ async function backAfterSwitching(browser, viewport) {
             const tool = tools.page;
             await card(tool, `android:${PIXEL}`).getByRole('link', { name: 'Files', exact: true }).click();
             await tool.locator('.tool-view-list-files').waitFor();
+            const inTool = await tool.evaluate(() => history.length);
             await tool.locator('.tool-tabs').getByRole('button', { name: 'Shell', exact: true }).click();
             await tool.locator('.tool-view-shell').waitFor();
             assert.equal(await hash(tool), `#!action=device&udid=${PIXEL}&view=shell`);
             await tool.locator('.tool-tabs').getByRole('button', { name: 'Files', exact: true }).click();
             await tool.locator('.tool-view-list-files').waitFor();
+            assert.equal(await tool.evaluate(() => history.length), inTool, `${viewport.name}: a tab change adds no entry`);
             await tool.locator('.stream-header .notifications-link').click();
             await tool.locator('.notifications-page').waitFor();
             // "Open screen" in the inbox is a link in the older form.
@@ -338,7 +342,7 @@ async function linksOpenOnce(browser) {
         [`action=list-files&udid=${PIXEL}&path=sdcard`, `#!action=device&udid=${PIXEL}&view=files&path=`, 'Google Pixel 9 · Files · ws-scrcpy', '.tool-view-list-files', 'FSLS'],
         [`action=device&udid=${PIXEL}&view=files&path=sdcard`, `#!action=device&udid=${PIXEL}&view=files&path=`, 'Google Pixel 9 · Files · ws-scrcpy', '.tool-view-list-files', 'FSLS'],
         [`action=notifications&source=${IPHONE}&notification=history-key`, `#!action=notifications&source=${IPHONE}&notification=history-key`, 'Notifications · ws-scrcpy', '.notifications-page'],
-        ['action=', '#!action=', 'Devices · ws-scrcpy', '#devices'],
+        ['action=', '#!action=', 'Phones · ws-scrcpy', '#devices'],
     ]) {
         test = await start(browser, { hash: link });
         try {

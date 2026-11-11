@@ -1,20 +1,49 @@
+import { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import { BaseClient } from '../client/BaseClient';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import { streamSocketUrl } from '../googDevice/client/deviceInterfaces';
+import { DEFAULT_FILES_PATH } from '../googDevice/client/deviceTools';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
 import { deviceName, findDeviceByUdid } from '../state/devices';
-import { goUp } from '../state/router';
-import { clientParams, LIST_PAGE_NAME, parseRoute, Platform, rememberedPhone, rememberPhone } from '../state/routes';
+import { goUp, switchRoute } from '../state/router';
+import {
+    clientParams,
+    DEVICE_TABS,
+    deviceRoute,
+    DeviceView,
+    LIST_PAGE_NAME,
+    parseRoute,
+    Platform,
+    rememberedPhone,
+    rememberPhone,
+} from '../state/routes';
 import { AppBar } from '../ui/AppBar';
+import { Tab, TabStrip } from '../ui/TabStrip';
 import { StreamView } from './StreamView';
 import { CoreDeviceStreamView } from './CoreDeviceStreamView';
 import { ToolRoute } from './ToolRoute';
+import { deviceTools } from './ToolView';
 import '../../style/views/ToolUnavailable.css';
 
 /** How long a screen link for a phone this browser has not seen waits for the list. */
 const IDENTIFY_MS = 1500;
+
+/** The server a phone is reached through, when the address names one. Part of which page it is. */
+const HOST_KEYS = ['hostname', 'port', 'pathname', 'secure', 'useProxy'];
+
+/** What a tab link does not take over from the address: its own head, the socket and the folder. */
+const TAB_DROPS = ['action', 'udid', 'view', 'ws', 'path'];
+
+/**
+ * The tabs of an Android phone's page: the screen, and the tools this build has. An iPhone has
+ * the screen only and shows no tabs.
+ */
+const PHONE_TABS: ReadonlyArray<Tab<DeviceView>> = DEVICE_TABS.android.flatMap(({ view, title }) => {
+    const tool = deviceTools.find((item) => item.view === view);
+    return view === 'screen' || tool ? [{ id: view, title, hint: tool?.hint }] : [];
+});
 
 /**
  * The server a phone's link points at, as its tracker describes it. A link names another host
@@ -78,8 +107,12 @@ function PhoneNotListed({ udid }: { udid: string }) {
 }
 
 /**
- * One phone's page: its screen, its files or its shell. Exactly one of the three is mounted, so
- * leaving the screen for another view stops the stream at once.
+ * One phone's page: its screen and, for an Android phone, Files and Shell as tabs beside it.
+ *
+ * The stream view is mounted only while the Screen tab is shown, so leaving it for another tab
+ * stops the stream at once. Files and Shell are each mounted the first time their tab is shown
+ * and then stay, hidden, until the page is left for another phone, the list or Notifications:
+ * a shell session and a Files folder survive a look at another tab.
  *
  * The address names the phone, not its platform. The list says which screen to open; before the
  * list arrives, what this browser remembers of the phone does. A phone that is in neither is
@@ -133,19 +166,68 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
                 : undefined,
         [params, view, platform],
     );
-    const tool = useMemo(() => (view === 'screen' ? undefined : clientParams(params)), [params, view]);
 
-    if (tool) {
-        return <ToolRoute params={tool} />;
+    // The tools that have been shown on this page, each with the address it was last shown
+    // with. Another phone, or the same serial on another server, is another page: its key
+    // changes below and the tools of the page before stop.
+    const pageKey = [udid, ...HOST_KEYS.map((key) => params.get(key))].join('\n');
+    const tools = useRef<{ page: string; shown: Partial<Record<DeviceView, URLSearchParams>> }>();
+    if (tools.current?.page !== pageKey) {
+        tools.current = { page: pageKey, shown: {} };
     }
-    if (android) {
-        return <StreamView params={android} />;
+    const shown = tools.current.shown;
+    if (view !== 'screen') {
+        const next = clientParams(params);
+        if (shown[view]?.toString() !== next.toString()) {
+            shown[view] = next;
+        }
     }
-    if (ios) {
-        return <CoreDeviceStreamView params={ios} />;
-    }
-    if (waitedFor === udid) {
-        return <PhoneNotListed udid={udid} />;
-    }
-    return <main class="tool-unavailable" aria-busy="true" />;
+
+    // A tab change replaces the history entry, so one Back from any tab leads to the list. The
+    // link names the phone and the view. What else the address says stays with the page (a
+    // server it names, a player chosen for this visit), except the socket and the folder:
+    // Files opens in its first folder, and once it is mounted the link names none, so Files
+    // stays where it was left.
+    const selectTab = (next: DeviceView) => {
+        if (next === view) {
+            return;
+        }
+        const extra: Record<string, string> = {};
+        params.forEach((value, key) => {
+            if (!TAB_DROPS.includes(key)) {
+                extra[key] = value;
+            }
+        });
+        if (next === 'files' && !shown.files) {
+            extra.path = DEFAULT_FILES_PATH;
+        }
+        switchRoute(deviceRoute(udid, next, extra));
+    };
+    const tabs = (status?: ComponentChildren) =>
+        PHONE_TABS.length > 1 ? (
+            <TabStrip label="Phone views" tabs={PHONE_TABS} current={view} onSelect={selectTab}>
+                {status}
+            </TabStrip>
+        ) : null;
+
+    return (
+        <>
+            {android && <StreamView params={android} tabs={tabs()} />}
+            {ios && <CoreDeviceStreamView params={ios} />}
+            {view === 'screen' &&
+                !android &&
+                !ios &&
+                (waitedFor === udid ? (
+                    <PhoneNotListed udid={udid} />
+                ) : (
+                    <main class="tool-unavailable" aria-busy="true" />
+                ))}
+            {deviceTools.map(({ view: tool }) => {
+                const toolParams = shown[tool];
+                return toolParams ? (
+                    <ToolRoute key={`${pageKey}\n${tool}`} params={toolParams} active={view === tool} tabs={tabs} />
+                ) : null;
+            })}
+        </>
+    );
 }

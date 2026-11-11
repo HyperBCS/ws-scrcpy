@@ -439,8 +439,8 @@ async function main() {
             assert.equal(await page.locator('.stream-header').count(), 1, 'shared tool header remains visible');
             assert.equal(
                 await page.locator('.tool-navigation button').allInnerTexts().then((list) => list.join(',')),
-                'Files,Shell',
-                'the tools navigation offers Files and Shell only',
+                'Screen,Files,Shell',
+                'the tabs of the phone\'s page: the screen, then the tools',
             );
 
             // Layout: nothing may overflow sideways, and touch builds keep 44px targets.
@@ -1054,7 +1054,7 @@ async function main() {
                 document.querySelector('.file-listing-upload-progress')?.textContent.includes('pending-upload'),
             );
             // Leaving with an upload in progress asks first, and stops it only when told to.
-            await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+            await page.getByRole('button', { name: 'Phones', exact: true }).click();
             const leave = page.locator('.fx-dialog[open]');
             await leave.getByRole('heading', { name: `Stop the upload to ${DEVICE}?`, exact: true }).waitFor();
             await page.waitForTimeout(550);

@@ -1,3 +1,4 @@
+import { ComponentChildren } from 'preact';
 import { Presence } from '../ui/Presence';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ParamsStreamScrcpy } from '../../types/ParamsStreamScrcpy';
@@ -17,7 +18,9 @@ import {
 import { findDeviceForStream } from '../state/streamDevice';
 import { deviceName } from '../state/devices';
 import { NotificationsLink } from '../ui/NotificationsLink';
-import { goToDeviceList } from '../state/router';
+import { goUp } from '../state/router';
+import { LIST_PAGE_NAME } from '../state/routes';
+import { AppBar, AppBarStatus } from '../ui/AppBar';
 import { ActionsSheet } from './ActionsSheet';
 import { FloatingToolbar } from './FloatingToolbar';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
@@ -34,9 +37,11 @@ import '../../style/views/StreamView.css';
 
 interface StreamViewProps {
     params: ParamsStreamScrcpy;
+    /** The tab strip of the phone's page, drawn under the header. */
+    tabs?: ComponentChildren;
 }
 
-export function StreamView({ params }: StreamViewProps) {
+export function StreamView({ params, tabs }: StreamViewProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [error, setError] = useState('');
     // Counts the owner's "Start again" after the stream service was stopped: a new connection
@@ -53,8 +58,8 @@ export function StreamView({ params }: StreamViewProps) {
         streamNotice.value = '';
         streamServiceStopped.value = false;
         setError('');
-        // `StreamClientScrcpy` sets `document.body.className = 'stream'` itself; navigating back
-        // to the device list re-sets it to 'list' from there (see `views/DeviceList.tsx`).
+        // `StreamClientScrcpy` sets `document.body.className = 'stream'` itself; the list and
+        // the tool tabs set their own when they are shown (`DeviceList.tsx`, `ToolView.tsx`).
         let client: StreamClientScrcpy;
         try {
             client = StreamClientScrcpy.start(params, undefined, undefined, undefined, container);
@@ -94,42 +99,23 @@ export function StreamView({ params }: StreamViewProps) {
 
     return (
         <div class="stream-view">
-            <header class="stream-header">
-                <button
-                    type="button"
-                    class="stream-header-back"
-                    onClick={goToDeviceList}
-                    aria-label="Back to devices"
-                    title="Back to devices"
-                >
-                    <svg
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                    >
-                        <path d="m15 6-6 6 6 6" />
-                    </svg>
-                </button>
-                <div class="stream-header-device">
-                    <strong title={String(name)}>{name}</strong>
-                    <span class={`stream-header-status ${streamConnected.value ? 'connected' : ''}`} role="status">
-                        <span class="stream-header-status-dot" aria-hidden="true" />
-                        {error
-                            ? 'Unable to connect'
-                            : streamConnected.value
-                              ? 'Connected'
-                              : stopped
-                                ? 'Stopped'
-                                : 'Connecting…'}
-                    </span>
-                    <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
-                </div>
+            <AppBar
+                title={String(name)}
+                status={
+                    <>
+                        <AppBarStatus connected={streamConnected.value}>
+                            {error
+                                ? 'Unable to connect'
+                                : streamConnected.value
+                                  ? 'Connected'
+                                  : stopped
+                                    ? 'Stopped'
+                                    : 'Connecting…'}
+                        </AppBarStatus>
+                        <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
+                    </>
+                }
+            >
                 <NotificationsLink compact />
                 <button
                     type="button"
@@ -139,7 +125,8 @@ export function StreamView({ params }: StreamViewProps) {
                 >
                     Switch
                 </button>
-            </header>
+            </AppBar>
+            {tabs}
             <LockScreenNotice
                 key="lock-notice"
                 udid={params.udid}
@@ -168,8 +155,8 @@ export function StreamView({ params }: StreamViewProps) {
                 <div class="stream-start-error" role="alert">
                     <h2>Unable to start this stream</h2>
                     <p>{error}</p>
-                    <button type="button" class="sheet-button" onClick={goToDeviceList}>
-                        Back to devices
+                    <button type="button" class="sheet-button" onClick={goUp}>
+                        {LIST_PAGE_NAME}
                     </button>
                 </div>
             )}
@@ -181,8 +168,8 @@ export function StreamView({ params }: StreamViewProps) {
                         <button type="button" class="sheet-button primary" onClick={() => setAttempt(attempt + 1)}>
                             Start again
                         </button>
-                        <button type="button" class="sheet-button" onClick={goToDeviceList}>
-                            Back to devices
+                        <button type="button" class="sheet-button" onClick={goUp}>
+                            {LIST_PAGE_NAME}
                         </button>
                     </div>
                 </div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { streamConnected } from '../state/stream';
-import { goToDeviceList } from '../state/router';
+import { goUp } from '../state/router';
+import { LIST_PAGE_NAME } from '../state/routes';
 import '../../style/views/SleepOverlay.css';
 import { Presence } from '../ui/Presence';
 
@@ -91,8 +92,8 @@ export function SleepOverlay({ sessionKey, screenOff, onWake }: SleepOverlayProp
                     <div class="sleep-overlay-label">{hasConnected ? 'Reconnecting…' : 'Connecting to device…'}</div>
                     {waiting && <div class="sleep-overlay-hint">Check that the device is online and unlocked.</div>}
                     {waiting && (
-                        <button type="button" class="sleep-overlay-return" onClick={goToDeviceList}>
-                            Back to devices
+                        <button type="button" class="sleep-overlay-return" onClick={goUp}>
+                            {LIST_PAGE_NAME}
                         </button>
                     )}
                 </div>

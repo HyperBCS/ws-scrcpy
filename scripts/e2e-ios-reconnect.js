@@ -97,7 +97,7 @@ async function run(browser, { width, height, colorScheme, checkTiming }) {
         assert.ok(await retry.isVisible());
         const box = await retry.boundingBox();
         assert.ok(box.x >= 0 && box.x + box.width <= width, `${label}: Retry is inside the viewport`);
-        for (const name of ['Retry', 'Back to devices']) {
+        for (const name of ['Retry', 'Phones']) {
             assert.ok(await reachable(page, notice.getByRole('button', { name, exact: true })), `${label}: ${name} can be pressed`);
         }
         const stage = await page.locator('.stream-stage').boundingBox();
@@ -220,7 +220,7 @@ async function noPicture(browser, { width, height, colorScheme }) {
         await headerIs('Stream stopped');
         assert.equal(await header.evaluate((el) => el.classList.contains('connected')), false);
         await hardwareDisabled(true); // no controls for a stopped stream
-        for (const name of ['Retry', 'Back to devices']) {
+        for (const name of ['Retry', 'Phones']) {
             assert.ok(await reachable(page, card.getByRole('button', { name, exact: true })), `${label}: ${name} can be pressed`);
         }
         await page.locator('.stream-notice').waitFor({ state: 'hidden' });
@@ -258,7 +258,7 @@ async function noPicture(browser, { width, height, colorScheme }) {
         assert.equal(await actions.getByText(/Reconnecting to the phone/).count(), 0, `${label}: no reconnect is claimed`);
         await page.getByRole('button', { name: 'Close Actions', exact: true }).click();
         await actions.waitFor({ state: 'hidden' });
-        const back = card.getByRole('button', { name: 'Back to devices', exact: true });
+        const back = card.getByRole('button', { name: 'Phones', exact: true });
         assert.ok(await reachable(page, back));
         await back.click();
         await page.locator(`[data-device-key="ios:${UDID}"]`).waitFor();

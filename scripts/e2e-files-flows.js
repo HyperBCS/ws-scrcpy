@@ -825,9 +825,9 @@ async function uploads(browser, layout, name, scheme) {
     const question = leave.getByRole('heading', { name: `Stop the upload to ${DEVICE}?`, exact: true });
     const files0 = await page.evaluate(() => location.hash);
     // The second Back is pressed with the question open: it closes the question and stays.
-    for (const way of ['browser Back', 'browser Back twice', 'Back to devices']) {
+    for (const way of ['browser Back', 'browser Back twice', 'Phones button']) {
         if (way.startsWith('browser Back')) await page.goBack();
-        if (way === 'Back to devices') await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+        if (way === 'Phones button') await page.getByRole('button', { name: 'Phones', exact: true }).click();
         await question.waitFor();
         assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Keep uploading');
         assert.equal(
@@ -860,7 +860,7 @@ async function uploads(browser, layout, name, scheme) {
     if (!(await filesLink.isVisible())) await card.locator('summary').click();
     await filesLink.click();
     await ready(page);
-    await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+    await page.getByRole('button', { name: 'Phones', exact: true }).click();
     await card.waitFor();
 
     // Another tab of the same phone is not leaving it, so nothing is asked. What becomes of

@@ -1,8 +1,9 @@
 import { useLayoutEffect } from 'preact/hooks';
-import { ACTION } from '../../common/Action';
 import { canOpenScreen, DeviceEntry, deviceName } from '../state/devices';
-import { buildLinkHref } from '../state/links';
-import { goToDeviceList } from '../state/router';
+import { deviceHref, followLink } from '../state/links';
+import { goUp } from '../state/router';
+import { LIST_PAGE_NAME } from '../state/routes';
+import { AppBar } from '../ui/AppBar';
 import '../../style/views/StreamView.css';
 import '../../style/views/ToolUnavailable.css';
 
@@ -16,34 +17,10 @@ export function ToolUnavailable({ entry, tool }: { entry: DeviceEntry; tool: str
         document.body.className = '';
     }, []);
     const name = deviceName(entry);
+    const screen = deviceHref(entry.descriptor.udid, 'screen', entry.params);
     return (
         <main class="tool-unavailable">
-            <header class="stream-header">
-                <button
-                    type="button"
-                    class="stream-header-back"
-                    onClick={goToDeviceList}
-                    aria-label="Back to devices"
-                    title="Back to devices"
-                >
-                    <svg
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                    >
-                        <path d="m15 6-6 6 6 6" />
-                    </svg>
-                </button>
-                <div class="stream-header-device">
-                    <strong title={name}>{name}</strong>
-                </div>
-            </header>
+            <AppBar title={name} />
             <section class="tool-unavailable-body" role="alert">
                 <h2>{tool} is not available for this device</h2>
                 <p>Files and Shell work on Android devices only. {name} is an iPhone or iPad.</p>
@@ -51,16 +28,22 @@ export function ToolUnavailable({ entry, tool }: { entry: DeviceEntry; tool: str
                     {canOpenScreen(entry) && (
                         <a
                             class="ui-button ui-button-primary"
-                            href={buildLinkHref(
-                                { action: ACTION.STREAM_COREDEVICE, udid: entry.descriptor.udid },
-                                entry.params,
-                            )}
+                            href={screen}
+                            onClick={(event) => {
+                                if (event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+                                    return;
+                                }
+                                event.preventDefault();
+                                // Another view of the same phone, as a tab is: the entry is
+                                // replaced, so Back from the screen does not return here.
+                                followLink(screen, 'switch');
+                            }}
                         >
                             Open screen
                         </a>
                     )}
-                    <button type="button" class="ui-button" onClick={goToDeviceList}>
-                        Back to devices
+                    <button type="button" class="ui-button" onClick={goUp}>
+                        {LIST_PAGE_NAME}
                     </button>
                 </div>
             </section>

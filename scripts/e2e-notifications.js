@@ -732,7 +732,7 @@ async function perDeviceHistory(browser) {
         assert.equal(await f.page.evaluate(() => window.__notificationBadges.at(-1)), 1);
 
         await f.page.getByRole('link', { name: '← Devices', exact: true }).click();
-        await f.page.getByRole('heading', { name: 'Devices', exact: true }).waitFor();
+        await f.page.getByRole('heading', { name: 'Phones', exact: true }).waitFor();
         await until(() => f.summaryPolls > 0, 'Devices loads the lightweight unread summary');
         const headerLink = f.page.locator('.device-list-header a[href*=notifications]');
         assert.equal(await headerLink.getAttribute('href'), '#!action=notifications', 'Devices has a Notifications link that does not depend on a card');
@@ -1101,7 +1101,7 @@ async function unlinkedDeepLink(browser) {
     const f = await fixture(browser, { history: true, notifications: historyItems(), devices: true });
     try {
         await f.page.getByRole('link', { name: '← Devices', exact: true }).click();
-        await f.page.getByRole('heading', { name: 'Devices', exact: true }).waitFor();
+        await f.page.getByRole('heading', { name: 'Phones', exact: true }).waitFor();
         const card = id => f.page.locator(`article.device[data-device-key$=":${id}"]`);
         await card('phone-a').locator('.device-notification-history').waitFor();
         // The card of an unlinked iPhone has no inbox button; a link that names it opens setup.

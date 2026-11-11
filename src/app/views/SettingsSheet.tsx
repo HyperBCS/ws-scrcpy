@@ -13,8 +13,7 @@ import { ControlCenterCommand } from '../../common/ControlCenterCommand';
 import { DEFAULT_SCRCPY_SERVER_CONFIG, ScrcpyServerConfig } from '../../common/Constants';
 import { EncoderInfo } from '../../types/EncoderInfo';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
-import { ACTION } from '../../common/Action';
-import { navigate, route } from '../state/router';
+import { route, switchRoute } from '../state/router';
 import '../../style/views/SettingsSheet.css';
 
 // Both browser players currently parse AVC/H.264. The server supports other codecs, but
@@ -309,19 +308,13 @@ export function SettingsSheet() {
         if (!session) {
             return;
         }
-        const params: Record<string, string | boolean> = {};
-        route.value.forEach((value, key) => {
-            params[key] = value;
-        });
+        // The same page with another player: the entry is replaced, so Back does not lead to
+        // the stream under the player before.
+        const next = new URLSearchParams(route.value);
+        next.set('player', (event.currentTarget as HTMLSelectElement).value);
+        next.set('captureKeyboard', String(captureKeyboard));
         closeSettingsSheet();
-        navigate({
-            ...params,
-            action: ACTION.STREAM_SCRCPY,
-            udid: session.params.udid,
-            player: (event.currentTarget as HTMLSelectElement).value,
-            ws: session.params.ws,
-            captureKeyboard: captureKeyboard,
-        });
+        switchRoute(next);
     };
 
     return (

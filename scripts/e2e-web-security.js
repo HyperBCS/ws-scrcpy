@@ -116,10 +116,9 @@ async function androidCard(browser) {
 
         const open = card.getByRole('link', { name: 'Open screen', exact: true });
         const link = new URLSearchParams(new URL(await open.getAttribute('href')).hash.slice(2));
-        const socket = new URL(link.get('ws'));
-        assert.equal(socket.host, ownSocketHost, `${label}: Open screen connects through the server`);
-        assert.equal(socket.searchParams.get('action'), 'proxy-adb');
-        assert.equal(socket.searchParams.get('udid'), ANDROID);
+        // The link names the phone only. The page opens the socket itself (checked below).
+        assert.equal(link.get('ws'), null, `${label}: Open screen names no socket`);
+        assert.equal(link.get('udid'), ANDROID);
         assert.equal(link.get('hostname'), null, 'a local link names no host');
 
         await card.locator('summary').click();
@@ -130,7 +129,7 @@ async function androidCard(browser) {
         assert.doesNotMatch(await card.textContent(), new RegExp(`wlan0|${PHONE_ADDRESS.replaceAll('.', '\\.')}`), `${label}: the phone's own address is not offered`);
         for (const alternative of await details.locator('a.stream.alternative').all()) {
             const params = new URLSearchParams(new URL(await alternative.getAttribute('href')).hash.slice(2));
-            assert.equal(new URL(params.get('ws')).host, ownSocketHost, `${label}: ${await alternative.textContent()} uses the server`);
+            assert.equal(params.get('ws'), null, `${label}: ${await alternative.textContent()} names no socket`);
         }
         // The row sits where the iPhone card has the same one, and nothing overflows the card.
         const row = details.locator('.device-interface');
@@ -152,6 +151,10 @@ async function androidCard(browser) {
             [ANDROID],
             `${label}: Wake asks the server`,
         );
+        await open.click();
+        await page.getByText('Connected', { exact: true }).waitFor();
+        const stream = test.sockets.filter((url) => url.searchParams.get('action') === 'proxy-adb');
+        assert.deepEqual(stream.map((url) => [url.host, url.searchParams.get('udid')]), [[ownSocketHost, ANDROID]], `${label}: Open screen connects through the server`);
         assertOnlyOwnSockets(test.sockets, label);
         assert.equal(test.commands.filter((command) => command.type === 'update_interfaces').length, 0);
         assert.deepEqual(test.errors, [], `${label}: no runtime errors`);
@@ -186,7 +189,7 @@ async function streamLinks(browser) {
             assert.equal(await refused.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
             if (ws.startsWith('wss://attacker')) await refused.page.screenshot({ path: path.join(OUT, `refused-link-${mobile ? 'phone' : 'desktop'}.png`) });
             // The error offers the way back to the device list.
-            await refused.page.locator('button.sheet-button', { hasText: 'Back to devices' }).click();
+            await refused.page.locator('button.sheet-button', { hasText: 'Phones' }).click();
             await refused.page.locator('.device').first().waitFor();
             assert.deepEqual(refused.errors, []);
             await refused.context.close();

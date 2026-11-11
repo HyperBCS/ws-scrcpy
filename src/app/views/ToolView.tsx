@@ -1,24 +1,31 @@
+import { ComponentChildren } from 'preact';
 import { Presence } from '../ui/Presence';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { ACTION } from '../../common/Action';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { BaseClient } from '../client/BaseClient';
 import { deviceName, DeviceEntry, supportsDeviceTools } from '../state/devices';
 import { DEFAULT_FILES_PATH } from '../googDevice/client/deviceTools';
 import { findDeviceForTool } from '../state/toolDevice';
-import { buildLinkHref } from '../state/links';
-import { goToDeviceList } from '../state/router';
+import { deviceHref, followLink } from '../state/links';
+import type { DeviceView } from '../state/routes';
 import { closeAllSheets, openSheet } from '../state/stream';
+import { AppBar } from '../ui/AppBar';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { NotificationsLink } from '../ui/NotificationsLink';
 import '../../style/views/StreamView.css';
 import '../../style/views/ToolView.css';
 
-interface MountedTool {
+export interface MountedTool {
     stop(): void;
     hasConnection(): boolean;
     navigate?(path: string): void;
+    /**
+     * Told when the tool's tab is hidden (false) and when it is shown again (true). The tool
+     * stays mounted in between: a tab change never stops it. A new tool counts as shown.
+     */
+    setActive?(active: boolean): void;
     focus?(): void;
     sendInput?(text: string): void;
     setControl?(active: boolean): void;
@@ -39,12 +46,18 @@ const FIRST_CONNECT_MS = 10000;
 /** '' while there is nothing to report, then one state at a time. */
 type Lost = '' | 'reconnecting' | 'closed' | 'ended';
 
-export const deviceTools = [
+/** The tools this build has, in the order of their tabs. `view` is the tab each one is. */
+export const deviceTools: ReadonlyArray<{ view: DeviceView; action: ACTION; title: string; hint: string }> = [
     /// #if INCLUDE_FILE_LISTING
-    { action: ACTION.FILE_LISTING, title: 'Files', hint: 'Browse, download, and upload files on your device.' },
+    {
+        view: 'files',
+        action: ACTION.FILE_LISTING,
+        title: 'Files',
+        hint: 'Browse, download, and upload files on this phone.',
+    },
     /// #endif
     /// #if INCLUDE_ADB_SHELL
-    { action: ACTION.SHELL, title: 'Shell', hint: 'Use the device terminal. Tap the terminal to type.' },
+    { view: 'shell', action: ACTION.SHELL, title: 'Shell', hint: 'Use the terminal of this phone. Tap it to type.' },
     /// #endif
 ];
 
@@ -76,25 +89,54 @@ async function mountTool(
     return undefined;
 }
 
-function follow(href: string): void {
-    const url = new URL(href);
-    if (url.origin === location.origin && url.pathname === location.pathname) {
-        location.hash = url.hash;
-    } else {
-        location.assign(url);
-    }
+interface ToolViewProps {
+    /** The address this tool was last shown with. It does not change while the tool is hidden. */
+    params: URLSearchParams;
+    /** False while another tab of the phone's page is shown. The tool stays mounted, hidden. */
+    active: boolean;
+    /** The tab strip of the phone's page, drawn with this tool's connection state at its end. */
+    tabs: (status: ComponentChildren) => ComponentChildren;
 }
 
-export function ToolView({ params }: { params: URLSearchParams }) {
+/**
+ * One tool of a phone's page: Files or Shell. The page mounts it the first time its tab is shown
+ * and keeps it until the page is left, so a shell session and a Files folder survive a look at
+ * another tab. While hidden it draws no header, sets no body class, follows no keyboard height
+ * and holds no focus; its connection stays open.
+ */
+export function ToolView({ params, active, tabs }: ToolViewProps) {
     const action = params.get('action') || '';
     const udid = params.get('udid') || '';
     const tool = deviceTools.find((candidate) => candidate.action === action);
     const entry = findDeviceForTool({ ...BaseClient.parseParameters(params), udid });
     const descriptor = entry?.descriptor as GoogDeviceDescriptor | undefined;
+    const viewRef = useRef<HTMLElement>(null);
+    const workspaceRef = useRef<HTMLElement>(null);
+    // A hidden tool keeps its workspace where the header and the tabs left it. Grown into their
+    // place, it would refit the terminal, and Shell would resize the phone's terminal twice for
+    // each look at another tab. Measured as the tab is left, while the header is still drawn.
+    const chromeHeight = useRef(0);
+    const wasActive = useRef(active);
+    if (wasActive.current && !active && viewRef.current && workspaceRef.current) {
+        chromeHeight.current =
+            workspaceRef.current.getBoundingClientRect().top - viewRef.current.getBoundingClientRect().top;
+    }
+    wasActive.current = active;
     const mountRef = useRef<HTMLDivElement>(null);
     const clientRef = useRef<MountedTool>();
     const routeRef = useRef(params);
     routeRef.current = params;
+    const activeRef = useRef(active);
+    activeRef.current = active;
+    // What the mounted tool was last told. A new one counts as shown.
+    const toldActive = useRef(true);
+    const tellActive = () => {
+        const client = clientRef.current;
+        if (client && toldActive.current !== activeRef.current) {
+            toldActive.current = activeRef.current;
+            client.setActive?.(activeRef.current);
+        }
+    };
     const [error, setError] = useState('');
     // The tool's code could not be downloaded, usually because a deploy replaced it. Only a
     // reload of the page fetches the new names; reconnecting would ask for the old ones again.
@@ -114,11 +156,27 @@ export function ToolView({ params }: { params: URLSearchParams }) {
         .join('\n');
 
     useEffect(() => {
+        if (!active) {
+            // Measured again when the tab is shown. A height kept from an open keyboard would
+            // squeeze the tool for one frame and refit it twice.
+            setViewportHeight(undefined);
+            return;
+        }
         const update = () => setViewportHeight(window.visualViewport?.height);
         update();
         window.visualViewport?.addEventListener('resize', update);
         return () => window.visualViewport?.removeEventListener('resize', update);
-    }, []);
+    }, [active]);
+
+    useLayoutEffect(() => {
+        if (active) {
+            document.body.className = action === ACTION.FILE_LISTING ? 'file-listing' : action;
+        } else if (viewRef.current?.contains(document.activeElement)) {
+            // Typing must not reach a terminal or a field that is no longer on screen.
+            (document.activeElement as HTMLElement).blur();
+        }
+        tellActive();
+    }, [active, action]);
 
     useEffect(() => {
         const mount = mountRef.current;
@@ -141,7 +199,6 @@ export function ToolView({ params }: { params: URLSearchParams }) {
         setConnected(false);
         setLost(retrying ? 'reconnecting' : '');
         setControl(false);
-        document.body.className = action === ACTION.FILE_LISTING ? 'file-listing' : action;
         mountTool(routeRef.current, mount, () => cancelled)
             .then((client) => {
                 if (!client) return;
@@ -151,6 +208,9 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                 }
                 mounted = client;
                 clientRef.current = client;
+                // The tab can change while the tool's code is still loading.
+                toldActive.current = true;
+                tellActive();
                 client.onControlChange?.(setControl);
                 client.navigate?.(routeRef.current.get('path') || DEFAULT_FILES_PATH);
                 setLoaded(true);
@@ -175,7 +235,10 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                 return;
             }
             const now = Date.now();
-            if (!mounted || !(wasConnected || now - openedAt > FIRST_CONNECT_MS)) {
+            // A hidden tool is not tried again behind the tab that is shown: Files is mounted
+            // anew for each attempt and reads the address when it is. The attempts start when
+            // its tab is shown again.
+            if (!mounted || !activeRef.current || !(wasConnected || now - openedAt > FIRST_CONNECT_MS)) {
                 return;
             }
             if (mounted.sessionEnded?.()) {
@@ -211,8 +274,13 @@ export function ToolView({ params }: { params: URLSearchParams }) {
         };
     }, [identity, attempt]);
 
+    // Only an address that names a folder moves Files. A tab link to Files that is already
+    // mounted names none, and Files stays in the folder it was left in.
     useEffect(() => {
-        clientRef.current?.navigate?.(params.get('path') || DEFAULT_FILES_PATH);
+        const path = params.get('path');
+        if (path) {
+            clientRef.current?.navigate?.(path);
+        }
     }, [params.get('path')]);
 
     const reconnect = () => {
@@ -248,92 +316,56 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                 : { text: 'Connection lost.', button: 'Reconnect' };
     }
 
-    const switchTool = (nextAction: ACTION, nextEntry = entry) => {
-        if (nextEntry) {
-            follow(
-                buildLinkHref(
-                    {
-                        action: nextAction,
-                        udid: nextEntry.descriptor.udid,
-                        path: nextAction === ACTION.FILE_LISTING ? DEFAULT_FILES_PATH : undefined,
-                    },
-                    nextEntry.params,
-                ),
-            );
-        } else {
-            const next = new URLSearchParams(params);
-            next.set('action', nextAction);
-            if (nextAction === ACTION.FILE_LISTING) next.set('path', DEFAULT_FILES_PATH);
-            else next.delete('path');
-            location.hash = `!${next}`;
+    const switchPhone = (next: DeviceEntry) => {
+        if (tool) {
+            const extra = tool.view === 'files' ? { path: DEFAULT_FILES_PATH } : {};
+            followLink(deviceHref(next.descriptor.udid, tool.view, next.params, extra), 'switch');
         }
     };
 
     return (
         <main
+            ref={viewRef}
             class={`tool-view tool-view-${action}`}
-            style={viewportHeight ? { height: `${viewportHeight}px` } : undefined}
+            hidden={!active}
+            style={
+                !active
+                    ? { top: `${chromeHeight.current}px` }
+                    : viewportHeight
+                      ? { height: `${viewportHeight}px` }
+                      : undefined
+            }
         >
-            <header class="stream-header">
-                <button
-                    type="button"
-                    class="stream-header-back"
-                    onClick={goToDeviceList}
-                    aria-label="Back to devices"
-                    title="Back to devices"
+            {active && (
+                <AppBar
+                    title={entry ? deviceName(entry) : udid}
+                    status={<StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />}
                 >
-                    <svg
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        aria-hidden="true"
-                    >
-                        <path d="m15 6-6 6 6 6" />
-                    </svg>
-                </button>
-                <div class="stream-header-device">
-                    <strong>{entry ? deviceName(entry) : udid}</strong>
-                    <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
-                </div>
-                <NotificationsLink compact />
-                <button type="button" class="stream-header-switch" onClick={() => openSheet('devices')}>
-                    Switch
-                </button>
-            </header>
-            <nav class="tool-navigation" aria-label="Device views">
-                <div class="tool-tabs">
-                    {deviceTools.map((item) => (
-                        <button
-                            key={item.action}
-                            type="button"
-                            title={item.hint}
-                            aria-current={item.action === action ? 'page' : undefined}
-                            onClick={() => switchTool(item.action)}
-                        >
-                            {item.title}
-                        </button>
-                    ))}
-                </div>
-                <span class={`tool-connection ${connected ? 'connected' : ''}`} role="status">
-                    {error
-                        ? 'Unavailable'
-                        : connected
-                          ? 'Connected'
-                          : lost === 'reconnecting'
-                            ? 'Reconnecting…'
-                            : lost === 'ended'
-                              ? 'Ended'
-                              : lost === 'closed'
-                                ? 'Disconnected'
-                                : loaded
-                                  ? 'Connecting…'
-                                  : 'Opening…'}
-                </span>
-            </nav>
-            <section class="tool-workspace" aria-label={tool?.title}>
+                    <NotificationsLink compact />
+                    <button type="button" class="stream-header-switch" onClick={() => openSheet('devices')}>
+                        Switch
+                    </button>
+                </AppBar>
+            )}
+            {active &&
+                tabs(
+                    <span class={`tool-connection ${connected ? 'connected' : ''}`} role="status">
+                        {error
+                            ? 'Unavailable'
+                            : connected
+                              ? 'Connected'
+                              : lost === 'reconnecting'
+                                ? 'Reconnecting…'
+                                : lost === 'ended'
+                                  ? 'Ended'
+                                  : lost === 'closed'
+                                    ? 'Disconnected'
+                                    : loaded
+                                      ? 'Connecting…'
+                                      : 'Opening…'}
+                    </span>,
+                )}
+            <section ref={workspaceRef} class="tool-workspace" aria-label={tool?.title}>
                 <Presence show={showBanner} kind="collapse" class="tool-error" role="status">
                     <span>{bannerRef.current.text}</span>
                     <button type="button" onClick={codeMissing ? () => location.reload() : reconnect}>
@@ -398,13 +430,16 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                     </div>
                 )}
             </section>
-            <DeviceSwitcherSheet
-                currentDeviceKey={entry?.key}
-                filter={supportsDeviceTools}
-                title={`Switch device · ${tool?.title || 'Tools'}`}
-                openLabel={tool?.title}
-                onSelectDevice={(next: DeviceEntry) => switchTool(action as ACTION, next)}
-            />
+            {/* One switcher for the page: a hidden tool has none, and no shortcut of its own. */}
+            {active && (
+                <DeviceSwitcherSheet
+                    currentDeviceKey={entry?.key}
+                    filter={supportsDeviceTools}
+                    title={`Switch device · ${tool?.title || 'Tools'}`}
+                    openLabel={tool?.title}
+                    onSelectDevice={switchPhone}
+                />
+            )}
         </main>
     );
 }

@@ -15,7 +15,6 @@ import {
 import { openApplSettingsSheet } from '../state/settingsSheet';
 import { replyText, sendServiceCommand, TrackerCommandAborted } from '../client/trackerCommand';
 import { activeAudioSession, audioAvailability } from '../state/audio';
-import { goToDeviceList } from '../state/router';
 import { deviceName, findDeviceByUdid } from '../state/devices';
 import { ControlCenterCommand } from '../../common/ControlCenterCommand';
 import { copyPhoneClipboardHere } from '../ui/copyText';
@@ -603,12 +602,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     )}
                     {debugNote && <SheetStatus>{debugNote}</SheetStatus>}
                 </AnimatedDetails>
-
-                <div class="sheet-footer">
-                    <button type="button" class="sheet-button" onClick={goToDeviceList}>
-                        Back to devices
-                    </button>
-                </div>
             </div>
         </BottomSheet>
     );
