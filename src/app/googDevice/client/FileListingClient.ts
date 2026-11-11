@@ -2648,17 +2648,19 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.active = true;
         const params = this.routeParams();
         const asked = params?.get('path');
-        if (params && !FileListingClient.isTag(history.state?.files)) {
-            // A change of tab writes the same history entry and drops the explorer's tag. It is
-            // still the place the explorer was at, not a step forward, so it is tagged again with
-            // that place. When the tab's link names no folder, it gets the folder that is shown.
+        const tagged = FileListingClient.isTag(history.state?.files);
+        if (tagged) {
+            // Back or Forward came to one of this explorer's entries.
+            this.syncHistory();
+        }
+        if (params && (!tagged || !asked)) {
+            // A change of tab writes the same history entry, and the explorer's tag is lost. The
+            // entry is still the place the explorer was at, not a step forward, so it is tagged
+            // with that place again. A link that names no folder gets the folder that is shown.
             if (!asked) {
                 params.set('path', this.path);
             }
             replaceRoute(params, this.historyState());
-        } else {
-            // Back or Forward came to one of this explorer's entries.
-            this.syncHistory();
         }
         this.updateControls();
         if (this.missed) {

@@ -712,6 +712,15 @@ test('a tab link that names the folder shown is the same place in Files history,
     await show(true, { path: '/sdcard/DCIM' });
     assert.deepEqual(place(), [1, 1]);
     assert.equal(client.getPath(), '/sdcard/DCIM');
+
+    // A tagged entry whose address names no folder gets the folder, and keeps its place.
+    const tag = tab.history.state.files;
+    await show(false);
+    tab.history.replaceState({ ...tab.history.state, files: tag }, '', address('files'));
+    client.setActive(true);
+    await settle();
+    assert.equal(tab.location.hash, address('files', '&path=%2Fsdcard%2FDCIM'));
+    assert.deepEqual(place(), [1, 1]);
     tab.history.back();
     await settle();
     assert.equal(tab.location.hash, address('files', '&path=%2Fsdcard'), 'Back is the folder before');
