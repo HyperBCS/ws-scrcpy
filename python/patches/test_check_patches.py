@@ -5,6 +5,7 @@ import re
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -63,6 +64,10 @@ class MissingPatchesTests(unittest.TestCase):
         (self.directory / 'ws_scrcpy_keyboard.py').write_text('# an older copy\n')
         (self.directory / 'ws_scrcpy_multitouch.py').unlink()
         self.assertEqual(check.missing_patches(self.directory), ['current keyboard.py', 'current multitouch.py'])
+
+    def test_an_interpreter_without_the_package_says_so_instead_of_naming_patches(self):
+        with mock.patch.object(check.importlib.util, 'find_spec', return_value=None):
+            self.assertEqual(check.check(), {'version': None, 'found': False, 'missing': []})
 
     def test_the_pinned_version_is_read_from_requirements(self):
         self.assertRegex(check.pinned_version(ROOT / 'python/requirements.txt'), r'^\d+\.\d+\.\d+$')

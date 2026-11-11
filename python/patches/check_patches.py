@@ -11,7 +11,9 @@ Every patch leaves a marker comment in the file it changes. A patch that changes
 patched file must contain needs a new marker, listed here, as "keyboard lifecycle v2" did. The
 two modules that are copied whole are compared with their source in this directory.
 
-Prints one JSON object on stdout: {"version": "11.44.0", "missing": ["...", ...]}.
+Prints one JSON object on stdout: {"version": "11.44.0", "found": true, "missing": ["...", ...]}.
+"found" is false when this interpreter has no pymobiledevice3 at all, which says nothing about
+the patches: the CLI the server runs may belong to another interpreter.
 """
 from __future__ import annotations
 
@@ -79,7 +81,7 @@ def check() -> dict:
     # The top-level spec is found without importing the package.
     spec = importlib.util.find_spec('pymobiledevice3')
     if spec is None or not spec.origin:
-        return {'version': None, 'missing': ['pymobiledevice3 itself']}
+        return {'version': None, 'found': False, 'missing': []}
     try:
         version = importlib.metadata.version('pymobiledevice3')
     except importlib.metadata.PackageNotFoundError:
@@ -88,7 +90,7 @@ def check() -> dict:
     pinned = pinned_version(HERE.parent / 'requirements.txt')
     if pinned and version and pinned != version:
         missing.insert(0, f'pymobiledevice3 {pinned} (installed: {version})')
-    return {'version': version, 'missing': missing}
+    return {'version': version, 'found': True, 'missing': missing}
 
 
 if __name__ == '__main__':

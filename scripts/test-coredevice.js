@@ -1231,6 +1231,12 @@ test('the helper check is skipped where it cannot be run, and a check that fails
     try {
         assert.equal(await PyMobileDevice.helperProblem(), undefined, 'an unknown answer does not lock the phones out');
         assert.match(console.error.mock.calls[0].arguments[0], /could not check the installed patches/);
+        // The interpreter found next to the CLI has no pymobiledevice3 of its own.
+        const answer = JSON.stringify(JSON.stringify({ version: null, found: false, missing: [] }));
+        t.mock.method(PyMobileDevice, 'patchCheckCommand', () => ({ command: process.execPath, args: ['-e', `console.log(${answer})`] }));
+        PyMobileDevice.useBin(shim);
+        assert.equal(await PyMobileDevice.helperProblem(), undefined, 'a package the check cannot see is not a missing patch');
+        assert.match(console.error.mock.calls.at(-1).arguments[0], /has no pymobiledevice3 to check/);
     } finally {
         PyMobileDevice.useBin(shim);
     }

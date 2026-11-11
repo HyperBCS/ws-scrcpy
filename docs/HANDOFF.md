@@ -1742,7 +1742,8 @@ venv's interpreter before a session's mount (`PyMobileDevice.helperProblem()`, c
 `CoreDeviceRunner.bringUp`) and fails the start with "missing patches: ... Run npm run patch:ios".
 That is a failure before serve-web ran, so the viewer gets 4010 and keeps asking; a stale answer is
 not cached, so patching is noticed without a server restart. A check that cannot be run (no venv
-next to the CLI, the script missing, `IOS_PATCH_CHECK=0`, a Python error) allows the session.
+next to the CLI, the script missing, `IOS_PATCH_CHECK=0`, a Python error, or a `python` next to the
+CLI that has no pymobiledevice3 of its own) allows the session.
 `python/patches/test_check_patches.py` fails when `python/venv` is behind `python/patches`, and
 ties the marker list to the patch scripts. A patch that changes an already patched file needs a new
 marker in both places. `npm run dev` runs `patch:ios` first when the venv exists; if that fails

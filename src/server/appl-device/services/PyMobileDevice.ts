@@ -127,7 +127,12 @@ export class PyMobileDevice {
         if (code !== 0) {
             throw new Error(PyMobileDevice.explain(stderr) || `"${PATCH_CHECK_SCRIPT}" exited with ${code}`);
         }
-        const result = JSON.parse(stdout.trim().split('\n').pop() || '') as { missing?: unknown };
+        const result = JSON.parse(stdout.trim().split('\n').pop() || '') as { found?: unknown; missing?: unknown };
+        if (result.found === false) {
+            // An interpreter next to a CLI that is not its own (IOS_PYMOBILEDEVICE3 pointing into
+            // /usr/local/bin, say) cannot see the package. That is no reason to refuse sessions.
+            throw new Error(`${check.command} has no pymobiledevice3 to check`);
+        }
         const missing = Array.isArray(result.missing) ? result.missing.map(String).filter(Boolean) : [];
         if (!missing.length) {
             return undefined;
