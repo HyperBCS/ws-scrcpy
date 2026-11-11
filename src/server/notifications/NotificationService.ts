@@ -2,6 +2,8 @@ import express, { Express, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import zlib from 'zlib';
+import { promisify } from 'util';
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 import { PushSubscription } from 'web-push';
 import { Service } from '../services/Service';
@@ -10,7 +12,7 @@ import { isDismissActionLabel } from '../../common/NotificationActions';
 import { sameOrigin } from '../requestOrigin';
 import { resolveDataDir } from '../dataDir';
 
-import { NotificationEvent, NotificationSource } from '../../common/Notification';
+import { NotificationEvent, NotificationHistoryItem, NotificationSource } from '../../common/Notification';
 import { PushDelivery, PushTarget } from './PushDelivery';
 export type { NotificationEvent, NotificationSource } from '../../common/Notification';
 
@@ -43,6 +45,27 @@ const sentences = (parts: string[]): string =>
         .filter(Boolean)
         .map((part) => part.replace(/\.$/, ''))
         .join('. ');
+
+const gzip = promisify(zlib.gzip);
+
+/** Names the push service of a subscription, so the page can tell receiving devices apart. */
+function pushProvider(endpoint: string): string {
+    const host = new URL(endpoint).hostname;
+    if (host.endsWith('push.apple.com')) return 'Apple';
+    if (host === 'fcm.googleapis.com') return 'Google';
+    if (host.endsWith('mozilla.com')) return 'Mozilla';
+    if (host.endsWith('notify.windows.com')) return 'Windows';
+    return 'Other';
+}
+
+/**
+ * Identifies one state of the history. It is a hash of what the page is sent, so it changes with
+ * every visible change (a new item, a read mark, a lost Bluetooth session) wherever that change
+ * was made, and it stays the same across a server restart.
+ */
+function historyRevision(serialized: string): string {
+    return crypto.createHash('sha1').update(serialized).digest('hex').slice(0, 16);
+}
 
 export function validateSubscription(value: unknown): PushSubscription {
     const sub = value as PushSubscription;
@@ -529,6 +552,14 @@ export class NotificationService implements Service {
         for (const item of this.feed.values()) if (!item.read && !item.dismissed) unreadBySource[item.source]++;
         return { unread: Object.values(unreadBySource).reduce((sum, n) => sum + n, 0), unreadBySource };
     }
+    /** The history as the page shows it: newest first, without the fields only the server uses. */
+    private history(source?: string): NotificationHistoryItem[] {
+        return [...this.feed.values()]
+            .filter((item) => source === undefined || item.source === source)
+            .reverse()
+            .sort((a, b) => b.received - a.received)
+            .map(({ fingerprint: _fingerprint, reconnectable: _reconnectable, ...item }) => item);
+    }
     private async performAction(item: FeedItem, expectedLabel: unknown, timeout = 15000): Promise<void> {
         if (typeof expectedLabel !== 'string' || expectedLabel !== item.negativeActionLabel)
             throw Error('The iPhone action changed. Refresh notifications before trying again.');
@@ -760,8 +791,12 @@ export class NotificationService implements Service {
                 }
             });
         };
+        // Polled every few seconds while the page is open, so it carries no notification text.
+        // The page fetches /history only when `historyRevision` changes.
         route('get', '/status', (_req, res) => {
             this.prune();
+            const storedBySource: Record<string, number> = Object.fromEntries(this.store.sources.map((s) => [s.id, 0]));
+            for (const item of this.feed.values()) storedBySource[item.source] = (storedBySource[item.source] || 0) + 1;
             res.json({
                 publicKey: this.store.vapid.publicKey,
                 sources: this.store.sources,
@@ -776,14 +811,41 @@ export class NotificationService implements Service {
                 storageError: this.storageError,
                 pairingError: this.recentPairingError(),
                 delivery: this.delivery,
-                notifications: [...this.feed.values()]
-                    .reverse()
-                    .sort((a, b) => b.received - a.received)
-                    .map(({ fingerprint: _fingerprint, reconnectable: _reconnectable, ...item }) => item),
+                // One row per receiving device. The id is a hash, never the push endpoint.
+                receivers: this.store.subscriptions.map((s) => ({
+                    id: s.id,
+                    provider: pushProvider(s.subscription.endpoint),
+                    ...this.push.statsFor(s.id),
+                })),
+                historyRevision: historyRevision(JSON.stringify(this.history())),
+                storedBySource,
                 ...this.counts(),
                 retentionDays: 30,
                 publicUrl: process.env.WS_PUBLIC_URL || '',
             });
+        });
+        // The stored notifications, for one iPhone when `source` is given. `since` is the
+        // revision the page already holds: 304 when nothing changed.
+        route('get', '/history', async (req, res) => {
+            this.prune();
+            const { source, since } = req.query;
+            if (source !== undefined && !this.store.sources.some((s) => s.id === source))
+                throw Error('Unknown notification device');
+            const notifications = JSON.stringify(this.history(source as string | undefined));
+            const revision = historyRevision(notifications);
+            if (since === revision) {
+                res.status(304).end();
+                return;
+            }
+            const body = Buffer.from(`{"revision":"${revision}","notifications":${notifications}}`);
+            res.type('json');
+            res.setHeader('Vary', 'Accept-Encoding');
+            // Nothing else compresses responses and this is the one large reply: 500 items
+            // are about 245 KB, and about a tenth of that compressed.
+            if (body.length > 1024 && /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) {
+                res.setHeader('Content-Encoding', 'gzip');
+                res.send(await gzip(body));
+            } else res.send(body);
         });
         route('get', '/summary', (_req, res) => {
             this.prune();
@@ -844,6 +906,40 @@ export class NotificationService implements Service {
             }
             this.saveHistory(true);
             res.json({ ok: true, dismissed, ...this.counts() });
+        });
+        // Undo for the local bulk actions: puts a confirmed set back in the inbox, each with the
+        // read state it had. Like the single restore, it changes nothing on the iPhone.
+        route('post', '/history/restore', (req, res) => {
+            const { source, items } = req.body;
+            if (
+                !this.store.sources.some((s) => s.id === source) ||
+                !Array.isArray(items) ||
+                items.length < 1 ||
+                items.length > 500 ||
+                items.some(
+                    (item) =>
+                        !item ||
+                        typeof item.key !== 'string' ||
+                        !item.key ||
+                        item.key.length > 256 ||
+                        typeof item.read !== 'boolean',
+                ) ||
+                new Set(items.map((item) => item.key)).size !== items.length
+            )
+                throw Error('Select a device and the notifications to move back to the inbox');
+            if (items.some((item) => this.feed.has(item.key) && this.feed.get(item.key)!.source !== source))
+                throw Error('All selected notifications must belong to the same device');
+            this.prune();
+            const restored: string[] = [];
+            for (const { key, read } of items as Array<{ key: string; read: boolean }>) {
+                const item = this.feed.get(key);
+                if (!item) continue;
+                item.dismissed = false;
+                item.read = read;
+                restored.push(key);
+            }
+            this.saveHistory(true);
+            res.json({ ok: true, restored, ...this.counts() });
         });
         route('post', '/history/actions', async (req, res) => {
             const { source, items } = req.body;
@@ -1057,23 +1153,30 @@ export class NotificationService implements Service {
         });
         route('post', '/subscriptions', (req, res) => {
             const subscription = validateSubscription(req.body.subscription);
-            const sources = req.body.sources;
+            // The browser replaced its subscription while the app was closed. The service worker
+            // names the old endpoint and the record keeps its choices, which only the page knows.
+            const replaced =
+                typeof req.body.replaces === 'string'
+                    ? this.store.subscriptions.find((s) => s.subscription.endpoint === req.body.replaces)
+                    : undefined;
+            const sources =
+                req.body.sources ?? replaced?.sources.filter((id) => this.store.sources.some((s) => s.id === id));
             if (!Array.isArray(sources) || sources.some((id) => !this.store.sources.some((s) => s.id === id)))
                 throw Error('Select valid source devices');
-            const receiverSource = req.body.receiverSource || '';
+            const receiverSource = req.body.receiverSource ?? replaced?.receiverSource ?? '';
             if (receiverSource && !this.store.sources.some((s) => s.id === receiverSource))
                 throw Error('Invalid receiver device');
             const id = crypto.createHash('sha256').update(subscription.endpoint).digest('hex');
-            if (this.store.subscriptions.length >= 100 && !this.store.subscriptions.some((s) => s.id === id))
-                throw Error('Subscription limit reached');
-            this.store.subscriptions = [
-                ...this.store.subscriptions.filter((s) => s.id !== id),
-                { id, subscription, sources, receiverSource, updated: Date.now() },
-            ];
+            const kept = this.store.subscriptions.filter((s) => s.id !== id && s !== replaced);
+            if (kept.length >= 100) throw Error('Subscription limit reached');
+            if (replaced && replaced.id !== id) this.push.forget(replaced.id);
+            this.store.subscriptions = [...kept, { id, subscription, sources, receiverSource, updated: Date.now() }];
             this.save();
             res.json({ id });
         });
         route('delete', '/subscriptions', (req, res) => {
+            for (const s of this.store.subscriptions)
+                if (s.subscription.endpoint === req.body.endpoint) this.push.forget(s.id);
             this.store.subscriptions = this.store.subscriptions.filter(
                 (s) => s.subscription.endpoint !== req.body.endpoint,
             );

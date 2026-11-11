@@ -56,7 +56,19 @@ export interface NotificationStatus extends NotificationSummary {
     storageError?: string;
     // The last failed Bluetooth pairing in the past 10 minutes.
     pairingError?: { message: string; at: number } | null;
+    // Totals for all receiving devices since the server started.
     delivery: { sent: number; failed: number; lastError: string };
-    notifications: NotificationHistoryItem[];
+    // The same per receiving device. `id` is the SHA-256 of the push endpoint.
+    receivers?: Array<{ id: string; provider: string; sent: number; failed: number; lastError: string }>;
+    // Changes whenever the stored notifications change; the page then fetches /history.
+    historyRevision: string;
+    // How many notifications the server holds for each iPhone.
+    storedBySource: Record<string, number>;
     retentionDays?: number;
+}
+
+/** Reply of GET /history. */
+export interface NotificationHistoryReply {
+    revision: string;
+    notifications: NotificationHistoryItem[];
 }

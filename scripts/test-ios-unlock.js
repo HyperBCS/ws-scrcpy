@@ -767,8 +767,8 @@ test('push: notifySystem queues one job per subscription, preparePush honours sy
         assert.deepEqual(delivered.map((item) => item.endpoint).sort(), endpoints);
         assert.deepEqual(delivered[0].payload, payload, 'the payload is sent as given, nothing else');
         assert.equal(service.feed.size, 0, 'not stored in history');
-        const status = await (await api('/status')).json();
-        assert.deepEqual(status.notifications, []);
+        const history = await (await api('/history')).json();
+        assert.deepEqual(history.notifications, []);
 
         const id = crypto.createHash('sha256').update(endpoints[0]).digest('hex');
         assert.deepEqual(service.preparePush(id, 'system:abc', '{"x":1}').payload, '{"x":1}');

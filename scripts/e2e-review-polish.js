@@ -10,12 +10,13 @@ async function main() {
     const browser = await ({ chromium, webkit }[browserName]).launch();
     const out = `/tmp/ws-review-polish-${browserName}`; await fs.mkdir(out, { recursive: true });
     try {
-        const f = await fixture(browser, { history: true, notifications: historyItems() });
+        const f = await fixture(browser, { history: true, notifications: historyItems(), devices: true });
         try {
-            await settleMotion(f.page);
             const button = f.page.getByRole('link', { name: 'Open screen', exact: true });
-            const [action, search] = await Promise.all([button.boundingBox(), f.page.getByRole('searchbox').boundingBox()]);
-            assert(Math.abs(action.y - search.y) < 3, 'Open screen shares the search row');
+            await button.waitFor();
+            await settleMotion(f.page);
+            const [action, device] = await Promise.all([button.boundingBox(), f.page.getByRole('combobox', { name: 'Device', exact: true }).boundingBox()]);
+            assert(Math.abs(action.y + action.height / 2 - (device.y + device.height / 2)) < 3, 'Open screen sits beside the iPhone it opens');
             assert(action.width < 130 && action.height >= 44, 'compact width, full touch target');
             assert.equal(await button.evaluate(el => getComputedStyle(el).textDecorationLine), 'none');
             assert.equal(await button.evaluate(el => getComputedStyle(el).borderTopStyle), 'solid');

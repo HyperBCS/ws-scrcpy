@@ -28,6 +28,7 @@ function cleanup(worker) {
         require: name => {
             if (name === '@preact/signals') return { signal: value => ({ value }) };
             if (name === '../client/request') return {};
+            if (name === '../../common/pushKey') return {};
             if (name === './router') return { route: { value: new URLSearchParams() } };
             throw Error(`Unexpected dependency ${name}`);
         },

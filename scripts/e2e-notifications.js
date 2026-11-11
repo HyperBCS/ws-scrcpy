@@ -3,6 +3,7 @@ const { settleMotion } = require('./ui-motion');
 // API, device discovery, and push subscriptions are isolated fixtures. No real
 // phone settings, Bluetooth state, or push providers are changed by these tests.
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { chromium, webkit } = require('playwright');
@@ -111,7 +112,7 @@ async function fixture(browser, options = {}) {
             userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
         } : {}),
     });
-    await context.addInitScript(({ subscription, registered, storedSources, storedReceiver, ios, standalone, displayedKeys, workerHang }) => {
+    await context.addInitScript(({ subscription, registered, storedSources, storedReceiver, ios, standalone, displayedKeys, workerHang, subscribedKey, subscribeNeedsGesture }) => {
         if (storedSources !== undefined) localStorage.setItem('notification-sources', JSON.stringify(storedSources));
         if (storedReceiver !== undefined) localStorage.setItem('notification-receiver-source', storedReceiver);
         if (ios) Object.defineProperty(navigator, 'standalone', { configurable: true, value: standalone });
@@ -125,6 +126,8 @@ async function fixture(browser, options = {}) {
                 return result;
             };
         }
+        window.__lastTap = -Infinity;
+        addEventListener('click', event => { if (event.isTrusted) window.__lastTap = performance.now(); }, true);
         window.__notificationBadges = [];
         window.__closedNotifications = [];
         window.__notificationWorkerCalls = { getRegistration: 0, getNotifications: 0 };
@@ -135,16 +138,29 @@ async function fixture(browser, options = {}) {
         const counters = window.__notificationFixture = { permissionRequests: 0, subscribeCalls: 0, unsubscribeCalls: 0 };
         let permission = registered ? 'granted' : 'default';
         Object.defineProperty(Notification, 'permission', { configurable: true, get: () => permission });
-        const makeSubscription = () => ({
-            ...subscription,
-            toJSON: () => subscription,
-            unsubscribe: async () => { counters.unsubscribeCalls++; active = null; return true; },
-        });
-        let active = registered ? makeSubscription() : null;
+        // `subscribedKey` is the server key the browser's subscription was made for. With it set,
+        // subscriptions report their key and a new one gets a new endpoint, as in a real browser.
+        const bytes = key => Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)).buffer;
+        let renewals = 0;
+        const makeSubscription = key => {
+            const json = key && renewals ? { ...subscription, endpoint: `${subscription.endpoint}-renewed-${renewals}` } : subscription;
+            return {
+                ...json,
+                ...(key ? { options: { userVisibleOnly: true, applicationServerKey: key } } : {}),
+                toJSON: () => json,
+                unsubscribe: async () => { counters.unsubscribeCalls++; active = null; return true; },
+            };
+        };
+        let active = registered ? makeSubscription(subscribedKey && bytes(subscribedKey)) : null;
         PushManager.prototype.getSubscription = async () => active;
-        PushManager.prototype.subscribe = async () => {
+        PushManager.prototype.subscribe = async settings => {
             counters.subscribeCalls++;
-            active = makeSubscription();
+            // Safari refuses to subscribe outside a tap, even with permission granted.
+            if (subscribeNeedsGesture && !(performance.now() - window.__lastTap < 1000))
+                throw new DOMException('Subscribing for push requires a user gesture', 'NotAllowedError');
+            if (subscribedKey) renewals++;
+            const key = settings.applicationServerKey;
+            active = makeSubscription(subscribedKey && key.buffer.slice(key.byteOffset, key.byteOffset + key.byteLength));
             return active;
         };
         const registration = {
@@ -169,14 +185,16 @@ async function fixture(browser, options = {}) {
             permission = 'granted';
             return permission;
         };
-    }, { subscription, registered: options.registered ?? true, storedSources: options.storedSources, storedReceiver: options.storedReceiver, ios: !!options.ios, standalone: !!options.standalone, displayedKeys: options.displayedKeys || [], workerHang: options.workerHang || '' });
+    }, { subscription, registered: options.registered ?? true, storedSources: options.storedSources, storedReceiver: options.storedReceiver, ios: !!options.ios, standalone: !!options.standalone, displayedKeys: options.displayedKeys || [], workerHang: options.workerHang || '', subscribedKey: options.subscribedKey || '', subscribeNeedsGesture: !!options.subscribeNeedsGesture });
     const page = await context.newPage();
     if (options.clock) await page.clock.install();
     const state = {
         context, page, sources: options.sources ?? phones(), errors: [], saved: [], tests: [], removed: [],
-        disabled: 0, statusPolls: 0, pairingOpen: false, pairingRejected: !!options.pairingRejected, subscriptionError: '',
+        disabled: 0, statusPolls: 0, pairingOpen: false, pairingRejected: !!options.pairingRejected, subscriptionError: options.subscriptionError || '',
+        receivers: options.receivers, removedEndpoints: [], registeredEndpoints: new Set(),
         missingSubscription: !!options.missingSubscription, testError: '', operations: [],
-        notifications: structuredClone(options.notifications || []), readRequests: [], dismissed: [], actions: [], iconRequests: [], actionError: '', dismissError: '', summaryPolls: 0, bulkDismissed: [], bulkActions: [], bulkActionResult: null, restored: [], holdNextMutation: false, releaseMutation: null,
+        historyFetches: [], statuses: options.statuses || {}, feedError: options.feedError || '', publicKey: options.publicKey || subscription.keys.p256dh,
+        notifications: structuredClone(options.notifications || []), readRequests: [], dismissed: [], actions: [], iconRequests: [], actionError: '', dismissError: '', summaryPolls: 0, bulkDismissed: [], bulkActions: [], bulkActionResult: null, restored: [], bulkRestored: [], statusError: '', holdNextMutation: false, releaseMutation: null,
     };
     page.on('pageerror', error => state.errors.push(error.message));
     await page.routeWebSocket('**', socket => {
@@ -209,14 +227,25 @@ async function fixture(browser, options = {}) {
         const unreadBySource = Object.fromEntries(state.sources.map(source => [source.id, state.notifications.filter(n => n.source === source.id && !n.read && !n.dismissed).length]));
         const unread = Object.values(unreadBySource).reduce((a, b) => a + b, 0);
         let reply = { ok: true }, status = 200;
+        // As on the server: the revision is a hash of what /history would send.
+        const revision = crypto.createHash('sha1').update(JSON.stringify(state.notifications)).digest('hex').slice(0, 16);
         if (pathname.endsWith('/status')) {
             state.statusPolls++;
+            if (state.statusError) return route.fulfill({ status: 502, json: { error: state.statusError } });
             reply = {
-                publicKey: subscription.keys.p256dh, sources: state.sources, bluetooth: [],
-                statuses: Object.fromEntries(state.sources.map(s => [s.id, 'Receiving notifications'])), pairing: null,
-                pairingOpen: state.pairingOpen, pairingRejected: state.pairingRejected, error: '', delivery: { sent: 0, failed: 0, lastError: '' },
-                notifications: state.notifications, unread, unreadBySource, retentionDays: 30, publicUrl: 'https://phone.example',
+                publicKey: state.publicKey, sources: state.sources, bluetooth: [],
+                statuses: Object.fromEntries(state.sources.map(s => [s.id, state.statuses[s.id] ?? 'Receiving notifications'])), pairing: null,
+                pairingOpen: state.pairingOpen, pairingRejected: state.pairingRejected, error: state.feedError, delivery: { sent: 0, failed: 0, lastError: '' },
+                // 'saved': the devices the page registered, as the server would list them.
+                ...(state.receivers === 'saved' ? { receivers: [...state.registeredEndpoints].map(endpoint => ({ id: crypto.createHash('sha256').update(endpoint).digest('hex'), provider: 'Apple', sent: 0, failed: 0, lastError: '' })) } : state.receivers ? { receivers: state.receivers } : {}),
+                historyRevision: revision, storedBySource: Object.fromEntries(state.sources.map(s => [s.id, state.notifications.filter(n => n.source === s.id).length])),
+                unread, unreadBySource, retentionDays: 30, publicUrl: 'https://phone.example',
             };
+        } else if (pathname.endsWith('/history') && request.method() === 'GET') {
+            const since = new URL(request.url()).searchParams.get('since');
+            state.historyFetches.push(since);
+            if (since === revision) return route.fulfill({ status: 304 });
+            reply = { revision, notifications: state.notifications };
         } else if (pathname.endsWith('/summary')) {
             state.summaryPolls++;
             reply = { sources: state.sources, unread, unreadBySource };
@@ -229,6 +258,15 @@ async function fixture(browser, options = {}) {
             state.notifications.forEach(n => {
                 if (body.keys ? body.keys.includes(n.key) : body.source ? n.source === body.source : body.all === true) n.read = body.read !== false;
             });
+        } else if (pathname.endsWith('/history/restore') && request.method() === 'POST') {
+            const body = request.postDataJSON();
+            state.bulkRestored.push(body);
+            const restored = [];
+            for (const { key, read } of body.items) {
+                const item = state.notifications.find(n => n.key === key && n.source === body.source);
+                if (item) { item.dismissed = false; item.read = read; restored.push(key); }
+            }
+            reply = { ok: true, restored };
         } else if (pathname.endsWith('/history/dismiss') && request.method() === 'POST') {
             const body = request.postDataJSON();
             state.bulkDismissed.push(body);
@@ -264,8 +302,15 @@ async function fixture(browser, options = {}) {
         } else if (pathname.endsWith('/subscriptions') && request.method() === 'POST') {
             state.saved.push(request.postDataJSON());
             if (state.subscriptionError) { status = 400; reply = { error: state.subscriptionError }; }
-            else state.missingSubscription = false;
-        } else if (pathname.endsWith('/subscriptions') && request.method() === 'DELETE') state.disabled++;
+            else {
+                state.missingSubscription = false;
+                state.registeredEndpoints.add(state.saved.at(-1).subscription.endpoint);
+            }
+        } else if (pathname.endsWith('/subscriptions') && request.method() === 'DELETE') {
+            state.disabled++;
+            state.removedEndpoints.push(request.postDataJSON().endpoint);
+            state.registeredEndpoints.delete(request.postDataJSON().endpoint);
+        }
         else if (pathname.endsWith('/test') && request.method() === 'POST') {
             state.tests.push(request.postDataJSON());
             if (state.testError || state.missingSubscription) {
@@ -350,7 +395,7 @@ async function configuredReceiver(browser) {
             const summary = f.page.locator('summary').filter({ hasText: name });
             assert.equal(await summary.evaluate(el => el.closest('details').open), false, `${name} starts collapsed`);
         }
-        assert.equal(await f.page.getByText('Connected', { exact: true }).count(), 2);
+        assert.equal(await f.page.locator('.notification-source').getByText('Connected', { exact: true }).count(), 2);
         await capture(f, 'configured');
         await f.page.emulateMedia({ colorScheme: 'dark' });
         await capture(f, 'configured-dark');
@@ -501,8 +546,11 @@ async function iosInstallGate(browser) {
 }
 
 async function recoverMissingServerSubscription(browser) {
-    const f = await fixture(browser, { storedSources: ['phone-a'], storedReceiver: '', missingSubscription: true });
+    const f = await fixture(browser, { storedSources: ['phone-a'], storedReceiver: '' });
     try {
+        // The server drops the subscription after the page has loaded and registered it.
+        await until(() => f.saved.length === 1, 'the subscription is registered when the app loads');
+        Object.assign(f, { saved: [], operations: [], missingSubscription: true });
         await f.page.getByRole('button', { name: 'Send test notification', exact: true }).click();
         await f.page.getByText('Test notification queued. It should arrive on this device shortly.', { exact: true }).waitFor();
         assert.deepEqual(f.operations, ['POST test', 'POST subscriptions', 'POST test'], 'a missing server registration is repaired once before retrying');
@@ -519,6 +567,126 @@ async function recoverMissingServerSubscription(browser) {
         await assertClean(f);
         console.log('PASS a missing server subscription is repaired without permission prompts; other test errors remain visible');
     } finally { await f.context.close(); }
+}
+
+async function subscriptionRepairedOnLoad(browser) {
+    const counters = f => f.page.evaluate(() => window.__notificationFixture);
+    // Loading the app sends the subscription again with the saved choices; stale choices are left out.
+    let f = await fixture(browser, { storedSources: ['phone-a', 'removed-phone'], storedReceiver: 'removed-phone' });
+    try {
+        await until(() => f.saved.length === 1, 'the app registers its subscription on load');
+        assert.deepEqual(f.saved[0], { subscription, sources: ['phone-a'], receiverSource: '' });
+        assert.deepEqual(await counters(f), { permissionRequests: 0, subscribeCalls: 0, unsubscribeCalls: 0 }, 'a subscription for the current key is kept');
+        // Delivery is shown for each receiving device, found by the hash of its endpoint.
+        const own = crypto.createHash('sha256').update(subscription.endpoint).digest('hex');
+        f.receivers = [
+            { id: 'a'.repeat(64), provider: 'Google', sent: 3, failed: 2, lastError: 'Push provider rejected delivery (403)' },
+            { id: own, provider: 'Apple', sent: 5, failed: 0, lastError: '' },
+        ];
+        await openDetails(f.page, 'Delivery details');
+        const rows = f.page.locator('.notification-receivers li');
+        await rows.nth(1).waitFor();
+        assert.match(await rows.nth(0).textContent(), /^Other device 1 Google push service · 3 accepted, 2 failedPush provider rejected delivery \(403\)$/);
+        assert.match(await rows.nth(1).textContent(), /^This device Apple push service · 5 accepted$/);
+        assert.equal(await f.page.getByText('The server has no record of this device', { exact: false }).count(), 0);
+        // The server dropped this device while the page was open.
+        f.receivers = [f.receivers[0]];
+        await f.page.getByRole('alert').filter({ hasText: 'The server has no record of this device, so nothing can be delivered to it.' }).waitFor();
+        await assertClean(f);
+    } finally { await f.context.close(); }
+
+    // A device that never enabled notifications here sends nothing.
+    f = await fixture(browser, {});
+    try {
+        await sleep(300);
+        assert.deepEqual(f.saved, []);
+        assert.deepEqual(f.operations, []);
+    } finally { await f.context.close(); }
+
+    // The server has new keys (a data reset): the old subscription can never be delivered to.
+    f = await fixture(browser, { storedSources: ['phone-a'], storedReceiver: '', subscribedKey: Buffer.alloc(65, 9).toString('base64url') });
+    try {
+        await until(() => f.saved.length === 1, 'the replacement subscription is registered');
+        assert.deepEqual(await counters(f), { permissionRequests: 0, subscribeCalls: 1, unsubscribeCalls: 1 });
+        assert.equal(f.saved[0].subscription.endpoint, `${subscription.endpoint}-renewed-1`);
+        assert.deepEqual(f.removedEndpoints, [subscription.endpoint], 'the server is told to forget the old endpoint');
+        await f.page.getByText('Notifications on', { exact: true }).waitFor();
+        // The page uses the replacement from then on.
+        await f.page.getByRole('button', { name: 'Send test notification', exact: true }).click();
+        await until(() => f.tests.length === 1, 'the test is sent');
+        assert.deepEqual(f.tests, [{ endpoint: `${subscription.endpoint}-renewed-1` }]);
+        await assertClean(f);
+    } finally { await f.context.close(); }
+
+    // The same key again is not a reason to resubscribe.
+    f = await fixture(browser, { storedSources: ['phone-a'], storedReceiver: '', subscribedKey: subscription.keys.p256dh });
+    try {
+        await until(() => f.saved.length === 1, 'the subscription is registered');
+        assert.deepEqual(await counters(f), { permissionRequests: 0, subscribeCalls: 0, unsubscribeCalls: 0 });
+    } finally { await f.context.close(); }
+
+    // The page says so when the server could not be told.
+    f = await fixture(browser, { storedSources: ['phone-a'], storedReceiver: '', subscriptionError: 'Subscription limit reached' });
+    try {
+        await f.page.getByRole('alert').filter({ hasText: 'This device could not be registered with the server: Subscription limit reached' }).waitFor();
+    } finally { await f.context.close(); }
+    console.log('PASS the push subscription is registered again on load, replaced when the server key changed, and reported per device');
+}
+
+async function subscriptionStateOnReturn(browser) {
+    const counters = f => f.page.evaluate(() => window.__notificationFixture);
+    const noRecord = f => f.page.getByText('The server has no record of this device', { exact: false });
+    // Enabling shows no warning that the server lacks this device while the status catches up.
+    let f = await fixture(browser, { registered: false, storedSources: ['phone-a'], storedReceiver: '', receivers: 'saved' });
+    try {
+        await f.page.getByRole('button', { name: 'Enable on this device', exact: true }).click();
+        await f.page.getByText('Notifications enabled on this device.', { exact: true }).waitFor();
+        await sleep(300);
+        assert.equal(await noRecord(f).count(), 0);
+        await openDetails(f.page, 'Delivery details');
+        assert.equal(await f.page.locator('.notification-receivers li').filter({ hasText: 'This device' }).count(), 1, 'listed without waiting for the next poll');
+        await assertClean(f);
+    } finally { await f.context.close(); }
+
+    // Turned off here after the app sent the subscription on load, the page says so after
+    // leaving and coming back.
+    f = await fixture(browser, { storedSources: ['phone-a'], storedReceiver: '', receivers: 'saved' });
+    try {
+        await until(() => f.saved.length === 1, 'the subscription is sent on load');
+        await openDetails(f.page, 'Choose phones and delivery options');
+        await f.page.getByRole('button', { name: 'Turn off on this device', exact: true }).click();
+        await f.page.getByRole('button', { name: 'Enable on this device', exact: true }).waitFor();
+        await f.page.evaluate(() => { location.hash = '!'; });
+        await f.page.locator('#devices').waitFor();
+        await f.page.evaluate(() => { location.hash = '!action=notifications'; });
+        await f.page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+        await f.page.getByText('Notifications off', { exact: true }).waitFor();
+        await sleep(300);
+        assert.equal(await f.page.getByText('Notifications on', { exact: true }).count(), 0, 'a stale subscription is not shown again');
+        await assertClean(f);
+    } finally { await f.context.close(); }
+
+    // Safari needs a tap to subscribe. When the server's keys changed, the old subscription is
+    // gone and the page asks for that tap instead of showing notifications as on.
+    // It opens on the inbox, so no tap happens before the repair runs.
+    f = await fixture(browser, { history: true, notifications: historyItems(), storedSources: ['phone-a'], storedReceiver: '', subscribedKey: Buffer.alloc(65, 9).toString('base64url'), subscribeNeedsGesture: true });
+    try {
+        await until(() => f.removedEndpoints.length === 1, 'the subscription for the old keys is removed');
+        await f.page.waitForFunction(() => window.__notificationFixture.subscribeCalls === 1);
+        await f.page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+        const notice = f.page.getByRole('alert').filter({ hasText: 'Notifications stopped on this device because the server’s keys changed. Tap Enable on this device to turn them on again.' });
+        await notice.waitFor();
+        await f.page.getByText('Notifications off', { exact: true }).waitFor();
+        assert.deepEqual(f.saved, []);
+        const enable = f.page.getByRole('button', { name: 'Enable on this device', exact: true });
+        assert.equal(await enable.isEnabled(), true);
+        await enable.click();
+        await f.page.getByText('Notifications enabled on this device.', { exact: true }).waitFor();
+        assert.equal(f.saved.at(-1).subscription.endpoint, `${subscription.endpoint}-renewed-1`);
+        assert.equal((await counters(f)).subscribeCalls, 2, 'one refused without a tap, one made by the tap');
+        await assertClean(f);
+    } finally { await f.context.close(); }
+    console.log('PASS the page shows the browser’s subscription after a repair, a turn-off and a refused resubscribe');
 }
 
 async function perDeviceHistory(browser) {
@@ -587,27 +755,57 @@ async function perDeviceHistory(browser) {
     } finally { await f.context.close(); }
 }
 
+async function historyFetchedOnChange(browser) {
+    const f = await fixture(browser, { history: true, notifications: historyItems() });
+    try {
+        await article(f.page, 'Coffee at four?').waitFor();
+        assert.deepEqual(f.historyFetches, [''], 'the history is downloaded once when the page opens');
+        const poll = async () => {
+            const before = f.statusPolls;
+            await f.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+            await until(() => f.statusPolls > before, 'the page polled the status');
+        };
+        for (let index = 0; index < 4; index++) await poll();
+        await sleep(200);
+        assert.equal(f.historyFetches.length, 1, 'polls that find nothing new do not download the history again');
+        f.notifications.unshift({ key: 'a-new', source: 'phone-a', app: 'com.example.chat', appName: 'Messages', title: 'Running late', body: 'Ten minutes.', received: Date.now(), read: false, dismissed: false, active: true });
+        await poll();
+        await article(f.page, 'Running late').waitFor();
+        assert.equal(f.historyFetches.length, 2, 'a changed revision fetches the history once');
+        assert.match(f.historyFetches[1], /^[0-9a-f]{16}$/, 'the page names the revision it holds');
+        assert.equal(await headerBadge(f.page).textContent(), '3');
+        await poll();
+        await sleep(200);
+        assert.equal(f.historyFetches.length, 2);
+        await assertClean(f);
+        console.log('PASS the status poll carries no history; the history is fetched only when its revision changes');
+    } finally { await f.context.close(); }
+}
+
 async function dismissKeepsHistory(browser) {
     const f = await fixture(browser, { history: true, notifications: historyItems(), displayedKeys: ['a-chat', 'b-mail'] });
     try {
-        await cardAction(f.page, 'Coffee at four?', 'Dismiss here');
+        await cardAction(f.page, 'Coffee at four?', 'Archive');
         await article(f.page, 'Coffee at four?').waitFor({ state: 'detached' });
         assert.deepEqual(f.dismissed, ['a-chat']);
         assert.equal(await headerBadge(f.page).textContent(), '1');
         assert.deepEqual(await f.page.evaluate(() => window.__closedNotifications), ['a-chat'], 'local dismissal closes only the corresponding received push');
-        await f.page.getByRole('button', { name: 'All history', exact: true }).click();
+        await f.page.getByRole('button', { name: 'Archive', exact: true }).click();
         const old = article(f.page, 'Coffee at four?');
-        await old.getByText('Dismissed here', { exact: true }).waitFor();
+        await old.getByText('Archived', { exact: true }).waitFor();
+        assert.equal(await article(f.page, 'Design review').count(), 0, 'Archive shows only archived notifications');
         const archivedMenu = await openCardMenu(f.page, 'Coffee at four?');
-        assert.equal(await archivedMenu.getByRole('button', { name: 'Dismiss here', exact: true }).count(), 0);
+        assert.equal(await archivedMenu.getByRole('button', { name: 'Archive', exact: true }).count(), 0);
         await archivedMenu.getByRole('button', { name: 'Move to inbox', exact: true }).click();
         await archivedMenu.waitFor({ state: 'detached' });
         assert.deepEqual(f.restored, [{ key: 'a-chat', read: true }]);
+        await article(f.page, 'Coffee at four?').waitFor({ state: 'detached' });
+        await f.page.getByRole('button', { name: 'All', exact: true }).click();
         await waitRead(f.page, 'Coffee at four?', true);
-        assert.equal(f.notifications.length, 3, 'dismissal preserves the historical record');
+        assert.equal(f.notifications.length, 3, 'archiving preserves the historical record');
         assert.deepEqual(f.actions, [], 'local dismissal sends no Bluetooth action');
         await assertClean(f);
-        console.log('PASS Dismiss here clears the inbox and push while preserving All history');
+        console.log('PASS Archive clears the inbox and push and keeps the notification in Archive');
     } finally { await f.context.close(); }
 }
 
@@ -622,7 +820,7 @@ async function labeledPhoneActions(browser) {
         await decline.waitFor();
         const layout = await initial.evaluate(el => {
             const heading = el.querySelector('.notification-action-sheet-group');
-            const local = [...el.querySelectorAll('.notification-action-sheet-actions > button')].find(button => button.textContent === 'Dismiss here');
+            const local = [...el.querySelectorAll('.notification-action-sheet-actions > button')].find(button => button.textContent === 'Archive');
             const phone = [...el.querySelectorAll('.notification-action-sheet-actions > button')].find(button => button.textContent === 'Decline on iPhone');
             return {
                 heading: heading?.textContent, divider: heading ? parseFloat(getComputedStyle(heading).borderTopWidth) : 0,
@@ -723,7 +921,7 @@ async function confirmPromptLayouts(browser) {
             assert.deepEqual(f.removed, []);
             assert.ok(!f.operations.includes('POST sources'), 'arming either prompt sends nothing');
 
-            await f.page.getByRole('button', { name: 'History', exact: true }).click();
+            await f.page.getByRole('button', { name: 'Inbox', exact: true }).click();
             const params = new URL(f.page.url());
             params.hash = '!action=notifications&source=phone-b';
             await f.page.goto(params.href);
@@ -770,18 +968,202 @@ async function notificationDeepLink(browser) {
     } finally { await f.context.close(); }
 }
 
+async function feedStatusInInbox(browser) {
+    const f = await fixture(browser, { history: true, notifications: historyItems(), statuses: { 'phone-a': 'Receiving notifications', 'phone-b': 'Bluetooth disconnected; waiting for iPhone' } });
+    try {
+        const state = f.page.locator('.notification-feed-state');
+        const time = new Date(f.notifications[0].received).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        await state.getByText('Connected', { exact: true }).waitFor();
+        assert.equal(await state.textContent(), `ConnectedLast notification ${time}`);
+        assert.equal(await f.page.locator('.notification-history-source .notification-notice').count(), 0, 'a live feed shows no notice');
+        await capture(f, 'feed-connected');
+        // The other iPhone lost its Bluetooth link: the inbox says so beside its name.
+        await f.page.getByRole('combobox', { name: 'Device', exact: true }).selectOption('phone-b');
+        await state.getByText('Reconnecting', { exact: true }).waitFor();
+        await f.page.getByRole('status').filter({ hasText: 'New notifications from Phone B appear when it reconnects. Bluetooth disconnected; waiting for iPhone.' }).waitFor();
+        await capture(f, 'feed-reconnecting');
+        // Sharing switched off on the iPhone needs the owner.
+        f.statuses['phone-b'] = 'Allow notification sharing in the iPhone Bluetooth settings';
+        await f.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+        await state.getByText('Action needed', { exact: true }).waitFor();
+        await f.page.getByRole('alert').filter({ hasText: 'Phone B: Allow notification sharing in the iPhone Bluetooth settings.' }).waitFor();
+        const colours = await f.page.evaluate(() => {
+            const badge = document.querySelector('.notification-feed-state .notification-badge');
+            return { badge: getComputedStyle(badge).color, danger: getComputedStyle(document.querySelector('.notification-history-source .notification-error')).color };
+        });
+        assert.equal(colours.badge, colours.danger, 'Action needed uses the error colour');
+        for (const colorScheme of ['light', 'dark']) {
+            await f.page.emulateMedia({ colorScheme });
+            await capture(f, `feed-attention-${colorScheme}`);
+        }
+        await f.page.emulateMedia({ colorScheme: 'light' });
+        // A collector failure stops every iPhone's feed.
+        f.feedError = 'Bluetooth unavailable: org.bluez.Error.NotReady';
+        await f.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+        await f.page.getByRole('alert').filter({ hasText: 'Notifications are not being received. Bluetooth unavailable: org.bluez.Error.NotReady.' }).waitFor();
+        // Setup uses the same three states.
+        await f.page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+        const badge = id => f.page.locator('.notification-source').filter({ has: f.page.getByRole('heading', { name: id, exact: true }) }).locator('.notification-badge');
+        await badge('Phone B').getByText('Action needed', { exact: true }).waitFor();
+        assert.equal(await badge('Phone A').textContent(), 'Connected');
+        f.statuses['phone-b'] = 'Authorizing notifications';
+        await f.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+        await badge('Phone B').getByText('Reconnecting', { exact: true }).waitFor();
+        assert.equal(await f.page.getByText('Connecting…', { exact: true }).count(), 0);
+        await assertClean(f);
+        console.log('PASS the inbox shows whether each iPhone is connected, reconnecting or needs action, and when the feed has failed');
+    } finally { await f.context.close(); }
+}
+
+async function openScreenFromInbox(browser) {
+    const streamHash = '#!action=stream-coredevice&udid=phone-a';
+    // The iPhones are connected by USB.
+    let f = await fixture(browser, { history: true, notifications: historyItems(), devices: true });
+    try {
+        const row = f.page.locator('.notification-history-device-row');
+        const link = row.getByRole('link', { name: 'Open screen', exact: true });
+        await link.waitFor();
+        assert.equal(await link.getAttribute('href'), streamHash);
+        assert.equal(await f.page.locator('.notification-search-row a, .notification-search-row button').filter({ hasText: 'Open screen' }).count(), 0, 'the search row holds only search and filters');
+        const sheet = await openCardMenu(f.page, 'Coffee at four?');
+        const first = sheet.locator('.notification-action-sheet-actions > :first-child');
+        assert.equal(await first.textContent(), 'Open iPhone screen');
+        assert.equal(await first.getAttribute('href'), streamHash);
+        await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await sheet.waitFor({ state: 'detached' });
+        // A touch double tap does nothing; Enter on the focused card opens the screen.
+        const card = article(f.page, 'Coffee at four?');
+        await card.evaluate(el => {
+            el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', isPrimary: true }));
+            el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        });
+        await sleep(200);
+        assert.match(f.page.url(), /action=notifications/);
+        await card.focus();
+        await f.page.keyboard.press('Enter');
+        await f.page.waitForFunction(hash => location.hash === hash, streamHash);
+        // The iPhone's screen links back to its notifications, with the unread count.
+        const back = f.page.locator('.stream-header-notifications');
+        await back.waitFor();
+        assert.equal(await back.getAttribute('href'), '#!action=notifications&source=phone-a');
+        await f.page.waitForFunction(() => document.querySelector('.stream-header-notifications')?.getAttribute('aria-label') === 'Notifications, 2 unread');
+        assert.equal(await back.locator('.notification-unread-count').textContent(), '2');
+        await back.click();
+        await f.page.locator('#notification-history-heading').waitFor();
+        // A mouse double-click on a card opens it too.
+        await article(f.page, 'Design review').locator('h3').dblclick();
+        await f.page.waitForFunction(hash => location.hash === hash, streamHash);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.context.close(); }
+
+    // Not in the device list: the button says why it is off, and Enter explains instead.
+    f = await fixture(browser, { history: true, notifications: historyItems() });
+    try {
+        const button = f.page.locator('.notification-history-device-row').getByRole('button', { name: 'Open screen', exact: true });
+        await button.waitFor();
+        assert.equal(await button.isDisabled(), true);
+        const reason = 'Phone A is not connected to the NUC by USB.';
+        assert.equal(await f.page.locator(`#${await button.getAttribute('aria-describedby')}`).textContent(), reason);
+        await article(f.page, 'Coffee at four?').focus();
+        await f.page.keyboard.press('Enter');
+        await f.page.locator('.notification-failure').getByText(reason, { exact: true }).waitFor();
+        assert.match(f.page.url(), /action=notifications/);
+        const sheet = await openCardMenu(f.page, 'Coffee at four?');
+        const item = sheet.getByRole('button', { name: /^Open iPhone screen/ });
+        assert.equal(await item.isDisabled(), true);
+        assert.equal(await item.textContent(), `Open iPhone screen${reason}`);
+        await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await assertClean(f);
+    } finally { await f.context.close(); }
+    console.log('PASS the iPhone screen opens from the inbox header, a card menu, Enter or a double-click, and links back with the unread count');
+}
+
+async function deepLinkScrollsAndFades(browser) {
+    const items = [...historyItems(), ...Array.from({ length: 12 }, (_, i) => ({ ...historyItems()[2], key: `b-newer-${i}`, title: `Newer ${i + 1}`, received: Date.now() - 60000 + i * 1000 }))];
+    const f = await fixture(browser, { history: true, notifications: items, source: 'phone-b', notification: 'b-mail' });
+    try {
+        const card = article(f.page, 'A message from Alex');
+        await f.page.waitForFunction(() => document.querySelector('article.notification-history-item.highlighted'));
+        const box = await card.evaluate(el => { const rect = el.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, middle: (rect.top + rect.bottom) / 2, height: innerHeight }; });
+        assert.ok(box.top >= 0 && box.bottom <= box.height, `the opened notification is on screen: ${JSON.stringify(box)}`);
+        assert.ok(Math.abs(box.middle - box.height / 2) < box.height / 4, `and near the middle: ${JSON.stringify(box)}`);
+        await sleep(4600);
+        assert.doesNotMatch(await card.getAttribute('class'), /highlighted/, 'the outline fades after a few seconds');
+        await assertClean(f);
+        console.log('PASS a notification opened from a push is scrolled to the middle and its outline fades');
+    } finally { await f.context.close(); }
+}
+
+async function unlinkedDeepLink(browser) {
+    const f = await fixture(browser, { history: true, notifications: historyItems(), devices: true });
+    try {
+        await f.page.getByRole('link', { name: '← Devices', exact: true }).click();
+        await f.page.getByRole('heading', { name: 'Devices', exact: true }).waitFor();
+        const card = id => f.page.locator(`article.device[data-device-key$=":${id}"]`);
+        await card('phone-a').locator('.device-notification-history').waitFor();
+        await f.page.waitForFunction(() => [...document.querySelectorAll('.device-notification-history')].some(link => link.textContent === 'Set up notifications'));
+        assert.equal(await card('phone-c').locator('.device-notification-history').textContent(), 'Set up notifications', 'an unlinked iPhone offers setup');
+        assert.match(await card('phone-b').locator('.device-notification-history').textContent(), /^Notifications/);
+        await card('phone-c').locator('.device-notification-history').click();
+        await f.page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
+        const add = f.page.locator('details.notification-pairing');
+        await f.page.waitForFunction(() => document.querySelector('details.notification-pairing')?.open);
+        await add.getByText('Phone C is not linked yet. Follow these steps to receive its notifications.', { exact: true }).waitFor();
+        assert.equal(await add.getByRole('combobox', { name: 'iPhone connected to the NUC by USB', exact: true }).inputValue(), 'phone-c');
+        assert.equal(await f.page.getByText('Connect an iPhone to receive its', { exact: false }).count(), 0);
+        await capture(f, 'unlinked-source');
+        // The inbox stays open for the linked iPhones.
+        const inbox = f.page.getByRole('button', { name: 'Inbox', exact: true });
+        assert.equal(await inbox.isEnabled(), true);
+        await inbox.click();
+        await f.page.locator('#notification-history-heading').waitFor();
+        assert.equal(await f.page.getByRole('combobox', { name: 'Device', exact: true }).inputValue(), 'phone-a');
+        assert.doesNotMatch(f.page.url(), /phone-c/);
+        await article(f.page, 'Coffee at four?').waitFor();
+        await assertClean(f);
+        console.log('PASS an unlinked iPhone opens the linking steps while the inbox stays open for the linked ones');
+    } finally { await f.context.close(); }
+}
+
+async function phoneActionsOutlastDefaultTimeout(browser) {
+    // The server may wait 15 s for the iPhone on one action and work 30 s on a bulk one.
+    const items = historyItems();
+    items[1].canDismiss = true; items[1].negativeActionLabel = 'Clear';
+    const f = await fixture(browser, { history: true, notifications: items, clock: true });
+    try {
+        f.holdNextMutation = true;
+        await cardAction(f.page, 'Coffee at four?', 'Clear on iPhone');
+        await until(() => !!f.releaseMutation, 'the fixture holds the action');
+        await f.page.clock.fastForward(16000);
+        assert.equal(await f.page.locator('.notification-failure').count(), 0, 'no failure while the server is still working');
+        f.releaseMutation();
+        await f.page.locator('.notification-phone-result').getByText('Clear sent to Phone A.', { exact: true }).waitFor();
+
+        f.holdNextMutation = true;
+        await confirmBulk(f.page, 'Clear all on iPhone', true);
+        await until(() => !!f.releaseMutation, 'the fixture holds the bulk action');
+        await f.page.clock.fastForward(31000);
+        assert.equal(await f.page.locator('.notification-failure').count(), 0, 'no failure while the bulk action runs');
+        assert.equal(await f.page.getByRole('status').filter({ hasText: 'Clearing on Phone A…' }).count(), 1);
+        f.releaseMutation();
+        await f.page.locator('.notification-phone-result').getByText('Clear sent to Phone A for 1 notification.', { exact: true }).waitFor();
+        await assertClean(f);
+        console.log('PASS phone actions wait as long as the server may take');
+    } finally { if (f.releaseMutation) f.releaseMutation(); await f.context.close(); }
+}
+
 async function confirmBulk(page, buttonName, accept, beforeAnswer) {
     const sheet = await openToolbar(page);
     const button = sheet.getByRole('button', { name: buttonName });
     await button.click();
     // The confirm prompt opens in the same sheet; its button ignores presses for the first 500 ms.
-    const dialog = sheet.getByRole('alertdialog', { name: /^Dismiss \d+ notification/ });
+    const dialog = sheet.getByRole('alertdialog', { name: /^Clear \d+ notifications? on / });
     await dialog.waitFor();
     const message = await dialog.innerText();
     if (beforeAnswer) beforeAnswer(message);
     if (accept) {
         await dialog.locator('.confirm-prompt-button:not([aria-disabled])').first().waitFor();
-        await dialog.getByRole('button', { name: /^Dismiss (here|on phone)$/ }).click();
+        await dialog.getByRole('button', { name: 'Clear on iPhone', exact: true }).click();
     } else {
         await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
         await dialog.waitFor({ state: 'detached' });
@@ -791,36 +1173,51 @@ async function confirmBulk(page, buttonName, accept, beforeAnswer) {
     return message;
 }
 
-async function bulkDismissHere(browser) {
+async function bulkArchiveAndUndo(browser) {
     const items = historyItems();
-    for (let i = 0; i < 26; i++) items.push({ ...items[1], key: `a-older-${i}`, title: `Older alert ${i + 1}`, received: Date.now() - 180000 - i * 1000 });
-    const expected = items.filter(n => n.source === 'phone-a').map(n => n.key).sort();
+    for (let i = 0; i < 26; i++) items.push({ ...items[1], key: `a-older-${i}`, title: `Older alert ${i + 1}`, received: Date.now() - 180000 - i * 1000, read: i % 2 === 0 });
+    const phoneA = items.filter(n => n.source === 'phone-a');
+    const states = list => list.map(n => [n.key, n.read]).sort();
     const f = await fixture(browser, { history: true, notifications: items, source: 'phone-a', displayedKeys: ['a-chat', 'b-mail', 'a-older-25'] });
     try {
-        const button = /^Dismiss all here/;
-        const cancelled = await confirmBulk(f.page, button, false);
-        assert.match(cancelled, /Phone A/);
-        assert.match(cancelled, /28/);
-        assert.deepEqual(f.bulkDismissed, [], 'cancelling confirmation sends no dismiss request');
-        assert.ok(f.notifications.every(n => !n.dismissed));
-        const accepted = await confirmBulk(f.page, button, true, () => {
-            f.notifications.unshift({ ...historyItems()[0], key: 'a-arrived-during-confirmation', title: 'Arrived during confirmation' });
-        });
-        assert.match(accepted, /Phone A/);
-        await until(() => f.bulkDismissed.length === 1, 'confirmed bulk dismissal reaches the API');
-        await article(f.page, 'Arrived during confirmation').waitFor();
+        const sheet = await openToolbar(f.page);
+        // Not seen by the page yet: it must not join the set taken when Archive all is pressed.
+        f.notifications.unshift({ ...historyItems()[0], key: 'a-arrived-after', title: 'Arrived after the tap' });
+        await sheet.getByRole('button', { name: 'Archive all', exact: true }).click();
+        await sheet.waitFor({ state: 'detached' });
+        assert.equal(await f.page.getByRole('alertdialog').count(), 0, 'archiving here asks for no confirmation');
+        await until(() => f.bulkDismissed.length === 1, 'the bulk archive reaches the API');
+        await article(f.page, 'Arrived after the tap').waitFor();
         assert.equal(f.bulkDismissed[0].source, 'phone-a');
-        assert.deepEqual([...f.bulkDismissed[0].keys].sort(), expected, 'the exact confirmed snapshot includes older unrendered alerts and excludes new arrivals');
-        assert.equal(f.notifications.find(n => n.key === 'b-mail').dismissed, false, 'bulk local dismissal cannot touch another phone');
-        assert.equal(f.notifications.find(n => n.key === 'a-arrived-during-confirmation').dismissed, false);
-        assert.equal(f.notifications.length, 30, 'history survives bulk dismissal');
+        assert.deepEqual([...f.bulkDismissed[0].keys].sort(), phoneA.map(n => n.key).sort(), 'the snapshot includes older unrendered notifications and leaves out later arrivals');
+        assert.equal(f.notifications.find(n => n.key === 'b-mail').dismissed, false, 'archiving cannot touch another phone');
+        assert.equal(f.notifications.find(n => n.key === 'a-arrived-after').dismissed, false);
+        assert.equal(f.notifications.length, 30, 'history survives archiving');
         assert.deepEqual((await f.page.evaluate(() => window.__closedNotifications)).sort(), ['a-chat', 'a-older-25']);
         assert.equal(await headerBadge(f.page).textContent(), '1');
         assert.equal(await f.page.evaluate(() => window.__notificationBadges.at(-1)), 2);
-        await f.page.getByRole('button', { name: 'All history', exact: true }).click();
-        await article(f.page, 'Coffee at four?').getByText('Dismissed here', { exact: true }).waitFor();
+        // Undo, as for one notification: every one comes back with the read state it had.
+        const undo = f.page.locator('.notification-undo');
+        await undo.getByText('Archived 28 notifications from Phone A', { exact: true }).waitFor();
+        await undo.getByRole('button', { name: 'Undo', exact: true }).click();
+        await until(() => f.bulkRestored.length === 1, 'Undo reaches the API');
+        assert.equal(f.bulkRestored[0].source, 'phone-a');
+        assert.deepEqual(states(f.bulkRestored[0].items), states(phoneA));
+        await article(f.page, 'Coffee at four?').waitFor();
+        await f.page.waitForFunction(() => document.querySelector('.notification-page-header .notification-unread-count')?.textContent === '16');
+        // Mark all read can be undone too.
+        await toolbarAction(f.page, 'Mark all read');
+        await undo.getByText('Marked 16 notifications read', { exact: true }).waitFor();
+        const marked = f.readRequests.at(-1);
+        assert.equal(marked.keys.length, 16);
+        await undo.getByRole('button', { name: 'Undo', exact: true }).click();
+        await until(() => f.readRequests.length === 2, 'Undo of Mark all read reaches the API');
+        assert.deepEqual(f.readRequests.at(-1), { keys: marked.keys, read: false });
+        await f.page.waitForFunction(() => document.querySelector('.notification-page-header .notification-unread-count')?.textContent === '16');
+        await f.page.getByRole('button', { name: 'Archive', exact: true }).click();
+        await f.page.getByText('No archived notifications', { exact: true }).waitFor();
         await assertClean(f);
-        console.log('PASS bulk local dismissal confirms a per-phone snapshot, preserves history, and leaves later arrivals untouched');
+        console.log('PASS Archive all and Mark all read act on a per-phone snapshot at once and can be undone');
     } finally { await f.context.close(); }
 }
 
@@ -832,7 +1229,33 @@ async function bulkDismissPhone(browser) {
     items.push({ ...items[0], key: 'a-stale', title: 'Old cleared alert', active: false });
     const f = await fixture(browser, { history: true, notifications: items, source: 'phone-a', displayedKeys: ['a-chat', 'a-calendar', 'b-mail'] });
     try {
-        const button = /^Dismiss all on (iPhone|phone)/;
+        const button = 'Clear all on iPhone';
+        // The confirmation says what happens on the iPhone and here, starts on Cancel, and
+        // its confirm button is filled red in both themes.
+        for (const colorScheme of ['light', 'dark']) {
+            await f.page.emulateMedia({ colorScheme });
+            const sheet = await openToolbar(f.page);
+            await sheet.getByRole('button', { name: button, exact: true }).click();
+            const prompt = sheet.getByRole('alertdialog', { name: 'Clear 2 notifications on Phone A?', exact: true });
+            await prompt.waitFor();
+            assert.match(await prompt.textContent(), /They are removed from the iPhone and cannot be brought back there\. They stay here, marked as read\./);
+            const look = await prompt.evaluate(el => {
+                const [confirm, cancel] = el.querySelectorAll('.confirm-prompt-button');
+                const rgb = value => value.match(/\d+/g).slice(0, 3).map(Number);
+                return { focus: document.activeElement === cancel, confirm: rgb(getComputedStyle(confirm).backgroundColor), cancel: getComputedStyle(cancel).backgroundColor, text: getComputedStyle(confirm).color, label: confirm.textContent };
+            });
+            assert.equal(look.focus, true, 'focus starts on Cancel');
+            assert.equal(look.label, 'Clear on iPhone');
+            assert.ok(look.confirm[0] > 150 && look.confirm[1] < 80 && look.confirm[2] < 80, `the confirm button is red in ${colorScheme}: ${look.confirm}`);
+            assert.notEqual(look.cancel, `rgb(${look.confirm.join(', ')})`);
+            assert.equal(look.text, 'rgb(255, 255, 255)');
+            await f.page.screenshot({ path: path.join(SCREENSHOTS, `ws-notifications-bulk-confirm-${colorScheme}.png`), animations: 'disabled' });
+            await prompt.getByRole('button', { name: 'Cancel', exact: true }).click();
+            await prompt.waitFor({ state: 'detached' });
+            await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
+            await sheet.waitFor({ state: 'detached' });
+        }
+        await f.page.emulateMedia({ colorScheme: 'light' });
         const cancelled = await confirmBulk(f.page, button, false);
         assert.match(cancelled, /Phone A/);
         assert.match(cancelled, /2/);
@@ -923,21 +1346,42 @@ async function stickyBarsReachScrollTop(browser) {
             assert.ok(tools.scrollTop >= 900, `the inbox scrolls by 900 px at ${width} px (got ${tools.scrollTop})`);
             assert.ok(Math.abs(tools.gap) <= 1, `the search bar sits at the scrollport top at ${width} px (gap ${tools.gap} px)`);
             assert.equal(tools.itemsAbove, 0, `no list item shows above the search bar at ${width} px`);
-            // A failed action shows the sticky error notice, which sticks to the same edge.
+            // A failed action is reported at the bottom of the screen, above the list, with Retry.
             f.dismissError = 'Could not dismiss. Try again.';
-            await cardAction(f.page, 'Message 1', 'Dismiss here');
-            const feedback = f.page.locator('.notification-feedback[role="alert"]').filter({ hasText: f.dismissError });
-            await feedback.waitFor();
+            await cardAction(f.page, 'Message 20', 'Archive');
+            const failure = f.page.locator('.notification-failure[role="alert"]').filter({ hasText: f.dismissError });
+            await failure.waitFor();
             await settleMotion(f.page);
-            const notice = await measureSticky(f.page, '.notification-feedback');
+            assert.ok(await f.page.locator('main').evaluate(el => el.scrollTop > 400), 'the list is scrolled down');
+            const covered = await failure.evaluate(el => {
+                const box = el.getBoundingClientRect();
+                const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+                return { inside: box.top >= 0 && box.bottom <= innerHeight, onTop: el.contains(top) };
+            });
+            assert.deepEqual(covered, { inside: true, onTop: true }, `the failure stays visible after scrolling at ${width} px`);
             if (width === 390) {
-                await f.page.screenshot({ path: path.join(OUT, 'notifications-sticky-feedback-390.png'), animations: 'disabled' });
+                await f.page.screenshot({ path: path.join(OUT, 'notifications-failure-390.png'), animations: 'disabled' });
             }
-            assert.ok(Math.abs(notice.gap) <= 1, `the error notice sits at the scrollport top at ${width} px (gap ${notice.gap} px)`);
-            assert.equal(notice.itemsAbove, 0, `no list item shows above the error notice at ${width} px`);
+            f.dismissError = '';
+            await failure.getByRole('button', { name: 'Retry', exact: true }).click();
+            await until(() => f.dismissed.includes('a-sticky-19'), 'Retry repeats the action');
+            await failure.waitFor({ state: 'detached' });
+            await f.page.locator('.notification-undo').getByText('Archived', { exact: true }).waitFor();
+            // A lost connection is shown inside the search bar, so scrolling cannot hide it.
+            f.statusError = 'Bad gateway';
+            await f.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+            const lost = f.page.locator('.notification-history-tools [role="alert"]').filter({ hasText: 'Connection interrupted.' });
+            await lost.waitFor();
+            await settleMotion(f.page);
+            const notice = await measureSticky(f.page, '.notification-history-tools');
+            assert.ok(Math.abs(notice.gap) <= 1, `the search bar and its notice sit at the scrollport top at ${width} px (gap ${notice.gap} px)`);
+            assert.equal(await lost.evaluate(el => { const box = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(box.left + 10, box.top + box.height / 2)); }), true, 'nothing covers the connection notice');
+            f.statusError = '';
+            await f.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+            await lost.waitFor({ state: 'detached' });
             f.dismissError = '';
             await assertClean(f);
-            console.log(`PASS sticky search bar and error notice reach the scrollport top at ${width}x${height}`);
+            console.log(`PASS sticky search bar and connection notice reach the scrollport top, and failures stay visible, at ${width}x${height}`);
         } finally { await f.context.close(); }
     }
 }
@@ -1082,7 +1526,7 @@ async function searchAndFilters(browser) {
         await f.page.evaluate(() => { location.hash = '!action=notifications&source=phone-b&notification=b-mail'; });
         await waitRead(f.page, 'A message from Alex', true);
         assert.equal(await search.inputValue(), '', 'opening a specific alert resets stale search text');
-        assert.equal(await f.page.getByRole('button', { name: 'Inbox', exact: true }).getAttribute('aria-pressed'), 'true');
+        assert.equal(await f.page.getByRole('button', { name: 'All', exact: true }).getAttribute('aria-pressed'), 'true');
         await f.page.getByRole('button', { name: /^Filters/ }).click();
         const sheet = f.page.getByRole('dialog', { name: 'Filter notifications', exact: true });
         assert.equal(await sheet.getByRole('combobox', { name: 'App', exact: true }).inputValue(), '', 'source/deep-link changes clear the app filter');
@@ -1104,13 +1548,14 @@ async function bulkRespectsFilters(browser) {
         await f.page.getByRole('button', { name: 'Unread', exact: true }).click();
         await article(f.page, 'Family dinner').waitFor();
         assert.equal(await f.page.locator('article.notification-history-item').count(), 1);
-        const question = await confirmBulk(f.page, /^Dismiss all here/, true);
-        assert.match(question, /1 notification/);
+        const sheet = await openToolbar(f.page);
+        assert.equal(await sheet.getByText('1 notification in this view.', { exact: true }).count(), 1);
+        await sheet.getByRole('button', { name: 'Archive all', exact: true }).click();
         await until(() => f.bulkDismissed.length === 1, 'filtered bulk request arrives');
         assert.deepEqual(f.bulkDismissed, [{ source: 'phone-a', keys: ['a-chat'] }]);
         assert.ok(f.notifications.filter(n => n.key !== 'a-chat').every(n => !n.dismissed), 'hidden app/status/source records are untouched');
         await assertClean(f);
-        console.log('PASS bulk dismissal respects combined search, app, status and device filters');
+        console.log('PASS Archive all respects combined search, app, status and device filters');
     } finally { await f.context.close(); }
 }
 
@@ -1277,7 +1722,7 @@ async function delayedActionDoesNotCrossDevices(browser) {
     const f = await fixture(browser, { history: true, notifications: historyItems() });
     try {
         f.holdNextMutation = true;
-        await cardAction(f.page, 'Coffee at four?', 'Dismiss here');
+        await cardAction(f.page, 'Coffee at four?', 'Archive');
         await until(() => !!f.releaseMutation, 'the fixture holds the first phone’s mutation response');
         // The select is intentionally disabled while saving; history/deep-link navigation can still change routes.
         await f.page.evaluate(() => { location.hash = '!action=notifications&source=phone-b'; });
@@ -1475,8 +1920,8 @@ async function main() {
     const browser = await ({ chromium, webkit }[browserName] || chromium).launch({ headless: true });
     try {
         const cases = [onboarding, missedPairingRequest, configuredReceiver, receiverChoicesAndUnlink, enablingReceiver, errorsSurvivePolling,
-            iosInstallGate, recoverMissingServerSubscription, perDeviceHistory, dismissKeepsHistory, labeledPhoneActions, confirmPromptLayouts,
-            notificationDeepLink, bulkDismissHere, bulkDismissPhone, compactLongNotification, stickyBarsReachScrollTop, accessibleActionMenus, richNotificationMedia,
+            iosInstallGate, recoverMissingServerSubscription, subscriptionRepairedOnLoad, subscriptionStateOnReturn, perDeviceHistory, historyFetchedOnChange, dismissKeepsHistory, labeledPhoneActions, confirmPromptLayouts,
+            notificationDeepLink, deepLinkScrollsAndFades, unlinkedDeepLink, feedStatusInInbox, openScreenFromInbox, phoneActionsOutlastDefaultTimeout, bulkArchiveAndUndo, bulkDismissPhone, compactLongNotification, stickyBarsReachScrollTop, accessibleActionMenus, richNotificationMedia,
             searchAndFilters, bulkRespectsFilters, swipeAndUndo, swipeMotionAndFailure, delayedActionDoesNotCrossDevices, standaloneTouchNotifications,
             compatibilityPointerEventsDoNotDoubleAct, nativeTouchCancellationAndMultifinger, hangingRegistrationCleanup,
             hangingNotificationCleanup, hangingWorkerDeepLink];

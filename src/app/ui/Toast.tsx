@@ -6,7 +6,10 @@ interface ToastProps {
     message: string;
     identity: unknown;
     onDismiss: () => void;
+    /** Milliseconds before it closes by itself; 0 keeps it until it is closed. */
     duration?: number;
+    /** `error` reports a failure: a warning icon, and it is read out at once. */
+    tone?: 'success' | 'error';
     action?: { label: string; run: () => void; disabled?: boolean };
     className?: string;
     dismissLabel?: string;
@@ -17,6 +20,7 @@ export function Toast({
     identity,
     onDismiss,
     duration = 6000,
+    tone = 'success',
     action,
     className = '',
     dismissLabel = 'Dismiss message',
@@ -31,6 +35,7 @@ export function Toast({
             held.current = { hover: false, focus: false };
             return;
         }
+        if (duration <= 0) return;
         let remaining = duration;
         let start = 0;
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -58,8 +63,8 @@ export function Toast({
         <Presence
             show={!!message}
             kind="toast"
-            class={`app-toast ${className}`}
-            role="status"
+            class={`app-toast ${tone === 'error' ? 'error' : ''} ${className}`}
+            role={tone === 'error' ? 'alert' : 'status'}
             onPointerEnter={(event) => {
                 if (event.pointerType === 'mouse') {
                     held.current.hover = true;
@@ -89,7 +94,7 @@ export function Toast({
                 stroke-width="1.8"
                 aria-hidden="true"
             >
-                <path d="m5 12 4 4L19 6" />
+                <path d={tone === 'error' ? 'M12 4 2.5 20h19L12 4zm0 6v4.5m0 2.5v.5' : 'm5 12 4 4L19 6'} />
             </svg>
             <span class="toast-message" key={String(identity)}>
                 {message}

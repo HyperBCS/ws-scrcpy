@@ -288,6 +288,19 @@
     padding-top: 16px;
     border-top: 1px solid var(--device-border-color);
 }
+.notification-receivers {
+    margin: 0 0 10px;
+    padding: 0;
+    list-style: none;
+    font-size: 14px;
+}
+.notification-receivers li + li {
+    margin-top: 8px;
+}
+.notifications-page .notification-receivers p {
+    margin: 2px 0 0;
+    font-size: 13px;
+}
 .notification-pairing-code {
     display: block;
     margin: 10px 0 14px;
@@ -780,4 +793,91 @@
 }
 .notification-media-size {
     min-width: 0;
+}
+
+/* Three link states: Connected (.ready), Reconnecting and Action needed. */
+.notification-badge.reconnecting {
+    color: var(--status-starting-color);
+    background: color-mix(in srgb, var(--status-starting-color) 12%, transparent);
+}
+.notification-badge.attention {
+    color: var(--status-unauthorized-color);
+    background: color-mix(in srgb, var(--status-unauthorized-color) 10%, transparent);
+}
+
+/* The iPhone shown in the inbox: its name or picker, the way to its screen, and its link state. */
+.notification-history-source {
+    margin-bottom: 4px;
+}
+.notification-history-device-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.notification-history-device-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 16px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.notifications-page .notification-history-device-row .notification-open-screen {
+    margin-left: 0;
+    padding: 8px 12px;
+    font-size: 13px;
+}
+.notifications-page .notification-feed-state {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    margin: 8px 0 4px;
+    font-size: 13px;
+    color: var(--text-color-light);
+}
+.notifications-page .notification-screen-reason {
+    margin: 4px 0;
+}
+.notifications-page .notification-history-source .notification-notice {
+    margin: 8px 0 4px;
+}
+.notifications-page .notification-history-tools .notification-connection {
+    margin: 0 0 8px;
+}
+.notifications-page .notification-bulk-busy {
+    margin: 6px 0 0;
+}
+.notification-action-sheet .notification-action-reason {
+    display: block;
+    color: var(--text-color-light);
+    font-size: 13px;
+}
+.notification-action-sheet .notification-action-sheet-actions > button:has(.notification-action-reason) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+}
+
+/* Enter opens the iPhone's screen, so a focused card shows it. The row clips anything outside. */
+.notification-swipe-row .notification-history-item:focus-visible {
+    outline: 2px solid var(--link-color);
+    outline-offset: -2px;
+}
+/* The outline of a notification opened from a push fades after a few seconds. */
+.notification-swipe-row .notification-history-item {
+    transition:
+        transform var(--motion-settle) var(--ease-out),
+        background-color var(--motion-fast) ease,
+        border-color var(--motion-fast) ease,
+        box-shadow 600ms ease;
+}
+.notification-swipe-row .notification-history-item.highlighted {
+    box-shadow: inset 0 0 0 2px var(--link-color);
+}
+@media (prefers-reduced-motion: reduce) {
+    .notification-swipe-row .notification-history-item {
+        transition: none;
+    }
 }

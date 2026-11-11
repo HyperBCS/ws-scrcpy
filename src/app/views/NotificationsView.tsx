@@ -3,28 +3,26 @@ import { Toast } from '../ui/Toast';
 import { AnimatedDetails } from '../ui/AnimatedDetails';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { devices, deviceName } from '../state/devices';
+import { devices, deviceName, findDeviceByUdid } from '../state/devices';
 import {
     notificationRequest as api,
     registerNotificationWorker,
     applyNotificationSummary,
+    savedNotificationSources as savedSources,
+    pushSubscriptionFor,
+    pushReceiverId,
+    syncPushSubscription,
 } from '../state/notifications';
-import { NotificationHistory, UnreadBadge } from './NotificationHistory';
-import { route } from '../state/router';
+import { FeedBadge, NotificationHistory, UnreadBadge, feedState } from './NotificationHistory';
+import { route, pushRoute } from '../state/router';
 import { privateAppUrl } from '../state/privateApp';
-import type { NotificationSource } from '../../common/Notification';
+import type {
+    NotificationHistoryItem,
+    NotificationHistoryReply,
+    NotificationSource,
+    NotificationStatus as Status,
+} from '../../common/Notification';
 import '../../style/views/Notifications.css';
-
-import type { NotificationStatus as Status } from '../../common/Notification';
-
-function savedSources(): string[] | null {
-    try {
-        const saved: unknown = JSON.parse(localStorage.getItem('notification-sources') || 'null');
-        return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string') : null;
-    } catch {
-        return null;
-    }
-}
 
 function choicesKey(sources: string[], receiver: string): string {
     return JSON.stringify({ sources: [...sources].sort(), receiver });
@@ -149,6 +147,9 @@ function SourceSettings({
 
 export function NotificationsView() {
     const [status, setStatus] = useState<Status>();
+    // The stored notifications. Status is polled; these are fetched only when its revision changes.
+    const [history, setHistory] = useState<NotificationHistoryItem[]>([]);
+    const historyRevision = useRef('');
     const [connectionError, setConnectionError] = useState('');
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
@@ -156,6 +157,20 @@ export function NotificationsView() {
     const busy = running > 0;
     const [panel, setPanel] = useState<'history' | 'setup'>();
     const [subscription, setSubscription] = useState<PushSubscription | null>(null);
+    const [receiverId, setReceiverId] = useState('');
+    useEffect(() => {
+        let alive = true;
+        setReceiverId('');
+        if (subscription)
+            void pushReceiverId(subscription.endpoint)
+                .then((id) => {
+                    if (alive) setReceiverId(id);
+                })
+                .catch(() => undefined);
+        return () => {
+            alive = false;
+        };
+    }, [subscription?.endpoint]);
     const [workerLoaded, setWorkerLoaded] = useState(false);
     const [selected, setSelected] = useState<string[]>([]);
     const [receiverChoice, setReceiver] = useState(localStorage.getItem('notification-receiver-source') || '');
@@ -194,6 +209,10 @@ export function NotificationsView() {
     const blockedPermission = supported && Notification.permission === 'denied';
     const enabled = !!subscription && !blockedPermission;
     const canEnable = supported && (!ios || installed) && workerLoaded && initialized && effectiveSources.length > 0;
+    // Delivery is reported per receiving device; this device is found by its subscription id.
+    const receivers = status?.receivers || [];
+    const ownIndex = receivers.findIndex((r) => r.id === receiverId);
+    const unregistered = enabled && !!confirmed && !!receiverId && !!status?.receivers && ownIndex < 0 && !busy;
     const privateUrl = privateAppUrl(status?.publicUrl);
 
     const refresh = (force = true): Promise<Status> => {
@@ -204,8 +223,21 @@ export function NotificationsView() {
         const promise = (async () => {
             try {
                 const result = await api<Status>('status', 'GET', undefined, controller.signal);
+                const changed =
+                    result.historyRevision !== historyRevision.current
+                        ? await api<NotificationHistoryReply | null>(
+                              `history?since=${encodeURIComponent(historyRevision.current)}`,
+                              'GET',
+                              undefined,
+                              controller.signal,
+                          )
+                        : null;
                 // A slow poll must not overwrite a source added or removed by a newer refresh.
                 if (mounted.current && request === statusRequest.current) {
+                    if (changed && Array.isArray(changed.notifications)) {
+                        historyRevision.current = changed.revision;
+                        setHistory(changed.notifications);
+                    }
                     setStatus(result);
                     applyNotificationSummary(result);
                     setConnectionError('');
@@ -233,11 +265,13 @@ export function NotificationsView() {
         const timer = window.setInterval(poll, 5000);
         navigator.serviceWorker?.addEventListener('message', poll);
         document.addEventListener('visibilitychange', poll);
-        if (supported)
-            void registerNotificationWorker()
+        if (supported) {
+            let synced = false;
+            const registration = registerNotificationWorker();
+            void registration
                 .then((r) => r.pushManager.getSubscription())
                 .then((s) => {
-                    if (alive) setSubscription(s);
+                    if (alive && !synced) setSubscription(s);
                 })
                 .catch((e) => {
                     if (alive) setError(`Could not check notifications on this device: ${e.message}`);
@@ -245,7 +279,23 @@ export function NotificationsView() {
                 .finally(() => {
                     if (alive) setWorkerLoaded(true);
                 });
-        else setWorkerLoaded(true);
+            // The app sends this device's subscription to the server again when it loads, and
+            // may replace it. The result is shared by every visit to this page, so the
+            // subscription shown is read from the browser afterwards, never from that result.
+            void syncPushSubscription(true).then(async (result) => {
+                const current = await registration.then((r) => r.pushManager.getSubscription()).catch(() => undefined);
+                if (!alive) return;
+                synced = true;
+                if (current !== undefined) setSubscription(current);
+                if (result.lost)
+                    setError(
+                        'Notifications stopped on this device because the server’s keys changed. Tap Enable on this device to turn them on again.',
+                    );
+                else if (result.error) setError(`This device could not be registered with the server: ${result.error}`);
+                // Delivery details list this device once the server has it again.
+                else if (result.sent) void refresh().catch(() => undefined);
+            });
+        } else setWorkerLoaded(true);
         return () => {
             alive = false;
             mounted.current = false;
@@ -271,14 +321,16 @@ export function NotificationsView() {
             });
         setReceiver((current) => (valid.has(current) ? current : ''));
     }, [status, initialized]);
-    const run = async (fn: () => Promise<void>) => {
+    // A failure goes to `onError` when given (the inbox reports it beside the list), otherwise
+    // to the notice at the top of Setup.
+    const run = async (fn: () => Promise<void>, onError?: (message: string) => void) => {
         setRunning((value) => value + 1);
         setError('');
         setMessage('');
         try {
             await fn();
         } catch (e) {
-            setError((e as Error).message);
+            (onError || setError)((e as Error).message);
         } finally {
             setRunning((value) => Math.max(0, value - 1));
         }
@@ -288,6 +340,8 @@ export function NotificationsView() {
         localStorage.setItem('notification-sources', JSON.stringify(selected));
         localStorage.setItem('notification-receiver-source', receiver);
         setSavedChoices(choicesKey(selected, receiver));
+        // The delivery details must list this device before they are shown again.
+        await refresh().catch(() => undefined);
     };
     const enable = () => {
         // Safari requires this call in the original button gesture, before any awaits.
@@ -297,29 +351,37 @@ export function NotificationsView() {
                 throw Error('Allow notifications for this app in this device’s settings, then try again.');
             const registration = await registerNotificationWorker();
             await navigator.serviceWorker.ready;
-            const existing = await registration.pushManager.getSubscription();
-            const bytes = Uint8Array.from(atob(status!.publicKey.replace(/-/g, '+').replace(/_/g, '/')), (c) =>
-                c.charCodeAt(0),
-            );
-            const sub =
-                existing ||
-                (await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes }));
+            const sub = (await pushSubscriptionFor(registration, status!.publicKey, true))!;
             await saveSubscription(sub);
             setSubscription(sub);
             setMessage('Notifications enabled on this device.');
         });
     };
     const requestedSource = route.value.get('source') || '';
-    const historySource =
-        status?.sources.find((source) => source.id === requestedSource) ||
-        (!requestedSource ? status?.sources[0] : undefined);
+    const linkedRequest = status?.sources.find((source) => source.id === requestedSource);
+    // A device card links every iPhone here, linked or not. One that is not linked opens the
+    // steps to link it; the inbox stays open for the others.
+    const unlinkedRequest = !!requestedSource && !!status && !linkedRequest;
+    const unlinkedEntry = unlinkedRequest ? findDeviceByUdid(requestedSource) : undefined;
+    const unlinkedName = unlinkedEntry ? deviceName(unlinkedEntry) : 'This iPhone';
+    const historySource = linkedRequest || status?.sources[0];
     useEffect(() => {
         if (requestedSource && status) {
             setPanel(status.sources.some((source) => source.id === requestedSource) ? 'history' : 'setup');
             setPhone(requestedSource);
         }
     }, [requestedSource, !!status]);
-    const activePanel = historySource ? panel || 'history' : 'setup';
+    // Inbox drops the unlinked iPhone from the route, so Setup is shown until then.
+    const activePanel = !historySource || unlinkedRequest ? 'setup' : panel || 'history';
+    const openInbox = () => {
+        if (unlinkedRequest) {
+            const params = new URLSearchParams(route.value);
+            params.delete('source');
+            params.delete('notification');
+            pushRoute(params);
+        }
+        setPanel('history');
+    };
     const updateSource = async (source: NotificationSource) => {
         await api('sources', 'POST', source);
         await refresh();
@@ -333,13 +395,14 @@ export function NotificationsView() {
                 </a>
                 <h1>
                     Notifications{' '}
-                    <UnreadBadge count={historySource ? status?.unreadBySource?.[historySource.id] || 0 : 0} />
+                    <UnreadBadge
+                        count={historySource && !unlinkedRequest ? status?.unreadBySource?.[historySource.id] || 0 : 0}
+                    />
                 </h1>
-                {(!status || status.sources.length <= 1 || activePanel === 'setup') && (
-                    <p>{historySource?.name || 'Connect an iPhone to receive its alerts.'}</p>
-                )}
+                {status && !status.sources.length && <p>Connect an iPhone to receive its notifications.</p>}
             </header>
-            {connectionError && status && (
+            {/* The inbox shows this inside its search bar, which stays on screen while scrolling. */}
+            {connectionError && status && activePanel === 'setup' && (
                 <p role="alert" class="notification-notice notification-error">
                     Connection interrupted. {connectionError}
                 </p>
@@ -348,7 +411,9 @@ export function NotificationsView() {
                 show={!!error}
                 kind="collapse"
                 role="alert"
-                class="notification-notice notification-error notification-feedback"
+                // Sticky on Setup only: in the inbox the search bar would cover it. The inbox
+                // reports its own failures at the bottom of the screen.
+                class={`notification-notice notification-error ${activePanel === 'setup' ? 'notification-feedback' : ''}`}
             >
                 {error}
             </Presence>
@@ -385,12 +450,8 @@ export function NotificationsView() {
                         style={{ '--segment-index': activePanel === 'setup' ? 1 : 0 }}
                         aria-label="Notification pages"
                     >
-                        <button
-                            disabled={!historySource}
-                            aria-pressed={activePanel === 'history'}
-                            onClick={() => setPanel('history')}
-                        >
-                            History
+                        <button disabled={!historySource} aria-pressed={activePanel === 'history'} onClick={openInbox}>
+                            Inbox
                         </button>
                         <button aria-pressed={activePanel === 'setup'} onClick={() => setPanel('setup')}>
                             Setup &amp; delivery
@@ -400,8 +461,11 @@ export function NotificationsView() {
                         <Presence show={activePanel === 'history'} class="notification-panel">
                             <NotificationHistory
                                 sources={status.sources}
-                                items={status.notifications}
+                                items={history}
                                 unreadBySource={status.unreadBySource || {}}
+                                statuses={status.statuses}
+                                feedError={status.error}
+                                connectionError={connectionError}
                                 busy={busy}
                                 run={run}
                                 refresh={refresh}
@@ -419,24 +483,24 @@ export function NotificationsView() {
                                     </p>
                                 )}
                                 {status.sources.map((s) => {
-                                    const ready = status.statuses[s.id] === 'Receiving notifications';
+                                    const state = feedState(status.statuses[s.id]);
                                     return (
                                         <article class="notification-source" key={s.id}>
                                             <div class="notification-source-heading">
                                                 <h3>{s.name}</h3>
-                                                <span class={`notification-badge ${ready ? 'ready' : ''}`}>
-                                                    {ready ? 'Connected' : 'Connecting…'}
-                                                </span>
+                                                <FeedBadge state={state} />
                                             </div>
-                                            {!ready && (
-                                                <p class="notification-help">
+                                            {state !== 'connected' && (
+                                                <p
+                                                    class={`notification-help ${state === 'attention' ? 'notification-error' : ''}`}
+                                                >
                                                     {status.statuses[s.id] ||
                                                         'Waiting for Bluetooth. Keep the iPhone near the NUC.'}
                                                 </p>
                                             )}
                                             <SourceSettings
                                                 source={s}
-                                                stored={status.notifications.filter((n) => n.source === s.id).length}
+                                                stored={status.storedBySource?.[s.id] || 0}
                                                 busy={busy}
                                                 update={(source) =>
                                                     void run(async () => {
@@ -459,6 +523,7 @@ export function NotificationsView() {
                                     class="notification-details notification-pairing"
                                     open={
                                         !status.sources.length ||
+                                        unlinkedRequest ||
                                         status.pairingOpen ||
                                         !!status.pairing ||
                                         !!status.pairingRejected
@@ -468,6 +533,12 @@ export function NotificationsView() {
                                         {status.sources.length ? 'Add another iPhone' : 'Connect your first iPhone'}
                                     </summary>
                                     <div class="notification-details-content">
+                                        {unlinkedRequest && (
+                                            <p class="notification-notice" role="status">
+                                                {unlinkedName} is not linked yet. Follow these steps to receive its
+                                                notifications.
+                                            </p>
+                                        )}
                                         <p>Use the iPhone whose notifications you want to forward.</p>
                                         <ol class="notification-setup-steps">
                                             <li>Connect that iPhone to the NUC by USB.</li>
@@ -530,7 +601,7 @@ export function NotificationsView() {
                                             <h3>Match the two connections</h3>
                                             <p class="notification-help">
                                                 Choose the same iPhone in both lists. This connects its screen controls
-                                                with its Bluetooth alerts.
+                                                with its Bluetooth notifications.
                                             </p>
                                             <label>
                                                 iPhone connected to the NUC by USB
@@ -633,7 +704,7 @@ export function NotificationsView() {
                                         {privateUrl ? (
                                             <>
                                                 <p>
-                                                    Open the secure app with Tailscale connected to receive alerts here.
+                                                    Open the secure app with Tailscale connected to receive notifications here.
                                                 </p>
                                                 <a class="ui-button" href={privateUrl}>
                                                     Open private app
@@ -641,7 +712,7 @@ export function NotificationsView() {
                                             </>
                                         ) : (
                                             <p>
-                                                Alerts need this app's secure (HTTPS) address.
+                                                Notifications need this app's secure (HTTPS) address.
                                                 {status && ' Set WS_PUBLIC_URL on the server to link to it from here.'}
                                             </p>
                                         )}
@@ -676,8 +747,8 @@ export function NotificationsView() {
                                 {receiver && selected.includes(receiver) && (
                                     <p class="notification-help">
                                         {status.sources.find((s) => s.id === receiver)?.name} won’t receive its own
-                                        alerts again. Select a different sending iPhone to receive its notifications
-                                        here.
+                                        notifications again. Select a different sending iPhone to receive its
+                                        notifications here.
                                     </p>
                                 )}
                                 <AnimatedDetails
@@ -727,7 +798,7 @@ export function NotificationsView() {
                                             </select>
                                         </label>
                                         <p class="notification-help">
-                                            Prevents this iPhone from receiving its own alerts.
+                                            Prevents this iPhone from receiving its own notifications.
                                         </p>
                                         {subscription && (
                                             <button
@@ -819,18 +890,48 @@ export function NotificationsView() {
                                         Some notifications could not be sent. See delivery details below.
                                     </p>
                                 )}
-                                <AnimatedDetails class="notification-details">
+                                {unregistered && (
+                                    <p role="alert" class="notification-error">
+                                        The server has no record of this device, so nothing can be delivered to it. Send
+                                        a test notification to register it again.
+                                    </p>
+                                )}
+                                <AnimatedDetails class="notification-details notification-delivery-details">
                                     <summary>Delivery details</summary>
                                     <div class="notification-details-content">
-                                        <p class="notification-help">
-                                            Across all receiving devices since the server started:{' '}
-                                            {status.delivery.sent} accepted by the push service
-                                            {status.delivery.failed ? `, ${status.delivery.failed} failed` : ''}.
-                                            Acceptance doesn’t confirm a banner appeared.
-                                        </p>
-                                        {status.delivery.lastError && (
-                                            <p class="notification-error">{status.delivery.lastError}</p>
+                                        {receivers.length ? (
+                                            <ul class="notification-receivers">
+                                                {receivers.map((r, index) => (
+                                                    <li key={r.id}>
+                                                        <strong>
+                                                            {index === ownIndex
+                                                                ? 'This device'
+                                                                : `Other device ${index + (ownIndex >= 0 && ownIndex < index ? 0 : 1)}`}
+                                                        </strong>{' '}
+                                                        <span class="notification-help">
+                                                            {r.provider} push service · {r.sent} accepted
+                                                            {r.failed ? `, ${r.failed} failed` : ''}
+                                                        </span>
+                                                        {r.lastError && <p class="notification-error">{r.lastError}</p>}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        ) : (
+                                            <p class="notification-help">
+                                                No device is registered to receive notifications.
+                                            </p>
                                         )}
+                                        {status.delivery.lastError &&
+                                            !receivers.some((r) => r.lastError === status.delivery.lastError) && (
+                                                <p class="notification-error">{status.delivery.lastError}</p>
+                                            )}
+                                        <p class="notification-help">
+                                            Counted since the server started
+                                            {status.delivery.sent || status.delivery.failed
+                                                ? `: ${status.delivery.sent} accepted${status.delivery.failed ? `, ${status.delivery.failed} failed` : ''} in total`
+                                                : ''}
+                                            . Acceptance by the push service doesn’t confirm a banner appeared.
+                                        </p>
                                     </div>
                                 </AnimatedDetails>
                             </section>

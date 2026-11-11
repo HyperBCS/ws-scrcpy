@@ -42,6 +42,7 @@ export function NotificationCard({
     markRead,
     dismiss,
     openMenu,
+    openScreen,
     removeOnRead,
 }: {
     item: HistoryItem;
@@ -51,8 +52,12 @@ export function NotificationCard({
     markRead: () => Promise<void>;
     dismiss: () => Promise<void>;
     openMenu: () => void;
+    // Enter on the focused card, or a double-click with a mouse, opens the iPhone's screen.
+    openScreen: () => void;
     removeOnRead: boolean;
 }) {
+    // A double tap on a touch screen is too easy to make by accident to start a stream.
+    const lastPointer = useRef('');
     const [expanded, setExpanded] = useState(false);
     const [overflow, setOverflow] = useState(false);
     const [offset, setOffset] = useState(0);
@@ -235,14 +240,34 @@ export function NotificationCard({
                         <path d="M4 5h16v4H4z M6 9v11h12V9 M10 13h4" />
                     )}
                 </svg>
-                <span>{direction > 0 ? (n.read ? 'Unread' : 'Read') : 'Dismiss'}</span>
+                <span>{direction > 0 ? (n.read ? 'Unread' : 'Read') : 'Archive'}</span>
             </div>
             <article
                 ref={card}
+                tabIndex={0}
                 style={offset ? { transform: `translateX(${offset}px)` } : undefined}
                 aria-busy={committing || undefined}
                 class={`notification-history-item ${!n.read ? 'unread' : ''} ${n.dismissed ? 'dismissed' : ''} ${highlighted ? 'highlighted' : ''} ${offset && !committing ? 'swiping' : ''}`}
+                onKeyDown={(event) => {
+                    if (event.key === 'Enter' && event.target === event.currentTarget) {
+                        event.preventDefault();
+                        openScreen();
+                    }
+                }}
+                onDblClick={(event) => {
+                    if (
+                        lastPointer.current === 'mouse' &&
+                        !(
+                            event.target instanceof Element &&
+                            event.target.closest(
+                                'button, a, input, select, textarea, video, audio, .notification-media',
+                            )
+                        )
+                    )
+                        openScreen();
+                }}
                 onPointerDown={(event) => {
+                    lastPointer.current = event.pointerType;
                     if (nativeTouch && event.pointerType === 'touch') return;
                     if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
                     if (!event.isPrimary) {
@@ -381,7 +406,7 @@ export function NotificationCard({
                         ))}
                     </section>
                 )}
-                {n.dismissed && <span class="notification-history-status">Dismissed here</span>}
+                {n.dismissed && <span class="notification-history-status">Archived</span>}
             </article>
         </div>
     );

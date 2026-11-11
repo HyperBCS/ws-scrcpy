@@ -6,6 +6,12 @@ const { test } = require('node:test');
 
 const source = fs.readFileSync(path.join(__dirname, '../src/public/sw.js'), 'utf8');
 
+const subscriptionOf = (endpoint, key) => ({
+    endpoint,
+    options: { applicationServerKey: key },
+    toJSON: () => ({ endpoint, keys: { p256dh: 'p', auth: 'a' } }),
+});
+
 function worker(options = {}) {
     const listeners = new Map();
     const shown = [];
@@ -16,11 +22,30 @@ function worker(options = {}) {
     const focused = [];
     const fetched = [];
     const order = [];
+    const subscribed = [];
     let closed = 0;
+    // Chromium gives a notification click one window interaction: focus() and openWindow() each
+    // use it up, and the second of them is refused.
+    let interaction = false;
+    const interact = (what) => {
+        if (!interaction) throw new DOMException(`Not allowed to ${what}.`, 'InvalidAccessError');
+        interaction = false;
+    };
+    // `uncontrolled`: true for every window, or the URLs of the windows this worker does not control.
+    const controlled = (url) => !(options.uncontrolled === true || options.uncontrolled?.includes(url));
     const windows = (options.windows || []).map((url) => ({
         url,
-        navigate: async (target) => navigated.push(target),
-        focus: async () => focused.push(url),
+        navigate: async (target) => {
+            order.push('navigate');
+            if (!controlled(url) || options.navigateFailure)
+                throw new TypeError("This service worker is not the client's active service worker.");
+            navigated.push({ window: url, target });
+        },
+        focus: async () => {
+            order.push('focus');
+            interact('focus a window');
+            focused.push(url);
+        },
         postMessage: (message) => messages.push(message),
     }));
     const navigator = options.noBadges
@@ -48,17 +73,30 @@ function worker(options = {}) {
                 order.push('notification');
                 shown.push({ title, ...notification });
             },
+            pushManager: {
+                subscribe: async (settings) => {
+                    subscribed.push(settings);
+                    if (options.subscribeFailure) throw Error('Permission was withdrawn');
+                    return subscriptionOf('https://web.push.apple.com/resubscribed');
+                },
+            },
         },
         clients: {
             claim: async () => undefined,
-            matchAll: async () => windows,
-            openWindow: async (target) => opened.push(target),
+            matchAll: async ({ includeUncontrolled = false } = {}) =>
+                windows.filter((client) => includeUncontrolled || controlled(client.url)),
+            openWindow: async (target) => {
+                order.push('open');
+                interact('open a window');
+                opened.push(target);
+            },
         },
     };
     vm.runInNewContext(source, {
         self,
         navigator,
         URL,
+        URLSearchParams,
         AbortController,
         setTimeout: (callback, duration) => setTimeout(callback, options.fastTimeout ? 0 : duration),
         clearTimeout,
@@ -87,14 +125,18 @@ function worker(options = {}) {
         focused,
         fetched,
         order,
+        subscribed,
+        change: (event) => dispatch('pushsubscriptionchange', event),
         get closed() {
             return closed;
         },
         push: (payload) => dispatch('push', { data: payload === undefined ? null : { json: () => payload } }),
-        click: (url) =>
-            dispatch('notificationclick', {
+        click: (url) => {
+            interaction = true;
+            return dispatch('notificationclick', {
                 notification: { data: { url }, close: () => closed++ },
-            }),
+            });
+        },
     };
 }
 
@@ -182,14 +224,117 @@ test('push URLs only set an app route, and cannot replace the origin or scope', 
     }
 });
 
-test('notification clicks navigate and focus an existing app window', async () => {
+test('a replaced push subscription is sent to the server under its old endpoint', async () => {
+    const key = new Uint8Array([4, 1, 2, 3]).buffer;
+    const old = subscriptionOf('https://web.push.apple.com/old', key);
+    const posted = (context) =>
+        context.fetched.map(({ url, settings }) => ({ url, method: settings.method, body: JSON.parse(settings.body) }));
+
+    // The browser already made the new subscription.
+    const given = worker({ windows: ['https://example.test/app/'] });
+    await given.change({ oldSubscription: old, newSubscription: subscriptionOf('https://web.push.apple.com/new', key) });
+    assert.deepEqual(given.subscribed, [], 'no second subscription is made');
+    assert.deepEqual(posted(given), [
+        {
+            url: 'https://example.test/app/api/notifications/subscriptions',
+            method: 'POST',
+            body: { subscription: { endpoint: 'https://web.push.apple.com/new', keys: { p256dh: 'p', auth: 'a' } }, replaces: 'https://web.push.apple.com/old' },
+        },
+    ]);
+    assert.deepEqual(given.messages.map((message) => message.type), ['notifications-changed'], 'an open page is told to refresh');
+
+    // The browser only reports the loss: subscribe again with the same server key.
+    const lost = worker();
+    await lost.change({ oldSubscription: old, newSubscription: null });
+    assert.equal(lost.subscribed.length, 1);
+    assert.equal(lost.subscribed[0].userVisibleOnly, true);
+    assert.equal(lost.subscribed[0].applicationServerKey, key);
+    assert.equal(posted(lost)[0].body.subscription.endpoint, 'https://web.push.apple.com/resubscribed');
+    assert.equal(posted(lost)[0].body.replaces, 'https://web.push.apple.com/old');
+
+    // Nothing identifies the server's record, or the browser refuses: left for the app to repair.
+    for (const [options, event] of [
+        [{}, { oldSubscription: null, newSubscription: null }],
+        [{}, {}],
+        [{ subscribeFailure: true }, { oldSubscription: old, newSubscription: null }],
+        [{ fetchFailure: true }, { oldSubscription: old, newSubscription: subscriptionOf('https://web.push.apple.com/new', key) }],
+    ]) {
+        const context = worker({ ...options, windows: ['https://example.test/app/'] });
+        await context.change(event);
+        assert.equal(context.fetched.filter(({ settings }) => !options.fetchFailure && settings.method === 'POST').length, 0);
+        assert.equal(context.messages.length, 1, 'the page is still told');
+    }
+});
+
+test('notification clicks focus, then navigate, an existing app window', async () => {
     const context = worker({ windows: ['https://example.test/app/#!action=devices'] });
     const target = 'https://example.test/app/#!action=notifications&notification=history-key';
     await context.click(target);
     assert.equal(context.closed, 1);
-    assert.deepEqual(context.navigated, [target]);
-    assert.equal(context.focused.length, 1);
+    assert.deepEqual(context.navigated, [{ window: 'https://example.test/app/#!action=devices', target }]);
+    assert.deepEqual(context.order, ['focus', 'navigate'], 'focus is requested while the tap still counts as a gesture');
     assert.deepEqual(context.opened, []);
+});
+
+test('notification clicks prefer the window already on Notifications and leave device sessions alone', async () => {
+    const target = 'https://example.test/app/#!action=notifications&source=phone&notification=history-key';
+    const stream = 'https://example.test/app/#!action=stream-coredevice&udid=phone';
+    const inbox = 'https://example.test/app/#!action=notifications&source=other';
+    const list = 'https://example.test/app/';
+    const preferred = worker({ windows: [stream, list, inbox] });
+    await preferred.click(target);
+    assert.deepEqual(preferred.navigated, [{ window: inbox, target }]);
+    assert.deepEqual(preferred.focused, [inbox]);
+    assert.deepEqual(preferred.opened, []);
+
+    const idle = worker({ windows: [stream, list] });
+    await idle.click(target);
+    assert.deepEqual(idle.navigated, [{ window: list, target }], 'the device list may be navigated');
+
+    for (const busy of [
+        stream,
+        'https://example.test/app/#!action=stream&udid=android&player=mse',
+        'https://example.test/app/#!action=shell&udid=android',
+        'https://example.test/app/#!action=list-files&udid=android&path=%2Fsdcard',
+    ]) {
+        const context = worker({ windows: [busy] });
+        await context.click(target);
+        assert.deepEqual(context.navigated, [], `${busy} keeps its session`);
+        assert.deepEqual(context.focused, []);
+        assert.deepEqual(context.opened, [target], 'the notification opens in a window of its own');
+    }
+});
+
+test('a window this worker does not control falls back to a new window', async () => {
+    const inbox = 'https://example.test/app/#!action=notifications';
+    const target = 'https://example.test/app/#!action=notifications&notification=history-key';
+    const context = worker({ windows: [inbox], uncontrolled: true });
+    await context.click(target);
+    assert.deepEqual(context.navigated, []);
+    // Focusing it first would use up the one window interaction the tap allows.
+    assert.deepEqual(context.order, ['open'], 'the window it cannot navigate is not focused first');
+    assert.deepEqual(context.opened, [target], 'the tap never does nothing');
+
+    // A controlled window is still preferred over one the worker cannot navigate.
+    const list = 'https://example.test/app/';
+    const mixed = worker({ windows: [inbox, list], uncontrolled: [inbox] });
+    await mixed.click(target);
+    assert.deepEqual(mixed.navigated, [{ window: list, target }]);
+    assert.deepEqual(mixed.opened, []);
+
+    // Navigation can still fail after focus. A new window is tried; a refusal is not an error.
+    const failing = worker({ windows: [list], navigateFailure: true });
+    await failing.click(target);
+    assert.deepEqual(failing.order, ['focus', 'navigate', 'open']);
+    assert.deepEqual(failing.focused, [list], 'the app window is at least brought forward');
+});
+
+test('windows of another app on the same origin are not reused', async () => {
+    const context = worker({ windows: ['https://example.test/other/#!action=notifications'] });
+    const target = 'https://example.test/app/#!action=notifications';
+    await context.click(target);
+    assert.deepEqual(context.navigated, []);
+    assert.deepEqual(context.opened, [target]);
 });
 
 test('notification clicks open a new app window if needed and reject unsafe destinations', async () => {

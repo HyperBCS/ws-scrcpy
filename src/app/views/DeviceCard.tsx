@@ -23,7 +23,7 @@ import { replyText, sendServiceCommand, TrackerCommandAborted } from '../client/
 import { isToolAction } from './ToolView';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { hasRunningStreamService } from '../state/streamService';
-import { notificationSummary } from '../state/notifications';
+import { notificationSummary, notificationsLinked } from '../state/notifications';
 import { UnreadBadge } from './NotificationHistory';
 import { DeviceIcon } from '../ui/DeviceIcon';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
@@ -435,10 +435,17 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                     Settings
                 </button>
                 <a
-                    class="ui-button device-notification-history"
+                    class={`ui-button device-notification-history ${notificationsLinked(descriptor.udid) === false ? 'setup' : ''}`}
                     href={`#!${new URLSearchParams({ action: 'notifications', source: descriptor.udid })}`}
                 >
-                    Notifications <UnreadBadge count={notificationSummary.value.unreadBySource[descriptor.udid] || 0} />
+                    {notificationsLinked(descriptor.udid) === false ? (
+                        'Set up notifications'
+                    ) : (
+                        <>
+                            Notifications{' '}
+                            <UnreadBadge count={notificationSummary.value.unreadBySource[descriptor.udid] || 0} />
+                        </>
+                    )}
                 </a>
             </div>
             <AnimatedDetails class="device-details">

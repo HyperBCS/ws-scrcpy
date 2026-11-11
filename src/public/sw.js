@@ -44,16 +44,57 @@ self.addEventListener('push', event => {
         clients.forEach(client => client.postMessage({ type: 'notifications-changed' }));
     })());
 });
+// The browser replaced or dropped this device's push subscription while the app was closed.
+// Subscribe again with the same server key and hand the server the new endpoint; it keeps the
+// choices stored for the old one. Whatever cannot be done here is repaired when the app next opens.
+self.addEventListener('pushsubscriptionchange', event => {
+    event.waitUntil((async () => {
+        try {
+            const old = event.oldSubscription;
+            const key = old?.options?.applicationServerKey;
+            const fresh = event.newSubscription
+                || (key ? await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }) : null);
+            if (fresh && old?.endpoint) {
+                await fetch(new URL('api/notifications/subscriptions', self.registration.scope), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ subscription: fresh.toJSON(), replaces: old.endpoint }),
+                });
+            }
+        } catch (_) { /* Left for the app to repair. */ }
+        const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        clients.forEach(client => client.postMessage({ type: 'notifications-changed' }));
+    })());
+});
+// What the app shows in a window, read from its `#!key=value` route.
+function windowRoute(client) {
+    try { return new URLSearchParams(new URL(client.url).hash.replace(/^#!/, '')); } catch (_) { return new URLSearchParams(); }
+}
 self.addEventListener('notificationclick', event => {
     event.notification.close();
     let target;
     try { target = new URL(event.notification.data?.url || self.registration.scope); } catch (_) { return; }
-    if (target.origin !== self.location.origin || !target.pathname.startsWith(new URL(self.registration.scope).pathname)) return;
+    const scope = new URL(self.registration.scope);
+    if (target.origin !== self.location.origin || !target.pathname.startsWith(scope.pathname)) return;
     event.waitUntil((async () => {
-        const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-        const existing = windows.find(client => new URL(client.url).origin === target.origin);
-        if (existing) { await existing.navigate(target.href); await existing.focus(); }
-        else await self.clients.openWindow(target.href);
-        // The opened history page marks only this alert read.
+        // Only a window this worker controls can be navigated. Another one (after a hard reload,
+        // for example) is passed over and the notification opens in a window of its own.
+        const windows = (await self.clients.matchAll({ type: 'window' })).filter(client => {
+            try { const url = new URL(client.url); return url.origin === target.origin && url.pathname.startsWith(scope.pathname); } catch (_) { return false; }
+        });
+        // A window showing a stream, a shell or a file list is left alone: navigating it ends that session.
+        const existing = windows.find(client => windowRoute(client).get('action') === 'notifications')
+            || windows.find(client => !windowRoute(client).get('udid'));
+        if (existing) {
+            // Chromium lets one tap either focus a window or open one, so the window is chosen
+            // first. Focus comes before navigate, while the tap still counts as a user gesture.
+            try { await existing.focus(); } catch (_) { /* Navigating still shows the notification. */ }
+            try {
+                await existing.navigate(target.href);
+                return;
+            } catch (_) { /* Try a new window. */ }
+        }
+        try { await self.clients.openWindow(target.href); } catch (_) { /* The browser refused a window. */ }
+        // The opened page marks only this notification read.
     })());
 });
