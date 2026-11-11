@@ -3,6 +3,7 @@ const { settleMotion } = require('./ui-motion');
 // API, device discovery, and push subscriptions are isolated fixtures. No real
 // phone settings, Bluetooth state, or push providers are changed by these tests.
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { chromium, webkit } = require('playwright');
@@ -176,6 +177,7 @@ async function fixture(browser, options = {}) {
         context, page, sources: options.sources ?? phones(), errors: [], saved: [], tests: [], removed: [],
         disabled: 0, statusPolls: 0, pairingOpen: false, pairingRejected: !!options.pairingRejected, subscriptionError: '',
         missingSubscription: !!options.missingSubscription, testError: '', operations: [],
+        historyFetches: [], statuses: options.statuses || {}, feedError: options.feedError || '', publicKey: options.publicKey || subscription.keys.p256dh,
         notifications: structuredClone(options.notifications || []), readRequests: [], dismissed: [], actions: [], iconRequests: [], actionError: '', dismissError: '', summaryPolls: 0, bulkDismissed: [], bulkActions: [], bulkActionResult: null, restored: [], holdNextMutation: false, releaseMutation: null,
     };
     page.on('pageerror', error => state.errors.push(error.message));
@@ -209,14 +211,22 @@ async function fixture(browser, options = {}) {
         const unreadBySource = Object.fromEntries(state.sources.map(source => [source.id, state.notifications.filter(n => n.source === source.id && !n.read && !n.dismissed).length]));
         const unread = Object.values(unreadBySource).reduce((a, b) => a + b, 0);
         let reply = { ok: true }, status = 200;
+        // As on the server: the revision is a hash of what /history would send.
+        const revision = crypto.createHash('sha1').update(JSON.stringify(state.notifications)).digest('hex').slice(0, 16);
         if (pathname.endsWith('/status')) {
             state.statusPolls++;
             reply = {
-                publicKey: subscription.keys.p256dh, sources: state.sources, bluetooth: [],
-                statuses: Object.fromEntries(state.sources.map(s => [s.id, 'Receiving notifications'])), pairing: null,
-                pairingOpen: state.pairingOpen, pairingRejected: state.pairingRejected, error: '', delivery: { sent: 0, failed: 0, lastError: '' },
-                notifications: state.notifications, unread, unreadBySource, retentionDays: 30, publicUrl: 'https://phone.example',
+                publicKey: state.publicKey, sources: state.sources, bluetooth: [],
+                statuses: Object.fromEntries(state.sources.map(s => [s.id, state.statuses[s.id] ?? 'Receiving notifications'])), pairing: null,
+                pairingOpen: state.pairingOpen, pairingRejected: state.pairingRejected, error: state.feedError, delivery: { sent: 0, failed: 0, lastError: '' },
+                historyRevision: revision, storedBySource: Object.fromEntries(state.sources.map(s => [s.id, state.notifications.filter(n => n.source === s.id).length])),
+                unread, unreadBySource, retentionDays: 30, publicUrl: 'https://phone.example',
             };
+        } else if (pathname.endsWith('/history') && request.method() === 'GET') {
+            const since = new URL(request.url()).searchParams.get('since');
+            state.historyFetches.push(since);
+            if (since === revision) return route.fulfill({ status: 304 });
+            reply = { revision, notifications: state.notifications };
         } else if (pathname.endsWith('/summary')) {
             state.summaryPolls++;
             reply = { sources: state.sources, unread, unreadBySource };
@@ -584,6 +594,33 @@ async function perDeviceHistory(browser) {
         assert.equal(await headerBadge(f.page).count(), 0, 'the unread badge clears when every alert is read');
         await assertClean(f);
         console.log('PASS per-device history shows original icons; read actions update filters, shared counts and Home Screen badge');
+    } finally { await f.context.close(); }
+}
+
+async function historyFetchedOnChange(browser) {
+    const f = await fixture(browser, { history: true, notifications: historyItems() });
+    try {
+        await article(f.page, 'Coffee at four?').waitFor();
+        assert.deepEqual(f.historyFetches, [''], 'the history is downloaded once when the page opens');
+        const poll = async () => {
+            const before = f.statusPolls;
+            await f.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+            await until(() => f.statusPolls > before, 'the page polled the status');
+        };
+        for (let index = 0; index < 4; index++) await poll();
+        await sleep(200);
+        assert.equal(f.historyFetches.length, 1, 'polls that find nothing new do not download the history again');
+        f.notifications.unshift({ key: 'a-new', source: 'phone-a', app: 'com.example.chat', appName: 'Messages', title: 'Running late', body: 'Ten minutes.', received: Date.now(), read: false, dismissed: false, active: true });
+        await poll();
+        await article(f.page, 'Running late').waitFor();
+        assert.equal(f.historyFetches.length, 2, 'a changed revision fetches the history once');
+        assert.match(f.historyFetches[1], /^[0-9a-f]{16}$/, 'the page names the revision it holds');
+        assert.equal(await headerBadge(f.page).textContent(), '3');
+        await poll();
+        await sleep(200);
+        assert.equal(f.historyFetches.length, 2);
+        await assertClean(f);
+        console.log('PASS the status poll carries no history; the history is fetched only when its revision changes');
     } finally { await f.context.close(); }
 }
 
@@ -1475,7 +1512,7 @@ async function main() {
     const browser = await ({ chromium, webkit }[browserName] || chromium).launch({ headless: true });
     try {
         const cases = [onboarding, missedPairingRequest, configuredReceiver, receiverChoicesAndUnlink, enablingReceiver, errorsSurvivePolling,
-            iosInstallGate, recoverMissingServerSubscription, perDeviceHistory, dismissKeepsHistory, labeledPhoneActions, confirmPromptLayouts,
+            iosInstallGate, recoverMissingServerSubscription, perDeviceHistory, historyFetchedOnChange, dismissKeepsHistory, labeledPhoneActions, confirmPromptLayouts,
             notificationDeepLink, bulkDismissHere, bulkDismissPhone, compactLongNotification, stickyBarsReachScrollTop, accessibleActionMenus, richNotificationMedia,
             searchAndFilters, bulkRespectsFilters, swipeAndUndo, swipeMotionAndFailure, delayedActionDoesNotCrossDevices, standaloneTouchNotifications,
             compatibilityPointerEventsDoNotDoubleAct, nativeTouchCancellationAndMultifinger, hangingRegistrationCleanup,

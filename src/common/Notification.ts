@@ -48,6 +48,15 @@ export interface NotificationStatus extends NotificationSummary {
     pairingRejected?: boolean;
     error: string;
     delivery: { sent: number; failed: number; lastError: string };
-    notifications: NotificationHistoryItem[];
+    // Changes whenever the stored notifications change; the page then fetches /history.
+    historyRevision: string;
+    // How many notifications the server holds for each iPhone.
+    storedBySource: Record<string, number>;
     retentionDays?: number;
+}
+
+/** Reply of GET /history. */
+export interface NotificationHistoryReply {
+    revision: string;
+    notifications: NotificationHistoryItem[];
 }

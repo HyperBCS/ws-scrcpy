@@ -19,6 +19,20 @@ function slowServer(delay, reply = { ok: true }) {
     return { fetch, calls };
 }
 
+test('a 304 reply resolves to null and other failures keep their message', async () => {
+    const originalFetch = global.fetch;
+    try {
+        global.fetch = async () => ({ ok: false, status: 304, json: async () => { throw Error('no body'); } });
+        assert.equal(await requestJson('http://server/api/notifications/history?since=abc'), null);
+        global.fetch = async () => ({ ok: false, status: 400, json: async () => ({ error: 'Unknown notification device' }) });
+        await assert.rejects(requestJson('http://server/x'), /Unknown notification device/);
+        global.fetch = async () => ({ ok: false, status: 502, json: async () => { throw Error('not JSON'); } });
+        await assert.rejects(requestJson('http://server/x'), /Request failed \(502\)/);
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
 test('a request waits as long as its caller allows, and 10 s by default', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const originalFetch = global.fetch;

@@ -11,10 +11,13 @@ import {
 } from '../state/notifications';
 import { NotificationHistory, UnreadBadge } from './NotificationHistory';
 import { route } from '../state/router';
-import type { NotificationSource } from '../../common/Notification';
+import type {
+    NotificationHistoryItem,
+    NotificationHistoryReply,
+    NotificationSource,
+    NotificationStatus as Status,
+} from '../../common/Notification';
 import '../../style/views/Notifications.css';
-
-import type { NotificationStatus as Status } from '../../common/Notification';
 
 function savedSources(): string[] | null {
     try {
@@ -148,6 +151,9 @@ function SourceSettings({
 
 export function NotificationsView() {
     const [status, setStatus] = useState<Status>();
+    // The stored notifications. Status is polled; these are fetched only when its revision changes.
+    const [history, setHistory] = useState<NotificationHistoryItem[]>([]);
+    const historyRevision = useRef('');
     const [connectionError, setConnectionError] = useState('');
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
@@ -205,8 +211,21 @@ export function NotificationsView() {
         const promise = (async () => {
             try {
                 const result = await api<Status>('status', 'GET', undefined, controller.signal);
+                const changed =
+                    result.historyRevision !== historyRevision.current
+                        ? await api<NotificationHistoryReply | null>(
+                              `history?since=${encodeURIComponent(historyRevision.current)}`,
+                              'GET',
+                              undefined,
+                              controller.signal,
+                          )
+                        : null;
                 // A slow poll must not overwrite a source added or removed by a newer refresh.
                 if (mounted.current && request === statusRequest.current) {
+                    if (changed && Array.isArray(changed.notifications)) {
+                        historyRevision.current = changed.revision;
+                        setHistory(changed.notifications);
+                    }
                     setStatus(result);
                     applyNotificationSummary(result);
                     setConnectionError('');
@@ -401,7 +420,7 @@ export function NotificationsView() {
                         <Presence show={activePanel === 'history'} class="notification-panel">
                             <NotificationHistory
                                 sources={status.sources}
-                                items={status.notifications}
+                                items={history}
                                 unreadBySource={status.unreadBySource || {}}
                                 busy={busy}
                                 run={run}
@@ -437,7 +456,7 @@ export function NotificationsView() {
                                             )}
                                             <SourceSettings
                                                 source={s}
-                                                stored={status.notifications.filter((n) => n.source === s.id).length}
+                                                stored={status.storedBySource?.[s.id] || 0}
                                                 busy={busy}
                                                 update={(source) =>
                                                     void run(async () => {

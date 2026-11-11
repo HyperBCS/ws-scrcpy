@@ -4,6 +4,7 @@ export const REQUEST_TIMEOUT_MS = 10000;
 /**
  * A request ends on navigation or timeout instead of leaving a control busy indefinitely.
  * `timeoutMs` must outlast the longest time the server may work on that route.
+ * A 304 has no body and resolves to `null`: the caller named the version it already holds.
  */
 export async function requestJson<T>(
     url: string,
@@ -22,6 +23,7 @@ export async function requestJson<T>(
     }, timeoutMs);
     try {
         const response = await fetch(url, { ...options, signal: controller.signal });
+        if (response.status === 304) return null as T;
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
             throw new Error(result.error || `Request failed (${response.status})`);
