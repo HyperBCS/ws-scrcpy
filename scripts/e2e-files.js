@@ -610,7 +610,8 @@ async function main() {
             await row(page, 'notes.txt').waitFor();
             await open(page, 'denied');
             await page.getByRole('alert').filter({ hasText: 'Permission denied by fixture' }).waitFor();
-            await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
+            // The failed folder offers its own Up button; this is the toolbar's.
+            await page.locator('.fx-history').getByRole('button', { name: 'Up one folder', exact: true }).click();
             await row(page, 'notes.txt').waitFor();
 
             // Home navigates to the root, and the folder switch keeps the old rows on screen until
@@ -982,7 +983,7 @@ async function main() {
             await row(page, 'late.txt').waitFor();
             await settled(page);
             assert.equal(
-                await page.locator('.fx-status[role="alert"]').innerText(),
+                await page.locator('.app-toast[role="alert"] .toast-message').innerText(),
                 'late.txt: An item with this name already exists.',
             );
             await pick(['late.txt', 'Browser copy']);
@@ -994,7 +995,7 @@ async function main() {
             await uploaded('on-time.txt');
             await settled(page);
             assert.equal(
-                await page.locator('.fx-status[role="alert"]').innerText(),
+                await page.locator('.app-toast[role="alert"] .toast-message').innerText(),
                 'later.txt: An item with this name already exists.',
                 'the failure is still shown after the folder is listed again',
             );

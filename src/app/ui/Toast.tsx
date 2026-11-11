@@ -10,6 +10,8 @@ interface ToastProps {
     action?: { label: string; run: () => void; disabled?: boolean };
     className?: string;
     dismissLabel?: string;
+    /** `error` is announced at once and shows a warning mark in place of the check. */
+    tone?: 'ok' | 'error';
 }
 
 export function Toast({
@@ -20,6 +22,7 @@ export function Toast({
     action,
     className = '',
     dismissLabel = 'Dismiss message',
+    tone = 'ok',
 }: ToastProps) {
     const dismiss = useRef(onDismiss);
     dismiss.current = onDismiss;
@@ -58,8 +61,8 @@ export function Toast({
         <Presence
             show={!!message}
             kind="toast"
-            class={`app-toast ${className}`}
-            role="status"
+            class={`app-toast ${tone === 'error' ? 'toast-error ' : ''}${className}`}
+            role={tone === 'error' ? 'alert' : 'status'}
             onPointerEnter={(event) => {
                 if (event.pointerType === 'mouse') {
                     held.current.hover = true;
@@ -89,7 +92,7 @@ export function Toast({
                 stroke-width="1.8"
                 aria-hidden="true"
             >
-                <path d="m5 12 4 4L19 6" />
+                {tone === 'error' ? <path d="M12 8v5m0 3.5v.01M12 3 2.5 19.5h19z" /> : <path d="m5 12 4 4L19 6" />}
             </svg>
             <span class="toast-message" key={String(identity)}>
                 {message}

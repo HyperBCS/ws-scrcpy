@@ -363,6 +363,88 @@ async function dialogs(browser) {
     await finish();
 }
 
+// A folder that cannot be opened says so in the list, and results arrive as toasts.
+async function errors(browser, layout, name) {
+    const { page, finish, traffic } = await start(browser, layout, ROOT, 'light');
+    const box = page.locator('.fx-failed-box');
+    const toast = page.locator('.app-toast:not([data-exiting])');
+    const statusLine = () => page.locator('.fx-status').innerText();
+
+    await open(page, 'denied');
+    await box.waitFor();
+    assert.equal(await page.locator('.file-explorer').getAttribute('data-listing'), 'error');
+    assert.equal(await box.locator('strong').innerText(), 'This folder could not be opened');
+    assert.equal(await box.locator('.fx-failed-reason').innerText(), 'Permission denied by fixture');
+    assert.equal(await box.locator('.fx-failed-path').innerText(), ROOT + '/denied');
+    assert.equal(await page.getByText('This folder is empty.').count(), 0, 'a failed folder is not called empty');
+    assert.equal(await page.locator('.fx-row').count(), 0, 'no rows from the folder before');
+    assert.equal(await statusLine(), '', 'the status line carries no error');
+    assert.equal(await page.locator('.fx-counts').innerText(), '', 'and no item count for a folder that was not read');
+    const frame = await page.locator('.tool-mount').boundingBox();
+    const boxArea = await box.boundingBox();
+    assert(boxArea.x >= frame.x && boxArea.x + boxArea.width <= frame.x + frame.width + 0.5, 'the message fits the list');
+    await page.screenshot({ path: path.join(OUT, `flows-folder-error-${name}.png`) });
+    // Retry asks the device again; Up leaves.
+    const lists = () => traffic.requests.filter((item) => item.cmd === 'LIST' && item.destination === ROOT + '/denied').length;
+    const before = lists();
+    await box.getByRole('button', { name: 'Retry', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.file-explorer').dataset.listing === 'error');
+    await box.waitFor();
+    assert.equal(lists(), before + 1, 'Retry lists the folder again');
+    await box.getByRole('button', { name: 'Up one folder', exact: true }).click();
+    await crumb(page, 'tmp');
+    await row(page, 'notes.txt').waitFor();
+
+    // A mistyped path: the address bar shows what was asked for, not the folder before it.
+    await page.getByRole('button', { name: 'Type a folder path', exact: true }).click();
+    await page.locator('.fx-address-input').fill('/data/local/nope');
+    await page.locator('.fx-address-input').press('Enter');
+    await box.waitFor();
+    assert.equal(await box.locator('.fx-failed-path').innerText(), '/data/local/nope');
+    assert.equal((await page.locator('.fx-crumb').allInnerTexts()).join(' '), '/ data local nope');
+    assert.equal(await page.locator('.fx-row').count(), 0);
+    // Back returns to the folder that worked.
+    await page.goBack();
+    await crumb(page, 'tmp');
+    await ready(page);
+
+    // A result is a toast that names the item and stays after the folder is listed again.
+    await row(page, 'photo.png').locator('.fx-row-menu').click();
+    await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
+    await page.locator('.fx-dialog[open] input[name="value"]').fill('picture.png');
+    await page.locator('.fx-dialog[open]').getByRole('button', { name: 'Rename', exact: true }).click();
+    await row(page, 'picture.png').waitFor();
+    await ready(page);
+    assert.equal(await toast.getAttribute('role'), 'status');
+    assert.equal(await toast.locator('.toast-message').innerText(), 'Renamed photo.png to picture.png.');
+    assert.equal(await statusLine(), '', 'the status line keeps to counts');
+
+    // A refusal names the item and gives the device's reason, in full.
+    await row(page, 'denied').locator('.fx-row-menu').click();
+    await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
+    await page.locator('.fx-dialog[open] input[name="value"]').fill('allowed');
+    await page.locator('.fx-dialog[open]').getByRole('button', { name: 'Rename', exact: true }).click();
+    const failure = page.locator('.app-toast[role="alert"]:not([data-exiting])');
+    await failure.waitFor();
+    await ready(page);
+    await settleMotion(page);
+    assert.equal(
+        await failure.locator('.toast-message').innerText(),
+        'Could not rename “denied”: Operation not permitted by fixture',
+    );
+    const message = await failure.locator('.toast-message').evaluate((el) => ({
+        cut: el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1,
+        left: el.getBoundingClientRect().left,
+        right: el.getBoundingClientRect().right,
+    }));
+    assert.equal(message.cut, false, 'the whole message is readable');
+    assert(message.left >= 0 && message.right <= layout.width, 'the toast fits the screen');
+    await page.screenshot({ path: path.join(OUT, `flows-operation-error-${name}.png`) });
+    await failure.getByRole('button', { name: 'Dismiss message', exact: true }).click();
+    await failure.waitFor({ state: 'detached' });
+    await finish();
+}
+
 async function goTo(page, target) {
     await page.getByRole('button', { name: 'Type a folder path', exact: true }).click();
     await page.locator('.fx-address-input').fill(target);
@@ -460,6 +542,8 @@ async function main() {
         ['columns', () => columns(browser)],
         ['dialogs', () => dialogs(browser)],
         ['names that differ by case', () => nameCase(browser)],
+        ['errors phone', () => errors(browser, PHONE, 'phone')],
+        ['errors desktop', () => errors(browser, DESKTOP, 'desktop')],
     ];
     try {
         for (const [name, run] of scenarios) {

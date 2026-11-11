@@ -575,6 +575,39 @@ body.file-listing-page {
     white-space: normal !important;
 }
 
+/* A folder that could not be listed says so where the list would be. */
+.fx-failed-box {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    max-width: 440px;
+    margin: 0 auto;
+    padding: 10px 0;
+    line-height: 1.45;
+}
+
+.fx-failed-box strong {
+    color: var(--text-color);
+    font-size: 1.1em;
+}
+
+.fx-failed-reason,
+.fx-failed-path {
+    overflow-wrap: anywhere;
+}
+
+.fx-failed-path {
+    font-family: var(--font-stack-mono);
+}
+
+.fx-failed-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 6px;
+}
+
 /* ------------------------------------------------------------------ list and tile views */
 
 .file-explorer[data-view='list'] .fx-table,
@@ -690,6 +723,12 @@ body.file-listing-page {
 .file-explorer[data-view='list'] .fx-empty-row,
 .file-explorer[data-view='tiles'] .fx-empty-row {
     grid-column: 1 / -1;
+}
+
+/* The message spans the list in every layout; as a lone cell it shrank to its text. */
+.file-explorer[data-view='list'] .fx-empty,
+.file-explorer[data-view='tiles'] .fx-empty {
+    flex: 1 1 auto;
 }
 
 .file-explorer[data-view='list'] .fx-row.selected,
@@ -1105,13 +1144,14 @@ body.file-listing-page {
         font-size: 0.86em;
         line-height: 1.2;
     }
-    .file-explorer[data-view='details'] .fx-empty-row {
+    .file-explorer[data-view='details'] .fx-empty-row,
+    .file-explorer[data-view='details'] .fx-empty-row > .fx-empty {
         display: block;
     }
 }
 
 @media (hover: hover) {
-    .fx-table tbody tr:hover {
+    .fx-table tbody tr:not(.fx-empty-row):hover {
         background: var(--device-list-hover-color);
     }
     .fx-row.selected:hover {
