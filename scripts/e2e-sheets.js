@@ -131,7 +131,7 @@ async function main() {
                     card.parentElement.insertBefore(filler, card);
                 }
             });
-            const trigger = page.locator('[data-sheet-target] button').filter({ hasText: 'Settings' });
+            const trigger = page.locator('[data-sheet-target] button.stream-settings-button');
             await trigger.scrollIntoViewIfNeeded();
             const list = page.locator('#devices');
             const savedTop = await list.evaluate((el) => el.scrollTop);

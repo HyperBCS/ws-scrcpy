@@ -20,17 +20,25 @@ import {
 import Util from '../Util';
 import { buildLinkHref, isLocalLink } from '../state/links';
 import { NavigateParams } from '../state/router';
-import { DeviceStatusInfo, getDeviceStatusInfo, isDeviceStarting, markStarting } from '../state/deviceStatus';
+import {
+    DeviceStatusInfo,
+    getDeviceProblems,
+    getDeviceStatusInfo,
+    isDeviceStarting,
+    markStarting,
+} from '../state/deviceStatus';
 import { sendWakeKey } from '../googDevice/client/wake';
 import { openApplSettingsSheet, openSettingsSheet } from '../state/settingsSheet';
 import { unlockCardLine } from '../state/unlockSchedule';
-import { isToolAction } from './ToolView';
+import { deviceTools, isToolAction } from './ToolView';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { hasRunningStreamService } from '../state/streamService';
 import { notificationSummary } from '../state/notifications';
 import { isNotificationSource } from '../state/notificationsTarget';
+import { rememberCardOpen, wasCardOpen } from '../state/deviceListView';
 import { UnreadBadge } from './NotificationHistory';
 import { DeviceIcon } from '../ui/DeviceIcon';
+import { BellIcon } from '../ui/NotificationsLink';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 
 function collectTools(tools: Set<Tool>, descriptor: GoogDeviceDescriptor | ApplDeviceDescriptor): ToolEntry[] {
@@ -81,7 +89,12 @@ function NavLink({ entry, params, className }: NavLinkProps) {
 
 function StatusBadge({ info }: { info: DeviceStatusInfo }) {
     return (
-        <span class="device-status" style={{ color: info.color }} title={`Status: ${info.label}`}>
+        <span
+            class="device-status"
+            data-status={info.status}
+            style={{ '--status-color': info.color }}
+            title={`Status: ${info.label}`}
+        >
             <span class="device-status-icon" aria-hidden="true">
                 {info.icon}
             </span>
@@ -124,6 +137,47 @@ function UnavailableHint({ info }: { info: DeviceStatusInfo }) {
     );
 }
 
+/** Settings is an icon on every card, so the action row is the same width on both platforms. */
+function SettingsButton({ title, name, onClick }: { title: string; name: string; onClick: () => void }) {
+    return (
+        <button
+            type="button"
+            class="action-button stream-settings-button"
+            title={title}
+            aria-label={`Settings for ${name}`}
+            onClick={onClick}
+        >
+            <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+            >
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+        </button>
+    );
+}
+
+/** The card's disclosure. It reopens on return to Devices if it was open when the page was left. */
+function CardDetails({ deviceKey, children }: { deviceKey: string; children: ComponentChildren }) {
+    const [initiallyOpen] = useState(() => wasCardOpen(deviceKey));
+    return (
+        <AnimatedDetails
+            class="device-details"
+            open={initiallyOpen}
+            onToggle={(event) => rememberCardOpen(deviceKey, (event.currentTarget as HTMLDetailsElement).open)}
+        >
+            <summary>Details</summary>
+            {children}
+        </AnimatedDetails>
+    );
+}
+
 /** A recovery action: what it costs is written beside the button, not in a tooltip. */
 function TroubleRow({
     title,
@@ -158,7 +212,9 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const selected = options.find((option) => option.name === selectedName) ?? options[options.length - 1];
     const players = StreamClientScrcpy.getPlayers();
     const primaryPlayer = players.find((player) => player.playerCodeName === 'webcodecs') ?? players[0];
-    const tools = collectTools(GoogDeviceTracker.tools, descriptor);
+    // Files, then Shell: the order of the tabs on the tool page.
+    const toolOrder = (tool: ToolEntry) => deviceTools.findIndex((item) => item.action === tool.action);
+    const tools = collectTools(GoogDeviceTracker.tools, descriptor).sort((a, b) => toolOrder(a) - toolOrder(b));
     const streamEntry = (player: typeof primaryPlayer, title: string): ToolEntry => ({
         title,
         action: ACTION.STREAM_SCRCPY,
@@ -216,19 +272,22 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                     </button>
                 )}
                 {isActive && (
-                    <button
-                        class="action-button stream-settings-button"
+                    <SettingsButton
                         title="Stream settings"
-                        aria-label={`Settings for ${deviceName(entry)}`}
+                        name={deviceName(entry)}
                         onClick={() => openSettingsSheet(descriptor.udid, entry.key)}
-                    >
-                        Settings
-                    </button>
+                    />
                 )}
             </div>
+            {isActive && tools.length > 0 && (
+                <div class="services device-tool-actions">
+                    {tools.map((tool, index) => (
+                        <NavLink key={`${tool.action}_${index}`} className="desc-block" params={params} entry={tool} />
+                    ))}
+                </div>
+            )}
             {isActive && (
-                <AnimatedDetails class="device-details">
-                    <summary>Connection &amp; tools</summary>
+                <CardDetails deviceKey={entry.key}>
                     <div class="device-details-content">
                         <p class="device-serial" title="Device serial">
                             {descriptor.udid}
@@ -273,14 +332,6 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                                             entry={streamEntry(player, `Open with ${player.playerFullName}`)}
                                         />
                                     ))}
-                            {tools.map((tool, index) => (
-                                <NavLink
-                                    key={`${tool.action}_${index}`}
-                                    className="desc-block"
-                                    params={params}
-                                    entry={tool}
-                                />
-                            ))}
                         </div>
                         <div class="device-trouble" role="group" aria-label="Troubleshooting">
                             <h4 class="device-trouble-heading">Troubleshooting</h4>
@@ -317,7 +368,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                             )}
                         </div>
                     </div>
-                </AnimatedDetails>
+                </CardDetails>
             )}
         </article>
     );
@@ -331,6 +382,9 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const [feedback, setFeedback] = useState('');
     const [busy, setBusy] = useState('');
     const confirm = useArmedAction<'developer-mode' | 'stop' | 'restart' | 'remount'>();
+    // Restart services can be pressed on the error line or under Troubleshooting. Its prompt
+    // shows beside the button that was pressed.
+    const [restartFromError, setRestartFromError] = useState(false);
     const name = deviceName(entry);
     const developerMode = descriptor.developerMode;
     const session = descriptor.session ?? 'stopped';
@@ -382,8 +436,32 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
         entry.tracker.sendCommand(ControlCenterCommand.ENABLE_DEVELOPER_MODE, { udid: descriptor.udid });
     };
 
-    const isAsleep = statusInfo.status === 'asleep';
+    const problems = getDeviceProblems(entry);
+    const sessionProblem = problems.find((problem) => problem.kind === 'session');
+    // A phone that needs attention can be asleep as well; the banner still says so.
+    const isAsleep =
+        statusInfo.status === 'asleep' ||
+        ((statusInfo.status === 'attention' || statusInfo.status === 'error') && descriptor['screen.power'] === 'off');
     const unlockLine = descriptor.unlockSchedule && unlockCardLine(descriptor.unlockSchedule);
+    const canOpenScreen = isActive && developerMode !== false;
+    const hasInbox = isNotificationSource(notificationSummary.value, descriptor.udid);
+    const unread = notificationSummary.value.unreadBySource[descriptor.udid] || 0;
+    const restartPrompt = (
+        <ConfirmPrompt
+            action={confirm}
+            question={`Restart services on ${name}?`}
+            consequence="The phone session ends for every viewer. The next viewer gets a new one."
+            confirmLabel="Restart services"
+            danger
+            onConfirm={() =>
+                runCommand(
+                    ControlCenterCommand.RESTART_SESSION,
+                    'Restarting services',
+                    'Services restarted. Open the screen again.',
+                )
+            }
+        />
+    );
 
     return (
         <article
@@ -391,11 +469,8 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             data-device-key={entry.key}
         >
             <DeviceHeader entry={entry} platform={`iOS ${descriptor.version}`}>
-                {unlockLine && (
-                    <span
-                        class={`device-unlock-schedule ${unlockLine.problem ? 'problem' : ''}`}
-                        title={unlockLine.title}
-                    >
+                {unlockLine && !unlockLine.problem && (
+                    <span class="device-unlock-schedule" title={unlockLine.title}>
                         {unlockLine.text}
                     </span>
                 )}
@@ -415,7 +490,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                 </div>
             )}
             {isActive && developerMode === false && (
-                <div class="device-asleep-banner" role="status">
+                <div class="device-asleep-banner attention" role="status">
                     <span aria-hidden="true">⚠</span>
                     <span>Enable Developer Mode to open the screen.</span>
                     <button
@@ -437,12 +512,41 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                     onConfirm={enableDeveloperMode}
                 />
             )}
-            {isActive && session === 'error' && descriptor.sessionMessage && (
-                <p class="device-unavailable-hint">{descriptor.sessionMessage}</p>
+            {sessionProblem && (
+                <div class="device-problem" role="status" data-problem="session">
+                    <span class="device-problem-text">{sessionProblem.message}</span>
+                    <button
+                        type="button"
+                        class="device-problem-action"
+                        disabled={!canRecover}
+                        onClick={(event) => {
+                            setRestartFromError(true);
+                            confirm.arm('restart', event.currentTarget);
+                        }}
+                    >
+                        Restart services
+                    </button>
+                </div>
+            )}
+            {confirm.armed === 'restart' && restartFromError && canRecover && restartPrompt}
+            {isActive && unlockLine?.problem && (
+                <div class="device-problem" role="status" data-problem="unlock">
+                    <span class="device-unlock-schedule problem" title={unlockLine.title}>
+                        {unlockLine.text}
+                    </span>
+                    <button
+                        type="button"
+                        class="device-problem-action"
+                        aria-label={`Open settings for ${name}`}
+                        onClick={() => openApplSettingsSheet(descriptor.udid, entry.key)}
+                    >
+                        Open settings
+                    </button>
+                </div>
             )}
             {feedback && <p class="device-unavailable-hint">{feedback}</p>}
             <div class="services device-primary-actions">
-                {isActive ? (
+                {canOpenScreen ? (
                     tools.map((tool, index) => (
                         <NavLink
                             key={`${tool.action}_${index}`}
@@ -453,33 +557,37 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                     ))
                 ) : (
                     <button class="desc-block stream unavailable" disabled>
-                        {descriptor.state === 'unauthorized' ? 'Waiting for trust' : 'Device unavailable'}
-                    </button>
-                )}
-                {isActive && (
-                    <button
-                        class="action-button stream-settings-button"
-                        title="iPhone settings"
-                        aria-label={`Settings for ${deviceName(entry)}`}
-                        onClick={() => openApplSettingsSheet(descriptor.udid, entry.key)}
-                    >
-                        Settings
+                        {isActive
+                            ? 'Open screen'
+                            : descriptor.state === 'unauthorized'
+                              ? 'Waiting for trust'
+                              : 'Device unavailable'}
                     </button>
                 )}
                 {/* Only for an iPhone that sends its notifications here. Any other iPhone has no
                     inbox to open; setup is reached from Notifications in the page header. */}
-                {isNotificationSource(notificationSummary.value, descriptor.udid) && (
+                {hasInbox && (
                     <a
-                        class="ui-button device-notification-history"
+                        class="action-button device-notification-history"
                         href={`#!${new URLSearchParams({ action: 'notifications', source: descriptor.udid })}`}
+                        title="Notifications"
+                        aria-label={
+                            unread ? `Notifications for ${name}, ${unread} unread` : `Notifications for ${name}`
+                        }
                     >
-                        Notifications{' '}
-                        <UnreadBadge count={notificationSummary.value.unreadBySource[descriptor.udid] || 0} />
+                        <BellIcon />
+                        <UnreadBadge count={unread} />
                     </a>
                 )}
+                {isActive && (
+                    <SettingsButton
+                        title="iPhone settings"
+                        name={name}
+                        onClick={() => openApplSettingsSheet(descriptor.udid, entry.key)}
+                    />
+                )}
             </div>
-            <AnimatedDetails class="device-details">
-                <summary>Connection &amp; tools</summary>
+            <CardDetails deviceKey={entry.key}>
                 <div class="device-details-content device-debug-body">
                     <div class="device-interface">
                         <span>Connection</span>
@@ -541,7 +649,10 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                                 class="action-button danger"
                                 aria-label="Restart services"
                                 disabled={!canRecover}
-                                onClick={(event) => confirm.arm('restart', event.currentTarget)}
+                                onClick={(event) => {
+                                    setRestartFromError(false);
+                                    confirm.arm('restart', event.currentTarget);
+                                }}
                             >
                                 Restart
                             </button>
@@ -575,22 +686,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                                 }
                             />
                         )}
-                        {confirm.armed === 'restart' && canRecover && (
-                            <ConfirmPrompt
-                                action={confirm}
-                                question={`Restart services on ${name}?`}
-                                consequence="The phone session ends for every viewer. The next viewer gets a new one."
-                                confirmLabel="Restart services"
-                                danger
-                                onConfirm={() =>
-                                    runCommand(
-                                        ControlCenterCommand.RESTART_SESSION,
-                                        'Restarting services',
-                                        'Services restarted. Open the screen again.',
-                                    )
-                                }
-                            />
-                        )}
+                        {confirm.armed === 'restart' && !restartFromError && canRecover && restartPrompt}
                         {confirm.armed === 'remount' && canRecover && (
                             <ConfirmPrompt
                                 action={confirm}
@@ -609,7 +705,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         )}
                     </div>
                 </div>
-            </AnimatedDetails>
+            </CardDetails>
         </article>
     );
 }

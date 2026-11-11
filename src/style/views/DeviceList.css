@@ -12,14 +12,45 @@
     margin: 0 auto;
 }
 .device-list-header {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    gap: 0.6rem;
+    gap: 0.5rem 0.7rem;
     margin-bottom: 20px;
 }
-.device-list-header .notifications-link {
-    margin-left: auto;
+.device-list-summary {
+    justify-self: start;
+}
+.device-list-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+/* On a phone the summary takes its own row; the actions stay beside the heading. */
+@media (max-width: 479px) {
+    .device-list-header {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .device-list-summary {
+        grid-row: 2;
+        grid-column: 1 / -1;
+    }
+}
+.device-list-reload {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid var(--device-border-color);
+    border-radius: var(--radius-control);
+    background: var(--device-list-default-color);
+    color: var(--text-color);
+    cursor: pointer;
+}
+.device-list-reload svg {
+    width: 20px;
+    height: 20px;
 }
 .device-list-header h1 {
     font-size: 22px;
@@ -36,7 +67,7 @@
     border-radius: 999px;
     padding: 0.25rem 0.6rem;
     color: var(--text-color-light);
-    font-size: 0.8rem;
+    font-size: 12px;
     background: var(--device-list-default-color);
 }
 .device-list-summary-dot,
@@ -51,6 +82,10 @@
     background: var(--status-ready-color);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-ready-color) 12%, transparent);
 }
+.device-list-summary-dot.attention {
+    background: var(--status-starting-color);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-starting-color) 12%, transparent);
+}
 .tracker-block {
     margin-bottom: 0.8rem;
 }
@@ -59,7 +94,7 @@
     justify-content: space-between;
     gap: 0.7rem;
     padding: 0.1rem 0.15rem 0.35rem;
-    font-size: 0.8rem;
+    font-size: 12px;
     color: var(--text-color-light);
 }
 #devices .tracker-name > span:first-child {
@@ -106,14 +141,18 @@
     align-items: baseline;
     gap: 0 0.5rem;
     color: var(--text-color-light);
-    font-size: 0.8rem;
+    font-size: 12px;
     line-height: 1.4;
 }
 #devices .device-battery {
     white-space: nowrap;
 }
+#devices .device {
+    --problem-text-color: color-mix(in srgb, var(--status-unauthorized-color) 65%, var(--text-color));
+    --attention-text-color: color-mix(in srgb, var(--status-starting-color) 55%, var(--text-color));
+}
 #devices .device-unlock-schedule.problem {
-    color: var(--status-unauthorized-color);
+    color: var(--problem-text-color);
     font-weight: 600;
 }
 #devices .device-unlock-schedule.problem::before {
@@ -131,7 +170,7 @@
 }
 #devices .device-serial {
     font-family: var(--font-stack-mono);
-    font-size: 0.68rem;
+    font-size: 12px;
     color: var(--text-color-light);
     overflow-wrap: anywhere;
 }
@@ -141,18 +180,24 @@
     align-items: center;
     gap: 0.25rem;
     border-radius: 999px;
-    padding: 0.2rem 0.4rem;
-    background: color-mix(in srgb, currentColor 9%, transparent);
-    font-size: 0.68rem;
+    padding: 0.2rem 0.5rem;
+    /* The status colour tints the badge. The text is that colour pulled towards the text colour,
+       which keeps every state at 4.5:1 or better on the tint in both themes. */
+    background: color-mix(in srgb, var(--status-color) 12%, transparent);
+    color: color-mix(in srgb, var(--status-color) 55%, var(--text-color));
+    font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
 }
 #devices .device-status-icon {
-    font-size: 0.6rem;
+    font-size: 10px;
+}
+#devices .stream-service-status {
+    font-size: 12px;
 }
 #devices .device-unavailable-hint {
     color: var(--text-color-light);
-    font-size: 0.8rem;
+    font-size: 12px;
     line-height: 1.4;
     margin: 0;
 }
@@ -164,13 +209,51 @@
     gap: 0.5rem;
     border-radius: var(--radius-control);
     background: color-mix(in srgb, var(--status-asleep-color) 10%, transparent);
-    color: var(--status-asleep-color);
-    font-size: 0.76rem;
+    color: color-mix(in srgb, var(--status-asleep-color) 65%, var(--text-color));
+    font-size: 12px;
     line-height: 1.35;
     padding: 0.25rem 0.5rem;
     margin: 0;
 }
+#devices .device-asleep-banner.attention {
+    background: color-mix(in srgb, var(--status-starting-color) 12%, transparent);
+    color: var(--attention-text-color);
+}
+/* A failed session or a scheduled unlock that cannot run: the message and the one action. */
+#devices .device-problem {
+    box-sizing: border-box;
+    min-height: 51px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--status-unauthorized-color) 10%, transparent);
+    color: var(--problem-text-color);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.35;
+    padding: 0.25rem 0.5rem;
+}
+#devices .device-problem > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+#devices .device-problem-action {
+    flex: 0 0 auto;
+    margin-left: auto;
+    min-height: 44px;
+    padding: 0 0.6rem;
+    background: transparent;
+    color: inherit;
+    border: 1px solid currentColor;
+    border-radius: var(--radius-control);
+    font: inherit;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+}
 #devices .wake-button {
+    flex: 0 0 auto;
     margin-left: auto;
     min-height: 44px;
     min-width: 56px;
@@ -181,6 +264,7 @@
     border-radius: var(--radius-control);
     font: inherit;
     font-weight: 600;
+    white-space: nowrap;
     cursor: pointer;
 }
 #devices .services {
@@ -201,15 +285,44 @@
     background: var(--main-bg-color);
     color: var(--text-color);
     font: inherit;
-    font-size: 0.82rem;
+    font-size: 12px;
     font-weight: 550;
     text-decoration: none;
     line-height: 1.25;
     text-align: center;
     cursor: pointer;
 }
+/* Open screen takes the row. Notifications and Settings are square icon buttons on one surface,
+   so the row is the same on Android and iPhone cards and never wraps. */
+#devices .device-primary-actions {
+    flex-wrap: nowrap;
+}
 #devices .device-primary-actions .stream {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
+}
+#devices .device-primary-actions .device-notification-history,
+#devices .device-primary-actions .stream-settings-button {
+    position: relative;
+    flex: 0 0 44px;
+    width: 44px;
+    padding: 0;
+}
+#devices .device-primary-actions svg {
+    width: 20px;
+    height: 20px;
+}
+#devices .device-notification-history .notification-unread-count {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+}
+#devices .device-tool-actions > * {
+    flex: 1 1 0;
+    min-width: 0;
 }
 #devices .device-primary-actions .stream.primary {
     background: var(--accent-solid, #2868e8);
@@ -218,20 +331,16 @@
     font-size: 0.87rem;
     font-weight: 650;
 }
-#devices .device-primary-actions .stream-settings-button {
-    background: transparent;
-    padding-inline: 0.7rem;
-}
 #devices .device-details {
     border-top: 1px solid var(--device-border-color);
 }
 #devices .device-details summary {
-    min-height: 34px;
+    min-height: 44px;
     display: flex;
     align-items: center;
     gap: 0.5rem;
     color: var(--text-color-light);
-    font-size: 0.76rem;
+    font-size: 12px;
     list-style: none;
     cursor: pointer;
 }
@@ -253,7 +362,7 @@
     display: grid;
     gap: 0.25rem;
     margin-bottom: 0.45rem;
-    font-size: 0.78rem;
+    font-size: 12px;
     color: var(--text-color-light);
 }
 #devices .device-interface select {
@@ -270,7 +379,6 @@
 }
 #devices .device-secondary-actions > * {
     flex: 1 1 130px;
-    font-size: 0.76rem;
 }
 #devices button:disabled {
     cursor: default;
@@ -306,7 +414,7 @@
 }
 .device-list-empty p {
     max-width: 420px;
-    font-size: 0.85rem;
+    font-size: 12px;
     line-height: 1.45;
     margin: 0 0 0.5rem;
     color: var(--text-color-light);
@@ -317,7 +425,7 @@
     margin: 0;
     padding-left: 1.2rem;
     color: var(--text-color-light);
-    font-size: 0.82rem;
+    font-size: 12px;
     line-height: 1.45;
 }
 .device-list-empty li {
@@ -354,7 +462,8 @@
 }
 @media (hover: hover) {
     #devices .desc-block:hover,
-    #devices .action-button:hover {
+    #devices .action-button:hover,
+    .device-list-reload:hover {
         border-color: var(--button-text-color);
     }
     #devices .stream.primary:hover {
@@ -398,16 +507,9 @@
     background: var(--main-bg-color);
     color: var(--text-color);
 }
-#devices .device-notification-history {
-    font-size: 0.82rem;
-}
 .device-debug-facts dd {
     min-width: 0;
     overflow-wrap: anywhere;
-}
-
-#devices .device-primary-actions > :last-child:not(.stream) {
-    flex: 0 0 116px;
 }
 
 /* Recovery actions: each row says what the action ends before it is pressed. */
@@ -421,7 +523,7 @@
 #devices .device-trouble-heading {
     margin: 0;
     color: var(--text-color-light);
-    font-size: 0.76rem;
+    font-size: 12px;
     font-weight: 600;
 }
 #devices .device-trouble-row {
@@ -437,18 +539,17 @@
     gap: 1px;
 }
 #devices .device-trouble-title {
-    font-size: 0.82rem;
+    font-size: 12px;
     font-weight: 600;
 }
 #devices .device-trouble-desc {
     color: var(--text-color-light);
-    font-size: 0.76rem;
+    font-size: 12px;
     line-height: 1.35;
 }
 #devices .device-trouble-row .action-button {
     flex: 0 0 auto;
     min-width: 84px;
-    font-size: 0.78rem;
 }
 #devices .action-button.danger {
     border-color: var(--status-unauthorized-color);

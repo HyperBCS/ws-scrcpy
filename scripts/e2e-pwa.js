@@ -144,7 +144,7 @@ async function main() {
         );
         assert.deepEqual(safariGestures, [true, true], 'Safari gesture handlers cancel browser zoom');
 
-        const settings = page.locator('[data-pwa-target] button').filter({ hasText: 'Settings' });
+        const settings = page.locator('[data-pwa-target] button.stream-settings-button');
         await settings.scrollIntoViewIfNeeded();
         const savedTop = await list.evaluate((el) => el.scrollTop);
         assert(savedTop > 500, 'settings opens from a genuinely scrolled actual device card');
