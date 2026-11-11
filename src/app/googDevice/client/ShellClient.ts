@@ -42,6 +42,8 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
     private sentSize = '';
     private controlActive = false;
     private controlListener?: (active: boolean) => void;
+    /** False while the phone's page shows another of its tabs and keeps the terminal hidden. */
+    private active = true;
 
     constructor(params: ParamsShell, mount: HTMLElement) {
         super(params);
@@ -62,10 +64,35 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         this.term.onData(this.onInput);
         this.term.onBinary((data) => this.send(data));
         this.term.onResize(this.scheduleResize);
-        // On phones, opening a tool should not immediately cover it with the keyboard.
+        this.focusOnOpen();
+    }
+
+    /** On phones, opening a tool should not immediately cover it with the keyboard. */
+    private focusOnOpen(): void {
         if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
             this.term.focus();
         }
+    }
+
+    /**
+     * The phone's page keeps the terminal mounted while it shows another tab of the same phone,
+     * and says so here. The session stays open and its output is still written. A hidden
+     * terminal takes no focus and no keys, and is not fitted to a size it does not have.
+     */
+    public setActive(active: boolean): void {
+        if (this.destroyed || active === this.active) {
+            return;
+        }
+        this.active = active;
+        if (!active) {
+            window.clearTimeout(this.resizeTimer);
+            this.resizeTimer = undefined;
+            this.term.blur();
+            return;
+        }
+        // The container may have another size than when the tab was left.
+        this.updateTerminalSize();
+        this.focusOnOpen();
     }
 
     protected supportMultiplexing(): boolean {
@@ -214,7 +241,7 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
     };
 
     public focus(): void {
-        if (!this.destroyed && !this.closed) {
+        if (!this.destroyed && !this.closed && this.active) {
             this.term.focus();
         }
     }
@@ -225,7 +252,7 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
     }
 
     private updateTerminalSize = (): void => {
-        if (this.destroyed || !this.container.clientWidth || !this.container.clientHeight) {
+        if (this.destroyed || !this.active || !this.container.clientWidth || !this.container.clientHeight) {
             return;
         }
         this.fitAddon.fit();
