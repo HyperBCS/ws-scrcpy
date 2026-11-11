@@ -68,8 +68,12 @@ test('a button carries its state: busy, disabled, pressed, and a link when it ha
     plain.props.onClick({});
     assert.equal(presses, 1);
 
-    const busy = elements(Button({ busy: true, icon: 'refresh', onClick: press, children: 'Saving' }));
-    assert.deepEqual([busy[0].props['aria-busy'], busy[0].props['aria-disabled'], busy[0].props.onClick], ['true', true, undefined]);
+    const busy = elements(Button({ busy: true, type: 'submit', icon: 'refresh', onClick: press, children: 'Saving' }));
+    assert.deepEqual([busy[0].props['aria-busy'], busy[0].props['aria-disabled'], busy[0].props.disabled], ['true', true, false], 'a busy button keeps the focus');
+    // Not disabled, so a press reaches it. The press is cancelled, or a submit button would send its form again.
+    let cancelled = 0;
+    busy[0].props.onClick({ preventDefault: () => cancelled++ });
+    assert.deepEqual([presses, cancelled], [1, 1], 'a press on a busy button does nothing');
     assert.equal(busy.length, 1, 'the ring takes the place of the icon while busy');
     assert.equal(elements(Button({ icon: 'refresh', children: 'Refresh' })).filter((element) => element.type === 'svg').length, 1);
 

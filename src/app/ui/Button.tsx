@@ -26,6 +26,10 @@ export function buttonClass({ variant = 'secondary', size = 'default', full = fa
         .join(' ');
 }
 
+function ignorePress(event: MouseEvent): void {
+    event.preventDefault();
+}
+
 interface ButtonProps extends ButtonLook {
     /** Work is under way: a ring shows in place of the icon and a press does nothing. */
     busy?: boolean;
@@ -68,7 +72,9 @@ export function Button({
         class: `${buttonClass({ variant, size, full })} ${className}`.trim(),
         'aria-busy': busy ? ('true' as const) : undefined,
         'aria-pressed': pressed === undefined ? undefined : pressed,
-        onClick: inert ? undefined : onClick,
+        // A busy button is not disabled, so it keeps the focus. Its press is cancelled, or a
+        // submit button would send its form a second time.
+        onClick: busy ? ignorePress : disabled ? undefined : onClick,
     };
     const content = (
         <>
