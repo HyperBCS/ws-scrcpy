@@ -492,6 +492,29 @@ test('an overlay that closes by itself steps back over its entry', () => {
     assert.equal(browser.index, 0);
 });
 
+test('an overlay that closes by itself takes the overlays opened from it along', () => {
+    // A sheet with a confirm on top: the sheet closes by its own button.
+    const { browser, router, shown } = open('#!');
+    router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
+    const closed = [];
+    const sheet = router.pushOverlay(() => closed.push('sheet'));
+    const confirm = router.pushOverlay(() => closed.push('confirm'));
+    assert.equal(browser.index, 3);
+    sheet.release();
+    assert.deepEqual(closed, ['confirm'], 'the confirm has lost its entry, so it is told to close');
+    confirm.release();
+    browser.settle();
+    assert.equal(browser.index, 1, 'both entries are stepped back over');
+    assert.deepEqual(closed, ['confirm']);
+
+    // Neither is still open when the page changes, and Back from the page is the list.
+    router.switchRoute({ action: 'device', udid: 'IPHONE', view: 'screen' });
+    browser.settle();
+    assert.deepEqual(closed, ['confirm']);
+    assert.deepEqual(browser.behind(), ['#!']);
+    assert.equal(shown.at(-1), 'action=device&udid=IPHONE&view=screen');
+});
+
 test('a route change closes every overlay, and the new address is written on the page entry', () => {
     // Switch phone is a sheet: choosing a phone replaces the page under the sheet, not the sheet's entry.
     const { browser, router, shown } = open('#!');

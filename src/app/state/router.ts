@@ -328,8 +328,14 @@ export function pushOverlay(onLeave: () => void): OverlayEntry {
             if (at < 0) {
                 return;
             }
-            // An overlay opened from this one sits on top of it and goes with it.
-            const first = overlays.splice(at).find((gone) => gone.index !== undefined)?.index;
+            // An overlay opened from this one sits on top of it and goes with it. Its entry is
+            // stepped back over too, so it is told to close, as Back would tell it; left open,
+            // it would have no entry and stay open over the next page.
+            const gone = overlays.splice(at);
+            gone.slice(1)
+                .reverse()
+                .forEach((above) => above.onLeave());
+            const first = gone.find((item) => item.index !== undefined)?.index;
             whenLanded(() => {
                 const here = position();
                 if (first !== undefined && here.overlay && here.index >= first) {
