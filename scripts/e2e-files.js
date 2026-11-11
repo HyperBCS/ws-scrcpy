@@ -246,10 +246,6 @@ async function fixture(page) {
                         }
                         send(Buffer.from('DONE'));
                         end();
-                    } else if (cmd === 'RECV') {
-                        send(Buffer.concat([Buffer.from('DATA'), files.get(destination) || Buffer.alloc(0)]));
-                        send(Buffer.from('DONE'));
-                        end();
                     }
                 } else if (innerType === 16 && uploads.has(channel)) {
                     const upload = uploads.get(channel);
@@ -657,6 +653,11 @@ async function main() {
             );
             await page.getByRole('button', { name: 'Close', exact: true }).click();
             await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+            // A large file downloads the same way as a small one, and says that it started.
+            const largeDownload = page.waitForEvent('download');
+            await open(page, 'film.mkv');
+            assert.equal((await largeDownload).suggestedFilename(), 'film.mkv');
+            await page.getByText('Download of film.mkv started in your browser.', { exact: true }).waitFor();
             await goTo(page, ROOT);
             await row(page, 'notes.txt').waitFor();
 
@@ -805,16 +806,26 @@ async function main() {
             await page.getByRole('button', { name: 'Close', exact: true }).click();
             await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
 
-            // Download and upload keep the original byte-level protocol.
+            // Every download goes through the browser, whatever its size, and says that it started.
+            const requestsBeforeDownload = traffic.requests.length;
             const downloadPromise = page.waitForEvent('download');
             await open(page, 'notes.txt');
             const download = await downloadPromise;
             assert.equal(download.suggestedFilename(), 'notes.txt');
+            // A download is a browser navigation, which page.route cannot answer. The fixture
+            // server in test-browser.js answers with the device and path it was asked for.
             assert.equal(
                 fs.readFileSync(await download.path(), 'utf8'),
-                'Mock download contents\n',
-                'download bytes preserved',
+                `fixture download ${UDID} ${ROOT}/notes.txt`,
+                'the browser asks the download endpoint for this device and path',
             );
+            await page.getByText('Download of notes.txt started in your browser.', { exact: true }).waitFor();
+            assert.equal(
+                traffic.requests.slice(requestsBeforeDownload).filter((request) => request.cmd === 'RECV').length,
+                0,
+                'no bytes travel over the Files channel',
+            );
+            assert.equal(await page.locator('.file-listing-progress').count(), 0, 'the browser shows the progress');
             const chooserPromise = page.waitForEvent('filechooser');
             await command(page, 'Upload files to this folder', 'Upload files');
             const chooser = await chooserPromise;

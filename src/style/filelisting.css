@@ -544,15 +544,6 @@ body.file-listing-page {
     white-space: normal !important;
 }
 
-.file-listing-progress {
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    height: 2px;
-    max-width: 100%;
-    background: var(--fx-accent);
-}
-
 /* ------------------------------------------------------------------ list and tile views */
 
 .file-explorer[data-view='list'] .fx-table,

@@ -10,6 +10,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const childProcess = require('node:child_process');
+const { once } = require('node:events');
+const { PassThrough } = require('node:stream');
+const express = require('express');
 const { AdbUtils } = require('../src/server/goog-device/AdbUtils');
 const { FileListing } = require('../src/server/goog-device/mw/FileListing');
 const { FilePushReader } = require('../src/server/goog-device/filePush/FilePushReader');
@@ -95,4 +98,61 @@ test('the Files channel reports the true size of files that LIST states in 32 bi
     assert.equal(record.readUInt32LE(4) + record.readUInt32LE(8) * 0x100000000, big);
     assert.equal(record.subarray(16, 16 + record.readUInt32LE(12)).toString(), "big it's.mp4");
     assert.equal(done.toString(), 'DONE');
+});
+
+test('HTTP downloads state the file size, and a transfer that ends early is not a complete file', async (t) => {
+    const { mountFileDownloads } = require('../src/server/goog-device/filePush/HttpDownload');
+    const app = express();
+    mountFileDownloads(app, '/');
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    t.after(() => {
+        server.closeAllConnections();
+        server.close();
+    });
+    const url = `http://127.0.0.1:${server.address().port}/api/files/download?udid=fake&path=/sdcard/clip.mp4`;
+    let size;
+    let chunks = [];
+    const asked = [];
+    t.mock.method(AdbUtils, 'fileSize', async (_serial, file) => {
+        asked.push(file);
+        return size;
+    });
+    t.mock.method(AdbUtils, 'pipePullFile', async () => {
+        const stream = new PassThrough();
+        stream.cancel = () => undefined;
+        process.nextTick(() => {
+            chunks.forEach((chunk) => stream.write(chunk));
+            stream.end();
+        });
+        return stream;
+    });
+
+    // The size comes from the device, so the browser can show progress for any file.
+    size = 11;
+    chunks = ['hello ', 'world'];
+    let response = await fetch(url);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-length'), '11');
+    assert.match(response.headers.get('content-disposition'), /attachment; filename="clip.mp4"/);
+    assert.equal(await response.text(), 'hello world');
+    assert.deepEqual(asked, ['/sdcard/clip.mp4']);
+
+    // A file that grew after its size was read is cut at the stated length.
+    chunks = ['hello ', 'world', ' and more'];
+    response = await fetch(url);
+    assert.equal(await response.text(), 'hello world');
+
+    // A pull that stops short must fail in the browser, not look like a finished download.
+    chunks = ['hello'];
+    response = await fetch(url);
+    assert.equal(response.headers.get('content-length'), '11');
+    await assert.rejects(response.text());
+
+    // Without a size the bytes are still streamed.
+    size = undefined;
+    chunks = ['abc'];
+    response = await fetch(url);
+    assert.equal(response.headers.get('content-length'), null);
+    assert.equal(await response.text(), 'abc');
 });

@@ -1,4 +1,3 @@
-import { FileDownloads } from './FileDownloads';
 import { trapDialogTab } from '../../ui/dialogFocus';
 import { CONFIRM_GUARD_MS } from '../../ui/ConfirmAction';
 import { transitionVisibility, cancelVisibility } from '../../ui/motion';
@@ -24,11 +23,9 @@ import { pushRoute } from '../../state/router';
 import { formatMode, formatModified, formatSize, iconMarkup, kindOf, typeLabel } from './fileTypes';
 
 type Request = {
-    kind: 'stat' | 'list' | 'download' | 'mutate' | 'sizes';
+    kind: 'stat' | 'list' | 'mutate' | 'sizes';
     path: string;
     generation: number;
-    entry?: Entry;
-    received: number;
     completed: boolean;
     failed: boolean;
     /** Mutating requests reload the folder and report this once the device answers DONE. */
@@ -162,17 +159,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private uploadErrors: string[] = [];
     /** True while the owner is answering name conflicts; nothing else may start meanwhile. */
     private resolving = false;
-    private readonly fileDownloads = new FileDownloads((destination) => {
-        const direct = this.buildDirectWebSocketUrl();
-        const endpoint = new URL('api/files/download', new URL('.', location.href));
-        endpoint.searchParams.set('udid', this.params.udid);
-        endpoint.searchParams.set('path', destination);
-        if (this.params.useProxy) endpoint.searchParams.set('remote', direct.toString());
-        return endpoint;
-    });
-    /** Live downloads by device path, so progress survives a re-render (sorting, filtering, polling). */
-    private readonly downloads = new Map<string, { received: number; size: number }>();
-
     private entries: Entry[] = [];
     private selection = new Set<string>();
     private anchorName?: string;
@@ -613,10 +599,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             const index = this.entries.indexOf(entry);
             const directory = entry.isDirectory();
             const selected = this.selection.has(entry.name);
-            const download = this.downloads.get(path.join(this.path, entry.name));
-            const percent = download
-                ? Math.min(100, download.size ? (download.received * 100) / download.size : 100)
-                : 0;
             const name = esc(entry.name);
             return `<tr class="fx-row${selected ? ' selected' : ''}${
                 cut.includes(entry.name) ? ' fx-cut' : ''
@@ -630,7 +612,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     )}" data-name="${name}" data-entry-id="${index}" aria-label="${
                         entry.isFile() ? 'Download' : 'Open'
                     } ${name}">${iconMarkup(kindOf(entry))}<span class="fx-name">${name}</span></a>
-                    ${download ? `<span class="file-listing-progress" style="width:${percent}%" aria-hidden="true"></span>` : ''}
                 </td>
                 <td class="entry-size" data-label="Size">${directory ? '—' : esc(formatSize(entry.size))}</td>
                 <td class="entry-type" data-label="Type">${esc(typeLabel(entry))}</td>
@@ -1871,15 +1852,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.operationError = undefined;
         this.operations++;
         this.updateControls();
-        this.send('mutate', payload, this.path, undefined, success);
+        this.send('mutate', payload, this.path, success);
     }
 
-    private request(kind: Request['kind'], destination: string, entry?: Entry): void {
-        const cmd = kind === 'stat' ? Protocol.STAT : kind === 'list' ? Protocol.LIST : Protocol.RECV;
-        this.send(kind, this.stringCommand(cmd, destination), destination, entry);
+    private request(kind: 'stat' | 'list', destination: string): void {
+        this.send(kind, this.stringCommand(kind === 'stat' ? Protocol.STAT : Protocol.LIST, destination), destination);
     }
 
-    private send(kind: Request['kind'], payload: Buffer, destination: string, entry?: Entry, success?: string): void {
+    private send(kind: Request['kind'], payload: Buffer, destination: string, success?: string): void {
         if (this.stopped || !(this.ws instanceof Multiplexer) || !this.hasConnection()) {
             return;
         }
@@ -1888,16 +1868,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             kind,
             path: destination,
             generation: this.generation,
-            entry,
-            received: 0,
             completed: false,
             failed: false,
             success,
         };
         this.requests.set(channel, request);
-        // Only listings belong to a generation: a download or a folder operation must survive the
-        // navigation that a completed operation itself triggers.
-        const stale = () => kind !== 'download' && kind !== 'mutate' && request.generation !== this.generation;
+        // Only listings belong to a generation: a folder operation must survive the navigation
+        // that a completed operation itself triggers.
+        const stale = () => kind !== 'mutate' && request.generation !== this.generation;
         const onMessage = (event: MessageEvent) => {
             if (this.stopped || stale()) {
                 return;
@@ -1916,11 +1894,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             channel.removeEventListener('message', onMessage);
             channel.removeEventListener('close', onClose);
             this.requests.delete(channel);
-            if (kind === 'download') {
-                this.fileDownloads.cancel(request.path);
-                this.downloads.delete(request.path);
-                this.scheduleRender();
-            }
             if (kind === 'mutate') {
                 this.operations = Math.max(0, this.operations - 1);
             }
@@ -1938,9 +1911,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             }
             if (kind === 'list' || (kind === 'stat' && !request.completed)) {
                 this.finishListing(request);
-            }
-            if (kind === 'download' && !request.completed && !request.failed) {
-                this.report('The download was interrupted. Select the file to try again.', true);
             }
             if (kind === 'mutate') {
                 if (request.completed && !request.failed) {
@@ -1982,7 +1952,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             this.report(message || 'The device could not open this folder or file.', true);
             if (request.kind === 'mutate') {
                 this.operationError = message || 'The device refused this operation.';
-            } else if (request.kind !== 'download') {
+            } else {
                 this.finishListing(request);
             }
             channel.close();
@@ -2019,40 +1989,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 this.entries.push(entry);
                 this.scheduleRender();
             }
-        } else if (code === Protocol.DATA && request.kind === 'download') {
-            const received = this.fileDownloads.append(request.path, data.subarray(4));
-            if (received === undefined) {
-                request.completed = true;
-                channel.close();
-                return;
-            }
-            request.received = received;
-            const progress = this.downloads.get(request.path);
-            if (progress) {
-                progress.received = request.received;
-                this.updateProgressBar(request);
-            }
         } else if (code === Protocol.DONE) {
             request.completed = true;
-            if (request.kind === 'download') {
-                this.finishDownload(request);
-            } else if (request.kind !== 'mutate') {
+            if (request.kind !== 'mutate') {
                 this.finishListing(request);
             }
-        }
-    }
-
-    /** Updates the existing bar in place: a re-render per data packet would fight scrolling. */
-    private updateProgressBar(request: Request): void {
-        const name = path.basename(request.path);
-        const bar = this.tableBody.querySelector<HTMLElement>(
-            `tr[data-name="${CSS.escape(name)}"] .file-listing-progress`,
-        );
-        if (bar) {
-            const size = request.entry?.size || 0;
-            bar.style.width = `${Math.min(100, size ? (request.received * 100) / size : 100)}%`;
-        } else {
-            this.scheduleRender();
         }
     }
 
@@ -2108,25 +2049,25 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         return url.toString();
     }
 
+    /**
+     * Every download is a plain HTTP request that the browser saves to disk itself: it shows the
+     * progress, and a file of any size never passes through this page's memory.
+     */
     private download(destination: string, entry: Entry): void {
-        if (
-            Array.from(this.requests.values()).some(
-                (request) => request.kind === 'download' && request.path === destination,
-            )
-        ) {
-            return;
+        const direct = this.buildDirectWebSocketUrl();
+        const endpoint = new URL('api/files/download', new URL('.', location.href));
+        endpoint.searchParams.set('udid', this.params.udid);
+        endpoint.searchParams.set('path', destination);
+        if (this.params.useProxy) {
+            endpoint.searchParams.set('remote', direct.toString());
         }
-        this.report(`Downloading ${entry.name}…`);
-        if (!this.fileDownloads.start(destination, entry.size)) return;
-        this.downloads.set(destination, { received: 0, size: entry.size });
-        this.scheduleRender();
-        this.request('download', destination, entry);
-    }
-
-    private finishDownload(request: Request): void {
-        const name = request.entry?.name || path.basename(request.path);
-        this.fileDownloads.finish(request.path, name);
-        this.report(`Downloaded ${name}.`);
+        const link = document.createElement('a');
+        link.href = endpoint.href;
+        link.download = entry.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        this.report(`Download of ${entry.name} started in your browser.`);
     }
 
     // ---------------------------------------------------------------- navigation
@@ -2312,8 +2253,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         this.requests.clear();
         this.uploads.clear();
-        this.downloads.clear();
-        this.fileDownloads.release();
         this.picker.value = '';
         this.wrapper.removeEventListener('click', this.onClick);
         this.wrapper.removeEventListener('dblclick', this.onDoubleClick);
