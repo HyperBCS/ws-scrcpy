@@ -19,6 +19,7 @@ import { goToDeviceList } from '../state/router';
 import { FloatingToolbar } from './FloatingToolbar';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { ApplActionsSheet } from './ApplActionsSheet';
+import { StreamNotificationsLink } from './StreamNotificationsLink';
 import { ApplUnlockSheet } from './ApplUnlockSheet';
 import { LiveTextOverlay } from './LiveTextOverlay';
 import { LockScreenNotice } from './LockScreenNotice';
@@ -132,6 +133,7 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                         {statusText}
                     </span>
                 </div>
+                <StreamNotificationsLink udid={params.udid} />
                 <button
                     type="button"
                     class="stream-header-switch"
