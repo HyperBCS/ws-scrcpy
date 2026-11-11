@@ -10,7 +10,7 @@ import Util from '../../Util';
 import { ChannelCode } from '../../../common/ChannelCode';
 import { ToolEntry } from '../../client/Tool';
 import { shellTool } from './deviceTools';
-import { applyControl } from './shellInput';
+import { applyControl, terminalSize } from './shellInput';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 
 const TAG = '[ShellClient]';
@@ -38,6 +38,8 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
     private sessions = 0;
     private started = false;
     private resizeTimer?: number;
+    /** The size the device was last told, as "colsxrows". */
+    private sentSize = '';
     private controlActive = false;
     private controlListener?: (active: boolean) => void;
 
@@ -170,11 +172,11 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         if (!udid || !this.ws || this.ws.readyState !== this.ws.OPEN) {
             return;
         }
-        const dimensions = this.fitAddon.proposeDimensions();
-        if (!dimensions) {
-            return;
-        }
-        const { rows, cols } = dimensions;
+        // The size the terminal shows, not a proposal: a proposal can be missing or NaN while the
+        // container has no size, and then the shell would not start.
+        this.updateTerminalSize();
+        const { cols, rows } = terminalSize(this.term.cols, this.term.rows);
+        this.sentSize = `${cols}x${rows}`;
         const message: MessageXtermClient = {
             id: 1,
             type: 'shell',
@@ -204,7 +206,12 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         if (this.destroyed || this.closed || !this.started || this.ws?.readyState !== this.ws?.OPEN) {
             return;
         }
-        const { cols, rows } = this.term;
+        const { cols, rows } = terminalSize(this.term.cols, this.term.rows);
+        // A refit past the size limit, or one that ends where it started, changes nothing remotely.
+        if (this.sentSize === `${cols}x${rows}`) {
+            return;
+        }
+        this.sentSize = `${cols}x${rows}`;
         const message: MessageXtermClient = { id: 1, type: 'shell', data: { type: 'resize', cols, rows } };
         // A binary frame: the server types every text frame into the shell.
         this.ws?.send(new TextEncoder().encode(JSON.stringify(message)));

@@ -658,7 +658,10 @@ sites too. When you discover something the hard way, leave it in the code.
   No session ever replays earlier commands. Neither tool prints its own lost-connection text.
 - Shell resizes its visible terminal with its container and the phone keyboard and tells the
   device (a `resize` message, debounced; after `start`, text frames are typed input and
-  messages are JSON in binary frames, so input can never be parsed as a message). It provides
+  messages are JSON in binary frames, so input can never be parsed as a message). The server
+  refuses a start or resize outside 1 to 500 columns or rows, so `terminalSize()` in
+  `shellInput.ts` caps what the browser reports; a very tall window would otherwise get no
+  shell at all. It provides
   native keyboard focus plus Esc/Tab/Ctrl/history buttons, and avoids opening the phone keyboard on
   entry. Files has a native multiple-file upload picker, compact folder shortcuts, responsive
   rows, empty/error states, downloads, and scoped upload cleanup. The Files section below

@@ -192,9 +192,21 @@ test('a stop message in a binary frame ends the session', () => {
     assert.equal(socket.readyState, socket.CLOSED);
 });
 
-// ------------------------------------------------------------------ toolbar Ctrl key
+// ------------------------------------------------------------------ client side
 
-const { applyControl, withControl } = require('../src/app/googDevice/client/shellInput');
+const { applyControl, withControl, terminalSize, MAX_TERMINAL_SIZE } = require('../src/app/googDevice/client/shellInput');
+
+test('the browser never reports a size the server refuses', () => {
+    assert.deepEqual(terminalSize(80, 24), { cols: 80, rows: 24 });
+    // A tall or zoomed-out window can fit more rows than the server accepts. A refused start
+    // message would leave the owner with a shell that never opens.
+    assert.deepEqual(terminalSize(714, 650), { cols: MAX_TERMINAL_SIZE, rows: MAX_TERMINAL_SIZE });
+    assert.deepEqual(terminalSize(0, NaN), { cols: 1, rows: 1 });
+    for (const size of [terminalSize(9999, 9999), terminalSize(0, 0)]) {
+        assert.ok(parseShellMessage(JSON.parse(start(size))), `${size.cols}x${size.rows} starts a shell`);
+        assert.ok(parseShellMessage(JSON.parse(resize(size.cols, size.rows))), `${size.cols}x${size.rows} resizes it`);
+    }
+});
 
 test('Ctrl changes the next single character and is then released', () => {
     assert.deepEqual(applyControl('c', true), { data: '\x03', armed: false });

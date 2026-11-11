@@ -1,3 +1,16 @@
+/** The largest column or row count the server accepts (RemoteShell refuses anything outside 1 to 500). */
+export const MAX_TERMINAL_SIZE = 500;
+
+/**
+ * The size to report to the device for a terminal of `cols` by `rows`. A very tall or zoomed-out
+ * window can fit more than the server accepts, and an out-of-range start message would be
+ * refused, so each value is kept within 1 to MAX_TERMINAL_SIZE.
+ */
+export function terminalSize(cols: number, rows: number): { cols: number; rows: number } {
+    const limit = (value: number) => Math.min(MAX_TERMINAL_SIZE, Math.max(1, Math.floor(value) || 1));
+    return { cols: limit(cols), rows: limit(rows) };
+}
+
 const CONTROL_PUNCTUATION: Record<string, string> = {
     '@': '\x00',
     ' ': '\x00',

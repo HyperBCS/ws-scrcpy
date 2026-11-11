@@ -214,6 +214,20 @@ async function main() {
             await until(()=>{ const last=state.resizes.at(-1); return last.cols===started.cols && last.rows===started.rows; },'the restored size reaches the device');
             assert.deepEqual(state.input,typed,'a resize is never typed into the shell');
             await lostConnection(page,state,name);
+            if(!mobile) {
+                // A very tall window fits more rows than the server accepts, and an out-of-range
+                // start message is refused. The device is told the largest size it takes.
+                await page.setViewportSize({width,height:10000});
+                await until(()=>state.resizes.at(-1).rows===500,'a tall terminal reports 500 rows');
+                assert(await shownRows()>500,'the terminal itself shows more rows');
+                const before = state.starts.length;
+                state.close();
+                await until(()=>state.starts.length===before+1,'the automatic attempt starts a session');
+                assert.equal(state.starts.at(-1).rows,500,'a new session starts at 500 rows');
+                await page.setViewportSize({width,height});
+                await page.locator('.tool-connection.connected').waitFor({state:'attached'});
+                await until(()=>state.resizes.at(-1).rows===started.rows,'the restored size reaches the device');
+            }
             const sessions = state.starts.length;
             await page.getByRole('button',{name:'Switch',exact:true}).click();
             const sheet=page.locator('.bottom-sheet-root.open');
