@@ -492,10 +492,15 @@ this contact address preserves the existing keys and receiver subscriptions.
    loops. Later changes use **Save changes** without another permission prompt.
 
 Keys, source mappings, subscriptions, and notification history persist across
-restarts; keep the data volume when updating. **History** shows the selected
-phone’s alerts, with **Inbox**, **Unread**, and **All history** filters. Device
-cards link directly to that phone’s history; there is no global history link on
-the Devices page. The NUC keeps up to 500 alerts per phone for 30 days in its private data directory. History starts with alerts collected by this
+restarts; keep the data volume when updating. **Inbox** shows the selected
+iPhone’s notifications, with **All**, **Unread**, and **Archive** views. Beside the
+iPhone’s name it shows whether its Bluetooth link is **Connected**,
+**Reconnecting** or needs action, and when the last notification arrived, with a
+notice when nothing new can arrive. **Open screen** there opens that iPhone’s screen,
+and is off while the iPhone is not connected by USB. Device cards link directly to
+that iPhone’s inbox, or to **Set up notifications** for an iPhone that is not
+linked yet; there is no global link on the Devices page. The iPhone screen’s header
+links back to its notifications with the unread count. The NUC keeps up to 500 alerts per phone for 30 days in its private data directory. History starts with alerts collected by this
 relay, including those iOS shares when connecting; it cannot recover alerts the
 phone no longer exposes. Turning message previews off also removes saved message
 text for that phone. Removing a source deletes its history and cached icons.
@@ -505,21 +510,25 @@ NUC. If an app icon is unavailable, the history shows a letter placeholder. This
 does not change iOS's system-managed PWA notification icon or attribution.
 
 **Mark read** and **Mark all read** update shared app unread counts; they do not
-mark messages read inside the original iPhone app. **Dismiss here** moves an alert
-out of the inbox while retaining it in **All history**. Where iOS offers a phone
-action, the card’s **⋯** menu shows its actual label, such as **Clear on
+mark messages read inside the original iPhone app. **Archive** moves a notification
+out of the inbox into **Archive**; it changes nothing on the iPhone. Where iOS offers
+a phone action, the card’s **⋯** menu shows its actual label, such as **Clear on
 iPhone**. A negative ANCS action is not always dismissal (it can decline a call),
 so its label is checked again before sending. Actions require a current Bluetooth
-session. Acceptance of an action does not claim the iPhone has removed the alert.
+session. Acceptance of an action does not claim the iPhone has removed the
+notification. The card menu also starts with **Open iPhone screen**; Enter on a
+focused card, or a double-click with a mouse, does the same.
 
-**Dismiss all here** and **Dismiss all on phone** live in the history toolbar’s
-**⋯** menu. They each confirm the selected phone and alert count, then act on
-that exact list of search/filter matches, including older results beyond the
-current page. Alerts arriving afterward are left alone. Phone bulk dismissal includes
-only explicit Clear/Dismiss actions, excludes actions such as Decline or Delete,
-and stops if the phone disconnects or cannot confirm an action. Partial results
-show how many requests were accepted and how many remain. Cards show a compact
-preview with **Show more** for longer messages.
+**Mark all read**, **Archive all** and **Clear all on iPhone** live in the inbox
+toolbar’s **⋯** menu. They act on that exact list of search/filter matches,
+including older results beyond the current page; notifications arriving afterward
+are left alone. **Mark all read** and **Archive all** act at once and offer
+**Undo**. **Clear all on iPhone** asks for confirmation first, includes only
+explicit Clear/Dismiss actions, excludes actions such as Decline or Delete, and
+stops if the iPhone disconnects or cannot confirm an action. Partial results show
+how many requests were accepted and how many remain. A failed action is reported at
+the bottom of the screen, with **Retry** where no confirmation is needed. Cards show
+a compact preview with **Show more** for longer messages.
 
 Web previews make HTTP/HTTPS links in the shared title and message clickable.
 Direct HTTPS image links (including GIFs), video links, and audio links offer
@@ -539,15 +548,16 @@ must end in a supported file extension before any query string; the browser must
 support the file's codec and the host must permit embedding.
 
 Search matches app names, titles, and full message text, ignoring case and accents.
-**Filters** limits results to one app; **Inbox**, **Unread**, and **All history**
+**Filters** limits results to one app; **All**, **Unread**, and **Archive**
 remain directly accessible. Opening a notification from a push clears any filters
-that would hide it. Search and filters are scoped to the selected phone.
+that would hide it, scrolls it into view and outlines it for a few seconds. Search
+and filters are scoped to the selected iPhone.
 
-On a touch screen, swipe right to toggle read/unread or left to dismiss here.
+On a touch screen, swipe right to toggle read/unread or left to archive.
 Vertical scrolling, short drags, cancelled touches, and multitouch do not trigger
 actions. Both gestures have a short-lived **Undo** control that restores the app
 state; they never perform an action on the iPhone. Card menus offer the same
-controls for keyboard/mouse use, plus **Move to inbox** for dismissed alerts.
+controls for keyboard/mouse use, plus **Move to inbox** for archived notifications.
 
 Unread badges show each phone’s count on its device card and notification page.
 The installed PWA icon shows the combined count where supported and permitted
@@ -558,7 +568,9 @@ silent pushes just to synchronise state.
 
 Existing alerts on reconnect are shown in history but not pushed again.
 Modifications/removals update history without silent pushes. Expired subscriptions
-are removed automatically. Focus, app notification settings, preview permissions,
+are removed automatically, as is one the push service refuses (400 or 403) three
+times in a row. The app sends this device's subscription to the server again each
+time it opens, and **Delivery details** list each receiving device. Focus, app notification settings, preview permissions,
 connectivity, and the push provider can affect which alerts appear and when.
 Notifications cannot bypass those iOS settings. No private content is cached by
 the service worker.
