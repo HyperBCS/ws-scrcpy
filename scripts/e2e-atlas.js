@@ -1,14 +1,17 @@
 // ATLAS_OUT=/tmp/atlas-after ATLAS_COMPARE=/tmp/atlas-before node scripts/test-browser.js atlas
 // A picture of every page and sheet, for changes that must not be visible. Each state is taken
 // in both themes at 390x844 (touch) and 1440x900 (mouse), with motion reduced and the clock,
-// zone and locale fixed. A state writes two files to ATLAS_OUT (a temporary directory when it is
-// not set): the screenshot, and one hash per element of everything the browser computed for its
-// style, which also covers what is scrolled out of view.
+// zone and locale fixed. A state writes two files to ATLAS_OUT (a temporary directory, removed
+// at the end, when it is not set): the screenshot, and one hash per element of what the browser
+// computed for its style, custom properties aside. The hashes also cover what is hidden or
+// scrolled out of view.
 //   ATLAS_COMPARE=<dir>  fail on any pixel or computed style that differs from the atlas in <dir>.
 //   ATLAS_ONLY=<regexp>  take only the states whose file name matches.
 //   ATLAS_STYLES=full    write every computed property instead of a hash, to read a difference.
-// Without ATLAS_COMPARE the suite fails when a state cannot be reached, a page throws, or two
-// screenshots of one state differ.
+// Without ATLAS_COMPARE the suite fails when a state cannot be reached, a page throws, or a
+// state does not come to rest.
+// To compare two builds: take the atlas of the first into a directory, build the second, and
+// run again with ATLAS_COMPARE set to that directory. Two runs of one build match exactly.
 // Every socket is a fixture. No device, adb or pymobiledevice3 is involved.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -565,7 +568,12 @@ async function main() {
     } finally {
         await browser.close();
     }
-    if (COMPARE) compare();
+    try {
+        if (COMPARE) compare();
+    } finally {
+        // An atlas nobody asked to keep is not left behind. Set ATLAS_OUT to look at the files.
+        if (!process.env.ATLAS_OUT) fs.rmSync(OUT, { recursive: true, force: true });
+    }
 }
 
 main().catch((error) => {
