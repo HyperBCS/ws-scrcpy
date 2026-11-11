@@ -58,6 +58,7 @@ class CollectorTests(unittest.TestCase):
             'objects': {}, 'owned_notifications': set(),
             'advert_ready': False, 'advert_since': 0, 'ADVERT_REFRESH': 120, 'ADAPTER': '/hci0', 'ADVERT': '/advert',
             'pair_until': 0, 'confirmation': None, 'holdoff': {}, 'RESET_HOLDOFF': 35,
+            'MAX_UIDS': 512, 'MAX_QUEUED_ACTIONS': 32,
             'emit': lambda kind, **fields: self.events.append(dict(kind=kind, **fields)),
             'iface': lambda *args: Interface(),
         }
@@ -196,6 +197,50 @@ class CollectorTests(unittest.TestCase):
         self.assertNotIn(1, self.client.pending_added)
         self.reply(uid=1, title='Evicted')
         self.assertFalse(any(n['event'] == 'added' for n in self.notifications()))
+
+    def test_reconnect_burst_larger_than_the_uid_limit_keeps_the_session(self):
+        for uid in range(1, 601):
+            self.source(0, uid=uid, flags=4)
+        self.assertIs(self.scope['clients'].get('phone'), self.client, 'the burst must not reset the session')
+        self.assertEqual(self.scope['holdoff'], {})
+        self.assertFalse(any(event['kind'] == 'status' for event in self.events))
+        self.assertEqual(len(self.client.queue), 512, 'one fetch per tracked UID')
+        self.assertEqual(len(self.writes), 1, 'only one control-point request is in flight')
+        self.reply(uid=1, title='Gave up')
+        for uid in range(89, 601):
+            self.reply(uid=uid, title=f'Alert {uid}')
+        self.assertEqual([(n['uid'], n['event'], n['preExisting']) for n in self.notifications()],
+                         [(uid, 'added', True) for uid in range(89, 601)], 'only the oldest announcements are dropped')
+        self.assertEqual(self.client.queue, {})
+        self.source(0, uid=601)
+        self.reply(uid=601, title='New')
+        self.assertEqual((self.notifications()[-1]['uid'], self.notifications()[-1]['preExisting']), (601, False))
+
+    def test_repeated_changes_to_one_alert_queue_a_single_fetch_in_its_place(self):
+        self.source(0, uid=1)
+        self.source(0, uid=2)
+        self.source(0, uid=3)
+        for _ in range(300):
+            self.source(1, uid=2)
+        self.assertEqual(list(self.client.queue), [2, 3])
+        self.source(2, uid=3)
+        self.assertEqual(list(self.client.queue), [2], 'a removed alert needs no fetch')
+        self.reply(uid=1)
+        self.reply(uid=2, title='Latest')
+        self.assertEqual([(n['uid'], n['event']) for n in self.notifications()],
+                         [(3, 'removed'), (1, 'added'), (2, 'added')])
+        self.assertEqual(len(self.writes), 2)
+
+    def test_action_queue_is_bounded_without_resetting_the_session(self):
+        self.source(0, uid=1)  # Keeps the control point busy so the actions stay queued.
+        for uid in range(100, 133):
+            self.client.active_notifications[uid] = dict(canDismiss=True, negativeActionLabel='Clear')
+            self.dismiss(requestId=f'request-{uid}', uid=uid)
+        results = self.action_results()
+        self.assertEqual([(result['uid'], result['ok']) for result in results], [(132, False)])
+        self.assertIn('busy', results[0]['error'])
+        self.assertIs(self.scope['clients'].get('phone'), self.client)
+        self.assertEqual(len(self.client.queue), 32)
 
     def test_evicted_uid_reuse_cannot_publish_an_old_inflight_response(self):
         self.source(0, uid=1, flags=4)
@@ -391,7 +436,7 @@ class CollectorTests(unittest.TestCase):
         self.reply(action='Clear')
         self.source(0, uid=43)
         self.dismiss()
-        self.client.queue[0]['expires'] = 0
+        next(iter(self.client.queue.values()))['expires'] = 0
         self.client.ready = {SOURCE, DATA}
         self.client.last_probe = time.monotonic()
         self.client.tick()
