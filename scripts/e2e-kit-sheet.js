@@ -15,8 +15,8 @@
 //   a toast raised while a sheet is open shows above it and can be pressed;
 //   touch, mouse and wheel events in a sheet or a menu do not reach document.body;
 //   the sheet follows the visual viewport when an on-screen keyboard resizes it;
-//   the menu opens at its button, moves with the arrow keys, closes on Escape, a press outside
-//   and Back, and returns focus.
+//   the menu opens at its button, moves with the arrow keys, closes on Escape, a press outside,
+//   Back and a scroll that moves its button (not on another scroll), and returns focus.
 // The page talks to no phone: every socket is refused here.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -690,6 +690,36 @@ async function menu(test) {
     await openMenu();
     await press(test, button);
     await gone('the button');
+
+    // A scroll elsewhere leaves the menu open; a scroll that moves the button closes it.
+    await openMenu();
+    const scroll = (selector, top) => page.evaluate(([sel, to]) => new Promise((resolve) => {
+        const node = document.querySelector(sel);
+        node.addEventListener('scroll', () => resolve(), { once: true });
+        node.scrollTop = to;
+    }), [selector, top]);
+    await page.evaluate(() => {
+        const other = document.createElement('div');
+        other.id = 'kit-sheets-other-scroller';
+        other.style.cssText = 'position: fixed; left: 0; bottom: 0; width: 40px; height: 40px; overflow: auto';
+        other.innerHTML = '<div style="height: 400px"></div>';
+        document.body.append(other);
+        const spacer = document.createElement('div');
+        spacer.id = 'kit-sheets-spacer';
+        spacer.style.height = '2000px';
+        document.querySelector('.kit-sheets-page').append(spacer);
+    });
+    await scroll('#kit-sheets-other-scroller', 100);
+    await page.waitForTimeout(100);
+    assert.equal(await button.getAttribute('aria-expanded'), 'true', 'a scroll that does not move the button leaves the menu open');
+    assert.ok(await list.evaluate((node) => !node.hasAttribute('data-exiting')));
+    await scroll('.kit-sheets-page', 40);
+    await gone('a scroll that moves the button');
+    await page.evaluate(() => {
+        document.getElementById('kit-sheets-other-scroller').remove();
+        document.getElementById('kit-sheets-spacer').remove();
+        document.querySelector('.kit-sheets-page').scrollTop = 0;
+    });
 
     // An item that is on or off leaves the menu open; an action closes it.
     await openMenu();

@@ -54,8 +54,8 @@ function placeMenu(menu: HTMLElement, anchor: MenuAnchor): void {
  *
  * The menu is placed at `anchor` in the top layer, so no sheet or scrolling parent covers or
  * cuts it. The first item takes focus and the arrow keys, Home and End move it. Escape, Tab, a
- * press outside, a scroll outside and the browser's Back ask for it to close through
- * `onClose`. Presses in it do not reach the listeners that drive the phone.
+ * press outside, a scroll that moves the button and the browser's Back ask for it to close
+ * through `onClose`. Presses in it do not reach the listeners that drive the phone.
  *
  * Call the result when the menu closes, however it closes: it ends all of this and returns
  * focus to the button. The caller hides or removes the element.
@@ -103,10 +103,21 @@ export function bindMenu(menu: HTMLElement, anchor: MenuAnchor, onClose: () => v
             onClose();
         }
     };
+    // A scroll that moves the button would leave the menu behind, so it closes the menu. A
+    // scroll elsewhere leaves it open: a list that changes length under a menu that stays open
+    // (an item that is on or off) scrolls by itself.
+    const scrolled = (event: Event) => {
+        const target = event.target;
+        if (!(target instanceof Node) || menu.contains(target)) {
+            return;
+        }
+        if (!opener || target.contains(opener)) {
+            onClose();
+        }
+    };
     menu.addEventListener('keydown', onKeyDown);
     document.addEventListener('pointerdown', outside, true);
-    // The button moves with what scrolls; the menu would stay behind.
-    document.addEventListener('scroll', outside, true);
+    document.addEventListener('scroll', scrolled, true);
     window.addEventListener('resize', place);
     const allowRemote = stopRemoteInteraction(menu);
     openMenus.set(menu, onClose);
@@ -115,7 +126,7 @@ export function bindMenu(menu: HTMLElement, anchor: MenuAnchor, onClose: () => v
     return () => {
         menu.removeEventListener('keydown', onKeyDown);
         document.removeEventListener('pointerdown', outside, true);
-        document.removeEventListener('scroll', outside, true);
+        document.removeEventListener('scroll', scrolled, true);
         window.removeEventListener('resize', place);
         allowRemote();
         openMenus.delete(menu);
