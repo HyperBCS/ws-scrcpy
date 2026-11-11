@@ -444,13 +444,14 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
      * run is owed from now. The run starts when it is due and the phone is not in use. A slot
      * the server was down for is taken up the same way when it is back, since the next slot may
      * come too late for the 24-hour limit. What the run's result does to `retryAt` is in
-     * `settleSlot`. A new slot replaces whatever the one before still owed.
+     * `settleSlot`. A new slot replaces whatever the one before still owed. A tick that starts
+     * no run checks a phone that refuses connections (`checkLockout`) and the 20-hour warning.
      */
     private tickDevice(udid: string, now: number): void {
-        this.checkLockout(udid, now);
         const schedule = this.store.getSchedule(udid);
         if (!schedule.enabled) {
             this.waiting.delete(udid);
+            this.checkLockout(udid, now);
             return;
         }
         let state = this.store.getRunState(udid);
@@ -492,6 +493,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             );
             return;
         }
+        this.checkLockout(udid, now);
         this.checkWarning(udid, schedule, state, now);
     }
 

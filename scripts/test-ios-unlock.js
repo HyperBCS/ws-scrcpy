@@ -2374,21 +2374,27 @@ test('scheduler with the real monitor: a phone that refuses connections gets a n
                 assert.equal(scheduler.getStatus(udid).needsManualUnlock, true);
                 await tickAt(slot + 6 * MINUTE);
                 assert.equal(checks, 1, 'the next check is five minutes later');
+                // 15:00: the tick that starts the slot's run does not check as well.
+                await tickAt(slot + HALF_DAY);
+                assert.equal(checks, 1);
+                assert.equal(record.lastRun.at, slot + HALF_DAY, 'the run is refused again');
+                assert.equal(record.lockedOutAt, slot + HALF_DAY);
+                assert.equal(pushes.length, 2);
             });
 
-            // The owner enters the passcode on the phone.
+            // The owner enters the passcode on the phone. Five minutes after the refused run:
             statuses.length = 0;
             const before = observers();
-            await tickAt(slot + 10 * MINUTE);
+            await tickAt(slot + HALF_DAY + 5 * MINUTE);
             assert.equal(checks, 2);
             assert.equal(record.lockedOutAt, undefined, 'the phone answers: the state clears');
             assert(observers() > before, 'with a new observer');
             assert(statuses.length > 0, 'the change is broadcast');
             assert.equal(statuses.at(-1).needsManualUnlock, undefined);
             assert.equal(record.lastRun.outcome, 'needs-manual-unlock', 'the last run is still what it was');
-            assert.equal(pushes.length, 1);
+            assert.equal(pushes.length, 2);
             assert(!calls().some((line) => line.includes('"serve-web"')), 'no display session was opened');
-            await tickAt(slot + 20 * MINUTE);
+            await tickAt(slot + HALF_DAY + 20 * MINUTE);
             assert.equal(checks, 2, 'no check once the phone answers');
         });
     } finally {
