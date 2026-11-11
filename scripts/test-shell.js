@@ -380,6 +380,23 @@ test('a hidden Shell keeps its session, takes no focus and is not fitted until i
     assert.equal(fit.fits, fits + 1, 'a repeated call does nothing');
 });
 
+test('a size that was waiting when the tab was left is sent when it is shown again', (t) => {
+    const { client, container, observed, timers, sizesSent } = openTerminal(t);
+    // The window narrows just before the tab is left: the terminal is fitted, the size waits.
+    container.clientWidth = 600;
+    observed();
+    assert.equal(timers.size, 1);
+    client.setActive(false);
+    assert.deepEqual(sizesSent(), []);
+    // Shown again at the same width: the fit changes nothing, and the phone still has 80 columns.
+    client.setActive(true);
+    const resized = [{ type: 'resize', cols: 60, rows: 24 }];
+    assert.deepEqual(sizesSent(), resized);
+    client.setActive(false);
+    client.setActive(true);
+    assert.deepEqual(sizesSent(), resized, 'a size the phone already has is not sent again');
+});
+
 test('showing Shell again on a phone does not open the keyboard', (t) => {
     const { client, term } = openTerminal(t, false);
     assert.equal(term.focused, 0, 'opening it does not either');

@@ -90,8 +90,10 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
             this.term.blur();
             return;
         }
-        // The container may have another size than when the tab was left.
+        // The container may have another size than when the tab was left. A size dropped when the
+        // tab was left is sent now: the terminal already has it, so the fit may change nothing.
         this.updateTerminalSize();
+        this.scheduleResize();
         this.focusOnOpen();
     }
 
