@@ -338,15 +338,10 @@ export function SettingsSheet() {
                     closeSettingsSheet();
                 }
             }}
-            title="Settings"
+            title="Stream settings"
+            subtitle={entry ? deviceName(entry) : undefined}
         >
-            <div class="settings-sheet-content">
-                <div class="settings-device-context" title={renderTarget.udid}>
-                    <span class="settings-device-dot" aria-hidden="true" />
-                    <div>
-                        <strong>{entry ? deviceName(entry) : 'Device settings'}</strong>
-                    </div>
-                </div>
+            <div class="settings-sheet-content" ref={contentRef}>
                 <section class="settings-sheet-section">
                     <h2 class="settings-sheet-section-title">Stream quality</h2>
                     {loading && (
@@ -772,7 +767,7 @@ export function SettingsSheet() {
                         </div>
                     ) : confirming ? (
                         <div class="settings-sheet-banner warning">
-                            <strong>Restart this device's stream?</strong>
+                            <strong>Restart this phone's stream?</strong>
                             <p>The screen will pause for a few seconds. {viewerWarning}</p>
                             <div class="settings-sheet-button-row">
                                 <button class="settings-sheet-button" onClick={() => setConfirming(false)}>

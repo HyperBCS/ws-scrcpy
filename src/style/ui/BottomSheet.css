@@ -98,6 +98,10 @@
     flex-shrink: 0;
 }
 
+.bottom-sheet-heading {
+    min-width: 0;
+}
+
 .bottom-sheet-title {
     min-width: 0;
     overflow-wrap: anywhere;

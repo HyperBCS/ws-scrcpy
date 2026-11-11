@@ -127,7 +127,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
     const onPower = (action: 'reboot' | 'shutdown') => {
         const entry = findDeviceByUdid(client.getDeviceUdid());
         if (!entry) {
-            setPower('This device is no longer in the device list.');
+            setPower('This phone is no longer in the device list.');
             return;
         }
         const command = action === 'reboot' ? ControlCenterCommand.REBOOT_DEVICE : ControlCenterCommand.SHUTDOWN_DEVICE;
@@ -147,7 +147,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
     const onServiceCommand = (command: string, label: string, done: string) => {
         const entry = findDeviceByUdid(client.getDeviceUdid());
         if (!entry) {
-            setDebugNote('This device is no longer in the device list.');
+            setDebugNote('This phone is no longer in the device list.');
             return;
         }
         setDebugBusy(true);
@@ -173,10 +173,15 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
     const phoneName = phoneEntry ? deviceName(phoneEntry) : descriptor?.name || descriptor?.model || 'this iPhone';
     const phoneSummary = descriptor
         ? `${descriptor.model}, iOS ${descriptor.version}${descriptor.developerMode === false ? '. Developer Mode is off.' : ''}`
-        : 'Device details unavailable.';
+        : 'Phone details unavailable.';
 
     return (
-        <BottomSheet open={toolsSheetOpen.value} onClose={() => (toolsSheetOpen.value = false)} title="Actions">
+        <BottomSheet
+            open={toolsSheetOpen.value}
+            onClose={() => (toolsSheetOpen.value = false)}
+            title="Actions"
+            subtitle={phoneEntry || descriptor ? phoneName : undefined}
+        >
             <div class="actions-sheet">
                 {!connected && (
                     <SheetStatus tone="warning">
@@ -224,19 +229,19 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             Refresh
                         </button>
                     </SheetRow>
-                    <SheetRow title="Restart picture" description="Restart frozen or broken video.">
+                    <SheetRow title="Restart video" description="For frozen or broken video.">
                         <button
                             type="button"
                             class="sheet-button"
                             onClick={() => {
-                                setScreenNote('Restarting the picture…');
+                                setScreenNote('Restarting the video…');
                                 client.restartStream();
                             }}
                         >
-                            Restart
+                            Restart video
                         </button>
                     </SheetRow>
-                    <SheetRow title="Restart session" description="Reconnect video, touch and keyboard.">
+                    <SheetRow title="Reconnect" description="Reconnect video, touch and keyboard.">
                         <button
                             type="button"
                             class="sheet-button"
@@ -245,7 +250,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                                 client.restartSession();
                             }}
                         >
-                            Restart
+                            Reconnect
                         </button>
                     </SheetRow>
                 </SheetGroup>
@@ -262,8 +267,8 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         </button>
                     </SheetRow>
                     <SheetToggleRow
-                        title="Send this computer's keystrokes"
-                        description="Send this keyboard’s keys to the phone."
+                        title="Send keystrokes"
+                        description="Keys typed in this browser go to the phone."
                         checked={keyboard}
                         onChange={onKeyboardToggle}
                     />
@@ -318,7 +323,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         <div class="sheet-row stack">
                             <textarea
                                 class="sheet-readout actions-clipboard-readout"
-                                aria-label="Device clipboard"
+                                aria-label="Phone clipboard"
                                 value={received}
                                 placeholder="The phone clipboard is empty"
                                 readOnly
@@ -334,7 +339,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         <textarea
                             id="ios-clipboard-text"
                             class="sheet-input actions-paste-input"
-                            aria-label="Text for the device clipboard"
+                            aria-label="Text for the phone clipboard"
                             placeholder="Type or paste text…"
                             value={clipboardDraft}
                             rows={3}
@@ -430,11 +435,10 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         <button
                             type="button"
                             class="sheet-button danger"
-                            aria-label="Restart services"
                             disabled={debugBusy}
                             onClick={(event) => confirm.arm('restart', event.currentTarget)}
                         >
-                            Restart
+                            Restart services
                         </button>
                     </SheetRow>
                     <SheetRow
@@ -460,7 +464,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                                 onServiceCommand(
                                     ControlCenterCommand.REFRESH_DEVICE,
                                     'Refreshing',
-                                    'Device info refreshed.',
+                                    'Phone info refreshed.',
                                 )
                             }
                         >

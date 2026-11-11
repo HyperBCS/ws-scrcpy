@@ -164,7 +164,7 @@ async function main() {
                 );
             };
             await open();
-            const close = page.getByRole('button', { name: 'Close Settings', exact: true });
+            const close = page.getByRole('button', { name: 'Close Stream settings', exact: true });
             const closeBox = await close.boundingBox();
             const iconBox = await close.locator('svg').boundingBox();
             assert(closeBox.width >= 48 && closeBox.height >= 48, 'close has a48px target');
@@ -269,7 +269,7 @@ async function main() {
             await settle(page);
             const touchesBefore = remotePackets.filter((packet) => packet[0] === 2).length;
             if (touch) await gesture(cdp, await handlePoint(page), 0, 130);
-            else await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
+            else await page.getByRole('button', { name: 'Close Stream settings', exact: true }).click();
             await page.locator('.bottom-sheet-root.open').waitFor({ state: 'hidden' });
             assert.equal(
                 remotePackets.filter((packet) => packet[0] === 2).length,
@@ -290,7 +290,7 @@ async function main() {
             await actions.click();
             await page.locator('.bottom-sheet-root.open').waitFor();
             await settle(page);
-            const draft = page.getByLabel('Text to paste on device');
+            const draft = page.getByLabel('Text to paste on the phone');
             const paste = page.getByRole('button', { name: 'Paste', exact: true });
             const tooLong = page.getByText('This text is too long to send. The limit is 256 KB.', { exact: true });
             const clipboardPackets = () => remotePackets.filter((packet) => packet[0] === 9);
@@ -302,7 +302,7 @@ async function main() {
             await draft.fill('a'.repeat((1 << 18) - 14));
             await tooLong.waitFor({ state: 'detached' });
             await paste.click();
-            await page.getByText('Pasted into the focused field on the device.', { exact: true }).waitFor();
+            await page.getByText('Pasted into the focused field on the phone.', { exact: true }).waitFor();
             await pause(50);
             assert.equal(clipboardPackets().length, 1, 'text at the limit is sent once');
             assert.equal(clipboardPackets()[0].length, 1 << 18, 'and fits one scrcpy control message');

@@ -461,7 +461,7 @@ async function clipboardLimitFlow(browser) {
             await page.locator('.control-buttons-list [title="Actions"]').click();
             const dialog = page.getByRole('dialog', { name: 'Actions', exact: true });
             await dialog.waitFor(); await settleMotion(page);
-            const draft = dialog.getByLabel('Text for the device clipboard');
+            const draft = dialog.getByLabel('Text for the phone clipboard');
             const send = dialog.getByRole('button', { name: 'Send to phone', exact: true });
             const tooLong = dialog.getByText('This text is too long to send. The limit is 256 KB.', { exact: true });
             const clipboardMessages = () => test.sent.filter((message) => message.type === 'clipboard');

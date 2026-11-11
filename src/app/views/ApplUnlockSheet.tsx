@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
-import { findDeviceByUdid } from '../state/devices';
+import { deviceName, findDeviceByUdid } from '../state/devices';
 import { openApplSettingsSheet } from '../state/settingsSheet';
 import { streamConnected, unlockSheetOpen } from '../state/stream';
 import { runUnlockNow } from '../state/unlockSchedule';
@@ -80,7 +80,12 @@ export function ApplUnlockSheet({ client }: { client: StreamClientCoreDevice }) 
         : note || (locked === false ? 'This phone reports that it is unlocked.' : unusable);
 
     return (
-        <BottomSheet open={open} onClose={() => (unlockSheetOpen.value = false)} title="Unlock device">
+        <BottomSheet
+            open={open}
+            onClose={() => (unlockSheetOpen.value = false)}
+            title="Unlock device"
+            subtitle={entry ? deviceName(entry) : undefined}
+        >
             <div class="unlock-sheet-content">
                 <p class="unlock-sheet-intro">
                     The server types the passcode stored for this phone. It is never sent to or kept in this browser.

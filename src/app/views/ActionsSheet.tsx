@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
-import { SheetGroup, SheetRow, SheetStatus } from '../ui/SheetControls';
+import { SheetGroup, SheetRow, SheetStatus, SoundRows } from '../ui/SheetControls';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import {
     activeStream,
@@ -12,6 +12,8 @@ import {
 } from '../state/stream';
 import { openSettingsSheet } from '../state/settingsSheet';
 import { findDeviceForStream } from '../state/streamDevice';
+import { deviceName } from '../state/devices';
+import { activeAudioSession, audioAvailability } from '../state/audio';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { goToDeviceList } from '../state/router';
 import { ControlMessage } from '../controlMessage/ControlMessage';
@@ -35,6 +37,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
     const entry = session ? findDeviceForStream(session.params) : undefined;
     const descriptor = entry?.params.type === 'android' ? (entry.descriptor as GoogDeviceDescriptor) : undefined;
     const lockActive = descriptor?.['device.locked'] === true || descriptor?.['keyguard.showing'] === true;
+    const audioSession = activeAudioSession.value;
 
     useEffect(() => {
         setClipboardDraft('');
@@ -48,12 +51,12 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
         }
         if (received !== undefined) {
             setReading(false);
-            setClipboardNote(received ? 'Read from the device.' : 'The device clipboard is empty.');
+            setClipboardNote(received ? 'Read from the phone.' : 'The phone clipboard is empty.');
             return;
         }
         const timeout = setTimeout(() => {
             setReading(false);
-            setClipboardNote('No clipboard response yet. Unlock the device and try again.');
+            setClipboardNote('No clipboard response yet. Unlock the phone and try again.');
         }, 5000);
         return () => clearTimeout(timeout);
     }, [reading, received]);
@@ -66,7 +69,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
     const onReadClipboard = () => {
         deviceClipboard.value = undefined;
         setReading(true);
-        setClipboardNote('Reading the device clipboard…');
+        setClipboardNote('Reading the phone clipboard…');
         client.sendMessage(CommandControlMessage.createGetClipboardCommand(CopyKey.NONE));
     };
 
@@ -77,12 +80,17 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
     const onPaste = () => {
         if (clipboardDraft && !draftTooLong && streamConnected.value) {
             client.sendMessage(CommandControlMessage.createSetClipboardCommand(clipboardDraft, true));
-            setClipboardNote('Pasted into the focused field on the device.');
+            setClipboardNote('Pasted into the focused field on the phone.');
         }
     };
 
     return (
-        <BottomSheet open={toolsSheetOpen.value} onClose={() => (toolsSheetOpen.value = false)} title="Actions">
+        <BottomSheet
+            open={toolsSheetOpen.value}
+            onClose={() => (toolsSheetOpen.value = false)}
+            title="Actions"
+            subtitle={entry ? deviceName(entry) : undefined}
+        >
             <div class="actions-sheet">
                 {!connected && (
                     <SheetStatus tone="warning">
@@ -90,10 +98,27 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                     </SheetStatus>
                 )}
 
-                <SheetGroup title="Clipboard">
+                <SheetGroup title="Sound">
+                    {audioSession ? (
+                        <SoundRows session={audioSession} />
+                    ) : (
+                        <SheetRow title="Listen in this browser" description={audioAvailability.value.message} />
+                    )}
+                </SheetGroup>
+
+                <SheetGroup
+                    title="Clipboard"
+                    status={
+                        draftTooLong ? (
+                            <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
+                        ) : (
+                            clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
+                        )
+                    }
+                >
                     <SheetRow
-                        title="Read the device's clipboard"
-                        description="Copy from the device to this browser."
+                        title="Read the phone's clipboard"
+                        description="Copy from the phone to this browser."
                         layout="pair"
                     >
                         <button
@@ -112,23 +137,23 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                         <div class="sheet-row stack">
                             <textarea
                                 class="sheet-readout actions-clipboard-readout"
-                                aria-label="Device clipboard"
+                                aria-label="Phone clipboard"
                                 value={received}
-                                placeholder="The device clipboard is empty"
+                                placeholder="The phone clipboard is empty"
                                 readOnly
                                 rows={3}
                             />
                         </div>
                     )}
                     <SheetRow
-                        title="Paste text on the device"
-                        description="Tap a field on the device, then paste."
+                        title="Paste text on the phone"
+                        description="Tap a field on the phone, then paste."
                         layout="stack"
                     >
                         <textarea
                             id="device-paste-text"
                             class="sheet-input actions-paste-input"
-                            aria-label="Text to paste on device"
+                            aria-label="Text to paste on the phone"
                             placeholder="Type or paste text…"
                             value={clipboardDraft}
                             rows={3}
@@ -144,13 +169,8 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                         </button>
                     </SheetRow>
                 </SheetGroup>
-                {draftTooLong ? (
-                    <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
-                ) : (
-                    clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
-                )}
 
-                <SheetGroup title="Device panels">
+                <SheetGroup title="Phone panels">
                     <SheetRow title="Notifications">
                         <button
                             type="button"
@@ -184,10 +204,11 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                 </SheetGroup>
 
                 <SheetGroup title="Session">
-                    <SheetRow title="Sound and stream quality">
+                    <SheetRow title="Stream settings" description="Stream quality and sound capture.">
                         <button
                             type="button"
                             class="sheet-button"
+                            aria-label="Open Stream settings"
                             disabled={!session}
                             onClick={() => {
                                 if (session) {
@@ -196,11 +217,11 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                                 }
                             }}
                         >
-                            Open Settings
+                            Open
                         </button>
                     </SheetRow>
                     {lockActive && (
-                        <SheetRow title="Unlock device" description="Enter the device PIN or password.">
+                        <SheetRow title="Unlock device" description="Enter the phone's PIN or password.">
                             <button
                                 type="button"
                                 class="sheet-button"

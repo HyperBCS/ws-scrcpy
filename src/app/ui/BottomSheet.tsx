@@ -12,10 +12,20 @@ interface BottomSheetProps {
     dismissible?: boolean;
     bodyClassName?: string;
     title: string;
+    /** The device the sheet acts on, shown under the title. */
+    subtitle?: string;
     children: ComponentChildren;
 }
 
-export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, title, children }: BottomSheetProps) {
+export function BottomSheet({
+    open,
+    onClose,
+    dismissible = true,
+    bodyClassName,
+    title,
+    subtitle,
+    children,
+}: BottomSheetProps) {
     const rootRef = useRef<HTMLDivElement>(null);
     const { ref: panelRef, present } = usePresence<HTMLDivElement>(open, 'sheet');
     const closeRef = useRef(onClose);
@@ -143,12 +153,16 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
                 role="dialog"
                 aria-modal={open ? true : undefined}
                 aria-label={title}
+                aria-description={subtitle}
                 tabIndex={-1}
             >
                 <div class="bottom-sheet-drag-region">
                     <div class="bottom-sheet-handle" aria-hidden="true" />
                     <div class="bottom-sheet-header">
-                        <h2 class="bottom-sheet-title">{title}</h2>
+                        <div class="bottom-sheet-heading">
+                            <h2 class="bottom-sheet-title">{title}</h2>
+                            {subtitle && <p class="bottom-sheet-subtitle">{subtitle}</p>}
+                        </div>
                         <button
                             type="button"
                             class="bottom-sheet-close"

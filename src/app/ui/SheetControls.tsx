@@ -182,7 +182,7 @@ export function SoundRows({ session }: SoundRowsProps) {
             </SheetRow>
             <SheetRow
                 title="Volume"
-                description="For this browser only. The device's own volume is not changed."
+                description="For this browser only. The phone's own volume is not changed."
                 layout="stack"
             >
                 <VolumeSlider session={session} />

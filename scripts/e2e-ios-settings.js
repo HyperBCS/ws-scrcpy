@@ -109,7 +109,7 @@ const colorOf = (locator) => locator.evaluate((el) => getComputedStyle(el).color
 
 async function openPanel(page) {
     await page.locator(`[data-device-key="ios:${UDID}"]`).getByRole('button', { name: 'Settings for iPhone fixture', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+    const dialog = page.getByRole('dialog', { name: 'Scheduled unlock', exact: true });
     await dialog.waitFor();
     await settleMotion(page);
     return dialog;
@@ -130,7 +130,7 @@ async function panelFlow(browser) {
         const storageBefore = await page.evaluate(() => Object.keys(localStorage).sort());
 
         const dialog = await openPanel(page);
-        for (const name of ['Scheduled unlock', 'Runs', 'Phone']) {
+        for (const name of ['Schedule', 'Runs', 'Phone']) {
             await dialog.getByRole('heading', { name, exact: true }).waitFor();
         }
         assert.equal(await dialog.getByRole('heading', { name: 'Status', exact: true }).count(), 0);
@@ -300,7 +300,7 @@ async function panelFlow(browser) {
         // The passcode left the browser exactly once.
         assert.equal(commands.filter((command) => JSON.stringify(command).includes(PASSCODE)).length, 1);
 
-        await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
+        await page.getByRole('button', { name: 'Close Scheduled unlock', exact: true }).click();
         await dialog.waitFor({ state: 'hidden' });
         assert.deepEqual(test.errors, []);
         console.log('PASS iOS settings panel: summary row, passcode asked twice, zone, toggle, run now and its refusal, failure tone, paused state, error alert, remove');
@@ -392,7 +392,7 @@ async function narrowFlow(browser) {
         }
         await page.screenshot({ path: path.join(OUT, 'device-list-320.png') });
         await button.click();
-        const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+        const dialog = page.getByRole('dialog', { name: 'Scheduled unlock', exact: true });
         await dialog.waitFor();
         await settleMotion(page);
         assert.equal(await dialog.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false, 'the panel does not overflow at 320px');
@@ -517,7 +517,7 @@ async function streamUnlockFlow(browser) {
             await openUnlock(page);
             assert.match(await state.textContent(), /^No passcode is stored on the server for this phone\./);
             await settings.click();
-            await page.getByRole('dialog', { name: 'Settings', exact: true }).waitFor();
+            await page.getByRole('dialog', { name: 'Scheduled unlock', exact: true }).waitFor();
             await settleMotion(page);
             await page.getByLabel('Passcode for scheduled unlock').waitFor();
             assert.equal(await page.getByRole('dialog', { name: 'Unlock device', exact: true }).count(), 0, 'one sheet at a time');

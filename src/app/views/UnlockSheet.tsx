@@ -8,6 +8,8 @@ import '../../style/views/UnlockSheet.css';
 interface UnlockSheetProps {
     open: boolean;
     udid: string;
+    /** Shown under the sheet title, as on every device sheet. */
+    deviceName?: string;
     sessionKey?: object;
     connected: boolean;
     locked: DeviceLockValue;
@@ -24,6 +26,7 @@ const CONFIRM_TIMEOUT_MS = 25000;
 export function UnlockSheet({
     open,
     udid,
+    deviceName,
     sessionKey,
     connected,
     locked,
@@ -204,7 +207,7 @@ export function UnlockSheet({
           : feedback;
 
     return (
-        <BottomSheet open={open} onClose={close} title="Unlock device">
+        <BottomSheet open={open} onClose={close} title="Unlock device" subtitle={deviceName}>
             <form
                 class="unlock-sheet-content"
                 onSubmit={submit}

@@ -299,7 +299,7 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
             >
                 <div class="live-text-heading">
                     <div>
-                        <strong id="live-text-title">Type on device</strong>
+                        <strong id="live-text-title">Type text</strong>
                         <p id="live-text-hint">{target.hint}</p>
                     </div>
                     <button type="button" class="live-text-done" onClick={close}>

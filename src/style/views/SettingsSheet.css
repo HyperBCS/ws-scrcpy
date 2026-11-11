@@ -21,42 +21,6 @@
     min-width: 0;
     max-width: 100%;
 }
-.settings-device-context {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
-    margin: 0;
-    background: var(--device-list-stripe-color);
-    border: 1px solid var(--device-border-color);
-    border-radius: 0.8rem;
-}
-.settings-device-dot {
-    display: block;
-    background: var(--button-text-color);
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-.settings-device-context > div {
-    min-width: 0;
-    display: grid;
-    gap: 0.25rem;
-}
-.settings-device-context strong {
-    font-size: 1rem;
-    line-height: 1.45;
-    font-weight: 600;
-    overflow-wrap: anywhere;
-}
-.settings-device-context span:last-child {
-    color: var(--text-color-light);
-    font-family: var(--font-stack-mono);
-    font-size: 0.86rem;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-}
 .settings-sheet-section {
     margin: 0;
 }
@@ -483,15 +447,11 @@
     }
 }
 
-/* The iPhone settings sheet (views/ApplSettingsSheet.tsx) is built from ui/SheetControls.css rows;
-   it only needs the device context line spaced from the first group and the facts grid padded
-   when it stands alone in a group card. */
+/* The iPhone sheet (views/ApplSettingsSheet.tsx) is built from ui/SheetControls.css rows; it
+   only needs the facts grid padded when it stands alone in a group card. */
 .appl-settings-sheet {
     padding-top: 4px;
     min-width: 0;
-}
-.appl-settings-sheet .settings-device-context {
-    margin-bottom: 20px;
 }
 .appl-settings-sheet .sheet-group-card > .sheet-facts {
     padding: 12px 14px;
