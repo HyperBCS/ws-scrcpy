@@ -5,6 +5,8 @@ import { ChildProcess, spawn } from 'child_process';
 const TAG = '[pymobiledevice3]';
 const PATCH_CHECK_SCRIPT = 'check_patches.py';
 const PATCH_CHECK_TIMEOUT_MS = 15000;
+// `IOS_SETTINGS_KEY_ENV` in IosSettingsStore.ts, repeated so this file does not import the store.
+const SETTINGS_KEY_ENV = 'WS_IOS_SETTINGS_KEY';
 
 export type OneShotResult = { stdout: string; stderr: string; code: number | null };
 
@@ -239,9 +241,15 @@ export class PyMobileDevice {
         return JSON.parse(line) as T;
     }
 
-    /** The environment every child process gets. */
+    /**
+     * The environment every child process gets: this server's, without the key that encrypts the
+     * stored passcodes. `IosSettingsStore` takes that key out of the environment when it loads;
+     * leaving it out here as well covers a variable that was set afterwards.
+     */
     public static childEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-        return { ...process.env, PYTHONUNBUFFERED: '1', ...extra };
+        const env: NodeJS.ProcessEnv = { ...process.env, PYTHONUNBUFFERED: '1', ...extra };
+        delete env[SETTINGS_KEY_ENV];
+        return env;
     }
 
     public static spawnDetached(args: string[], env: NodeJS.ProcessEnv = {}): ChildProcess {

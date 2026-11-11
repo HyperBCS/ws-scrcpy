@@ -22,6 +22,8 @@ export const IOS_SETTINGS_FILE = 'ios-settings.json';
 export const IOS_SETTINGS_KEY_FILE = 'ios-settings.key';
 /** 64 hex characters. When set, no key file is written or read. */
 export const IOS_SETTINGS_KEY_ENV = 'WS_IOS_SETTINGS_KEY';
+/** A path for the key file outside the data directory, such as a Docker secret. */
+export const IOS_SETTINGS_KEY_FILE_ENV = 'WS_IOS_SETTINGS_KEY_FILE';
 /** A settings file that could not be read is moved here, so the next write does not destroy it. */
 export const IOS_SETTINGS_BAD_FILE = 'ios-settings.json.bad';
 
@@ -32,6 +34,24 @@ const TAG_BYTES = 16;
 const KEY_HEX = /^[0-9a-f]{64}$/i;
 const UNREADABLE_KEY_MISSING = 'Stored passcode unreadable: key file missing';
 const UNREADABLE_DECRYPT = 'Stored passcode unreadable: decryption failed';
+
+let envKey: string | undefined;
+
+/**
+ * The key from `WS_IOS_SETTINGS_KEY`, taken out of the environment the first time it is seen. The
+ * server starts Python tools, ffmpeg and the Bluetooth collector as child processes, and each
+ * would otherwise inherit the key. This runs when the module loads, which is before any service
+ * starts, and again on each read in case the variable was set later.
+ */
+function takeEnvKey(): string | undefined {
+    const value = process.env[IOS_SETTINGS_KEY_ENV];
+    if (value !== undefined) {
+        envKey = value;
+        delete process.env[IOS_SETTINGS_KEY_ENV];
+    }
+    return envKey;
+}
+takeEnvKey();
 
 /** AES-256-GCM, new 12-byte IV per write, AAD = udid. All three fields base64. */
 export interface EncryptedPasscode {
@@ -205,9 +225,15 @@ function sanitizeUnlock(value: unknown): StoredUnlockSettings | undefined {
  * by default, an in-memory `UnlockSettingsStore` in tests) and emits `status` after each change,
  * so the descriptor update path is the same for a command and for a run. Owned by W1.
  *
- * The key is read from disk (or the environment) whenever it is needed and never cached, so a
- * key file removed while the server runs is noticed by the next `getSchedule`. The plaintext
- * passcode exists only inside `setPasscode` and `readPasscode`.
+ * The key file is read whenever the key is needed and never cached, so a key file removed while
+ * the server runs is noticed by the next `getSchedule`. A key from the environment is read once
+ * and removed from it (`takeEnvKey`). The plaintext passcode exists only inside `setPasscode` and
+ * `readPasscode`.
+ *
+ * What the encryption is worth: with the key file in the data directory, anything that can read
+ * that directory (a backup, a copy of the Docker volume) has both halves. It stops a casual look
+ * at the settings file and no more. `WS_IOS_SETTINGS_KEY_FILE` or `WS_IOS_SETTINGS_KEY` keep the
+ * key somewhere else.
  */
 export class IosSettingsStore implements UnlockSettingsStore {
     private static instance?: IosSettingsStore;
@@ -223,10 +249,16 @@ export class IosSettingsStore implements UnlockSettingsStore {
         return !!IosSettingsStore.instance;
     }
 
+    /** Test seam: drop the key taken from the environment, as a new process would start. */
+    public static forgetEnvKey(): void {
+        envKey = undefined;
+    }
+
     private loaded = false;
     private loadedAt = 0;
     // An unusable `WS_IOS_SETTINGS_KEY` is logged once, not on every status read.
     private keyEnvReported = false;
+    private directoryModeReported = false;
     // Why the settings file was not used, for `getProblems`.
     private loadProblem?: string;
     private file: IosSettingsFile = { version: 1, devices: {} };
@@ -242,7 +274,7 @@ export class IosSettingsStore implements UnlockSettingsStore {
         this.loadedAt = Date.now();
         this.file = { version: 1, devices: {} };
         try {
-            fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+            this.ensureDirectory();
         } catch (error) {
             console.error(`${TAG} could not create ${this.directory}: ${(error as Error).message}`);
             this.loadProblem = 'The iPhone settings directory could not be created. Scheduled unlock cannot run.';
@@ -484,15 +516,39 @@ export class IosSettingsStore implements UnlockSettingsStore {
     }
 
     private write(): void {
+        this.ensureDirectory();
+        this.writePrivate(path.join(this.directory, IOS_SETTINGS_FILE), JSON.stringify(this.file));
+    }
+
+    /**
+     * The data directory, private to the server's user. `mkdir`'s mode only applies to a directory
+     * it creates, and a Docker volume root or a directory made by another tool already exists, so
+     * the mode is set as well. A directory owned by someone else keeps its mode.
+     */
+    private ensureDirectory(): void {
         fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-        this.writePrivate(IOS_SETTINGS_FILE, JSON.stringify(this.file));
+        try {
+            if ((fs.statSync(this.directory).mode & 0o777) !== 0o700) {
+                fs.chmodSync(this.directory, 0o700);
+            }
+        } catch (error) {
+            if (!this.directoryModeReported) {
+                this.directoryModeReported = true;
+                console.error(`${TAG} could not make ${this.directory} private: ${(error as Error).message}`);
+            }
+        }
     }
 
     /** Temp-file-then-rename, 0600, like `NotificationStorage.write`. */
-    private writePrivate(name: string, content: string | Buffer): void {
-        const file = path.join(this.directory, name);
+    private writePrivate(file: string, content: string | Buffer): void {
         fs.writeFileSync(file + '.tmp', content, { mode: 0o600 });
         fs.renameSync(file + '.tmp', file);
+    }
+
+    /** `WS_IOS_SETTINGS_KEY_FILE`, else `ios-settings.key` in the data directory. */
+    private keyFile(): string {
+        const elsewhere = process.env[IOS_SETTINGS_KEY_FILE_ENV];
+        return elsewhere ? path.resolve(elsewhere) : path.join(this.directory, IOS_SETTINGS_KEY_FILE);
     }
 
     /**
@@ -500,7 +556,7 @@ export class IosSettingsStore implements UnlockSettingsStore {
      * neither is usable, which `getSchedule` reports and `readPasscode` throws on.
      */
     private readKey(): Buffer | undefined {
-        const fromEnv = process.env[IOS_SETTINGS_KEY_ENV];
+        const fromEnv = takeEnvKey();
         if (fromEnv !== undefined && fromEnv !== '') {
             if (!KEY_HEX.test(fromEnv)) {
                 if (!this.keyEnvReported) {
@@ -513,10 +569,14 @@ export class IosSettingsStore implements UnlockSettingsStore {
             }
             return Buffer.from(fromEnv, 'hex');
         }
-        const file = path.join(this.directory, IOS_SETTINGS_KEY_FILE);
         try {
-            const key = fs.readFileSync(file);
-            return key.length === KEY_BYTES ? key : undefined;
+            const key = fs.readFileSync(this.keyFile());
+            if (key.length === KEY_BYTES) {
+                return key;
+            }
+            // A secret written by hand or by a secrets manager is text: the same 64 hex characters.
+            const text = key.toString('utf8').trim();
+            return KEY_HEX.test(text) ? Buffer.from(text, 'hex') : undefined;
         } catch {
             return undefined;
         }
@@ -524,12 +584,33 @@ export class IosSettingsStore implements UnlockSettingsStore {
 
     /** First `setPasscode` without a key: write a random one. Not reached while the env var is set. */
     private createKeyFile(): Buffer {
-        if (process.env[IOS_SETTINGS_KEY_ENV]) {
+        if (takeEnvKey()) {
             throw new Error(`${IOS_SETTINGS_KEY_ENV} is set but not a valid key (64 hex characters)`);
         }
-        fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+        const file = this.keyFile();
         const key = crypto.randomBytes(KEY_BYTES);
-        this.writePrivate(IOS_SETTINGS_KEY_FILE, key);
+        if (!process.env[IOS_SETTINGS_KEY_FILE_ENV]) {
+            this.ensureDirectory();
+            this.writePrivate(file, key);
+            return key;
+        }
+        if (fs.existsSync(file)) {
+            // Never replaced: it may be the key for ciphertext stored elsewhere.
+            throw new Error(
+                `${IOS_SETTINGS_KEY_FILE_ENV} names a file that is not a key (32 bytes or 64 hex characters)`,
+            );
+        }
+        // The system's own message can name paths; the caller's error goes to a browser.
+        let written = true;
+        try {
+            this.writePrivate(file, key);
+        } catch (error) {
+            written = false;
+            console.error(`${TAG} could not write the key file: ${(error as Error).message}`);
+        }
+        if (!written) {
+            throw new Error(`The key file named by ${IOS_SETTINGS_KEY_FILE_ENV} could not be written`);
+        }
         return key;
     }
 }
