@@ -1152,6 +1152,66 @@ test('scheduler: a run starts on the minute of its slot, whatever second the ser
     }
 });
 
+test('scheduler: right after a restart, a due run waits for the phone to be listed and its lock read, two minutes at most', async () => {
+    const slot = Date.UTC(2026, 10, 12, 15, 0);
+    // Restarted at 15:30, with the 15:00 slot not yet taken up.
+    const started = slot + 30 * MINUTE;
+    let connected = false;
+    const ctx = makeScheduler({ time: started, connected: () => connected });
+    const udid = 'iphone-restart';
+    const at = async (clock) => {
+        ctx.setClock(clock);
+        ctx.tick();
+        await ctx.settle();
+    };
+    try {
+        ctx.store.updateSchedule(udid, { enabled: true, time: '03:00', timeZone: ZONE });
+        ctx.store.setPasscode(udid, PASSCODE);
+        const record = ctx.store.devices.get(udid);
+        record.lastSlotAt = slot - HALF_DAY;
+        // The first tick: the tracker has not listed the phone yet.
+        await at(started + 5000);
+        assert.equal(record.lastSlotAt, slot, 'the slot is taken up');
+        assert.equal(record.lastRun, undefined, 'but not ended as not connected');
+        assert.equal(ctx.pushes.length, 0, 'and nothing is pushed');
+        // Listed, but the lock not read yet: a phone in use would get Home and a swipe.
+        connected = true;
+        await at(started + MINUTE);
+        assert.equal(ctx.driver.calls.length, 0);
+        // The monitor reads the phone in use: it waits for the lock as at any other time.
+        ctx.monitor.set(udid, false);
+        await at(started + MINUTE + 10000);
+        assert.equal(ctx.driver.calls.length, 0);
+        assert.equal(ctx.scheduler.getStatus(udid).waitingForLock, true);
+        ctx.monitor.set(udid, true);
+        await at(started + 2 * MINUTE - 1000);
+        assert.equal(ctx.driver.calls.length, 1, 'the run starts once the phone reads locked');
+        assert.equal(record.lastRun.outcome, 'unlocked');
+    } finally {
+        ctx.scheduler.release();
+    }
+
+    // A phone that never gets a lock reading is run when the two minutes are up.
+    const other = makeScheduler({ time: started });
+    try {
+        other.store.updateSchedule(udid, { enabled: true, time: '03:00', timeZone: ZONE });
+        other.store.setPasscode(udid, PASSCODE);
+        other.store.devices.get(udid).lastSlotAt = slot - HALF_DAY;
+        for (const offset of [5000, MINUTE]) {
+            other.setClock(started + offset);
+            other.tick();
+            await other.settle();
+        }
+        assert.equal(other.driver.calls.length, 0);
+        other.setClock(started + 2 * MINUTE);
+        other.tick();
+        await other.settle();
+        assert.equal(other.driver.calls.length, 1, 'the driver reads the lock itself before it types');
+    } finally {
+        other.scheduler.release();
+    }
+});
+
 test('scheduler: a slot is skipped only when the server typed the passcode less than 11 hours before it', async () => {
     const slot = Date.UTC(2026, 10, 12, 15, 0);
     const ctx = makeScheduler({ time: slot });
@@ -2085,7 +2145,8 @@ test('scheduler: a phone that refuses connections is needs-manual-unlock: one pu
     ]) {
         fs.rmSync(logFile, { force: true });
         const output = captureConsole();
-        let clock = slot;
+        // The server has been up for ten minutes; this monitor never knows the lock state.
+        let clock = slot - 10 * MINUTE;
         const now = () => clock;
         const store = new MemoryStore(now);
         const monitor = Object.assign(new FakeMonitor(), scriptedMonitor());

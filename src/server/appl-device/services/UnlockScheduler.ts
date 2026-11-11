@@ -28,6 +28,9 @@ const TAG = '[UnlockScheduler]';
 
 const TICK_MS = 60000;
 const FIRST_TICK_MS = 5000;
+// After start, a run that is due waits this long at most for the tracker to list the phone and
+// for the monitor's first lock reading.
+const START_WAIT_MS = 2 * 60 * 1000;
 // A scheduled run that ends one of these ways is pushed to every subscription.
 const PUSHED_OUTCOMES = new Set<UnlockRunOutcome>([
     'failed-wake',
@@ -162,6 +165,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
     private readonly checkingLockout = new Set<string>();
     private storeChecked = false;
     private released = false;
+    private startedAt = 0;
 
     /** Public for tests; production goes through `getInstance()`. Missing deps are resolved in `start()`. */
     constructor(deps: Partial<UnlockSchedulerDeps> = {}) {
@@ -181,6 +185,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             return;
         }
         this.released = false;
+        this.startedAt = this.now();
         try {
             this.store.load();
             this.onState = (event) => this.handleState(event);
@@ -459,7 +464,13 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
                 this.waiting.delete(udid);
             }
         }
-        if (due && !inUse) {
+        // Right after a restart the tracker may not have listed the phone, nor the monitor read
+        // its lock: a run then would end as not connected and be pushed, or start on a phone in
+        // use. It waits for both, for `START_WAIT_MS` at most.
+        const starting =
+            now - this.startedAt < START_WAIT_MS &&
+            (!this.options?.isConnected(udid) || this.monitor.getState(udid)['device.locked'] === 'unknown');
+        if (due && !inUse && !starting) {
             // Stored before the run starts, so a write that fails starts nothing and a server
             // that keeps restarting does not open a session each time.
             this.store.setRunState(udid, { retryAt: now + UNLOCK_HOURLY_RETRY_MS });

@@ -2057,7 +2057,10 @@ the process started at. A timer that fires early leaves a short remainder and is
 for it. The tick five seconds after start stays, and a minute that falls inside those five
 seconds is left to it: the tracker has not listed the phones yet, and a run would end as
 `skipped-disconnected`. So a server restarted within five seconds of a slot starts that run up
-to five seconds late; any earlier restart does not move it.
+to five seconds late; any earlier restart does not move it. For the first two minutes after a
+start (`START_WAIT_MS`), a run that is due also waits until the tracker lists the phone and the
+monitor has a lock reading, so a restart after a slot neither ends the run as not connected
+(with a push) nor starts it on a phone in use. After two minutes it runs either way.
 
 **A slot owes a run until it is settled** (`tickDevice`, `settleSlot`). When a slot arrives,
 `lastSlotAt` is written and `retryAt` is set to the slot: "a run is owed, not before this time".
@@ -2090,8 +2093,8 @@ and the run starts at the first tick where the phone no longer reads unlocked, a
 the next slot. The status carries `waitingForLock` meanwhile (broadcast once), which the panel
 shows as "Runs when the phone is next locked". If the driver's own fresh reading finds the phone
 unlocked after a session was opened, the slot stays owed and is looked at again ten minutes
-later. An unknown lock state does not wait: the driver decides, and types only on a fresh
-locked reading.
+later. An unknown lock state does not wait, except in the first two minutes after a start:
+the driver decides, and types only on a fresh locked reading.
 
 **The lockout.** `isPasscodeLockout` (`IosUnlockSchedule.ts`) is the one place the refusal is
 matched: pymobiledevice3 11.44.0's `PasswordRequiredError` text ("Device is password protected.
