@@ -1,8 +1,8 @@
 /* eslint-disable */
 // Run with: node scripts/test-browser.js android-stream
-// The Android stream page in a real browser, with every socket mocked: a second scrcpy_initial
-// (rotation), a swipe that starts beside the picture, the mouse wheel, and the Settings sheet
-// without the Fit screen toggle. No frame is decoded: the bundled Chromium has no H.264.
+// The Android stream page in a real browser, with every socket mocked: recovery from a real
+// decoder error, a second scrcpy_initial (rotation), a swipe that starts beside the picture, the
+// mouse wheel, and the Settings sheet without the Fit screen toggle.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
