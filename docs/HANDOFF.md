@@ -2177,7 +2177,7 @@ reads both forms. `canonicalRoute` turns an older `action=stream`, `stream-cored
 address into the new form. Files keeps `action=list-files`, because `FileListingClient` reads that
 action from `location.hash` (`routeParams`, `identityOf`); a new-form Files address is turned into
 the older one. `KEEPS_OLD_ADDRESS` in `routes.ts` is the one switch to flip when Files reads the
-new form. `clientParams` gives the stream and tool clients the older action, which they parse and
+new form. (Step 3b flipped it and removed the switch; Files now has the new address.) `clientParams` gives the stream and tool clients the older action, which they parse and
 open their sockets with. `deviceHref` and `followLink` (`state/links.ts`) build a phone link
 without `player` or `ws` and follow it through the router; no view uses them yet. The service
 worker needed only a comment: it leaves alone a window whose address has a `udid`, and both forms
@@ -2265,3 +2265,133 @@ per open and per Back on a real iPhone; an older Android link on a real phone. H
 made by the app before this deploy have no `nav`; the first Back onto one tags it as if it were
 ahead of the page, so `goUp` can aim at the wrong entry for that tab, and once leave the app if
 another site comes before it. Closing and reopening the tab or the installed app clears this.
+
+### Redesign step 3b: one page per phone, Back closes overlays, Notifications in its address (2026-11-11, fixture-tested only)
+
+Packages p3-overlays, p3-tools-nav, p3-device-page and p3-notifications-nav, merged into
+`redesign` in that order. The plan is `docs/REDESIGN-PLAN.md`. Each package had a worker branch
+`work/<key>` and a review branch `review/<key>`. They are not named `redesign/<key>`: git keeps a
+branch as a file path, so a branch `redesign/<key>` cannot exist next to the branch `redesign`.
+Nothing below has run on a phone, in WebKit or in the installed app.
+
+**Overlays and Back** (p3-overlays). Every sheet built on `ui/BottomSheet.tsx`, the controls
+panel on a phone (`FloatingToolbar.tsx`), Type text (`LiveTextOverlay.tsx`) and
+`NotificationActionSheet.tsx` call `useOverlayHistory`; every Files menu and dialog calls
+`openOverlay`. Each has a history entry while it is open. The browser's Back closes the top one
+and leaves the page and its stream socket alone. Opening or closing an overlay does not change
+the `route` signal, so no stream view mounts again. The close button, the backdrop and Escape
+step back over the entry. In a sheet, Back does what Escape does: it cancels a confirm prompt
+first, and it leaves Stream settings open while Apply runs (the `stays` option: the router steps
+forward to the sheet's entry again with `history.go(1)` and pushes nothing).
+`NotificationActionSheet` is a native modal `<dialog>`. Chrome on Android sends Back to it as a
+close request (a `cancel` event), and its `onCancel` also cancels a prompt first.
+
+**Entries are counted, not owned.** `router.ts` keeps the overlay entries on top of the page equal
+in number to the open overlays that have one (`settleOverlays`, run in a microtask). A sheet that
+takes the place of another in the same pass keeps the entry, with no history call. `release()`
+removes only the overlay released; overlays above it stay open. `pushOverlay` makes its entry in a
+microtask, not at once. `shown` follows the entry the tab is on, overlay entries included.
+
+**The press gate.** `ui/overlayHistory.ts` gives an overlay an entry only if the owner has pressed
+something (a trusted `keydown` other than Escape, `mousedown`, `pointerup` or `touchend`) since the
+page loaded and since the last step through history, the router's own steps included. Chrome skips
+an entry that a page added without a press, and the page under it with it. An overlay without an
+entry closes with its page, as every sheet did before. What follows from it: an overlay opened
+from `page.evaluate`, after `setInputFiles` or after a dropped file gets no entry unless a press
+came first; an overlay opened in a later task than the one that closed before it gets none; the
+upload question asked after the browser's Back has none, so a second Back is refused like the first
+and the question stays.
+
+**Changes within the page.** A replace that stays on the page (`switchRoute` or `replaceRoute`: a
+corrected Files path, a Notifications filter or search, another player) is written at once on the
+entry the tab is on and leaves the overlays open. On an overlay's entry it is marked `nav.moved`,
+and the entry below takes the address and state when the overlay's entry is left (`carryDown`,
+also after a reload). A push within the page (a Files folder step, which Files writes when the
+folder's STAT arrives) and a change to another page close every overlay first. So a sheet opened
+while a folder step is still being checked closes when the step arrives.
+
+**Fixed while integrating.** (1) After Switch, the switcher's entry stays ahead of the page with
+the earlier phone's address. Forward reached it, and its `hashchange` showed that phone for a
+moment: its stream started and stopped. The router now ignores the `hashchange` of an overlay
+entry it steps over on the way back to the page that is shown (`passing` in `router.ts`). (2)
+Files released a question's entry before the next question opened. The step back over it cleared
+the press that answered, so the next question got no entry and Back left Files. A closed question
+now gives up its entry a task later (`dialogRelease` in `FileListingClient.ts`), unless the next
+question has taken it over by then. (3) The bell (`ui/NotificationsLink.tsx`) was a plain link. A
+Files menu closes on the tap outside it and steps back over its entry, and that step undid the
+link. The bell now follows its link through the router (`followLink`), which waits for the step.
+
+**One phone page** (p3-device-page). `DevicePage` builds the tab strip of an Android phone (Screen,
+Files, Shell: `DEVICE_TABS` filtered by the tools in the build) and hands it to the views; an
+iPhone has none. The stream view is mounted only while `view=screen`, so the stream stops at once
+on another tab. Files and Shell are each mounted the first time their tab is shown (one
+`ToolRoute` per tool, keyed by phone and server) and stay, hidden, until the page is left for
+another phone, the list or Notifications. A hidden tool is `main.tool-view[hidden]`: fixed,
+`visibility: hidden`, not `display: none`, so a modal dialog it opens is still shown. It keeps its
+workspace at the offset the header and tabs had, so Shell is not refitted and the phone's
+terminal is not resized by a tab change. A tab change is
+`switchRoute(deviceRoute(udid, view, the rest of the address without ws and path))`, so a player
+chosen in Settings survives it. The Files tab link carries the default folder only while Files is
+not mounted. `ToolView` tells a tool `setActive(false)` and `setActive(true)` through `MountedTool`,
+calls `navigate(path)` on an address change only when the address names a folder, and does not
+retry a hidden tool's lost connection until its tab is shown. The header stays inside each view
+(`AppBar`), because the typing layout, the tool view's keyboard height and the `.tool-view` rules
+need it as a child.
+
+**Tool clients** (p3-tools-nav). A hidden Shell keeps its session and output, gives up focus,
+drops a waiting size message and is not fitted. Shown again it is fitted, sends a size the phone
+does not have yet, and takes focus on a desktop. A hidden Files keeps its folder, connection and
+uploads, closes its menu and dialog, handles no keys and writes no address or history. Shown again
+it writes its folder into the address with a replace when the address names none, tags the entry
+with its place, shows a result or failure it held while hidden, and lists the folder again unless
+a selection, a filter, a listing or an upload is under way. The upload leave guard compares the
+phone (udid and the proxied-host keys), not the view: a tab change asks nothing, and leaving the
+phone's page asks from whichever tab is shown. The question ("Leaving this phone stops the upload,
+and the file is not saved on it.") opens from a holder on `document.body` with the class
+`file-explorer`, so `.file-explorer` matches two elements while it is open.
+
+**Addresses and links.** Files has the phone page's address,
+`#!action=device&udid=..&view=files&path=..`; `KEEPS_OLD_ADDRESS` is gone, and an older
+`action=list-files` link is rewritten in place. `clientParams` still gives the clients the older
+action their sockets open with. Card, switcher and refused-page links use `deviceHref` and
+`followLink`; the only link that names a player is the card's "Open with <player>". List to a
+phone is an open; Switch, a tab change, the player change and the refused page's "Open screen"
+are switches. No view assigns `location.hash` or calls `location.assign` for an in-app address.
+
+**Header and names.** StreamView, CoreDeviceStreamView, ToolView, ToolUnavailable, the
+not-connected state and Notifications draw `AppBar`. The list heading, its tab title and every
+back control say Phones, and the Actions sheets have no exit row. `AppBar` renders the title as
+`<strong>`, so Notifications has no `h1`.
+
+**Notifications** (p3-notifications-nav). The view is its address:
+`#!action=notifications[&source=][&panel=setup][&filter=unread|archive][&app=][&q=][&notification=]`,
+defaults left out. `state/notificationPage.ts` reads and builds it and imports no router;
+`state/notificationNav.ts` writes it with `switchRoute` and writes nothing when another page is
+shown. The search text is written 400 ms after the last key (Safari limits history writes) and at
+once before a screen is opened. A push link's `notification` parameter leaves the address once the
+notification is found. A link to an iPhone that is not linked writes `panel=setup`. The scroll
+position and list length are kept in memory under the address when a screen is opened from the
+inbox, and restored once on the return; a reload does not restore them.
+
+**Kept on purpose.** `App.tsx:29` `onPageChange(closeAllSheets)`: SettingsSheet refuses `onClose`
+while Apply runs, so only this closes it on a page change, and a sheet opened without a press has
+no entry for the router to close. The `closeAllSheets()` calls in the mount and unmount effects of
+`StreamView`, `CoreDeviceStreamView` and `ToolView` stay; the mount ones close a sheet when a
+stream or tool restarts on the same page, which the router does not see as a page change.
+
+**Tests.** `scripts/test-routes.js`, `test-files.js`, `test-shell.js` and
+`test-notification-page.js` (all in `npm test`) cover the router, the hidden tools and the
+Notifications address. New browser suites, in the default list: `overlay-back` (Back with each
+overlay on both stream views, the list and Notifications), `device-page` (tabs, the tools kept
+behind them, Switch and Forward, links) and `history-walk` (a walk across the pages at 390x844 and
+1280x800, a corrected Files path under the switcher, a folder step under it, an older Files link).
+Suites that compare history after a sheet has closed count `history.state.nav.index`: the sheet's
+entry stays ahead of the page, and `history.length` counts it.
+
+**Not verified.** The Back gesture in Android Chrome and in the installed app; Chrome's rule that
+skips an entry added without a press (Playwright's `goBack` goes to the entry directly);
+`carryDown` and `history.go(1)` from a `popstate` handler in WebKit; Safari's swipe back and its
+keyboard for Type text; Chrome's close request for the notification sheet; the Android stream
+stopping and starting across tabs on a phone, with the server's 30 s grace; one iPhone session per
+open after Switch and from a notification; Safari's pacing of `replaceState` for the search text;
+the safe-area inset of the Notifications header in the installed app.
