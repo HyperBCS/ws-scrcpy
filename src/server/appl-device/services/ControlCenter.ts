@@ -46,8 +46,9 @@ interface Tracked {
  *
  * `usbmux list --simple --usb` gives the set of attached UDIDs (no lockdown, so an untrusted
  * phone still shows up). It is read when usbmuxd reports a change (`UsbmuxListener`) and once a
- * minute, or every 3 s where that feed is not available. At 3 s it was 28,800 Python processes a
- * day for a server with nothing plugged in. Each new device gets one `lockdown info` (which raises
+ * minute, or every 3 s where that feed is not available or a phone has not answered lockdown yet
+ * (`waitingForLockdown`). At 3 s it was 28,800 Python processes a day for a server with nothing
+ * plugged in. Each new device gets one `lockdown info` (which raises
  * the Trust prompt through pymobiledevice3's autopair) plus `amfi developer-mode-status`. The
  * emitted `ApplDeviceDescriptor` also mirrors the screen-session state from `CoreDeviceRunner`
  * so the device list can show Starting/Running like it does for scrcpy, and the screen/lock
@@ -244,8 +245,22 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
                     .catch((error: Error) => console.error(`${TAG} ${error.message}`))
                     .finally(() => this.schedulePoll());
             },
-            this.listener?.isReady() ? POLL_LISTENING_MS : POLL_INTERVAL_MS,
+            this.listener?.isReady() && !this.waitingForLockdown() ? POLL_LISTENING_MS : POLL_INTERVAL_MS,
         );
+    }
+
+    /**
+     * An attached phone that lockdown has not answered for yet: untrusted, or still booting. Its
+     * next lockdown read is due UNPAIRED_RETRY_MS later and comes from a poll, and usbmuxd sends
+     * nothing when "Trust This Computer" is accepted, so the short poll stays until it answers.
+     */
+    private waitingForLockdown(): boolean {
+        for (const item of this.tracked.values()) {
+            if (item.descriptor.state !== DeviceState.DISCONNECTED && !item.descriptor.paired) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** One pass: reconcile attached UDIDs with what is tracked. Test seam via `listUdids`. */

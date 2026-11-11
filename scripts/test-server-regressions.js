@@ -17,9 +17,12 @@ process.env.WS_SCRCPY_STREAM_CONFIG_PATH = path.join(temporary, 'stream-config.j
 const previousDataDir = process.env.WS_NOTIFICATION_DATA;
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
 // The tracker must not listen on this machine's real usbmuxd socket from a test, and the state
-// monitor must not start the installed pymobiledevice3 as its notification observer.
+// monitor must start nothing at all: its observer is the installed pymobiledevice3, its lock walk
+// runs python/probes/lockstate.py with the venv's Python, and a screen read that outlives a test's
+// runJson mock would start the installed CLI too.
 process.env.IOS_USBMUX_LISTEN = '0';
 process.env.IOS_STATE_NOTIFICATIONS = '0';
+process.env.IOS_STATE_PROBE = '0';
 require('ts-node').register({ transpileOnly: true });
 // Webpack treats these imports as assets. Node only needs the surrounding server classes.
 require.extensions['.jar'] = () => {};
@@ -1553,6 +1556,68 @@ test('iOS tracking: usbmuxd events replace the 3 s poll, which returns when the 
     assert.equal(feed.stopped, true);
     feed.emit('change');
     assert.equal(lists, 8, 'a released tracker ignores the feed');
+});
+
+test('iOS tracking: with usbmuxd events up, an untrusted phone is still asked again every 10 s', async (t) => {
+    // usbmuxd sends nothing when "Trust This Computer" is accepted: only the next lockdown read
+    // notices, and that read comes from a poll.
+    let trusted = false;
+    let lists = 0;
+    let infos = 0;
+    t.mock.method(PyMobileDevice, 'runJson', async (args) => {
+        if (args[0] === 'usbmux') {
+            lists++;
+            return ['iphone-trust'];
+        }
+        if (args[0] === 'lockdown' && args[1] === 'info') {
+            infos++;
+            if (!trusted) throw new Error('PairingDialogResponsePendingError');
+            return { DeviceName: 'Trust', ProductType: 'iPhone14,5', ProductVersion: '27.0' };
+        }
+        if (args[0] === 'lockdown') return 'en-US';
+        if (args[0] === 'amfi') return true;
+        throw new Error(`unexpected ${args.join(' ')}`);
+    });
+    t.mock.method(console, 'error', () => undefined);
+    const feed = Object.assign(new EventEmitter(), {
+        isReady: () => true,
+        start: () => undefined,
+        stop: () => undefined,
+    });
+    class Tracker extends IosControlCenter {
+        createListener() {
+            return feed;
+        }
+    }
+    const tracker = new Tracker();
+    // A new phone counts as due for its first read only against a real clock.
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+    const advance = async (ms) => {
+        t.mock.timers.tick(ms);
+        for (let i = 0; i < 6; i++) await tick();
+    };
+    try {
+        await tracker.init();
+        await advance(0);
+        assert.equal(tracker.getDescriptor('iphone-trust').state, 'unauthorized');
+        assert.equal(infos, 1);
+        for (let i = 0; i < 4; i++) await advance(3000);
+        assert.equal(infos, 2, 'lockdown is asked again after 10 s, as without the feed');
+        trusted = true;
+        for (let i = 0; i < 4; i++) await advance(3000);
+        assert.equal(infos, 3);
+        assert.equal(tracker.getDescriptor('iphone-trust').state, 'Connected');
+        await advance(3000);
+        const settled = lists;
+        await advance(30000);
+        assert.equal(lists, settled, 'a trusted phone leaves the list to usbmuxd events');
+        await advance(30000);
+        assert.equal(lists, settled + 1);
+    } finally {
+        tracker.release();
+        t.mock.timers.reset();
+        CoreDeviceRunner.getInstance().release();
+    }
 });
 
 test('iOS device list: a socket that closes while the tracker starts leaves no listener behind', async (t) => {

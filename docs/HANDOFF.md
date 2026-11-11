@@ -1757,7 +1757,10 @@ get-state brought up a userspace tunnel beside serve-web's. Two changes:
 
 - `UsbmuxListener` holds one connection to usbmuxd's socket with a `Listen` request. Its
   messages are only a signal: on any of them the tracker runs `usbmux list` at once (150 ms
-  debounce). While the feed is up the regular poll is every 60 s, not 3 s. The list itself still
+  debounce). While the feed is up the regular poll is every 60 s, not 3 s, except while an
+  attached phone has not answered lockdown yet (untrusted, or still booting): usbmuxd sends
+  nothing when "Trust This Computer" is accepted, so that phone keeps the 3 s poll and its
+  lockdown retry every 10 s until it answers. The list itself still
   comes from the CLI, so a feed that misbehaves can only make an attach or detach show up to a
   minute late; it cannot hide a phone. No socket, a refused `Listen` or `IOS_USBMUX_LISTEN=0`
   leave the 3 s poll in place. The framing is written from the usbmuxd protocol and tested
