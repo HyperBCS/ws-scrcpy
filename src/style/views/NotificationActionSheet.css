@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 .notification-action-sheet {
     position: fixed;
     inset: auto 0 0;
@@ -112,7 +115,9 @@
     cursor: default;
 }
 
-.notification-action-sheet button:focus-visible,
+/* Not the buttons of a confirm prompt inside the sheet: the prompt sets its own focus ring, and
+   in a layer below this one it could not win. `:where()` leaves the weight of the rule alone. */
+.notification-action-sheet button:focus-visible:where(:not(.confirm-prompt-button)),
 .notification-action-sheet a:focus-visible {
     outline: 2px solid var(--link-color);
     outline-offset: -2px;
@@ -185,4 +190,5 @@
 }
 .notification-action-sheet .confirm-prompt {
     margin: 4px 0 8px;
+}
 }

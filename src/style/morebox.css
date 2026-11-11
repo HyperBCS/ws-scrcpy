@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 .text-area {
     width: 100%;
     resize: vertical;
@@ -9,7 +12,7 @@
     right: var(--panel-width);
     background-color: var(--controls-bg-color);
     z-index: 2;
-    padding: 0 .714rem .714rem .714rem;
+    padding: 0 9.996px 9.996px 9.996px;
 }
 
 /* Reparented into `ToolsSheet` (see that component) instead of the old UA-gated toolbar toggle:
@@ -26,7 +29,7 @@
 
 .text-with-shadow, .more-box label {
     color: var(--text-color);
-    text-shadow: var(--text-shadow-color) 0 0 .357rem;
+    text-shadow: var(--text-shadow-color) 0 0 4.998px;
 }
 
 .spoiler > input ~ .box {
@@ -53,4 +56,5 @@
 
 .spoiler > input {
     display: none;
+}
 }

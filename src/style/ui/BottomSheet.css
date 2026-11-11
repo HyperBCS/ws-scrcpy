@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 .bottom-sheet-root {
     position: fixed;
     inset: 0;
@@ -41,10 +44,10 @@
     flex-direction: column;
     background-color: var(--device-list-default-color);
     color: var(--text-color);
-    border-radius: 1.4rem 1.4rem 0 0;
+    border-radius: 19.6px 19.6px 0 0;
     border: 1px solid var(--device-border-color);
     border-bottom: 0;
-    box-shadow: 0 -0.2rem 1rem rgba(0, 0, 0, 0.3);
+    box-shadow: 0 -2.8px 14px rgba(0, 0, 0, 0.3);
     /* Must clear the control-bar inset too: `bottom` lifts the sheet off the viewport edge, so
        translating by its own height alone leaves it peeking above the bar while "closed". */
     transform: translateY(var(--sheet-drag-y, 0px));
@@ -104,7 +107,7 @@
     min-width: 0;
     overflow-wrap: anywhere;
     margin: 0;
-    font-size: 1.25rem;
+    font-size: 17.5px;
     font-weight: bold;
 }
 
@@ -112,7 +115,7 @@
 .bottom-sheet-subtitle {
     margin: 2px 0 0;
     color: var(--text-color-light);
-    font-size: 0.93rem;
+    font-size: 13.02px;
     line-height: 1.35;
     overflow-wrap: anywhere;
 }
@@ -169,24 +172,24 @@
 .bottom-sheet-row {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: 8.4px;
     min-height: 44px;
-    padding: 0.4rem 0;
+    padding: 5.6px 0;
 }
 
 .bottom-sheet-row input[type='checkbox'] {
-    width: 1.4rem;
-    height: 1.4rem;
+    width: 19.6px;
+    height: 19.6px;
 }
 
 .bottom-sheet-list-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.6rem;
+    gap: 8.4px;
     width: 100%;
     min-height: 44px;
-    padding: 0.5rem 0.2rem;
+    padding: 7px 2.8px;
     background: transparent;
     border: none;
     border-bottom: 1px solid var(--device-border-color);
@@ -207,23 +210,23 @@
 
 .bottom-sheet-hint {
     display: block;
-    font-size: 0.78rem;
+    font-size: 10.92px;
     color: var(--text-color-light);
 }
 
 /* Shared sheet controls. `ActionsSheet` is native Preact now; it replaces the reparented
    `GoogMoreBox`, whose vanilla DOM never matched the rest of the sheet UI. */
 .sheet-section-title {
-    font-size: 0.8rem;
+    font-size: 11.2px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.448px;
     color: var(--text-color-light);
-    margin: 0.9rem 0 0.2rem;
+    margin: 12.6px 0 2.8px;
 }
 
 .sheet-section-title:first-child {
-    margin-top: 0.2rem;
+    margin-top: 2.8px;
 }
 
 .sheet-button-row {
@@ -232,13 +235,13 @@
 
 .sheet-button {
     min-height: 44px;
-    padding: 0 0.9rem;
+    padding: 0 12.6px;
     font: inherit;
-    font-size: 1rem;
+    font-size: 14px;
     color: var(--button-text-color);
     background-color: transparent;
     border: 1px solid var(--button-border-color);
-    border-radius: 0.5rem;
+    border-radius: 7px;
     cursor: pointer;
 }
 
@@ -252,27 +255,27 @@
 }
 
 .sheet-input {
-    flex: 1 1 8rem;
+    flex: 1 1 112px;
     min-width: 0;
     min-height: 44px;
-    padding: 0 0.6rem;
+    padding: 0 8.4px;
     font: inherit;
     /* iOS zooms fields smaller than 16px, moving the remote screen under the keyboard. */
     font-size: 16px;
     color: var(--text-color);
     background-color: var(--main-bg-color);
     border: 1px solid var(--control-border-color);
-    border-radius: 0.5rem;
+    border-radius: 7px;
 }
 
 .sheet-readout {
-    padding: 0.5rem 0.6rem;
-    border-radius: 0.5rem;
+    padding: 7px 8.4px;
+    border-radius: 7px;
     background-color: var(--device-list-stripe-color);
     font-family: var(--font-stack-mono);
-    font-size: 0.8rem;
+    font-size: 11.2px;
     word-break: break-word;
-    max-height: 6rem;
+    max-height: 84px;
     overflow-y: auto;
 }
 
@@ -299,7 +302,7 @@
         margin: 0 auto;
         width: min(560px, calc(100% - 48px));
         max-height: min(720px, calc(100% - var(--sheet-top) - 32px));
-        border-radius: 1.4rem;
+        border-radius: 19.6px;
         border-bottom: 1px solid var(--device-border-color);
         transform: none;
     }
@@ -318,7 +321,7 @@
     }
 
     .bottom-sheet-header {
-        padding-top: 1rem;
+        padding-top: 14px;
     }
 }
 
@@ -348,4 +351,5 @@
     to {
         opacity: 1;
     }
+}
 }

@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 /* Grouped setting rows shared by the Actions and Settings sheets (see ui/SheetControls.tsx). */
 .sheet-group {
     margin: 0 0 22px;
@@ -8,14 +11,14 @@
 }
 .sheet-group-title {
     margin: 0 0 6px 2px;
-    font-size: 0.95rem;
+    font-size: 13.3px;
     font-weight: 600;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.133px;
     color: var(--text-color);
 }
 .sheet-group-hint {
     margin: 0 0 8px 2px;
-    font-size: 0.93rem;
+    font-size: 13.02px;
     line-height: 1.45;
     color: var(--text-color-light);
     overflow-wrap: anywhere;
@@ -52,12 +55,12 @@
     gap: 3px;
 }
 .sheet-row-title {
-    font-size: 1rem;
+    font-size: 14px;
     font-weight: 600;
     line-height: 1.35;
 }
 .sheet-row-desc {
-    font-size: 0.93rem;
+    font-size: 13.02px;
     line-height: 1.45;
     color: var(--text-color-light);
     overflow-wrap: anywhere;
@@ -86,7 +89,7 @@
     white-space: nowrap;
 }
 .sheet-row .sheet-input {
-    flex: 1 1 8rem;
+    flex: 1 1 112px;
 }
 
 .sheet-button.primary {
@@ -160,7 +163,7 @@
    normal text colour so they can be read; the icon carries the tone. */
 .sheet-status {
     margin: 8px 2px 0;
-    font-size: 0.93rem;
+    font-size: 13.02px;
     line-height: 1.45;
     color: var(--text-color);
     overflow-wrap: anywhere;
@@ -201,10 +204,10 @@
     accent-color: var(--accent-solid, #2563eb);
 }
 .sheet-volume output {
-    flex: 0 0 3.2em;
+    flex: 0 0 41.664px;
     text-align: right;
     font-variant-numeric: tabular-nums;
-    font-size: 0.93rem;
+    font-size: 13.02px;
     color: var(--text-color-light);
 }
 
@@ -221,7 +224,7 @@
     min-height: 52px;
     padding: 10px 14px;
     box-sizing: border-box;
-    font-size: 1rem;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
 }
@@ -231,14 +234,14 @@
 .sheet-details > summary::after {
     content: '+';
     margin-left: auto;
-    font-size: 1.2rem;
+    font-size: 16.8px;
     color: var(--text-color-light);
 }
 .sheet-details[open] > summary::after {
     content: '−';
 }
 .sheet-details > summary > span {
-    font-size: 0.93rem;
+    font-size: 13.02px;
     font-weight: 400;
     color: var(--text-color-light);
 }
@@ -251,7 +254,7 @@
     gap: 4px 12px;
     margin: 0;
     padding: 4px 14px 12px;
-    font-size: 0.93rem;
+    font-size: 13.02px;
     color: var(--text-color-light);
 }
 .sheet-facts dt {
@@ -284,4 +287,5 @@
     .sheet-switch::after {
         transition: none;
     }
+}
 }

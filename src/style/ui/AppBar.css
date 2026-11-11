@@ -1,9 +1,10 @@
+@layer tokens, base, components, views;
+
+@layer components {
 /* The header of every page below the list (`ui/AppBar.tsx`): back, title, one status line,
    actions. These are the stream header's rules, moved here unchanged with the component, which
-   the stream, tool and refused-tool views now draw. `views/StreamView.css` imports this file
-   at its top, so in the bundle these rules come just before the `.stream-view`,
-   `.stream-stage` and `.stream-mount` rules instead of just after them. Neither group selects
-   the other's elements, so no element is styled differently. */
+   the stream, tool and refused-tool views now draw. A rule of a page that changes the header
+   is in the views layer, so it wins over these wherever its file comes in the bundle. */
 .stream-header {
     display: flex;
     flex: 0 0 auto;
@@ -74,4 +75,5 @@
 .stream-header-switch {
     padding: 0 12px;
     font-weight: 600 !important;
+}
 }

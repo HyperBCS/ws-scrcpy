@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 .notifications-link,
 .notifications-link:visited {
     position: relative;
@@ -5,16 +8,16 @@
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    gap: 0.4rem;
+    gap: 5.6px;
     box-sizing: border-box;
     min-width: 44px;
     height: 44px;
-    padding: 0 0.7rem;
+    padding: 0 9.8px;
     border: 1px solid var(--device-border-color);
     border-radius: var(--radius-control);
     background: var(--device-list-default-color);
     color: var(--text-color);
-    font: 600 0.9rem/1 var(--font-stack);
+    font: 600 12.6px/1 var(--font-stack);
     text-decoration: none;
     cursor: pointer;
 }
@@ -50,7 +53,7 @@
 }
 @media (max-width: 479px) {
     .notifications-link:not(.compact) {
-        padding: 0 0.6rem;
+        padding: 0 8.4px;
     }
     .notifications-link-label {
         display: none;
@@ -60,4 +63,5 @@
     .notifications-link:hover {
         border-color: var(--button-text-color);
     }
+}
 }

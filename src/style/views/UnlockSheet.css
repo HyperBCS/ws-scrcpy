@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 .lock-screen-notice {
     position: relative;
     z-index: 6;
@@ -122,7 +125,7 @@
     padding: 12px 14px;
     font: inherit;
     font-size: 18px;
-    letter-spacing: 0.15em;
+    letter-spacing: 2.7px;
     border: 1px solid var(--control-border-color);
     border-radius: 12px;
     color: var(--text-color);
@@ -163,4 +166,5 @@
 .unlock-sheet-content :disabled {
     cursor: default;
     opacity: 0.55;
+}
 }

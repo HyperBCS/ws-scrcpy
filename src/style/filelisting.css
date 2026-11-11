@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer views {
 /* Device file explorer. Compact by default on a mouse, and every control grows to a 44px touch
    target on coarse pointers -- the phone browser is the primary client, so the layout follows the
    input device rather than the viewport width. */
@@ -649,9 +652,17 @@ body.file-listing-page {
     line-height: 1.45;
 }
 
+/* Sizes below that were a share of the explorer's own size are written for both of its sizes:
+   12.5px, and 13.5px on a touch screen. */
 .fx-failed-box strong {
     color: var(--text-color);
-    font-size: 1.1em;
+    font-size: 13.75px;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .fx-failed-box strong {
+        font-size: 14.85px;
+    }
 }
 
 .fx-failed-reason,
@@ -771,7 +782,13 @@ body.file-listing-page {
 .file-explorer[data-view='tiles'] .entry-size {
     display: block;
     text-align: center;
-    font-size: 0.85em;
+    font-size: 10.625px;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .file-explorer[data-view='tiles'] .entry-size {
+        font-size: 11.475px;
+    }
 }
 
 .file-explorer[data-view='tiles'] .fx-row[data-kind='folder'] .entry-size {
@@ -852,10 +869,20 @@ body.file-listing-page {
 .fx-menu [role='menuitemcheckbox']::before {
     content: '';
     display: inline-block;
-    width: 1em;
-    height: 1em;
-    margin-right: 0.35em;
-    vertical-align: -0.15em;
+    width: 12.5px;
+    height: 12.5px;
+    margin-right: 4.375px;
+    vertical-align: -1.875px;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .fx-menu [role='menuitemradio']::before,
+    .fx-menu [role='menuitemcheckbox']::before {
+        width: 13.5px;
+        height: 13.5px;
+        margin-right: 4.725px;
+        vertical-align: -2.025px;
+    }
 }
 
 .fx-menu [role='menuitemradio'][aria-checked='true']::before,
@@ -876,10 +903,17 @@ body.file-listing-page {
 .fx-menu-title {
     padding: 4px 8px 2px;
     color: var(--text-color-light);
-    font-size: 0.9em;
+    font-size: 11.25px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.675px;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .fx-menu-title {
+        font-size: 12.15px;
+        letter-spacing: 0.729px;
+    }
 }
 
 /* ------------------------------------------------------------------ status bar */
@@ -894,7 +928,13 @@ body.file-listing-page {
     border-top: 1px solid var(--device-border-color);
     background: var(--header-bg-color);
     color: var(--text-color-light);
-    font-size: 0.92em;
+    font-size: 11.5px;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .fx-statusbar {
+        font-size: 12.42px;
+    }
 }
 
 .fx-counts {
@@ -1223,8 +1263,14 @@ body.file-listing-page {
     .file-explorer[data-view='details'] .entry-time {
         padding-top: 1px;
         padding-bottom: 6px;
-        font-size: 0.86em;
+        font-size: 10.75px;
         line-height: 1.2;
+    }
+    @media (hover: none) and (pointer: coarse) {
+        .file-explorer[data-view='details'] .entry-size,
+        .file-explorer[data-view='details'] .entry-time {
+            font-size: 11.61px;
+        }
     }
     .file-explorer[data-view='details'] .fx-empty-row,
     .file-explorer[data-view='details'] .fx-empty-row > .fx-empty {
@@ -1281,4 +1327,5 @@ body.file-listing-page {
 .fx-menu[data-exiting],
 .fx-dialog[data-exiting] {
     pointer-events: none;
+}
 }

@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 /* The screen shown when a view could not be drawn (ui/ErrorBoundary.tsx). */
 .screen-failed {
     box-sizing: border-box;
@@ -17,14 +20,14 @@
 }
 .screen-failed h1 {
     margin: 0;
-    font-size: 1.25rem;
+    font-size: 17.5px;
     font-weight: 700;
 }
 .screen-failed p {
     margin: 0;
-    max-width: 32rem;
+    max-width: 448px;
     color: var(--text-color-light);
-    font-size: 1rem;
+    font-size: 14px;
     line-height: 1.45;
 }
 .screen-failed-actions {
@@ -42,7 +45,7 @@
     background: var(--device-list-default-color);
     color: var(--text-color);
     font: inherit;
-    font-size: 1rem;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
 }
@@ -68,4 +71,5 @@
     border-radius: var(--radius-panel);
     background: var(--device-list-default-color);
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+}
 }

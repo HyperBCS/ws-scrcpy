@@ -1,3 +1,6 @@
+@layer tokens, base, components, views;
+
+@layer components {
 /* The shared confirm prompt. It sets its own button styles so it looks the same in a sheet,
    on a device card and on the notifications page, whose own button rules differ. */
 .confirm-prompt {
@@ -21,7 +24,7 @@
 .confirm-prompt .confirm-prompt-question {
     margin: 0;
     color: var(--text-color);
-    font-size: 0.95rem;
+    font-size: 13.3px;
     font-weight: 650;
     line-height: 1.35;
     overflow-wrap: anywhere;
@@ -29,7 +32,7 @@
 .confirm-prompt .confirm-prompt-consequence {
     margin: 4px 0 0;
     color: var(--text-color-light);
-    font-size: 0.86rem;
+    font-size: 12.04px;
     font-weight: normal;
     line-height: 1.45;
     overflow-wrap: anywhere;
@@ -61,13 +64,13 @@
     min-width: 88px;
     min-height: 44px;
     margin: 0;
-    padding: 0 0.9rem;
+    padding: 0 12.6px;
     border: 1px solid var(--button-border-color);
-    border-radius: 0.5rem;
+    border-radius: 7px;
     background: var(--device-list-default-color, var(--main-bg-color));
     color: var(--text-color);
     font: inherit;
-    font-size: 0.9rem;
+    font-size: 12.6px;
     font-weight: 600;
     line-height: 1.25;
     text-align: center;
@@ -100,4 +103,5 @@
 /* Inside a disclosure card the rows carry their own side padding. */
 .sheet-details .confirm-prompt {
     margin: 8px 14px 12px;
+}
 }

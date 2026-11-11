@@ -1,11 +1,15 @@
+@layer tokens, base, components, views;
+
+@layer components {
 .tracker-status-notice {
     margin: 0 0 16px;
-    padding: 0.7rem 0.85rem;
+    padding: 9.8px 11.9px;
     border: 1px solid color-mix(in srgb, var(--status-starting-color) 45%, transparent);
     border-radius: var(--radius-control);
     background: color-mix(in srgb, var(--status-starting-color) 10%, transparent);
     color: var(--text-color);
-    font-size: 0.85rem;
+    font-size: 11.9px;
     line-height: 1.4;
     overflow-wrap: anywhere;
+}
 }
