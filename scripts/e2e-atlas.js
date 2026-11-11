@@ -41,6 +41,8 @@ const PIXEL_2 = 'ATLAS-PIXEL-0002';
 const PIXEL_3 = 'ATLAS-PIXEL-0003';
 const IPHONE = 'ATLAS-IPHONE-0001';
 const IPHONE_2 = 'ATLAS-IPHONE-0002';
+// A phone that is in no list.
+const MISSING = 'ATLAS-MISSING-0001';
 const android = (udid, model, extra = {}) => ({
     udid, state: 'device', pid: 123, interfaces: [], 'ro.product.model': model, 'ro.product.manufacturer': 'Google',
     'ro.build.version.release': '16', 'ro.build.version.sdk': '36', 'ro.product.cpu.abi': 'arm64-v8a',
@@ -414,6 +416,23 @@ async function iphoneStates(test) {
     await screenOverlays(test, 'iphone');
 }
 
+/** The pages a phone's address can lead to besides its tools, and a screen that is off. */
+async function otherStates(test) {
+    const { page } = test;
+    await page.goto(`${BASE}#!action=device&udid=${IPHONE}&view=shell`);
+    await page.getByRole('heading', { name: 'Shell is not available for this device', exact: true }).waitFor();
+    await shoot(test, 'tool-unavailable');
+
+    await page.goto(`${BASE}#!action=device&udid=${MISSING}&view=screen`);
+    await page.getByRole('heading', { name: 'This phone is not connected', exact: true }).waitFor();
+    await shoot(test, 'phone-not-listed');
+
+    await page.goto(BASE + screenOf(PIXEL_3));
+    await connected(page);
+    await page.locator('.sleep-overlay .sleep-overlay-button').waitFor();
+    await shoot(test, 'android-asleep');
+}
+
 /** Notifications: the inbox, the sheets it opens, and Setup. */
 async function notificationStates(test) {
     const { page } = test;
@@ -548,27 +567,28 @@ function compare() {
 
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
-    const browser = await chromium.launch({ args: RASTER_ARGS });
     try {
-        for (const viewport of VIEWPORTS) {
-            for (const theme of THEMES) {
-                const test = await start(browser, viewport, theme);
-                try {
-                    await listStates(test);
-                    await androidStates(test);
-                    await iphoneStates(test);
-                    await notificationStates(test);
-                    assert.deepEqual(test.errors, [], `${test.label}: no page error`);
-                    console.log(`PASS ${test.label}: ${test.shots} states written to ${OUT}`);
-                } finally {
-                    await test.context.close();
+        const browser = await chromium.launch({ args: RASTER_ARGS });
+        try {
+            for (const viewport of VIEWPORTS) {
+                for (const theme of THEMES) {
+                    const test = await start(browser, viewport, theme);
+                    try {
+                        await listStates(test);
+                        await androidStates(test);
+                        await iphoneStates(test);
+                        await notificationStates(test);
+                        await otherStates(test);
+                        assert.deepEqual(test.errors, [], `${test.label}: no page error`);
+                        console.log(`PASS ${test.label}: ${test.shots} states written to ${OUT}`);
+                    } finally {
+                        await test.context.close();
+                    }
                 }
             }
+        } finally {
+            await browser.close();
         }
-    } finally {
-        await browser.close();
-    }
-    try {
         if (COMPARE) compare();
     } finally {
         // An atlas nobody asked to keep is not left behind. Set ATLAS_OUT to look at the files.
