@@ -79,14 +79,16 @@
     width: 100%;
     height: 100%;
     max-height: none;
-    padding: var(--space-4);
+    /* No room at the sides: a caption of two words stays on one line in the 88px rail. */
+    padding: var(--space-4) 0;
     border: 0;
     border-radius: 0;
     box-shadow: none;
     scrollbar-width: thin;
 }
 
-/* One column without gaps: Listen, the eighth control, stays in view in a 600px window. */
+/* One column without gaps: the twelve controls of an Android phone fit a window 800px high,
+   and Listen, the eighth, stays in view in one of 600px. */
 .floating-toolbar.desktop .control-buttons-list.floating {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
