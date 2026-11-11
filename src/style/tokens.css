@@ -3,7 +3,7 @@
 @layer tokens {
 /* Role tokens. New rules use these. Nothing reads them yet: each screen moves to them in its own
    step, and the older names further down keep their values until the last screen has moved.
-   The colours here are the light theme; the dark theme is the block after this one. */
+   The colours here are the light theme; the dark theme is the last block of the file. */
 :root {
     --surface: #f5f6f8;
     --surface-raised: #ffffff;
@@ -75,31 +75,6 @@
 
     /* Breakpoints are 600px and 1024px. A media query cannot read a custom property, so rules
        write the numbers. */
-}
-
-@media (prefers-color-scheme: dark) {
-    :root {
-        --surface: #17191d;
-        --surface-raised: #202329;
-        --surface-sunken: #2a2e36;
-        --border: #343943;
-        --border-strong: #7d8490;
-        --text: #edf0f5;
-        --text-muted: #a0a7b3;
-        --accent-text: #8fb8f5;
-        --accent-soft: #1d2a47;
-        --danger-text: #f29a94;
-        --success-text: #5fd08a;
-        --success-fill: #1c3326;
-        --warning-text: #f0b849;
-        --warning-fill: #3a2f18;
-        --info-text: #aab4f2;
-        --info-fill: #252a45;
-        --neutral-text: #b4bac4;
-        --neutral-fill: #2c3038;
-        --scrim: rgba(0, 0, 0, 0.6);
-        --shadow-raised: 0 8px 30px rgba(0, 0, 0, 0.5);
-    }
 }
 
 /* The older names: shared surfaces, controls and motion. Motion tokens stay. */
@@ -178,8 +153,31 @@
     --status-danger-solid: hsl(0, 72%, 45%);
 }
 
+/* The dark theme of both sets of names. It is the one dark block and it comes after every light
+   value: the contrast test in scripts/test-sheet-ui.js reads the file as light, then dark. */
 @media (prefers-color-scheme: dark) {
     :root {
+        --surface: #17191d;
+        --surface-raised: #202329;
+        --surface-sunken: #2a2e36;
+        --border: #343943;
+        --border-strong: #7d8490;
+        --text: #edf0f5;
+        --text-muted: #a0a7b3;
+        --accent-text: #8fb8f5;
+        --accent-soft: #1d2a47;
+        --danger-text: #f29a94;
+        --success-text: #5fd08a;
+        --success-fill: #1c3326;
+        --warning-text: #f0b849;
+        --warning-fill: #3a2f18;
+        --info-text: #aab4f2;
+        --info-fill: #252a45;
+        --neutral-text: #b4bac4;
+        --neutral-fill: #2c3038;
+        --scrim: rgba(0, 0, 0, 0.6);
+        --shadow-raised: 0 8px 30px rgba(0, 0, 0, 0.5);
+
         color-scheme: dark;
         --main-bg-color: #17191d;
         --stream-bg-color: hsl(0, 0%, 20%);
