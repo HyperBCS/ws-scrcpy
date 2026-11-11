@@ -88,3 +88,25 @@ export function returnDialogFocus(panel: HTMLElement, fallback?: HTMLElement | n
     }
     (target ?? fallback)?.focus({ preventScroll: true });
 }
+
+const REMOTE_EVENTS = [
+    'touchstart',
+    'touchmove',
+    'touchend',
+    'touchcancel',
+    'mousedown',
+    'mousemove',
+    'mouseup',
+    'wheel',
+];
+
+/**
+ * The listeners that drive the phone are on `document.body`. A gesture in a sheet or a menu
+ * ends at `root`, the last touchend of a drag included; scrolling inside it still works.
+ * Returns what removes the stop.
+ */
+export function stopRemoteInteraction(root: HTMLElement): () => void {
+    const stop = (event: Event) => event.stopPropagation();
+    REMOTE_EVENTS.forEach((name) => root.addEventListener(name, stop));
+    return () => REMOTE_EVENTS.forEach((name) => root.removeEventListener(name, stop));
+}

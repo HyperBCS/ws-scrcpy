@@ -1,7 +1,7 @@
 // Run with: node --test scripts/test-style-rules.js
 // The rules every stylesheet under src/style keeps, read from the files without a browser.
 //   Layers: a file opens with the one layer order, and each of its rules is in a layer block:
-//   tokens.css in `tokens`, app.css in `base`, ui/ in `components`, the rest in `views`.
+//   tokens.css in `tokens`, app.css in `base`, ui/ and kit/ in `components`, the rest in `views`.
 //   Units: no font size in rem or em. The root is 16px and every length is px.
 //   Tokens: outside tokens.css a colour, a font size, a radius and a z-index come from a token,
 //   and nothing is `!important`. The stylesheets written before the tokens still hold such
@@ -68,7 +68,7 @@ function styleFiles(dir = STYLE) {
 function ownLayer(file) {
     if (file === 'tokens.css') return 'tokens';
     if (file === 'app.css') return 'base';
-    return file.startsWith('ui/') ? 'components' : 'views';
+    return file.startsWith('ui/') || file.startsWith('kit/') ? 'components' : 'views';
 }
 
 /**
