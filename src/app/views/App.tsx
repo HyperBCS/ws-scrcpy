@@ -13,6 +13,9 @@ import { CoreDeviceStreamView } from './CoreDeviceStreamView';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
 import { ACTION } from '../../common/Action';
 import { startNotificationSummary } from '../state/notifications';
+import { ErrorBoundary, ScreenFailed } from '../ui/ErrorBoundary';
+import { goToDeviceList } from '../state/router';
+import { closeAllSheets } from '../state/stream';
 
 export function App() {
     // Started here, not in `DeviceList`: opening a stream deep link directly (or just reloading
@@ -52,14 +55,57 @@ export function App() {
         view = <DeviceList />;
     }
 
+    // One failing view must not blank the app. The view and the sheets fail apart, so a broken
+    // sheet leaves the screen behind it in use. Navigating away clears a failed view.
+    const onDevices = !params.get('action');
     return (
         <>
-            {view}
+            <ErrorBoundary
+                resetKey={params.toString()}
+                fallback={(reset) => (
+                    <ScreenFailed
+                        onBack={() => {
+                            goToDeviceList();
+                            reset();
+                        }}
+                        backLabel={onDevices ? 'Try again' : 'Back to devices'}
+                    />
+                )}
+            >
+                {view}
+            </ErrorBoundary>
             {/* Mounted here rather than inside `StreamView` -- it is also reachable from a
                 device-list card (`DeviceCard`) with no stream open at all, see
                 `state/settingsSheet.ts`. */}
-            <SettingsSheet />
-            <ApplSettingsSheet />
+            <ErrorBoundary
+                fallback={(reset) => (
+                    <div class="screen-failed notice" role="alert">
+                        <h1>This panel failed</h1>
+                        <div class="screen-failed-actions">
+                            <button
+                                type="button"
+                                class="screen-failed-button primary"
+                                onClick={() => location.reload()}
+                            >
+                                Reload
+                            </button>
+                            <button
+                                type="button"
+                                class="screen-failed-button"
+                                onClick={() => {
+                                    closeAllSheets();
+                                    reset();
+                                }}
+                            >
+                                Dismiss
+                            </button>
+                        </div>
+                    </div>
+                )}
+            >
+                <SettingsSheet />
+                <ApplSettingsSheet />
+            </ErrorBoundary>
         </>
     );
 }
