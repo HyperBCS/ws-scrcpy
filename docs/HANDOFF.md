@@ -2234,9 +2234,11 @@ to be left, and the step back would undo it.
 class names. The back control defaults to `goUp` and is labelled `LIST_PAGE_NAME` ("Phones",
 owner decision D1); `DEVICE_TABS` in `routes.ts` holds the tabs of decision D2. Only the "not
 connected" state uses `AppBar` so far. The header rules moved unchanged to `style/ui/AppBar.css`,
-which `views/StreamView.css` imports at its top. `App.tsx` keeps side-effect imports of
-`ToolRoute`, `StreamView` and `CoreDeviceStreamView`. Both exist only to keep the order of rules
-in `main.css`, and can go when the styles are layered (step 4a). The tab rules are still in
+which `AppBar.tsx` imports. (Step 4a removed the `@import` of that file from
+`views/StreamView.css`; it changed nothing in the bundle.) `App.tsx` keeps side-effect imports of
+`ToolRoute`, `StreamView` and `CoreDeviceStreamView` to keep the order of rules in `main.css`.
+Step 4a kept them: layers decide only between layers, and inside one layer that order still
+decides rules of equal weight (see the step 4a section). The tab rules are still in
 `views/ToolView.css`, which `TabStrip.tsx` imports.
 
 **Unread count.** `startNotificationSummary` refreshed on `hashchange`. `pushState` and
@@ -2439,3 +2441,108 @@ they name the methods, the types and the sections of this file. No unlock statem
 **Not verified.** A container stop with an iPhone session open. The log should show
 `Stopping iDevice Tracker [...]`, then `Stopping iOS CoreDevice session runner`, then serve-web's
 `shutdown complete` for the phone, and Node should exit well inside the 80 s `stop_grace_period`.
+
+### Redesign step 4a: role tokens, one root size and cascade layers (2026-11-11, tested without a phone)
+
+Package p4-tokens, merged into `redesign` from `review/p4-tokens`. Stylesheets and two test
+scripts only; no `.ts` or `.tsx` file changed. Nothing a person can see changed. The step is not
+deployed on its own: the live container still runs 2f17e28, and `redesign` also carries the
+undeployed server change of step 6s.
+
+**Proof that nothing changed.** `scripts/e2e-atlas.js` (suite `atlas`) takes 146 states in both
+themes at 390x844 (touch) and 1440x900 (mouse) and records a picture and the computed style of
+every element. At integration, the atlas of the base commit (3d60ba9, built from an export) and
+the atlas of the merged head matched exactly: 292 of 292 files, no pixel and no computed style
+different, with no tolerance. Three runs of the head in a row matched each other. Seven more
+states taken with a scratch copy of the suite also matched (28 states, 56 files): the Restart
+services and Remount prompts on an iPhone card, the Reboot prompt in the iPhone Actions sheet,
+the Remove passcode prompt in Scheduled unlock, the Clear all on iPhone prompt, the erase-text
+prompt in Setup, and the app filter field with focus.
+
+**Tokens.** `src/style/tokens.css` has the role tokens of section 2 of the plan next to the older
+names, for both themes, with the values of the approved mockup: `--surface`, `--surface-raised`,
+`--surface-sunken`, `--border`, `--border-strong`, `--text`, `--text-muted`, `--accent`,
+`--accent-text`, `--accent-soft`, `--on-accent`, danger, success, warning, info and neutral as
+`-text` and `-fill`, `--scrim`, `--shadow-raised`, `--focus-ring`, `--focus-ring-offset`,
+`--disabled-opacity`, font sizes 12/13/15/17/20/24 and 16 for inputs, weights 400/600/700, space
+4 to 32, radius 8/12/20/full, control heights 44 and 32, and `--z-header` 5, `--z-overlay` 10,
+`--z-sheet` 20, `--z-toast` 30. The names beyond the plan's list (surface-sunken, accent-text,
+accent-soft, info, neutral, scrim, shadow-raised, disabled-opacity) come from the mockup; the
+header and overlay z values are the worker's choice, as the mockup shows only sheet and toast.
+Step 4b should confirm them before building on them. Nothing reads the role tokens yet, and no
+older name is aliased to them: the older names keep their values, so no existing rule changed.
+Step 4d deletes the older names. The file keeps one dark block, after every light value, because
+the contrast tests in `scripts/test-sheet-ui.js` read the file as light, then dark. Breakpoints
+(600 and 1024) are only named in a comment; a media query cannot read a custom property.
+
+**One root size.** The root is 16px (`app.css`), and `body` carries the 14px (`--font-size`)
+that text with no size of its own had. Every rem and em length is now the px it rendered at
+(rem times 14). The one rem in a media condition (`StreamView.css`, 37.5rem) was relative to the
+browser's 16px and became 600px. Six rules in `filelisting.css` had em lengths that were a share
+of the explorer's own size (12.5px, and 13.5px on a touch screen), so each has a second value
+under `(hover: none) and (pointer: coarse)`. No size was moved to the type scale; that is adoption
+work in 4c.
+
+**Layers.** Every stylesheet opens with `@layer tokens, base, components, views;` and holds its
+rules in its own layer: `tokens.css` in tokens, `app.css` in base, `ui/` in components, `views/`,
+`filelisting.css` and `morebox.css` in views. A layer later in that list wins over an earlier one
+whatever the selectors weigh. Where a component rule used to win over a page rule by weight, the
+rule was moved, not marked `!important`: `body.sheet-open #devices` went from `app.css` to
+`views/DeviceList.css`, `.floating-toolbar-panel[data-exiting]` from `app.css` to
+`views/FloatingToolbar.css`, and the disabled Wake button from `ui/AsleepBanner.css` to
+`views/DeviceList.css`. `views/Notifications.css` still styles `p`, `button` and `a` by tag; those
+rules now leave out the confirm prompt's parts, the toast's close button and links with
+`.ui-button` through `:where()`, which adds no weight, and the file has one components block (the
+toast's close button) and one base block (`.ui-button` links) that keep what those elements had.
+The focus rule of `views/NotificationActionSheet.css` leaves out the confirm prompt's buttons the
+same way. Both go when p4-adopt-notifications and p4-kit-sheet remove the rules by tag.
+
+Layer order decides only between layers. Inside one layer, rules of equal weight are still
+decided by the order of the files in the bundle. That is why the side-effect imports in
+`src/app/views/App.tsx` (`./ToolRoute`, `./StreamView`, `./CoreDeviceStreamView`) stay: without
+them about 1000 lines of `main.css` move inside the layers, and some selectors are defined in two
+views files (`.device-debug-facts` in `views/DeviceList.css` and `views/ActionsSheet.css`). The
+`ToolView.css` import in `src/app/ui/TabStrip.tsx` also stays, as the component's own style. The
+`@import` of `ui/AppBar.css` at the top of `views/StreamView.css` is gone; `AppBar.tsx` already
+puts that file earlier in the bundle.
+
+Three consequences for later steps. xterm's stylesheet (`@xterm/xterm/css/xterm.css`, in the
+Shell chunk) has no layer, so it wins over every app rule; no app rule names an xterm element
+today, and Shell matched in the atlas. A rule that has to restyle xterm's parts must sit outside
+the layers. An `!important` in an earlier layer beats one in a later layer, so the reduced-motion
+`!important` durations in `app.css` (base) win over any `!important` a page adds. Cascade layers
+need Chrome 99, Firefox 97 or Safari 15.4; an older browser drops every layer block and shows the
+page without styles.
+
+**The style test.** `scripts/test-style-rules.js` (in `npm test`) reads every file under
+`src/style` without a browser. It fails when a file does not open with the layer order, when a
+rule is outside a layer, when a layer block names an unknown layer or sits inside another block,
+and when a font size is in rem or em. Outside `tokens.css` it counts, per file, colours written
+as values (hex, colour functions and colour names), font sizes written as numbers, radii written
+as numbers, z-index numbers, `!important`, and blocks for a layer that is not the file's own
+(`otherLayers`). `ALLOWED` at the top of the file holds the count each older file had when the
+test was added. The test fails when a count rises above its entry, and a file not in the list is
+allowed none, so a new stylesheet must use tokens from the start. A count that falls passes
+without touching the list. The test does not force the list down, so a package that moves a
+file's values onto tokens lowers that file's numbers in `ALLOWED` in the same commit (and drops
+the line when all are zero); otherwise the room it leaves lets raw values come back unnoticed.
+Step 4d empties the list. Only font sizes are checked for rem and em; other em lengths are not.
+
+**The atlas suite.** It is in the default list of `scripts/test-browser.js` and takes about two
+minutes. Without `ATLAS_COMPARE` it checks that each state can be reached, throws no page error
+and comes to rest, and removes its temporary directory. To prove a change is invisible: build the
+commit before, run `ATLAS_OUT=<dir> node scripts/test-browser.js atlas`, build the change, and run
+again with `ATLAS_OUT=<dir2> ATLAS_COMPARE=<dir>`. `ATLAS_ONLY=<regexp>` limits the states, and
+`ATLAS_STYLES=full` writes every computed property instead of a hash, to read a difference. The
+style record leaves out custom properties (an unused token would change every hash), the ids
+Preact's `useId` makes, and xterm's `.xterm-scroll-area`, whose height xterm sets differently
+from run to run. Chromium rasters on one thread so that two runs of one build match. The atlas
+does not show the failure screen, the stream failure card, stream and tool notices, the tracker
+notice, Bluetooth pairing, Files uploads or Files properties; the rules for those were read, not
+compared.
+
+**Left for later.** `src/style/app.css` holds `.live-text-overlay[data-exiting]
+.live-text-backdrop` and `.live-text-backdrop`, which no markup uses, and `src/style/morebox.css`
+is never imported; both are for 4d. Element selectors under page classes, `!important`,
+breakpoints and duplicate button classes are counted, not changed, and are adoption work in 4b
+and 4c.
