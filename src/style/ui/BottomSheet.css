@@ -287,11 +287,16 @@
 @media (min-width: 760px) and (min-height: 540px) and (hover: hover) and (pointer: fine) {
     .bottom-sheet {
         --sheet-gutter: 24px;
+        /* The top edge is fixed and the dialog grows downwards. Centring it vertically moved
+           every control each time a message appeared or a section opened. */
+        --sheet-top: clamp(32px, 12%, 108px);
         inset: 0;
+        top: var(--sheet-top);
+        bottom: auto;
         height: fit-content;
-        margin: auto;
+        margin: 0 auto;
         width: min(560px, calc(100% - 48px));
-        max-height: min(720px, calc(100% - 64px));
+        max-height: min(720px, calc(100% - var(--sheet-top) - 32px));
         border-radius: 1.4rem;
         border-bottom: 1px solid var(--device-border-color);
         transform: none;
