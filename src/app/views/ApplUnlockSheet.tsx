@@ -109,7 +109,8 @@ export function ApplUnlockSheet({ client }: { client: StreamClientCoreDevice }) 
                 <p class="unlock-intro">
                     The server types the passcode stored for this phone. It is never sent to or kept in this browser.
                 </p>
-                <div class="unlock-feedback" data-unlock-state={!connected ? 'disconnected' : phase}>
+                {/* A live region from the start, so the first message is read out too. */}
+                <div class="unlock-feedback" aria-live="polite" data-unlock-state={!connected ? 'disconnected' : phase}>
                     {stateMessage && (
                         <InlineStatus
                             tone={

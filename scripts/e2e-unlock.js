@@ -172,6 +172,7 @@ async function main() {
             assert(awakeNotice.equals(asleepNotice), 'The lock notice is equally bright while the device is asleep');
             await open(page);
             test.update({ 'screen.power': 'on', 'device.awake': true });
+            assert.equal(await status(page).getAttribute('aria-live'), 'polite', 'The feedback is a live region before its first message');
             const remember = page.getByRole('checkbox', { name: 'Remember in this browser', exact: true });
             assert.equal(await remember.isChecked(), false, 'Remembering is off unless the owner asks for it');
             assert.equal(await field(page).getAttribute('type'), 'password');
@@ -231,7 +232,9 @@ async function main() {
             assert.equal(test.texts.length, 1, 'Unsupported password characters are rejected before transport');
             assert((await status(page).textContent()).includes('Other characters must be entered on the phone'));
             await field(page).fill(PASSWORD);
-            await page.getByRole('button', { name: 'Send password', exact: true }).click();
+            // Enter in the field sends it: the Send button is in the sheet's footer, outside the
+            // form, and belongs to it through its form attribute.
+            await field(page).press('Enter');
             await state(page, 'waiting');
             assert.deepEqual(test.texts, [PIN, PASSWORD], 'Password mode preserves ASCII letters, symbols and spaces');
             assert(

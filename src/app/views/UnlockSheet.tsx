@@ -324,9 +324,11 @@ export function UnlockSheet({
                               : 'Not saved. Tick the box to keep it in this browser after a confirmed unlock.'}
                     </p>
                 </div>
+                {/* A live region from the start, so the first message is read out too. */}
                 <div
                     id="unlock-feedback"
                     class="unlock-feedback"
+                    aria-live="polite"
                     data-unlock-state={confirmed ? 'confirmed' : !connected ? 'disconnected' : phase}
                 >
                     {stateMessage && (
