@@ -365,6 +365,32 @@ test('a screen opened from a notification: up is the list, the browser Back is t
     assert.equal(browser.index, 0);
 });
 
+test('a write made while up is under way waits for it, and a step the browser never reports is given up', async () => {
+    // The back control, then a card at once: the new page is opened from the list entry, so
+    // the phone that was shown is not left behind the list.
+    const { browser, router } = open('#!');
+    router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
+    router.goUp();
+    router.openRoute({ action: 'device', udid: 'IPHONE', view: 'screen' });
+    assert.equal(browser.location.hash, '#!action=device&udid=PIXEL&view=screen', 'nothing is written before the list is reached');
+    browser.settle();
+    assert.deepEqual(browser.hashes(), ['#!', '#!action=device&udid=IPHONE&view=screen']);
+    assert.deepEqual(browser.behind(), ['#!']);
+
+    // An entry that says the list is two steps back when it is not there (an entry left from an
+    // earlier version of the app): the browser does nothing and reports nothing. After the wait
+    // the page becomes the list in place, and writes are no longer held.
+    const stale = open('#!action=device&udid=PIXEL&view=screen', { state: { nav: { index: 2, below: 0 } } });
+    stale.router.goUp();
+    stale.browser.settle();
+    assert.equal(stale.browser.location.hash, '#!action=device&udid=PIXEL&view=screen');
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    assert.deepEqual(stale.browser.hashes(), ['#!']);
+    assert.equal(stale.shown.at(-1), '');
+    stale.router.openRoute({ action: 'device', udid: 'IPHONE', view: 'screen' });
+    assert.deepEqual(stale.browser.hashes(), ['#!', '#!action=device&udid=IPHONE&view=screen']);
+});
+
 test('a reload keeps the place in history, so up still goes back', () => {
     const first = open('#!');
     first.router.openRoute({ action: 'device', udid: 'IPHONE', view: 'screen' });
