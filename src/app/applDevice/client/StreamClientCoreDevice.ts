@@ -162,6 +162,11 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         return this.decoderKind;
     }
 
+    /** Why this browser cannot show the phone's video, or '' when it can. */
+    public getDecoderProblem(): string {
+        return this.decoderProblem;
+    }
+
     public getSessionState(): CoreDeviceSessionState {
         return this.sessionState;
     }

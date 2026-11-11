@@ -276,7 +276,9 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
             <div class="actions-sheet">
                 {!connected && (
                     <SheetStatus tone="warning">
-                        Reconnecting to the phone. Actions that need the stream are paused until it is back.
+                        {client.getDecoderProblem()
+                            ? 'This browser cannot show the phone’s video. Actions that need the stream are off.'
+                            : 'Reconnecting to the phone. Actions that need the stream are paused until it is back.'}
                     </SheetStatus>
                 )}
 

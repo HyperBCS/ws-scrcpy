@@ -251,6 +251,14 @@ async function noPicture(browser, { width, height, colorScheme }) {
         await hardwareDisabled(true);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${label}: no sideways scroll`);
         await page.screenshot({ path: path.join(SCREENSHOTS, `ios-stream-no-decoder-${width}-${colorScheme}.png`) });
+        // The Actions sheet gives the same reason for its paused rows, not "Reconnecting".
+        if (width < 600) await page.locator('.floating-toolbar-fab').click();
+        await page.locator('button.control-button[title="Actions"]').click();
+        const actions = page.getByRole('dialog', { name: 'Actions', exact: true });
+        await actions.getByText('This browser cannot show the phone’s video. Actions that need the stream are off.', { exact: true }).waitFor();
+        assert.equal(await actions.getByText(/Reconnecting to the phone/).count(), 0, `${label}: no reconnect is claimed`);
+        await page.getByRole('button', { name: 'Close Actions', exact: true }).click();
+        await actions.waitFor({ state: 'hidden' });
         const back = card.getByRole('button', { name: 'Back to devices', exact: true });
         assert.ok(await reachable(page, back));
         await back.click();
