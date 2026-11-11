@@ -115,12 +115,12 @@ export interface IosSettingsFile {
 export type UnlockRunState = Pick<StoredUnlockSettings, (typeof RUN_STATE_FIELDS)[number]>;
 
 /**
- * What `UnlockScheduler` (W2) needs from the store. `IosSettingsStore` (W1) implements it against
- * the files above; W2's tests implement it in memory. Every method is synchronous: writes go
- * temp-file-then-rename like `NotificationStorage.write`, and none of them throws for a missing
- * or unreadable key file. Only `readPasscode` decrypts, and it throws instead of returning
- * `undefined` so a caller cannot send an empty passcode by mistake; its error text never
- * contains the passcode.
+ * What `UnlockScheduler` needs from the store. `IosSettingsStore` implements it against the
+ * files above; the scheduler's tests implement it in memory. Every method is synchronous:
+ * writes go temp-file-then-rename like `NotificationStorage.write`, and none of them throws for
+ * a missing or unreadable key file. Only `readPasscode` decrypts, and it throws instead of
+ * returning `undefined` so a caller cannot send an empty passcode by mistake; its error text
+ * never contains the passcode.
  */
 export interface UnlockSettingsStore {
     /** Create the directory (0700) and read the settings file. Idempotent. Never throws at startup. */
@@ -233,12 +233,13 @@ function sanitizeUnlock(value: unknown): StoredUnlockSettings | undefined {
 
 /**
  * Settings and the encrypted unlock passcode for each iPhone, under the server data directory.
- * File layout and cipher parameters are in the plan (section 3.3) and the constants above.
+ * The file layout is `IosSettingsFile`: one `StoredUnlockSettings` record per udid. The cipher
+ * parameters are on `EncryptedPasscode` and in the constants above.
  *
  * Responsibility split: `ControlCenter` never calls this class. All four unlock commands go to
  * `UnlockScheduler`, which owns the only reference to the store (`IosSettingsStore.getInstance()`
  * by default, an in-memory `UnlockSettingsStore` in tests) and emits `status` after each change,
- * so the descriptor update path is the same for a command and for a run. Owned by W1.
+ * so the descriptor update path is the same for a command and for a run.
  *
  * The key file is read whenever the key is needed and never cached, so a key file removed while
  * the server runs is noticed by the next `getSchedule`. A key from the environment is read once
