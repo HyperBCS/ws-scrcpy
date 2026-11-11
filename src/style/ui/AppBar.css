@@ -1,7 +1,9 @@
 /* The header of every page below the list (`ui/AppBar.tsx`): back, title, one status line,
    actions. These are the stream header's rules, moved here unchanged with the component. The
-   stream and tool views still write the same markup themselves, and `views/StreamView.css`
-   imports this file in the place the rules had there, so nothing changes in the cascade. */
+   stream and tool views still write the same markup themselves. `views/StreamView.css` imports
+   this file at its top, so in the bundle these rules now come just before the `.stream-view`,
+   `.stream-stage` and `.stream-mount` rules instead of just after them. Neither group selects
+   the other's elements, so no element is styled differently. */
 .stream-header {
     display: flex;
     flex: 0 0 auto;
