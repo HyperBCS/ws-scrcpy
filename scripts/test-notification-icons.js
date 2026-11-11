@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { spawnSync } = require('node:child_process');
 require('ts-node').register({ transpileOnly: true });
 const { NotificationIcons } = require('../src/server/notifications/NotificationIcons');
 const { PyMobileDevice } = require('../src/server/appl-device/services/PyMobileDevice');
@@ -28,7 +29,9 @@ const [log, app] = [process.argv[2], process.argv.at(-1)];
 fs.appendFileSync(log, 'start ' + app + '\\n');
 setTimeout(() => {
     fs.appendFileSync(log, 'end ' + app + '\\n');
-    if (app.endsWith('.missing')) process.exit(1);
+    // The exit statuses of python/probes/notification_icon.py: 3, no icon; 1, the phone was not asked.
+    if (app.endsWith('.missing')) process.exit(3);
+    if (app.endsWith('.offline')) process.exit(1);
     if (app.endsWith('.bad')) { process.stdout.write('<svg></svg>'); return; }
     if (app.endsWith('.large')) { process.stdout.write(Buffer.alloc(2 * 1024 * 1024)); return; }
     const image = Buffer.from('${png.toString('base64')}', 'base64');
@@ -87,6 +90,100 @@ test('concurrent different icons limit USB requests and deletion invalidates pen
     assert.equal(await pending, null);
     assert.equal(fs.existsSync(path.join(f.dir, 'notification-icons', hash('iphone'))), false, 'removal cannot be undone by an in-flight USB result');
     assert.deepEqual(await f.icons.get('iphone', 'com.new'), png, 'a re-added source can fetch again');
+});
+
+test('no lookup is started for a phone that is not on USB, and nothing is held against it', async () => {
+    const f = fixture();
+    let reachable = true;
+    NotificationIcons.setPhoneCheck(udid => { assert.equal(udid, 'iphone'); return reachable; });
+    try {
+        assert.deepEqual(await f.icons.get('iphone', 'com.cached'), png);
+        reachable = false;
+        for (let i = 0; i < 30; i++) assert.equal(await f.icons.get('iphone', `com.app${i}`), null);
+        assert.equal(f.requests().filter(line => line.startsWith('start')).length, 1, 'only the first icon ran the probe');
+        assert.equal(f.icons.failures.size, 0);
+        assert.deepEqual(await f.icons.get('iphone', 'com.cached'), png, 'an icon already on disk needs no phone');
+        reachable = true;
+        assert.deepEqual(await f.icons.get('iphone', 'com.app0'), png, 'the icon loads once the phone is back');
+    } finally { NotificationIcons.setPhoneCheck(() => undefined); }
+});
+
+test('a missing icon is remembered for an hour only when the phone answered', async () => {
+    const f = fixture();
+    const remembered = async app => {
+        const before = Date.now();
+        assert.equal(await f.icons.get('iphone', app), null);
+        const [expires] = [...f.icons.failures.values()].slice(-1);
+        return Math.round((expires - before) / 60000);
+    };
+    try {
+        assert.equal(await remembered('com.first.missing'), 1, 'not known whether the phone is attached');
+        NotificationIcons.setPhoneCheck(() => true);
+        assert.equal(await remembered('com.second.missing'), 60);
+        assert.equal(await remembered('com.bad'), 60);
+        assert.equal(await remembered('com.large'), 1, 'a lookup that was cut short is tried again soon');
+        assert.equal(await remembered('com.third.offline'), 1, 'a probe that could not ask the phone is tried again soon');
+        const count = f.requests().length;
+        assert.equal(await f.icons.get('iphone', 'com.second.missing'), null);
+        assert.equal(f.requests().length, count);
+    } finally { NotificationIcons.setPhoneCheck(() => undefined); }
+});
+
+test('the icon probe exits with 3 only when the phone answered without an icon', () => {
+    // Runs python/probes/notification_icon.py against stand-in pymobiledevice3 modules.
+    const stub = path.join(temporary, 'pymobiledevice3-stub');
+    const files = {
+        '__init__.py': '',
+        'services/__init__.py': '',
+        'lockdown.py': `
+import asyncio, os
+class Lockdown:
+    async def __aenter__(self): return self
+    async def __aexit__(self, *details): return False
+async def create_using_usbmux(serial, connection_type, autopair):
+    assert (serial, connection_type, autopair) == ('iphone', 'USB', False)
+    if os.environ['ICON_PHONE'] == 'absent': raise ConnectionError('No device')
+    if os.environ['ICON_PHONE'] == 'slow': await asyncio.sleep(30)
+    return Lockdown()
+`,
+        'services/springboard.py': `
+import os
+class SpringBoardServicesService:
+    def __init__(self, lockdown): pass
+    async def __aenter__(self): return self
+    async def __aexit__(self, *details): return False
+    async def get_icon_pngdata(self, bundle):
+        return None if os.environ['ICON_PHONE'] == 'no-icon' else bytes.fromhex('${png.toString('hex')}')
+`,
+    };
+    for (const [name, text] of Object.entries(files)) {
+        fs.mkdirSync(path.dirname(path.join(stub, 'pymobiledevice3', name)), { recursive: true });
+        fs.writeFileSync(path.join(stub, 'pymobiledevice3', name), text);
+    }
+    const probe = path.join(__dirname, '..', 'python', 'probes', 'notification_icon.py');
+    const run = (phone) =>
+        spawnSync('python3', ['-s', probe, 'iphone', 'com.example'], {
+            env: { PATH: process.env.PATH, PYTHONPATH: stub, ICON_PHONE: phone },
+            timeout: 20000,
+        });
+    const found = run('icon');
+    assert.equal(found.status, 0);
+    assert.deepEqual(found.stdout, png);
+    assert.equal(run('no-icon').status, 3);
+    assert.equal(run('absent').status, 1);
+    assert.equal(run('slow').status, 1, 'its own timeout is not an answer');
+});
+
+test('the iPhone tracker says when it has listed the attached phones', async () => {
+    const { ControlCenter } = require('../src/server/appl-device/services/ControlCenter');
+    const tracker = new ControlCenter();
+    // Only the listing step runs; nothing here starts pymobiledevice3.
+    tracker.listUdids = async () => [];
+    tracker.initialized = true;
+    assert.equal(tracker.hasPolled(), false);
+    await tracker.poll();
+    assert.equal(tracker.hasPolled(), true);
+    assert.equal(tracker.getDescriptor('iphone'), undefined);
 });
 
 test('the cache retains at most 100 icons per source and replaces corrupt cached files', async () => {

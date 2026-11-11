@@ -27,6 +27,22 @@ export type { FeedItem } from './NotificationStorage';
 const PAIRING_WINDOW_MS = 120000;
 // How long the setup page explains a pairing request that arrived with no window open.
 const PAIRING_REJECTED_NOTICE_MS = 10 * 60000;
+// The collector reports every two seconds and the Setup page reads the status every five. A
+// collector error stays until the collector has reported for this long without a new one.
+const COLLECTOR_ERROR_HOLD_MS = 30000;
+// Collector restarts: 3 s after the first failure, doubling up to one minute. A collector that
+// stays up for COLLECTOR_STABLE_MS counts as recovered.
+const COLLECTOR_RESTART_MS = 3000;
+const COLLECTOR_RESTART_MAX_MS = 60000;
+const COLLECTOR_STABLE_MS = 60000;
+// How much of one collector process's stderr goes to the server log. A traceback is a few kilobytes.
+const COLLECTOR_LOG_LIMIT = 16384;
+
+const sentences = (parts: string[]): string =>
+    parts
+        .filter(Boolean)
+        .map((part) => part.replace(/\.$/, ''))
+        .join('. ');
 
 export function validateSubscription(value: unknown): PushSubscription {
     const sub = value as PushSubscription;
@@ -64,6 +80,39 @@ export interface SystemPushPayload {
     url: string;
 }
 
+type FingerprintFields = Pick<NotificationEvent, 'source' | 'app' | 'title' | 'subtitle' | 'body' | 'date'>;
+const digest = (value: unknown[]): string => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+// Marks a fingerprint that holds no text, so one made from text is never kept for a phone
+// whose previews are off.
+const REDUCED_FINGERPRINT = 'l:';
+
+/** Identifies an alert that the iPhone announces again after a reconnect. Made from its text. */
+export function textFingerprint(event: FingerprintFields): string | undefined {
+    return event.date
+        ? digest([event.source, event.app, event.title || '', event.subtitle || '', event.body || '', event.date])
+        : undefined;
+}
+
+/**
+ * The same for a phone with previews off. A hash of short, fixed-form text ("Your code is
+ * 123456") can be reversed by trying every candidate, so this one holds only the app, the time
+ * and the length of each text. The lengths are capped the way stored text is.
+ */
+export function reducedFingerprint(event: FingerprintFields): string | undefined {
+    const length = (value: string | undefined, limit: number) => Math.min((value || '').length, limit);
+    return event.date
+        ? REDUCED_FINGERPRINT +
+              digest([
+                  event.source,
+                  event.app,
+                  length(event.title, 1024),
+                  length(event.subtitle, 1024),
+                  length(event.body, 4096),
+                  event.date,
+              ])
+        : undefined;
+}
+
 export function shouldRelay(event: NotificationEvent, source: NotificationSource, sub: SubscriptionRecord): boolean {
     return (
         event.event === 'added' &&
@@ -86,9 +135,16 @@ export class NotificationService implements Service {
         return !!this.instance;
     }
     private dataDir = resolveDataDir();
-    private storage = new NotificationStorage(this.dataDir, (message) => {
-        this.error = message;
-    });
+    private storage = new NotificationStorage(
+        this.dataDir,
+        (message) => {
+            this.storageError = message;
+            console.error(`[NotificationService] ${message}`);
+        },
+        () => {
+            this.storageError = '';
+        },
+    );
     private icons = new NotificationIcons(this.dataDir);
     private sessions = new Map<string, string>();
     private bulkSources = new Set<string>();
@@ -123,7 +179,20 @@ export class NotificationService implements Service {
     // When the window opened by Start Bluetooth pairing ends; outlives collector restarts.
     private pairUntil = 0;
     private pairingRejectedAt = 0;
-    private error = '';
+    // Three separate causes, so that a healthy collector report cannot clear a storage or pairing
+    // problem. The Setup page shows them joined as `error`.
+    // Cleared once the collector has reported for COLLECTOR_ERROR_HOLD_MS without a new error.
+    private collectorError = '';
+    private collectorErrorAt = 0;
+    // Cleared by the next history save that succeeds.
+    private storageError = '';
+    // Kept for PAIRING_REJECTED_NOTICE_MS, or until pairing is started again.
+    private pairingError: { message: string; at: number } | null = null;
+    // Consecutive collector failures; zero again after COLLECTOR_STABLE_MS of uptime.
+    private collectorRestarts = 0;
+    private collectorStarted = 0;
+    // The child this service stopped on purpose (a changed or removed phone).
+    private expectedExit?: ChildProcessWithoutNullStreams;
     // Set when the settings file cannot be used. The service then keeps an empty store in memory,
     // reads and writes nothing, and answers every change with this text.
     private disabled = '';
@@ -159,7 +228,15 @@ export class NotificationService implements Service {
             console.error(`[NotificationService] ${this.disabled}`);
             return;
         }
+        let redacted = false;
         for (const item of this.storage.loadHistory(this.store.sources)) {
+            // History written before reduced fingerprints existed kept a hash of the text for
+            // these phones. The text is gone, so the hash cannot be replaced; drop it.
+            const preview = this.store.sources.find((source) => source.id === item.source)?.preview;
+            if (!preview && item.fingerprint && !item.fingerprint.startsWith(REDUCED_FINGERPRINT)) {
+                delete item.fingerprint;
+                redacted = true;
+            }
             this.feed.set(item.key, item);
             if (item.reconnectable && item.fingerprint)
                 this.replayCandidates.set(`${item.source}:${item.session}:${item.uid}`, {
@@ -170,10 +247,16 @@ export class NotificationService implements Service {
                 });
         }
         this.prune();
+        if (redacted) this.saveHistory();
     }
     private saveHistory(immediate = false): void {
         if (this.disabled) return;
-        this.storage.saveHistory(() => [...this.feed.values()], immediate);
+        try {
+            this.storage.saveHistory(() => [...this.feed.values()], immediate);
+        } catch (error) {
+            this.storageError = 'Notification history could not be saved';
+            throw error;
+        }
     }
     private save(): void {
         if (this.disabled) return;
@@ -193,7 +276,7 @@ export class NotificationService implements Service {
             this.storage.flush();
         } catch {
             // A full or read-only disk must not keep the collector and the push queue running.
-            this.error = 'Notification history could not be saved';
+            this.storageError = 'Notification history could not be saved';
         }
         if (this.restart) clearTimeout(this.restart);
         this.child?.kill();
@@ -212,11 +295,13 @@ export class NotificationService implements Service {
         ];
         const script = candidates.find((p) => fs.existsSync(p));
         if (!script) {
-            this.error = 'Bluetooth collector is not installed';
+            this.collectorFault('Bluetooth collector is not installed');
             return;
         }
         const child = spawn(process.env.WS_BLUETOOTH_PYTHON || '/usr/bin/python3', [script], { stdio: 'pipe' });
         this.child = child;
+        const started = Date.now();
+        this.collectorStarted = started;
         this.statuses = Object.fromEntries(this.store.sources.map((s) => [s.id, 'Waiting for Bluetooth connection']));
         let pending = '';
         child.stdout.setEncoding('utf8');
@@ -234,16 +319,28 @@ export class NotificationService implements Service {
                 try {
                     this.handleCollector(JSON.parse(line));
                 } catch {
-                    this.error = 'Invalid Bluetooth collector event';
+                    this.collectorFault('Invalid Bluetooth collector event');
                 }
             }
         });
-        child.stderr.on('data', () => {
-            this.error = 'Bluetooth collector failed; check host BlueZ and D-Bus access';
+        let logged = 0;
+        child.stderr.setEncoding('utf8');
+        child.stderr.on('data', (chunk: string) => {
+            // A message this collector reported itself says more. The two pipes are read in no
+            // fixed order, so its traceback can arrive after it.
+            if (this.collectorError && this.collectorErrorAt >= started) this.collectorErrorAt = Date.now();
+            else this.collectorFault('Bluetooth collector failed; check host BlueZ and D-Bus access');
+            // The text (a Python traceback, usually) is the only record of what went wrong.
+            if (logged >= COLLECTOR_LOG_LIMIT) return;
+            const text = chunk.slice(0, COLLECTOR_LOG_LIMIT - logged);
+            logged += text.length;
+            console.error(`[NotificationService] collector: ${text.trimEnd()}`);
+            if (logged >= COLLECTOR_LOG_LIMIT)
+                console.error('[NotificationService] collector: further output from this process is not logged');
         });
         child.stdin.on('error', () => undefined);
         child.on('error', () => {
-            this.error = 'Could not start Bluetooth collector';
+            this.collectorFault('Could not start Bluetooth collector');
         });
         child.on('close', () => {
             if (this.child === child) {
@@ -252,9 +349,51 @@ export class NotificationService implements Service {
             }
             this.pairing = null;
             this.pairingOpen = false;
-            if (!this.closed) this.restart = setTimeout(() => this.startCollector(), 3000);
+            const expected = this.expectedExit === child;
+            if (expected) this.expectedExit = undefined;
+            if (this.closed) return;
+            if (!expected && (!this.collectorError || this.collectorErrorAt < started))
+                this.collectorFault('Bluetooth collector stopped');
+            this.restart = setTimeout(() => this.startCollector(), this.restartDelay(expected, Date.now() - started));
         });
         for (const command of this.startCommands()) child.stdin.write(JSON.stringify(command) + '\n');
+    }
+    private collectorFault(message: string): void {
+        this.collectorError = message;
+        this.collectorErrorAt = Date.now();
+    }
+    /**
+     * How long to wait before the next collector start. A collector that fails as soon as it
+     * starts (no D-Bus, BlueZ down) must not be started again every 3 s without end.
+     */
+    private restartDelay(expected: boolean, uptime: number): number {
+        if (expected) return COLLECTOR_RESTART_MS;
+        if (uptime >= COLLECTOR_STABLE_MS) this.collectorRestarts = 0;
+        return Math.min(COLLECTOR_RESTART_MAX_MS, COLLECTOR_RESTART_MS * 2 ** this.collectorRestarts++);
+    }
+    private restartCount(): number {
+        if (this.child && Date.now() - this.collectorStarted >= COLLECTOR_STABLE_MS) this.collectorRestarts = 0;
+        return this.collectorRestarts;
+    }
+    /** Stops the collector so that it starts again with the current phones. Not a failure. */
+    private restartCollector(): void {
+        this.expectedExit = this.child;
+        this.child?.kill();
+    }
+    private recentPairingError(): { message: string; at: number } | null {
+        return this.pairingError && Date.now() - this.pairingError.at < PAIRING_REJECTED_NOTICE_MS
+            ? this.pairingError
+            : null;
+    }
+    /** Everything the Setup page should show as one notice. */
+    private errorText(): string {
+        const restarts = this.restartCount();
+        return sentences([
+            this.storageError,
+            this.collectorError,
+            this.collectorError && restarts > 1 ? `The collector has been restarted ${restarts} times` : '',
+            this.recentPairingError()?.message || '',
+        ]);
     }
     // Removing or relinking a source restarts the collector; reopen a pairing window it would close.
     private startCommands(): object[] {
@@ -300,7 +439,10 @@ export class NotificationService implements Service {
             case 'devices':
                 this.bluetooth = message.devices as unknown[];
                 this.pairingOpen = !!message.pairingOpen;
-                this.error = '';
+                // Counted from the later of the error and this collector's start: after a long
+                // restart delay, the first report of the new collector proves nothing yet.
+                if (Date.now() - Math.max(this.collectorErrorAt, this.collectorStarted) >= COLLECTOR_ERROR_HOLD_MS)
+                    this.collectorError = '';
                 break;
             case 'status': {
                 const source = String(message.source);
@@ -315,12 +457,19 @@ export class NotificationService implements Service {
                 if (String(message.status).includes('disconnected')) this.invalidateSources(source);
                 break;
             }
-            case 'error':
-                this.error = String(message.message);
+            case 'error': {
+                const text = String(message.message).slice(0, 500);
+                // One failed attempt, not a state of the collector: nothing later reports that it is over.
+                if (text.startsWith('Pairing failed')) this.pairingError = { message: text, at: Date.now() };
+                else this.collectorFault(text);
                 break;
+            }
             case 'pairing':
                 this.pairing = message.code ? { address: String(message.address), code: String(message.code) } : null;
-                if (message.code) this.pairingRejectedAt = 0;
+                if (message.code) {
+                    this.pairingRejectedAt = 0;
+                    this.pairingError = null;
+                }
                 break;
             case 'pairing-rejected':
                 this.pairingRejectedAt = Date.now();
@@ -460,27 +609,16 @@ export class NotificationService implements Service {
         if (event.app.startsWith('com.apple.WebKit.WebPush') || event.app.startsWith('com.apple.WebKit.PushBundle'))
             return;
         if (source.apps.length && !source.apps.includes(event.app)) return;
-        const fingerprint = event.date
-            ? crypto
-                  .createHash('sha256')
-                  .update(
-                      JSON.stringify([
-                          event.source,
-                          event.app,
-                          event.title || '',
-                          event.subtitle || '',
-                          event.body || '',
-                          event.date,
-                      ]),
-                  )
-                  .digest('hex')
-            : undefined;
+        // Only the kind this phone's setting allows is kept. An earlier record is compared under
+        // both, because it holds the kind that was allowed when it was stored.
+        const known = [textFingerprint(event), reducedFingerprint(event)];
+        const fingerprint = source.preview ? known[0] : known[1];
         // Match only one previous lifetime per new UID. Preserve its app read state
         // and stable history key while replacing transient Bluetooth identifiers.
         const replay =
             !current && fingerprint && event.event === 'added'
                 ? [...this.replayCandidates].find(
-                      ([, candidate]) => candidate.session !== event.session && candidate.fingerprint === fingerprint,
+                      ([, candidate]) => candidate.session !== event.session && known.includes(candidate.fingerprint),
                   )
                 : undefined;
         const previous = current || (replay?.[1].historyKey ? this.feed.get(replay[1].historyKey) : undefined);
@@ -632,7 +770,11 @@ export class NotificationService implements Service {
                 pairing: this.pairing,
                 pairingOpen: this.pairingOpen,
                 pairingRejected: Date.now() - this.pairingRejectedAt < PAIRING_REJECTED_NOTICE_MS,
-                error: this.disabled || this.error,
+                error: this.disabled || this.errorText(),
+                collectorError: this.collectorError,
+                collectorRestarts: this.restartCount(),
+                storageError: this.storageError,
+                pairingError: this.recentPairingError(),
                 delivery: this.delivery,
                 notifications: [...this.feed.values()]
                     .reverse()
@@ -654,6 +796,8 @@ export class NotificationService implements Service {
                 res.sendStatus(404);
                 return;
             }
+            // An app's icon rarely changes. Misses stay uncached so that they are asked for again.
+            res.setHeader('Cache-Control', 'private, max-age=86400');
             res.type('png').send(png);
         });
         route('post', '/history/read', (req, res) => {
@@ -842,6 +986,7 @@ export class NotificationService implements Service {
             this.command({ type: 'pair' });
             this.pairUntil = Date.now() + PAIRING_WINDOW_MS;
             this.pairingRejectedAt = 0;
+            this.pairingError = null;
             res.json({ ok: true });
         });
         route('post', '/confirm', (req, res) => {
@@ -877,11 +1022,24 @@ export class NotificationService implements Service {
                 { id, address: address.toUpperCase(), name, apps, preview },
             ];
             if (connectionChanged) this.invalidateSources();
-            for (const item of this.feed.values())
-                if (item.source === id && !preview) Object.assign(item, { title: '', subtitle: '', body: '' });
+            if (!preview) {
+                // The text goes, and so does anything it could be recovered from.
+                for (const item of this.feed.values()) {
+                    if (item.source !== id) continue;
+                    if (item.fingerprint && !item.fingerprint.startsWith(REDUCED_FINGERPRINT))
+                        item.fingerprint = reducedFingerprint(item);
+                    Object.assign(item, { title: '', subtitle: '', body: '' });
+                }
+                for (const [key, candidate] of this.replayCandidates) {
+                    const item = this.feed.get(candidate.historyKey || '');
+                    if (item?.source !== id && !key.startsWith(`${id}:`)) continue;
+                    if (item?.fingerprint) candidate.fingerprint = item.fingerprint;
+                    else this.replayCandidates.delete(key);
+                }
+            }
             this.saveHistory(true);
             this.save();
-            if (connectionChanged) this.child?.kill();
+            if (connectionChanged) this.restartCollector();
             res.json({ ok: true });
         });
         route('delete', '/sources/:id', (req, res) => {
@@ -894,7 +1052,7 @@ export class NotificationService implements Service {
             this.icons.removeSource(id);
             this.saveHistory(true);
             this.save();
-            this.child?.kill();
+            this.restartCollector();
             res.json({ ok: true });
         });
         route('post', '/subscriptions', (req, res) => {

@@ -46,7 +46,16 @@ export interface NotificationStatus extends NotificationSummary {
     pairingOpen: boolean;
     // An iPhone asked to pair in the last 10 minutes while no pairing window was open.
     pairingRejected?: boolean;
+    // Every current problem as one notice. The fields below give the parts.
     error: string;
+    // The Bluetooth collector's last error, cleared once it has run for a while without one.
+    collectorError?: string;
+    // Collector restarts in a row; zero again after a minute of uptime.
+    collectorRestarts?: number;
+    // Set while notification history is not being saved.
+    storageError?: string;
+    // The last failed Bluetooth pairing in the past 10 minutes.
+    pairingError?: { message: string; at: number } | null;
     delivery: { sent: number; failed: number; lastError: string };
     notifications: NotificationHistoryItem[];
     retentionDays?: number;

@@ -63,6 +63,7 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
     private pollQueued = false;
     private changeTimer?: NodeJS.Timeout;
     private listener?: UsbmuxListener;
+    private polled = false;
     private readonly tracked = new Map<string, Tracked>();
     private readonly id: string;
     private onSessionStatus?: (event: { udid: string; state: string; message?: string }) => void;
@@ -274,6 +275,7 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
             if (!this.initialized) {
                 return;
             }
+            this.polled = true;
             const present = new Set(udids);
             for (const [udid, item] of this.tracked) {
                 if (!present.has(udid) && item.descriptor.state !== DeviceState.DISCONNECTED) {
@@ -426,6 +428,11 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
 
     public getDescriptor(udid: string): ApplDeviceDescriptor | undefined {
         return this.tracked.get(udid)?.descriptor;
+    }
+
+    /** False until the attached phones have been listed once: no descriptor then proves nothing. */
+    public hasPolled(): boolean {
+        return this.polled;
     }
 
     public getId(): string {

@@ -1,10 +1,13 @@
 """Exercise the collector state machine without importing BlueZ or opening D-Bus."""
 import ast
 from collections import deque
+import contextlib
+import io
 import json
 from pathlib import Path
 import struct
 import time
+import traceback
 import unittest
 import uuid
 
@@ -19,12 +22,18 @@ class CollectorTests(unittest.TestCase):
         self.write_errors = []
         self.write_replies = []
         self.unregistered = []
+        self.registered = []
+        self.subscriptions = []
+        self.managed = dict
+        self.quits = []
+        self.stdin = []
         test = self
 
         class DBus:
             Array = staticmethod(lambda value, **kwargs: value)
             Dictionary = staticmethod(lambda value, **kwargs: value)
-            DBusException = Exception
+
+            class DBusException(Exception): pass
 
             class service:
                 Object = object
@@ -36,11 +45,20 @@ class CollectorTests(unittest.TestCase):
                 test.write_errors.append(error_handler)
                 test.write_replies.append(reply_handler)
 
+            def GetManagedObjects(self, **kwargs):
+                return test.managed()
+
+            def StartNotify(self, reply_handler, error_handler):
+                test.subscriptions.append((reply_handler, error_handler))
+
             def Disconnect(self, **kwargs):
                 test.disconnections.append(True)
 
             def UnregisterAdvertisement(self, path):
                 test.unregistered.append(path)
+
+            def RegisterAdvertisement(self, path, options, reply_handler, error_handler):
+                test.registered.append(path)
 
         # Import only Client: the module's executable section owns a live system
         # bus and GLib loop. The class itself runs against these controlled stubs.
@@ -48,7 +66,17 @@ class CollectorTests(unittest.TestCase):
         declarations = [node for node in tree.body if
                         isinstance(node, (ast.ClassDef, ast.FunctionDef)) and
                         node.name in ('Client', 'property_changed', 'handle_command', 'refresh_advert',
-                                      'Rejected', 'Agent')]
+                                      'Rejected', 'Agent', 'tick', 'command_input', 'stop_after')]
+
+        class Loop:
+            quit = staticmethod(lambda: test.quits.append(True))
+
+        class Os:
+            read = staticmethod(lambda descriptor, size: test.stdin.pop(0))
+
+        class Sys:
+            class stdin:
+                fileno = staticmethod(lambda: 0)
         self.scope = {
             'time': time, 'uuid': uuid, 'struct': struct, 'deque': deque, 'json': json,
             'ANCS': ANCS, 'SOURCE': SOURCE, 'DATA': DATA, 'CONTROL': CONTROL,
@@ -57,7 +85,9 @@ class CollectorTests(unittest.TestCase):
             'clients': {}, 'sources': {'AA:BB:CC:DD:EE:FF': 'phone'}, 'dbus': DBus,
             'objects': {}, 'owned_notifications': set(),
             'advert_ready': False, 'advert_since': 0, 'ADVERT_REFRESH': 120, 'ADAPTER': '/hci0', 'ADVERT': '/advert',
-            'pair_until': 0, 'confirmation': None, 'holdoff': {}, 'RESET_HOLDOFF': 35,
+            'pair_until': 0, 'confirmation': None, 'RESET_HOLDOFF': 35,
+            'MAX_UIDS': 512, 'MAX_QUEUED_ACTIONS': 32, 'pair_attempts': {}, 'advert_pending': False,
+            'loop': Loop, 'os': Os, 'sys': Sys, 'traceback': traceback, 'input_buffer': bytearray(),
             'emit': lambda kind, **fields: self.events.append(dict(kind=kind, **fields)),
             'iface': lambda *args: Interface(),
         }
@@ -103,6 +133,14 @@ class CollectorTests(unittest.TestCase):
     def action_results(self):
         return [event for event in self.events if event['kind'] == 'action-result']
 
+    def time_out(self):
+        parser, done, _, job = self.client.current
+        self.client.current = (parser, done, 0, job)
+        self.client.tick()
+
+    def statuses(self):
+        return [event['status'] for event in self.events if event['kind'] == 'status']
+
     def test_advert_is_registered_again_only_while_a_source_is_disconnected(self):
         refresh, now = self.scope['refresh_advert'], time.monotonic()
         self.scope.update(advert_ready=True, advert_since=now - 121)
@@ -118,6 +156,45 @@ class CollectorTests(unittest.TestCase):
         self.assertFalse(self.scope['advert_ready'])
         refresh()
         self.assertEqual(self.unregistered, ['/advert'])
+
+    def test_poll_reports_devices_and_keeps_its_timer(self):
+        self.assertIs(self.scope['tick'](), True)
+        self.assertEqual(self.events[-1], dict(kind='devices', devices=[], pairingOpen=False))
+        self.assertEqual(self.registered, ['/advert'])
+        self.assertEqual(self.quits, [])
+
+    def test_unexpected_error_in_the_poll_stops_the_process_for_a_restart(self):
+        def broken(): raise RuntimeError('unexpected')
+        self.managed = broken
+        output = io.StringIO()
+        with contextlib.redirect_stderr(output):
+            self.assertIs(self.scope['tick'](), False)
+        self.assertEqual(self.events[-1], dict(
+            kind='error', message='Bluetooth collector stopped after an internal error (RuntimeError)'))
+        self.assertEqual(self.quits, [True], 'a dropped timer must not leave the process idle')
+        self.assertIn('RuntimeError: unexpected', output.getvalue(), 'the traceback goes to the server log')
+
+    def test_bluetooth_error_in_the_poll_still_reports_bluetooth_unavailable(self):
+        def unavailable(): raise self.scope['dbus'].DBusException('org.bluez was not provided')
+        self.managed = unavailable
+        self.assertIs(self.scope['tick'](), False)
+        self.assertEqual(self.events[-1], dict(kind='error', message='Bluetooth unavailable: org.bluez was not provided'))
+        self.assertEqual(self.quits, [True])
+
+    def test_unexpected_error_in_a_command_stops_the_process_for_a_restart(self):
+        handled = []
+        self.scope['handle_command'] = handled.append
+        self.stdin = [b'{"type":"pa', b'ir"}\n{"type":"confirm"}\n']
+        self.assertIs(self.scope['command_input'](None, None), True)
+        self.assertIs(self.scope['command_input'](None, None), True)
+        self.assertEqual(handled, [b'{"type":"pair"}', b'{"type":"confirm"}'])
+        def broken(line): raise RuntimeError('unexpected')
+        self.scope['handle_command'] = broken
+        self.stdin = [b'{}\n']
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIs(self.scope['command_input'](None, None), False)
+        self.assertEqual(self.events[-1]['kind'], 'error')
+        self.assertEqual(self.quits, [True])
 
     def confirm_pairing(self):
         errors = []
@@ -196,6 +273,50 @@ class CollectorTests(unittest.TestCase):
         self.assertNotIn(1, self.client.pending_added)
         self.reply(uid=1, title='Evicted')
         self.assertFalse(any(n['event'] == 'added' for n in self.notifications()))
+
+    def test_reconnect_burst_larger_than_the_uid_limit_keeps_the_session(self):
+        for uid in range(1, 601):
+            self.source(0, uid=uid, flags=4)
+        self.assertIs(self.scope['clients'].get('phone'), self.client, 'the burst must not reset the session')
+        self.assertEqual(self.client.retry_at, 0)
+        self.assertFalse(any(event['kind'] == 'status' for event in self.events))
+        self.assertEqual(len(self.client.queue), 512, 'one fetch per tracked UID')
+        self.assertEqual(len(self.writes), 1, 'only one control-point request is in flight')
+        self.reply(uid=1, title='Gave up')
+        for uid in range(89, 601):
+            self.reply(uid=uid, title=f'Alert {uid}')
+        self.assertEqual([(n['uid'], n['event'], n['preExisting']) for n in self.notifications()],
+                         [(uid, 'added', True) for uid in range(89, 601)], 'only the oldest announcements are dropped')
+        self.assertEqual(self.client.queue, {})
+        self.source(0, uid=601)
+        self.reply(uid=601, title='New')
+        self.assertEqual((self.notifications()[-1]['uid'], self.notifications()[-1]['preExisting']), (601, False))
+
+    def test_repeated_changes_to_one_alert_queue_a_single_fetch_in_its_place(self):
+        self.source(0, uid=1)
+        self.source(0, uid=2)
+        self.source(0, uid=3)
+        for _ in range(300):
+            self.source(1, uid=2)
+        self.assertEqual(list(self.client.queue), [2, 3])
+        self.source(2, uid=3)
+        self.assertEqual(list(self.client.queue), [2], 'a removed alert needs no fetch')
+        self.reply(uid=1)
+        self.reply(uid=2, title='Latest')
+        self.assertEqual([(n['uid'], n['event']) for n in self.notifications()],
+                         [(3, 'removed'), (1, 'added'), (2, 'added')])
+        self.assertEqual(len(self.writes), 2)
+
+    def test_action_queue_is_bounded_without_resetting_the_session(self):
+        self.source(0, uid=1)  # Keeps the control point busy so the actions stay queued.
+        for uid in range(100, 133):
+            self.client.active_notifications[uid] = dict(canDismiss=True, negativeActionLabel='Clear')
+            self.dismiss(requestId=f'request-{uid}', uid=uid)
+        results = self.action_results()
+        self.assertEqual([(result['uid'], result['ok']) for result in results], [(132, False)])
+        self.assertIn('busy', results[0]['error'])
+        self.assertIs(self.scope['clients'].get('phone'), self.client)
+        self.assertEqual(len(self.client.queue), 32)
 
     def test_evicted_uid_reuse_cannot_publish_an_old_inflight_response(self):
         self.source(0, uid=1, flags=4)
@@ -372,26 +493,107 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(len(self.action_results()), 2)
         self.assertEqual(sum(payload[0] == 2 for payload in self.writes), 1)
 
-    def test_action_timeout_starts_a_new_session_later_and_late_ack_cannot_succeed(self):
+    def test_action_timeout_waits_on_the_same_session_and_late_ack_cannot_succeed(self):
         self.source(0, flags=16)
         self.reply(action='Clear')
         self.dismiss()
-        parser, done, _, job = self.client.current
-        self.client.current = (parser, done, 0, job)
-        self.client.tick()
+        self.source(0, uid=43, flags=16)
+        self.client.active_notifications[44] = dict(canDismiss=True, negativeActionLabel='Clear')
+        self.dismiss(requestId='request-2', uid=44)
+        self.assertEqual(self.action_results(), [], 'the second action waits behind the first')
+        self.time_out()
         self.assertEqual(self.disconnections, [], 'the iPhone does not reconnect after we drop it')
-        self.assertNotIn('phone', self.scope['clients'])
-        self.assertGreater(self.scope['holdoff']['phone'], time.monotonic() + 30)
-        self.assertFalse(self.action_results()[0]['ok'])
+        self.assertIs(self.scope['clients'].get('phone'), self.client)
+        self.assertGreater(self.client.retry_at, time.monotonic() + 30)
+        self.assertEqual([(result['requestId'], result['ok'], result['error']) for result in self.action_results()], [
+            ('request-2', False, 'Bluetooth was busy; the action was not sent'),
+            ('request-1', False, 'The iPhone did not answer in time; the action was not confirmed')])
         self.write_replies[-1]()
-        self.assertEqual(len(self.action_results()), 1)
+        self.assertEqual(len(self.action_results()), 2)
+        self.resume()
+        self.reply(uid=43, action='Clear')
+        self.assertEqual(sum(payload[0] == 2 for payload in self.writes), 1, 'an unconfirmed action is never sent again')
+        self.assertEqual(self.client.queue, {})
+
+    def test_response_timeout_keeps_the_session_the_queue_and_new_alerts(self):
+        session = self.client.session
+        self.source(0, uid=1)
+        self.reply(uid=1)
+        self.source(0, uid=2)
+        self.events.clear()
+        self.time_out()
+        self.assertIs(self.scope['clients'].get('phone'), self.client)
+        self.assertEqual(self.client.session, session)
+        self.assertEqual(self.statuses(), ['Notification response timed out; retrying'])
+        self.assertGreater(self.client.retry_at, time.monotonic() + 30)
+        self.reply(uid=2, title='Late fragment')
+        self.source(0, uid=3)
+        self.source(1, uid=1)
+        self.source(2, uid=4)
+        self.client.ready = {SOURCE, DATA}
+        self.client.tick()
+        self.assertEqual(len(self.writes), 2, 'nothing is requested while late fragments can still arrive')
+        self.assertEqual([(n['uid'], n['event']) for n in self.notifications()], [(4, 'removed')])
+        self.resume()
+        self.reply(uid=2, title='Second try')
+        self.reply(uid=3)
+        self.reply(uid=1, title='Edited')
+        self.assertEqual([(n['uid'], n['event'], n['title'], n['session']) for n in self.notifications()[1:]],
+                         [(2, 'added', 'Second try', session), (3, 'added', 'Alert', session),
+                          (1, 'modified', 'Edited', session)])
+        self.assertFalse(any(event['kind'] == 'session' for event in self.events), 'no new session is announced')
+        self.assertEqual(self.statuses()[-1], 'Receiving notifications')
+
+    def test_invalid_response_waits_and_fetches_the_alert_again(self):
+        self.source(0, uid=1)
+        self.source(0, uid=2)
+        self.client.data('/data', b'\xff\xff')
+        self.assertIs(self.scope['clients'].get('phone'), self.client)
+        self.assertEqual(self.statuses(), ['Invalid notification response; retrying'])
+        self.assertGreater(self.client.retry_at, time.monotonic() + 30)
+        self.assertEqual(len(self.writes), 1)
+        self.resume()
+        self.reply(uid=2)
+        self.reply(uid=1)
+        self.assertEqual([(n['uid'], n['event']) for n in self.notifications()], [(2, 'added'), (1, 'added')])
+
+    def test_alert_that_never_answers_is_given_up_after_three_requests(self):
+        self.source(0, uid=1)
+        self.source(0, uid=2)
+        self.time_out()
+        self.resume()
+        self.reply(uid=2)
+        for _ in range(2):
+            self.assertIn(1, self.client.pending_added)
+            self.time_out()
+            self.resume()
+        self.assertEqual([struct.unpack_from('<I', payload, 1)[0] for payload in self.writes], [1, 2, 1, 1])
+        self.assertNotIn(1, self.client.pending_added)
+        self.assertEqual(self.client.queue, {})
+        self.assertEqual([n['uid'] for n in self.notifications()], [2])
+
+    def test_probe_follows_the_wait_and_a_failed_subscription_cannot_shorten_it(self):
+        self.client.tick()
+        self.assertEqual(len(self.subscriptions), 1)
+        self.source(0)
+        self.client.last_probe = time.monotonic()
+        self.time_out()
+        wait = self.client.retry_at
+        self.subscriptions[0][1](Exception('Not permitted'))
+        self.assertEqual(self.client.retry_at, wait)
+        self.client.ready = {SOURCE, DATA}
+        self.client.authorized = True
+        self.resume()
+        self.reply()
+        self.client.tick()
+        self.assertEqual(self.writes[-1], app_request('com.apple.Preferences')[0])
 
     def test_queued_action_expires_before_delayed_attribute_request_finishes(self):
         self.source(0, flags=16)
         self.reply(action='Clear')
         self.source(0, uid=43)
         self.dismiss()
-        self.client.queue[0]['expires'] = 0
+        next(iter(self.client.queue.values()))['expires'] = 0
         self.client.ready = {SOURCE, DATA}
         self.client.last_probe = time.monotonic()
         self.client.tick()

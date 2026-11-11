@@ -520,8 +520,10 @@ phone no longer exposes. Turning message previews off also removes saved message
 text for that phone. Removing a source deletes its history and cached icons.
 
 Original app icons are read over the trusted USB connection and cached on the
-NUC. If an app icon is unavailable, the history shows a letter placeholder. This
-does not change iOS's system-managed PWA notification icon or attribution.
+NUC. If an app icon is unavailable, the history shows a letter placeholder. Icons
+are looked up only while the phone is on USB, and when the phone has no icon for an
+app it is not asked again for an hour. This does not change iOS's system-managed
+PWA notification icon or attribution.
 
 **Mark read** and **Mark all read** update shared app unread counts; they do not
 mark messages read inside the original iPhone app. **Dismiss here** moves an alert

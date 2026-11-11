@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Read one installed app's PNG icon from the paired USB iPhone to stdout."""
+"""Read one installed app's PNG icon from the paired USB iPhone to stdout.
+
+Exit status 3: the phone answered and has no usable icon for the app. The server remembers
+that for an hour. Exit status 1: the phone could not be asked (not on USB, not trusted, no
+answer within 6 s); the server tries again a minute later.
+"""
 
 import asyncio
 import logging
@@ -7,6 +12,11 @@ import re
 import sys
 
 MAX_BYTES = 1024 * 1024
+NO_ICON = 3
+
+
+class NoIcon(Exception):
+    pass
 
 
 async def icon(source: str, bundle: str) -> bytes:
@@ -18,7 +28,7 @@ async def icon(source: str, bundle: str) -> bytes:
         async with SpringBoardServicesService(lockdown) as springboard:
             png = await springboard.get_icon_pngdata(bundle)
             if not isinstance(png, bytes) or not png.startswith(b"\x89PNG\r\n\x1a\n") or len(png) > MAX_BYTES:
-                raise ValueError("Icon unavailable")
+                raise NoIcon()
             return png
 
 
@@ -33,6 +43,9 @@ if __name__ == "__main__":
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", bundle):
             raise ValueError("Invalid app")
         sys.stdout.buffer.write(asyncio.run(asyncio.wait_for(icon(source, bundle), timeout=6)))
+    except NoIcon:
+        print("Notification icon unavailable", file=sys.stderr)
+        sys.exit(NO_ICON)
     except Exception:
         # Never write a device response, pairing record, or identifier to logs.
         print("Notification icon unavailable", file=sys.stderr)

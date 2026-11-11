@@ -1,4 +1,5 @@
 import { NotificationService } from './notifications/NotificationService';
+import { NotificationIcons } from './notifications/NotificationIcons';
 import '../../LICENSE';
 import * as readline from 'readline';
 import { Config } from './Config';
@@ -106,6 +107,11 @@ async function loadApplModules() {
         }
         const descriptor = tracker.getDescriptor(udid);
         return !!descriptor && descriptor.state !== DeviceState.DISCONNECTED;
+    });
+    // Notification icons are read over USB; no lookup is started for a phone that is not there.
+    NotificationIcons.setPhoneCheck((udid) => {
+        const tracker = ControlCenter.getInstance();
+        return tracker.hasPolled() ? tracker.getDescriptor(udid)?.state === DeviceState.CONNECTED : undefined;
     });
 
     mwList.push(CoreDeviceProxy);

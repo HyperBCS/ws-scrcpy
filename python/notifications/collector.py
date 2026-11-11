@@ -9,9 +9,9 @@ import os
 import signal
 import sys
 import time
+import traceback
 import uuid
 import struct
-from collections import deque
 import dbus
 import dbus.service
 from dbus.mainloop.glib import DBusGMainLoop
@@ -30,7 +30,6 @@ confirmation = None
 advert_ready = False
 advert_pending = False
 advert_since = 0
-holdoff = {}
 owned_notifications = set()
 input_buffer = bytearray()
 AGENT = '/org/wsscrcpy/agent'
@@ -38,6 +37,8 @@ ADVERT = '/org/wsscrcpy/advert'
 ADAPTER = '/org/bluez/hci0'
 ADVERT_REFRESH = 120
 RESET_HOLDOFF = 35
+MAX_UIDS = 512
+MAX_QUEUED_ACTIONS = 32
 
 
 def emit(kind, **values):
@@ -99,7 +100,9 @@ class Client:
         self.path, self.source, self.chars = path, source, chars
         self.session = uuid.uuid4().hex
         self.ready, self.pending = set(), set()
-        self.queue, self.current = deque(), None
+        # Insertion-ordered. A notification has one entry under its UID however often it changes,
+        # so the UID limit also bounds the queue; actions and the probe use their own keys.
+        self.queue, self.current = {}, None
         self.revisions, self.apps = {}, {}
         self.active_notifications = {}
         self.action_requests = {}
@@ -118,16 +121,32 @@ class Client:
             self.last_status = status
             emit('status', source=self.source, status=status)
 
+    def wait(self, seconds):
+        # Never shortens a longer wait that is already running.
+        self.retry_at = max(self.retry_at, time.monotonic() + seconds)
+
     def reset(self, reason):
         if not self.alive(): return
+        # A timed-out or malformed fragmented response has no cancellation command, so nothing is
+        # requested until the ATT timeout (30 s) has passed; fragments that arrive meanwhile are
+        # ignored because no request is in flight. The link, the session and the queue stay. The
+        # iPhone announces its alerts once per subscription, so a new session on the same
+        # subscription would never hear of the ones it missed, and on 2026-11-05 the iPhone did
+        # not reconnect on its own after being dropped.
+        job = self.current[3] if self.current else None
+        self.current = None
+        self.wait(RESET_HOLDOFF)
+        self.last_probe = 0  # Probe as soon as the wait ends, so the status recovers then.
+        # A queued action was never written. Only the one in flight may have been performed.
+        for key, queued in list(self.queue.items()):
+            if queued['action_failed']:
+                del self.queue[key]
+                queued['action_failed']('Bluetooth was busy; the action was not sent')
         self.fail_actions('The iPhone did not answer in time; the action was not confirmed')
         self.status(reason)
-        clients.pop(self.source, None)
-        # A timed-out fragmented response has no cancellation command, so the next request must
-        # not share its session. Start a new one on the same link once the ATT timeout (30 s) has
-        # passed instead of disconnecting: on 2026-11-05 the iPhone did not reconnect on its own
-        # after being dropped.
-        holdoff[self.source] = time.monotonic() + RESET_HOLDOFF
+        if job and not job['action_failed'] and (not job['valid'] or job['valid']()):
+            if job['attempts'] < 3: self.queue[job['key']] = job
+            elif job['failed']: job['failed']()
 
     def fail_actions(self, reason):
         for complete in list(self.action_requests.values()): complete(False, reason)
@@ -163,18 +182,19 @@ class Client:
         self.enqueue((negative_action_request(uid), None, None), lambda _: complete(True), valid=valid,
                      action_failed=lambda reason: complete(False, reason))
 
-    def enqueue(self, request, done, failed=None, valid=None, action_failed=None):
-        if len(self.queue) >= 128:
-            if action_failed: action_failed('Bluetooth is busy; the action was not sent')
-            self.reset('Notification queue overflow; retrying'); return
-        self.queue.append(dict(request=request, done=done, failed=failed, valid=valid, attempts=0,
-                               action_failed=action_failed, expires=time.monotonic() + 10))
+    def enqueue(self, request, done, failed=None, valid=None, action_failed=None, key=None):
+        if action_failed and sum(1 for job in self.queue.values() if job['action_failed']) >= MAX_QUEUED_ACTIONS:
+            action_failed('Bluetooth is busy; the action was not sent'); return
+        # A job queued again under the same key replaces the earlier one and keeps its place.
+        key = object() if key is None else key
+        self.queue[key] = dict(request=request, done=done, failed=failed, valid=valid, attempts=0, key=key,
+                               action_failed=action_failed, expires=time.monotonic() + 10)
         self.pump()
 
     def pump(self):
         if not self.alive() or self.current or not self.queue or time.monotonic() < self.retry_at: return
         while self.queue:
-            job = self.queue.popleft()
+            job = self.queue.pop(next(iter(self.queue)))
             expired = bool(job['action_failed'] and time.monotonic() > job['expires'])
             if not expired and (not job['valid'] or job['valid']()): break
             if job['action_failed']:
@@ -212,12 +232,12 @@ class Client:
                 code in detail for code in ('0xa0', '0xa1', '0xa2', '0xa3'))
             if permission:
                 self.authorized = False
-                self.retry_at = time.monotonic() + 10
+                self.wait(10)
                 self.status('Allow notification sharing in the iPhone Bluetooth settings')
-            if not terminal and job['attempts'] < 3 and len(self.queue) < 128:
-                self.queue.append(job)  # Other UIDs keep their place ahead of this retry.
+            if not terminal and job['attempts'] < 3:
+                self.queue[job['key']] = job  # Other UIDs keep their place ahead of this retry.
                 if not permission:
-                    self.retry_at = time.monotonic() + 2 ** job['attempts']
+                    self.wait(2 ** job['attempts'])
                     self.status('Retrying notification request')
             elif job['failed']:
                 job['failed']()
@@ -232,9 +252,9 @@ class Client:
     def tick(self):
         if not self.alive(): return
         now = time.monotonic()
-        for job in list(self.queue):
+        for key, job in list(self.queue.items()):
             if job['action_failed'] and now > job['expires']:
-                self.queue.remove(job)
+                del self.queue[key]
                 job['action_failed']('Bluetooth was busy; the action was not sent')
         if self.current and now > self.current[2]:
             self.reset('Notification response timed out; retrying'); return
@@ -252,7 +272,7 @@ class Client:
                         owned_notifications.add(self.chars[characteristic])
                 def failed(error, characteristic=characteristic):
                     if self.alive():
-                        self.pending.discard(characteristic); self.retry_at = time.monotonic() + 5
+                        self.pending.discard(characteristic); self.wait(5)
                         self.status('Waiting for Bluetooth notification permission')
                 iface(self.chars[characteristic], 'org.bluez.GattCharacteristic1').StartNotify(reply_handler=ok, error_handler=failed)
         if len(self.ready) == 2 and not self.current and not self.queue and now - self.last_probe > (60 if self.authorized else 10):
@@ -283,15 +303,19 @@ class Client:
             else:
                 self.active_notifications.pop(uid, None)
             if event == 0: self.pending_added.setdefault(uid, bool(flags & 4))
-            if len(self.revisions) > 512:
+            if len(self.revisions) > MAX_UIDS:
+                # A burst larger than the limit (an iPhone reconnecting with hundreds of alerts)
+                # gives up the oldest announcements and keeps the session.
                 evicted = next(iter(self.revisions))
                 self.revisions.pop(evicted)
                 self.pending_added.pop(evicted, None)
                 self.active_notifications.pop(evicted, None)
+                self.queue.pop(evicted, None)
             common = dict(source=self.source, session=self.session, uid=uid, preExisting=bool(flags & 4),
                           event=['added', 'modified', 'removed'][event])
             if event == 2:
                 self.pending_added.pop(uid, None)
+                self.queue.pop(uid, None)
                 emit('notification', **common); return
             def valid(): return self.alive() and self.revisions.get(uid) == revision
             def unavailable():
@@ -317,8 +341,8 @@ class Client:
                         if len(self.apps) >= 256: self.apps.clear()
                         self.apps[app] = values.get(0) or app
                         publish(self.apps[app])
-                    self.enqueue(app_request(app), named, failed=lambda: named({}), valid=valid)
-            self.enqueue(notification_request(uid, bool(flags & 16)), fetched, failed=unavailable, valid=valid)
+                    self.enqueue(app_request(app), named, failed=lambda: named({}), valid=valid, key=uid)
+            self.enqueue(notification_request(uid, bool(flags & 16)), fetched, failed=unavailable, valid=valid, key=uid)
 
 
 def property_changed(interface, changes, invalidated, path=None):
@@ -341,6 +365,14 @@ def refresh_advert():
     if advert_ready and set(sources.values()) - set(clients) and time.monotonic() - advert_since > ADVERT_REFRESH:
         iface(ADAPTER, 'org.bluez.LEAdvertisingManager1').UnregisterAdvertisement(ADVERT)
         advert_ready = False
+
+
+def stop_after(error):
+    # PyGObject drops a timer or watch whose callback raises and keeps the process running, so
+    # Bluetooth would never be polled again. Quit instead; the server starts a new collector.
+    traceback.print_exc()
+    emit('error', message=f'Bluetooth collector stopped after an internal error ({type(error).__name__})')
+    loop.quit()
 
 
 def tick():
@@ -379,7 +411,7 @@ def tick():
             chars = {str(v['org.bluez.GattCharacteristic1']['UUID']): str(p) for p, v in objects.items()
                      if str(p).startswith(str(path) + '/') and 'org.bluez.GattCharacteristic1' in v}
             if not all(c in chars for c in (DATA, SOURCE, CONTROL)): continue
-            if source not in clients and time.monotonic() >= holdoff.get(source, 0):
+            if source not in clients:
                 clients[source] = Client(str(path), source, chars)
                 clients[source].status('Authorizing notifications')
         emit('devices', devices=devices, pairingOpen=time.monotonic() < pair_until)
@@ -390,6 +422,9 @@ def tick():
     except dbus.DBusException as error:
         emit('error', message='Bluetooth unavailable: ' + str(error))
         loop.quit()  # Parent restarts us; registrations are rebuilt after a daemon restart.
+        return False
+    except Exception as error:
+        stop_after(error)
         return False
     return True
 
@@ -429,14 +464,18 @@ def handle_command(line):
 
 
 def command_input(source, condition):
-    chunk = os.read(sys.stdin.fileno(), 8192)
-    if not chunk: loop.quit(); return False
-    input_buffer.extend(chunk)
-    if len(input_buffer) > 65536: loop.quit(); return False
-    while b'\n' in input_buffer:
-        line, _, tail = input_buffer.partition(b'\n')
-        input_buffer[:] = tail
-        handle_command(line)
+    try:
+        chunk = os.read(sys.stdin.fileno(), 8192)
+        if not chunk: loop.quit(); return False
+        input_buffer.extend(chunk)
+        if len(input_buffer) > 65536: loop.quit(); return False
+        while b'\n' in input_buffer:
+            line, _, tail = input_buffer.partition(b'\n')
+            input_buffer[:] = tail
+            handle_command(line)
+    except Exception as error:
+        stop_after(error)
+        return False
     return True
 
 
