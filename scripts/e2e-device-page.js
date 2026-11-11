@@ -691,13 +691,20 @@ async function toolAddressForIphone(browser) {
         assert.equal(await page.locator('.tool-navigation').count(), 0);
         const links = await checkLinks(page, 'refused tool');
         assert.deepEqual(links.map((link) => [link.text, link.hash]), [['Open screen', `#!action=device&udid=${IPHONE}&view=screen`]]);
+        const before = await entries(page);
         await page.getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.locator('.stream-view').waitFor();
         await quiet(page);
         assert.deepEqual(test.streams.map((stream) => stream.action), ['proxy-coredevice']);
         assert.deepEqual(test.opened.filter((code) => code === 'FSLS' || code === 'SHEL'), [], 'no tool channel for an iPhone');
+        // Another view of the same phone, like a tab: the entry is replaced, so Back does not
+        // lead to the refused page, from which Forward would start the iPhone again.
+        assert.equal(await entries(page), before, 'Open screen adds no entry');
+        await page.goBack().catch(() => undefined);
+        assert.ok(!page.url().startsWith(BASE), `Back from the screen leaves the app (${page.url()})`);
+        assert.equal(test.streams.length, 1);
         assert.deepEqual(test.errors, []);
-        console.log('PASS a tool address for an iPhone is refused under the shared header, and its screen link names the phone and the view');
+        console.log('PASS a tool address for an iPhone is refused under the shared header; its screen link names the phone and the view and replaces the entry');
     } finally {
         await test.context.close();
     }

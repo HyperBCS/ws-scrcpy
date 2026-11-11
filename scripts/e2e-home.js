@@ -498,8 +498,7 @@ async function toolLinkForIphone(browser, { width, height, mobile, colorScheme }
             await page.getByRole('link', { name: 'Open screen', exact: true }).click();
             await page.waitForFunction((udid) => location.hash.includes('view=screen') && location.hash.includes(udid), LINKED);
             await page.locator('.stream-view').waitFor();
-            await page.goBack();
-            await page.getByRole('button', { name: 'Phones', exact: true }).last().click();
+            await page.getByRole('button', { name: 'Phones', exact: true }).first().click();
             await page.locator('#devices').waitFor();
             assert.deepEqual(test.errors, []);
         } finally {

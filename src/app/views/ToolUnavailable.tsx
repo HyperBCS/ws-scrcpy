@@ -34,7 +34,9 @@ export function ToolUnavailable({ entry, tool }: { entry: DeviceEntry; tool: str
                                     return;
                                 }
                                 event.preventDefault();
-                                followLink(screen, 'open');
+                                // Another view of the same phone, as a tab is: the entry is
+                                // replaced, so Back from the screen does not return here.
+                                followLink(screen, 'switch');
                             }}
                         >
                             Open screen
