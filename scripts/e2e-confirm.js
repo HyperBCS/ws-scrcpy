@@ -216,6 +216,18 @@ async function powerActions(browser, mobile) {
         await dialog.waitFor({ state: 'detached' });
         assert.equal(power(), 0, 'a press elsewhere sends nothing');
 
+        // The browser's Back does what Escape does: the first one cancels the prompt and the
+        // sheet stays open on its history entry; the stream under it is not left.
+        await trigger(sheet, 'Reboot').click();
+        await dialog.waitFor();
+        await page.goBack();
+        await dialog.waitFor({ state: 'detached' });
+        await page.waitForFunction(() => history.state?.nav?.overlay === 1);
+        await pause(150);
+        assert.equal(await sheet.isVisible(), true, 'Back with a prompt open leaves the sheet open');
+        assert.equal(await page.locator('.stream-view').count(), 1, 'and the stream page');
+        assert.equal(power(), 0, 'Back sends nothing');
+
         if (!mobile) {
             // Keyboard: Enter arms it with Cancel focused; moving focus away with Tab disarms it.
             await trigger(sheet, 'Reboot').focus();

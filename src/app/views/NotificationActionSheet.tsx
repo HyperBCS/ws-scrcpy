@@ -2,6 +2,7 @@ import { trapDialogTab, restoreDialogFocus } from '../ui/dialogFocus';
 import type { ComponentChildren } from 'preact';
 import { useId, useLayoutEffect, useRef } from 'preact/hooks';
 import '../../style/views/NotificationActionSheet.css';
+import { useOverlayHistory } from '../ui/overlayHistory';
 import { usePresence } from '../ui/Presence';
 import { bindSheetDrag } from '../ui/sheetDrag';
 
@@ -32,6 +33,8 @@ export function NotificationActionSheet({ open, title, description, onClose, chi
         closing.current = true;
         callback.current();
     };
+    // The browser's Back closes the sheet and leaves Notifications open.
+    useOverlayHistory(open, close);
 
     useLayoutEffect(() => {
         const node = dialog.current;

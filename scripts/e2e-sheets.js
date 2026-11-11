@@ -224,16 +224,26 @@ async function main() {
             }
             await page.keyboard.press('Escape');
             await page.locator('.bottom-sheet-root.open .bottom-sheet-backdrop').dispatchEvent('click');
+            // The browser's Back is refused too: the tab ends on the sheet's history entry again.
+            const entries = await page.evaluate(() => history.length);
+            await page.goBack();
+            await page.waitForFunction(() => history.state?.nav?.overlay === 1);
+            await pause(150);
             assert.equal(
                 await page.locator('.bottom-sheet-root.open').count(),
                 1,
-                'Apply ignores Escape/backdrop/close',
+                'Apply ignores Escape/backdrop/close/Back',
             );
+            assert.equal(await page.evaluate(() => history.length), entries, 'Back during Apply adds no history entry');
+            assert.equal(await page.locator('#devices').count(), 1, 'Back during Apply stays on the list');
             assert(completeApply, 'Apply reached only fixture');
             completeApply();
             await page.locator('.settings-sheet-apply-bar [role="alert"]').waitFor();
-            await close.click();
+            // Once Apply has ended, Back closes the sheet and the list stays.
+            await page.goBack();
             await closed();
+            assert.equal(await page.evaluate(() => history.state?.nav?.overlay), undefined, 'Back left the entry of the sheet');
+            assert.equal(await page.locator('#devices').count(), 1, 'Back after Apply closes the sheet, not the app');
             // The same popup over a live-shaped mock stream must never emit remote touches.
             const socket = new URL('/__settings_fixture__', BASE);
             socket.protocol = socket.protocol === 'https:' ? 'wss:' : 'ws:';

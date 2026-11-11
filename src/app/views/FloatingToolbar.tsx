@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { deviceSwitcherOpen, liveTextOpen, streamConnected, toolsSheetOpen, unlockSheetOpen } from '../state/stream';
 import { applSettingsSheetTarget, settingsSheetTarget } from '../state/settingsSheet';
 import '../../style/views/FloatingToolbar.css';
+import { useOverlayHistory } from '../ui/overlayHistory';
 import { usePresence } from '../ui/Presence';
 
 const STORAGE_KEY = 'floating_toolbar_position';
@@ -179,6 +180,11 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
             setOpen(false);
         }
     }, [sheetOpen]);
+    // The panel over the picture on a phone: the browser's Back closes it and leaves the stream
+    // open. A sheet opened from it takes its place. `sheetOpen` is read here, and not only in
+    // the effect above, so the panel gives its history entry up in the same pass in which the
+    // sheet asks for one: the sheet takes that entry over and no step through history is made.
+    useOverlayHistory(mobile && open && !sheetOpen, () => setOpen(false));
 
     useEffect(() => {
         const resize = () => setPos((p) => clamp(p));
