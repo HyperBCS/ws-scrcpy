@@ -426,11 +426,13 @@ test('the card line shows a schedule that cannot run or failed as a problem, and
     const on = { enabled: true, time: '03:00', hasPasscode: true, timeZone: 'Europe/Berlin', lastUnlockedAt: now - 2 * 3600000 };
     assert.equal(unlockCardLine({ ...on, enabled: false }, now), undefined);
     assert.deepEqual(unlockCardLine(on, now), {
-        text: 'Scheduled unlock 03:00 · last 2 h ago',
-        title: 'Scheduled unlock at 03:00, Europe/Berlin',
+        text: 'Scheduled unlock 03:00 and 15:00 · last 2 h ago',
+        title: 'Scheduled unlock at 03:00 and 15:00, Europe/Berlin',
         problem: false,
     });
-    assert.equal(unlockCardLine({ ...on, timeZone: undefined, serverTimeZone: 'UTC' }, now).title, 'Scheduled unlock at 03:00, server time (UTC)');
+    assert.equal(unlockCardLine({ ...on, timeZone: undefined, serverTimeZone: 'UTC' }, now).title, 'Scheduled unlock at 03:00 and 15:00, server time (UTC)');
+    assert.equal(unlockCardLine({ ...on, time: '14:30' }, now).text, 'Scheduled unlock 14:30 and 02:30 · last 2 h ago');
+    const refused = { at: now, trigger: 'schedule', outcome: 'needs-manual-unlock', message: 'Enter the passcode on the phone.' };
     assert.deepEqual(
         [
             { ...on, lastRun: { at: now, trigger: 'schedule', outcome: 'failed-wake' } },
@@ -438,13 +440,23 @@ test('the card line shows a schedule that cannot run or failed as a problem, and
             { ...on, lastRun: { at: now, trigger: 'schedule', outcome: 'skipped-recent' } },
             { ...on, passcodeRejected: true },
             { ...on, hasPasscode: false },
+            // The phone refuses connections: the one sentence, before anything else that is wrong.
+            { ...on, needsManualUnlock: true, lastRun: refused },
+            { ...on, needsManualUnlock: true, passcodeRejected: true, lastRun: refused },
+            // Reachable again: the last run is history, not a problem.
+            { ...on, lastRun: refused },
+            { ...on, waitingForLock: true },
         ].map((status) => { const line = unlockCardLine(status, now); return [line.text, line.problem]; }),
         [
-            ['Scheduled unlock 03:00 · Failed: the screen did not wake', true],
-            ['Scheduled unlock 03:00 · Unlocked, but the phone did not lock again', true],
-            ['Scheduled unlock 03:00 · last 2 h ago', false],
+            ['Scheduled unlock 03:00 and 15:00 · Failed: the screen did not wake', true],
+            ['Scheduled unlock 03:00 and 15:00 · Unlocked, but the phone did not lock again', true],
+            ['Scheduled unlock 03:00 and 15:00 · last 2 h ago', false],
             ['Scheduled unlock paused: passcode rejected', true],
             ['Scheduled unlock cannot run: no passcode', true],
+            ['The iPhone stopped accepting connections. Enter the passcode on the phone.', true],
+            ['The iPhone stopped accepting connections. Enter the passcode on the phone.', true],
+            ['Scheduled unlock 03:00 and 15:00 · last 2 h ago', false],
+            ['Scheduled unlock 03:00 and 15:00 · runs when the phone is locked', false],
         ],
     );
     // Times are shown in the schedule's zone, not the browser's.

@@ -1,7 +1,9 @@
 import { ControlCenterCommand } from '../../common/ControlCenterCommand';
 import {
     isUnlockProblem,
+    secondUnlockTime,
     unlockOutcomeText,
+    UNLOCK_BY_HAND_MESSAGE,
     UNLOCK_RUN_TIMEOUT_MS,
     UnlockRunOptions,
     UnlockRunResult,
@@ -128,7 +130,12 @@ export function unlockCardLine(
         return undefined;
     }
     const zone = status.timeZone ?? (status.serverTimeZone ? `server time (${status.serverTimeZone})` : 'server time');
-    const title = `Scheduled unlock at ${status.time}, ${zone}`;
+    const times = `${status.time} and ${secondUnlockTime(status.time)}`;
+    const title = `Scheduled unlock at ${times}, ${zone}`;
+    if (status.needsManualUnlock) {
+        // Nothing remote works until the passcode is entered on the phone, so this comes first.
+        return { text: UNLOCK_BY_HAND_MESSAGE, title, problem: true };
+    }
     if (status.passcodeRejected) {
         return { text: 'Scheduled unlock paused: passcode rejected', title, problem: true };
     }
@@ -137,13 +144,16 @@ export function unlockCardLine(
     }
     if (status.lastRun && isUnlockProblem(status.lastRun.outcome)) {
         return {
-            text: `Scheduled unlock ${status.time} · ${unlockOutcomeText(status.lastRun.outcome)}`,
+            text: `Scheduled unlock ${times} · ${unlockOutcomeText(status.lastRun.outcome)}`,
             title,
             problem: true,
         };
     }
+    if (status.waitingForLock) {
+        return { text: `Scheduled unlock ${times} · runs when the phone is locked`, title, problem: false };
+    }
     const last = status.lastUnlockedAt ? ` · last ${relativeUnlockTime(status.lastUnlockedAt, now)}` : '';
-    return { text: `Scheduled unlock ${status.time}${last}`, title, problem: false };
+    return { text: `Scheduled unlock ${times}${last}`, title, problem: false };
 }
 
 /** "just now", "12 min ago", "3 h ago", "2 days ago"; for the card line. */

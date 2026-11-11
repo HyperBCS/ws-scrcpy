@@ -367,7 +367,10 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 </SheetGroup>
 
                 <SheetGroup title="iPhone settings">
-                    <SheetRow title="Scheduled unlock" description="The daily unlock, its passcode and the last run.">
+                    <SheetRow
+                        title="Scheduled unlock"
+                        description="The two daily unlocks, the passcode and the last run."
+                    >
                         <button
                             type="button"
                             class="sheet-button"

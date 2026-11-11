@@ -425,7 +425,7 @@ async function removePasscode(browser, mobile) {
         assert.doesNotMatch(await sheet.getByRole('button', { name: 'Replace', exact: true }).getAttribute('class'), /danger/);
         let dialog = await armAndCheck(test, {
             trigger: remove, scope: sheet, question: `Remove the stored passcode for ${NAME}?`,
-            consequence: /Scheduled unlock stops\. iOS restarts the phone after 72 hours without an unlock\./,
+            consequence: /Scheduled unlock stops\. The iPhone stops accepting connections 24 hours after the passcode was last entered\./,
             confirmLabel: 'Remove passcode', sentCount: cleared,
         });
         await shot(page, `passcode-remove-armed-${label}-light`);

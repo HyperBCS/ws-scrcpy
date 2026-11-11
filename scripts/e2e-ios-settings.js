@@ -40,7 +40,9 @@ const android = {
     'ro.product.cpu.abi': 'arm64-v8a', 'screen.power': 'on', 'device.awake': true, 'battery.level': 80, 'battery.charging': false,
 };
 
-async function start(browser, { width = 390, height = 844, mobile = true, colorScheme = 'light', status = BASE_STATUS, device = {}, stream = false, storage = {} } = {}) {
+// `refusal` makes the stream socket answer every start with that error and close with that code,
+// the way the server does for a phone it cannot start a session on.
+async function start(browser, { width = 390, height = 844, mobile = true, colorScheme = 'light', status = BASE_STATUS, device = {}, stream = false, storage = {}, refusal } = {}) {
     const context = await browser.newContext({
         viewport: { width, height }, isMobile: mobile, hasTouch: mobile, colorScheme,
         // A 24-hour time field, so typed digits are the time, and a known zone for the patches.
@@ -74,6 +76,13 @@ async function start(browser, { width = 390, height = 844, mobile = true, colorS
                 const answer = handlers.onStream?.(message);
                 if (answer) socket.send(JSON.stringify(answer));
             });
+            if (refusal) {
+                setTimeout(() => {
+                    socket.send(JSON.stringify({ type: 'status', state: 'error', message: refusal.message }));
+                    socket.close({ code: refusal.code, reason: 'Session failed' });
+                }, 50);
+                return;
+            }
             setTimeout(() => socket.send(JSON.stringify({ type: 'status', state: 'ready' })), 50);
             return;
         }
@@ -103,7 +112,9 @@ async function start(browser, { width = 390, height = 844, mobile = true, colorS
     const url = new URL(BASE);
     if (stream) url.hash = `!${new URLSearchParams({ action: 'stream-coredevice', udid: UDID })}`;
     await page.goto(url.toString());
-    if (stream) {
+    if (refusal) {
+        await page.locator('.stream-start-error').waitFor();
+    } else if (stream) {
         await page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
     } else {
         await page.locator(`[data-device-key="ios:${UDID}"]`).waitFor();
@@ -143,7 +154,7 @@ async function panelFlow(browser) {
         }
         assert.equal(await dialog.getByRole('heading', { name: 'Status', exact: true }).count(), 0);
         assert.match(await dialog.getByText('Developer Mode').locator('..').textContent(), /on/);
-        const toggle = dialog.getByRole('checkbox', { name: 'Unlock every day' });
+        const toggle = dialog.getByRole('checkbox', { name: 'Unlock twice a day' });
         assert.equal(await toggle.isDisabled(), true, 'the toggle waits for a stored passcode');
         assert.equal(await toggle.isChecked(), false);
         // The group opens with one row for state and last result.
@@ -203,6 +214,9 @@ async function panelFlow(browser) {
         assert.equal(await summary.getAttribute('data-unlock-summary'), 'on');
         assert.equal(await summary.locator('.sheet-row-title').textContent(), 'On');
         assert.equal(await summary.locator('.sheet-row-desc').textContent(), 'Next run Wed 11 Nov, 03:00 · No run yet', 'the next run is shown in the schedule zone');
+        // The schedule is explained in two sentences, and the switch names both times.
+        await dialog.getByText('Unlocks the iPhone twice a day, at the set time and 12 hours later, then locks it again. The iPhone stops accepting connections 24 hours after the passcode was last entered.', { exact: true }).waitFor();
+        assert.equal(await dialog.locator('.sheet-toggle-row .sheet-row-desc').textContent(), 'At 03:00 and 15:00.');
         assert.equal(await timeRow.locator('.sheet-row-desc').textContent(), ZONE, 'the zone is named next to the time');
         assert.equal(await dialog.getByRole('button', { name: `Use ${ZONE}`, exact: true }).count(), 0, 'nothing to adopt once the zones agree');
 
@@ -230,12 +244,12 @@ async function panelFlow(browser) {
         test.sendDevice(iphone(status));
         const lastRun = dialog.locator('[data-outcome]');
         await dialog.locator('[data-outcome="skipped-recent"]').waitFor();
-        assert.equal(await lastRun.locator('.sheet-row-desc').textContent(), 'Skipped: unlocked in the last 22 hours · Tue 10 Nov, 03:00');
+        assert.equal(await lastRun.locator('.sheet-row-desc').textContent(), 'Skipped: the server entered the passcode less than 11 hours earlier · Tue 10 Nov, 03:00');
         assert.equal(await lastRun.getAttribute('data-tone'), null, 'a skip that needs nothing is not an error');
         const neutral = await colorOf(lastRun.locator('.sheet-row-desc'));
         await iosCard.locator('.device-unlock-schedule').waitFor({ state: 'attached' });
-        assert.equal(await iosCard.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock 03:00 · last 2 h ago');
-        assert.equal(await iosCard.locator('.device-unlock-schedule').getAttribute('title'), `Scheduled unlock at 03:00, ${ZONE}`);
+        assert.equal(await iosCard.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock 03:00 and 15:00 · last 2 h ago');
+        assert.equal(await iosCard.locator('.device-unlock-schedule').getAttribute('title'), `Scheduled unlock at 03:00 and 15:00, ${ZONE}`);
         assert.equal(await iosCard.locator('.device-unlock-schedule.problem').count(), 0);
 
         // A failed run reads as a failure: error tone and an icon in the sheet, and on the card.
@@ -246,7 +260,7 @@ async function panelFlow(browser) {
         assert.equal(await lastRun.locator('svg.sheet-problem-icon').count(), 1);
         assert.equal(await summary.getAttribute('data-tone'), 'error');
         assert.match(await summary.locator('.sheet-row-desc').textContent(), /Last run: Failed: the screen did not wake$/);
-        assert.equal(await iosCard.locator('.device-unlock-schedule.problem').textContent(), 'Scheduled unlock 03:00 · Failed: the screen did not wake');
+        assert.equal(await iosCard.locator('.device-unlock-schedule.problem').textContent(), 'Scheduled unlock 03:00 and 15:00 · Failed: the screen did not wake');
         await page.screenshot({ path: path.join(OUT, 'panel-390-failed.png') });
 
         // A rejected passcode pauses the schedule, and the panel and the card say so.
@@ -588,7 +602,7 @@ async function disconnectedFlow(browser) {
                 // The schedule can still be turned off: the command needs the server, not the phone.
                 handlers.onCommand = (command) =>
                     command.type === 'update_unlock_schedule' ? { result: JSON.stringify({ ...status, enabled: false, nextRunAt: undefined }) } : undefined;
-                await dialog.getByRole('checkbox', { name: 'Unlock every day' }).click();
+                await dialog.getByRole('checkbox', { name: 'Unlock twice a day' }).click();
                 await dialog.getByText('Scheduled unlock is off.').waitFor();
                 assert.deepEqual(ofType(commands, 'update_unlock_schedule').map((command) => command.data.schedule), [{ enabled: false }]);
                 assert.equal(ofType(commands, 'run_unlock_now').length, 0);
@@ -637,7 +651,7 @@ async function lostRunReplyFlow(browser) {
         assert.equal(await button.isEnabled(), true, 'the button is not left on Running for three minutes');
         assert.match(await dialog.locator('.sheet-status').last().textContent(), /Failed: the screen did not wake\. The screen stayed dark/);
         // The other controls are released with it.
-        assert.equal(await dialog.getByRole('checkbox', { name: 'Unlock every day' }).isEnabled(), true);
+        assert.equal(await dialog.getByRole('checkbox', { name: 'Unlock twice a day' }).isEnabled(), true);
         assert.deepEqual(test.errors, []);
         console.log('PASS iOS Run now ends with the device update when its reply is lost');
     } finally {
@@ -756,10 +770,110 @@ async function streamSheetsFlow(browser) {
     }
 }
 
+// 2026-11-11: an iPhone refuses new connections 24 hours after its passcode was last entered.
+// The card, the panel and the stream page say so in one sentence, and the schedule shows its two
+// times. Phone and desktop, light and dark.
+async function lockoutFlow(browser) {
+    const SENTENCE = 'The iPhone stopped accepting connections. Enter the passcode on the phone.';
+    const refused = { at: Date.UTC(2026, 10, 11, 8, 0, 46), trigger: 'schedule', outcome: 'needs-manual-unlock', message: 'Enter the passcode on the phone.' };
+    const status = {
+        enabled: true, time: '03:00', hasPasscode: true, timeZone: ZONE, nextRunAt: Date.UTC(2026, 10, 11, 20, 0),
+        lastUnlockedAt: Date.UTC(2026, 10, 10, 8, 0, 46), needsManualUnlock: true, lastRun: refused,
+    };
+    for (const [width, height, mobile] of [[390, 844, true], [1280, 800, false]]) {
+        for (const colorScheme of ['light', 'dark']) {
+            const label = `${width} ${colorScheme}`;
+            const test = await start(browser, { width, height, mobile, colorScheme, status });
+            const { page, commands, handlers } = test;
+            try {
+                // The card: the sentence as the problem line, and both times in its title.
+                const card = page.locator(`[data-device-key="ios:${UDID}"]`);
+                const line = card.locator('.device-unlock-schedule.problem');
+                await line.waitFor();
+                assert.equal(await line.textContent(), SENTENCE);
+                assert.equal(await line.getAttribute('title'), `Scheduled unlock at 03:00 and 15:00, ${ZONE}`);
+                assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, `${label}: the card line does not widen the page`);
+                const lineBox = await line.boundingBox();
+                const cardBox = await card.boundingBox();
+                assert.ok(lineBox.x >= cardBox.x && lineBox.x + lineBox.width <= cardBox.x + cardBox.width + 1, `${label}: the line stays inside the card`);
+                await settleMotion(page);
+                await page.screenshot({ path: path.join(OUT, `device-list-by-hand-${width}-${colorScheme}.png`) });
+
+                // The panel: the state first, in the error tone, with the next try.
+                const dialog = await openPanel(page);
+                const summary = dialog.locator('[data-unlock-summary]');
+                assert.equal(await summary.getAttribute('data-unlock-summary'), 'by-hand');
+                assert.equal(await summary.getAttribute('data-tone'), 'error');
+                assert.equal(await summary.locator('.sheet-row-title').textContent(), 'Unlock the iPhone by hand');
+                assert.equal(await summary.locator('.sheet-row-desc').textContent(), `${SENTENCE} Next try Wed 11 Nov, 15:00.`);
+                assert.equal(await summary.locator('svg.sheet-problem-icon').count(), 1);
+                assert.equal(await dialog.locator('.sheet-toggle-row .sheet-row-desc').textContent(), 'At 03:00 and 15:00.');
+                const lastRun = dialog.locator('[data-outcome="needs-manual-unlock"]');
+                assert.equal(await lastRun.getAttribute('data-tone'), 'error');
+                assert.equal(await lastRun.locator('.sheet-row-desc').textContent(), 'The iPhone stopped accepting connections · Wed 11 Nov, 03:00. Enter the passcode on the phone.');
+                const neutral = dialog.locator('.sheet-row', { hasText: 'Run now' }).locator('.sheet-row-desc');
+                assert.notEqual(await colorOf(summary.locator('.sheet-row-desc')), await colorOf(neutral), `${label}: the state is not the neutral grey`);
+                assert.equal(await dialog.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false, `${label}: no horizontal overflow`);
+                assert.equal(await dialog.getByText(/device/i).count(), 0, `${label}: the panel says phone or iPhone`);
+                await page.screenshot({ path: path.join(OUT, `panel-by-hand-${width}-${colorScheme}.png`) });
+
+                // Run now on a phone that still refuses: the same sentence, as an error.
+                handlers.onCommand = (command) =>
+                    command.type === 'run_unlock_now' ? { result: JSON.stringify({ ...refused, at: Date.now(), trigger: 'manual' }) } : undefined;
+                await dialog.getByRole('button', { name: 'Run now', exact: true }).click();
+                await dialog.locator('.sheet-status.error', { hasText: SENTENCE }).waitFor();
+                assert.equal(await dialog.locator('.sheet-status.error').textContent(), SENTENCE);
+                assert.equal(ofType(commands, 'run_unlock_now').length, 1);
+
+                // The passcode was entered on the phone: the server clears the state. The last run
+                // is still listed, but nothing reads as a problem any more.
+                const reachable = { ...status, needsManualUnlock: undefined, lastUnlockedAt: Date.now() - 2 * 3600000 };
+                test.sendDevice(iphone(reachable));
+                await dialog.locator('[data-unlock-summary="on"]').waitFor();
+                assert.equal(await summary.getAttribute('data-tone'), 'neutral');
+                assert.equal(await summary.locator('.sheet-row-desc').textContent(), 'Next run Wed 11 Nov, 15:00 · Last run: The iPhone stopped accepting connections');
+                assert.equal(await lastRun.getAttribute('data-tone'), null);
+                assert.equal(await card.locator('.device-unlock-schedule.problem').count(), 0);
+                assert.equal(await card.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock 03:00 and 15:00 · last 2 h ago');
+
+                // A slot that arrived while the phone was in use waits for it to be locked.
+                test.sendDevice(iphone({ ...reachable, waitingForLock: true }, { 'device.locked': false, 'screen.power': 'on' }));
+                await dialog.locator('.sheet-row-desc', { hasText: 'Runs when the phone is next locked' }).waitFor();
+                assert.equal(await card.locator('.device-unlock-schedule').textContent(), 'Scheduled unlock 03:00 and 15:00 · runs when the phone is locked');
+                assert.equal(await card.locator('.device-unlock-schedule.problem').count(), 0);
+                assert.deepEqual(test.errors, []);
+            } finally {
+                await test.context.close();
+            }
+
+            // The stream page of that phone: the same sentence instead of a generic start failure,
+            // also once the page has stopped retrying.
+            const viewer = await start(browser, { width, height, mobile, colorScheme, status, stream: true, refusal: { message: SENTENCE, code: 4009 } });
+            try {
+                const problem = viewer.page.locator('.stream-start-error');
+                assert.equal(await problem.locator('h2').textContent(), 'Unlock the iPhone by hand');
+                assert.equal(await problem.locator('p').first().textContent(), SENTENCE);
+                await problem.getByRole('button', { name: 'Retry', exact: true }).waitFor();
+                // Three failed starts: the page stops trying. The sentence stays as it is.
+                await viewer.page.waitForFunction(() => !document.querySelector('.stream-start-error-note'), undefined, { timeout: 15000 });
+                assert.equal(await problem.locator('p').first().textContent(), SENTENCE, `${label}: no retry count is added to the sentence`);
+                assert.equal(await problem.locator('h2').textContent(), 'Unlock the iPhone by hand');
+                assert.equal(await viewer.page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
+                await settleMotion(viewer.page);
+                await viewer.page.screenshot({ path: path.join(OUT, `stream-by-hand-${width}-${colorScheme}.png`) });
+                assert.deepEqual(viewer.errors, []);
+            } finally {
+                await viewer.context.close();
+            }
+        }
+    }
+    console.log('PASS iOS unlock by hand: card, panel, Run now and stream page at 390 and 1280, light and dark; cleared state and waiting for lock');
+}
+
 (async () => {
     const browser = await chromium.launch({ headless: true });
     try {
-        for (const run of [panelFlow, timeTypingFlow, narrowFlow, themeFlow, streamUnlockFlow, disconnectedFlow, lostRunReplyFlow, streamSheetsFlow]) await run(browser);
+        for (const run of [panelFlow, timeTypingFlow, narrowFlow, themeFlow, lockoutFlow, streamUnlockFlow, disconnectedFlow, lostRunReplyFlow, streamSheetsFlow]) await run(browser);
     } finally {
         await browser.close();
     }

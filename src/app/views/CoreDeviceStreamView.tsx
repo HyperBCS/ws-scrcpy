@@ -4,6 +4,7 @@ import { ParamsStreamCoreDevice } from '../../types/ParamsStreamCoreDevice';
 import ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
 import { CoreDeviceSessionState } from '../../common/CoreDeviceProtocol';
+import { isPasscodeLockout, UNLOCK_BY_HAND_MESSAGE } from '../../common/IosUnlockSchedule';
 import {
     activeCoreDeviceStream,
     closeAllSheets,
@@ -118,6 +119,9 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
     // One card on the stage for every state without a picture: the reason, and what can be done.
     // A browser without a decoder cannot be retried into having one, so it gets no Retry.
     const trying = !!failure && session.state === 'starting';
+    // The phone refuses connections until its passcode is entered on it. The card says that in
+    // the words the settings panel and the push use, without the retry count the receiver adds.
+    const lockedOut = isPasscodeLockout(failure?.message);
     const problem = error
         ? { kind: 'start', title: 'Unable to start this stream', message: error, note: '', retry: false }
         : decoderError
@@ -131,8 +135,8 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
           : failure
             ? {
                   kind: failure.state,
-                  title: FAILURE_TITLE[failure.state],
-                  message: failure.message || FAILURE_FALLBACK[failure.state],
+                  title: lockedOut ? 'Unlock the iPhone by hand' : FAILURE_TITLE[failure.state],
+                  message: lockedOut ? UNLOCK_BY_HAND_MESSAGE : failure.message || FAILURE_FALLBACK[failure.state],
                   note: trying ? 'Trying again…' : failure.retrying ? 'Trying again shortly.' : '',
                   retry: true,
               }
