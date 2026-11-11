@@ -93,25 +93,27 @@ function audit({ mobile, tokens }) {
         }
         return false;
     };
-    const elements = [...page.querySelectorAll('*')].filter((element) => !element.closest('svg') || element.tagName === 'svg');
+    // A sheet that is closed is not drawn; e2e-kit-sheet.js measures the open ones.
+    const all = (selector) => [...page.querySelectorAll(selector)].filter((element) => !element.closest('dialog:not([open])'));
+    const elements = all('*').filter((element) => !element.closest('svg') || element.tagName === 'svg');
 
     // Sizes.
     const coarse = matchMedia('(pointer: coarse)').matches;
     if (coarse !== mobile) faults.push(`(pointer: coarse) is ${coarse} in a ${mobile ? 'touch' : 'mouse'} context`);
     const height = (element) => Math.round(element.getBoundingClientRect().height * 100) / 100;
-    for (const element of page.querySelectorAll('.kit-button, .kit-icon-button')) {
+    for (const element of all('.kit-button, .kit-icon-button')) {
         const compact = element.matches('.kit-button-compact, .kit-icon-button-compact');
         const expected = compact && !mobile ? 32 : 44;
         if (height(element) !== expected) faults.push(`${height(element)}px high, not ${expected}px: ${name(element)}`);
         if (element.matches('.kit-icon-button') && element.getBoundingClientRect().width !== expected) faults.push(`not square: ${name(element)}`);
     }
-    for (const element of page.querySelectorAll('input.kit-field, select.kit-field, .kit-tab, .kit-bar-back, .kit-segment, .kit-range, .kit-toast-close, .kit-toast-action')) {
+    for (const element of all('input.kit-field, select.kit-field, .kit-tab, .kit-bar-back, .kit-segment, .kit-range, .kit-toast-close, .kit-toast-action')) {
         if (height(element) !== 44) faults.push(`${height(element)}px high, not 44px: ${name(element)}`);
     }
-    for (const element of page.querySelectorAll('textarea.kit-field, .kit-row, .kit-disclosure > summary, .kit-bar-title')) {
+    for (const element of all('textarea.kit-field, .kit-row, .kit-disclosure > summary, .kit-bar-title')) {
         if (height(element) < 44) faults.push(`${height(element)}px high, under 44px: ${name(element)}`);
     }
-    for (const element of page.querySelectorAll('.kit-switch')) {
+    for (const element of all('.kit-switch')) {
         const target = parseFloat(getComputedStyle(element, '::after').height);
         if (target !== 44) faults.push(`a ${target}px target, not 44px: ${name(element)}`);
     }
@@ -160,7 +162,7 @@ function audit({ mobile, tokens }) {
     }
 
     // The edge that makes a field or a switch findable.
-    for (const element of page.querySelectorAll('.kit-field, .kit-switch')) {
+    for (const element of all('.kit-field, .kit-switch')) {
         if (dimmed(element)) continue;
         const style = getComputedStyle(element);
         const ratio = contrast(style.borderTopColor, behind(element.parentElement));
@@ -169,7 +171,7 @@ function audit({ mobile, tokens }) {
 
     // One accent: primary actions and everything that is on carry the same fill.
     const accentFills = new Set();
-    const marked = page.querySelectorAll('.kit-button-primary, .kit-switch:checked, .kit-button[aria-pressed="true"], .kit-icon-button[aria-pressed="true"]');
+    const marked = all('.kit-button-primary, .kit-switch:checked, .kit-button[aria-pressed="true"], .kit-icon-button[aria-pressed="true"]');
     for (const element of marked) {
         const style = getComputedStyle(element);
         accentFills.add(style.backgroundColor);
@@ -177,7 +179,7 @@ function audit({ mobile, tokens }) {
         if (style.borderTopColor !== resolved.accent) faults.push(`border ${style.borderTopColor} is not the accent: ${name(element)}`);
     }
     if (marked.length < 8 || accentFills.size !== 1) faults.push(`${marked.length} accent controls with ${accentFills.size} fills`);
-    for (const tab of page.querySelectorAll('.kit-tab')) {
+    for (const tab of all('.kit-tab')) {
         const style = getComputedStyle(tab);
         const current = tab.getAttribute('aria-current') === 'page';
         if (style.borderBottomColor !== (current ? resolved.accent : 'rgba(0, 0, 0, 0)')) faults.push(`tab underline ${style.borderBottomColor}: ${name(tab)}`);
@@ -185,7 +187,7 @@ function audit({ mobile, tokens }) {
     }
 
     // Icons: each is one path that draws inside the 24 by 24 grid.
-    const icons = [...page.querySelectorAll('[data-kit-icon] svg')];
+    const icons = all('[data-kit-icon] svg');
     if (icons.length < 50) faults.push(`${icons.length} icons shown`);
     for (const svg of icons) {
         const box = svg.querySelector('path').getBBox();
@@ -193,13 +195,13 @@ function audit({ mobile, tokens }) {
         if (!inside || svg.children.length !== 1) faults.push(`icon ${svg.parentElement.getAttribute('data-kit-icon')} is ${JSON.stringify([box.x, box.y, box.width, box.height])}`);
         if (svg.getAttribute('aria-hidden') !== 'true') faults.push(`icon ${svg.parentElement.getAttribute('data-kit-icon')} is not hidden from assistive technology`);
     }
-    for (const svg of page.querySelectorAll('svg.kit-icon')) {
+    for (const svg of all('svg.kit-icon')) {
         const size = svg.getBoundingClientRect().width;
         if (![16, 20, 24].includes(size) || svg.getBoundingClientRect().height !== size) faults.push(`an icon of ${size}px: ${name(svg)}`);
     }
 
     // Names.
-    for (const button of page.querySelectorAll('.kit-icon-button, .kit-toast-close')) {
+    for (const button of all('.kit-icon-button, .kit-toast-close')) {
         if (!(button.getAttribute('aria-label') || '').trim()) faults.push(`an icon button without a name: ${name(button)}`);
     }
 

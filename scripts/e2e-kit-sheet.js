@@ -1,7 +1,7 @@
 /* eslint-disable */
 // node scripts/test-browser.js kit-sheet      (E2E_OUT=<dir> keeps a picture of each state;
 //                                              KIT_SHEET_ONLY=focus,menu runs only those checks)
-// The sheet and the menu of the design kit, on their page at #!action=kit-sheets.
+// The sheet and the menu of the design kit, in their sections of the kit page (#!action=kit).
 // At 390x844 (touch) and 1440x900 (mouse), light and dark:
 //   the sheet is a bottom sheet below 600px and a centred dialog 560px wide from there, whatever
 //   the pointer; it has one header (title, subtitle, close) and one footer slot;
@@ -50,14 +50,23 @@ async function start(browser, viewport, colorScheme = 'light') {
     page.on('pageerror', (error) => test.errors.push(error.message));
     // The app looks for phones on every page. Here it finds no host.
     await page.routeWebSocket('**', () => undefined);
-    await page.goto(`${BASE}#!action=kit-sheets`);
-    await page.locator('.kit-sheets-page').waitFor();
+    await page.goto(`${BASE}#!action=kit`);
+    await page.locator('.kit-page').waitFor();
+    // The page scrolls inside itself. The sections of the sheet and the menu are put at its top,
+    // so their buttons are in the window.
+    await page.locator('[data-kit-section="Sheet"]').evaluate((node) => node.scrollIntoView({ block: 'start' }));
     return test;
 }
 
 const press = (test, locator) => (test.mobile ? locator.tap() : locator.click());
 const pressAt = (test, x, y) => (test.mobile ? test.page.touchscreen.tap(x, y) : test.page.mouse.click(x, y));
-const opener = (page, label) => page.locator('.kit-sheets-page > .kit-sheets-list').getByRole('button', { name: label, exact: true });
+const opener = (page, label) => page.locator('[data-kit-demo="examples"] .kit-demo-specimen').getByRole('button', { name: label, exact: true });
+/** A place on the page that is not a control: the title of a section, brought into the window. */
+const pageSpot = async (page, section) => {
+    const title = page.locator(`[data-kit-section="${section}"] > .kit-section-title`);
+    await title.scrollIntoViewIfNeeded();
+    return box(title);
+};
 const sheet = (page, title) => page.getByRole('dialog', { name: title, exact: true });
 const openSheets = (page) => page.locator('dialog.kit-sheet[open]:not([data-exiting])').count();
 const at = (page) => page.evaluate(() => ({ index: history.state?.nav?.index ?? 0, overlay: history.state?.nav?.overlay || 0, hash: location.hash }));
@@ -113,7 +122,7 @@ async function closed(test, dialog, home, how) {
     await dialog.waitFor({ state: 'hidden' });
     await untilAt(page, home.index, home.overlay);
     assert.equal((await at(page)).hash, home.hash, `${how} leaves the address alone`);
-    assert.ok(await page.locator('.kit-sheets-page').isVisible(), `${how} leaves the page`);
+    assert.ok(await page.locator('.kit-page').isVisible(), `${how} leaves the page`);
 }
 
 /** Drags the header of a bottom sheet down by `distance`. */
@@ -204,7 +213,7 @@ async function layout(test) {
     await closed(test, long.dialog, long.home, 'the backdrop');
 
     const field = await open(test, 'Sheet with a text field', 'Text field');
-    assert.equal((await style(field.dialog.locator('#kit-sheets-name'), 'fontSize')).fontSize, '16px', 'a field is 16px, so iOS does not zoom');
+    assert.equal((await style(field.dialog.getByLabel('Name', { exact: true }), 'fontSize')).fontSize, '16px', 'a field is 16px, so iOS does not zoom');
     await shot(test, 'sheet-field');
     await page.keyboard.press('Escape');
     await closed(test, field.dialog, field.home, 'Escape');
@@ -285,7 +294,7 @@ async function history(test) {
 async function confirmFirst(test) {
     const { page } = test;
     const { dialog, home } = await open(test, 'Sheet with a confirm prompt', 'Confirm prompt');
-    const prompt = dialog.locator('.confirm-prompt.kit');
+    const prompt = dialog.locator('.kit-confirm');
     const arm = async () => {
         await press(test, dialog.getByRole('button', { name: 'Erase the example' }));
         await prompt.waitFor();
@@ -371,6 +380,12 @@ async function busyStays(test) {
     console.log(`PASS ${test.label}: a sheet that may not close stays open on Escape, the close request, the backdrop, ${mobile ? 'a drag, ' : ''}Back and a close by the browser`);
 }
 
+/** The name of the control with focus: its label, or its own text. */
+function nameOfFocus() {
+    const node = document.activeElement;
+    return (node.getAttribute('aria-label') || node.labels?.[0]?.textContent || node.textContent || '').trim();
+}
+
 async function focus(test) {
     const { page } = test;
     const button = opener(page, 'Sheet with a text field');
@@ -388,18 +403,18 @@ async function focus(test) {
     for (let step = 0; step < 4; step++) {
         await page.keyboard.press('Tab');
         assert.ok(await inside(), 'Tab stays in the sheet');
-        order.push(await page.evaluate(() => document.activeElement.id || document.activeElement.className));
+        order.push(await page.evaluate(nameOfFocus));
     }
-    assert.deepEqual(order, ['kit-sheet-close', 'kit-sheets-name', 'kit-sheets-text', 'kit-sheet-close'], 'Tab goes round the controls of the sheet');
+    assert.deepEqual(order, ['Close Text field', 'Name', 'Text to paste on the phone', 'Close Text field'], 'Tab goes round the controls of the sheet');
     await page.keyboard.press('Shift+Tab');
-    assert.equal(await page.evaluate(() => document.activeElement.id), 'kit-sheets-text', 'Shift+Tab goes round the other way');
+    assert.equal(await page.evaluate(nameOfFocus), 'Text to paste on the phone', 'Shift+Tab goes round the other way');
     assert.ok(await inside());
     // The page under the sheet cannot take focus.
     await button.evaluate((node) => node.focus());
     assert.ok(await dialog.evaluate((node) => node.contains(document.activeElement)), 'the page under a sheet is inert');
     await page.keyboard.press('Escape');
     await closed(test, dialog, home, 'Escape');
-    assert.equal(await focused(page), 'button.kit-sheets-button:Sheet with a text field', 'focus returns to the button that opened the sheet');
+    assert.equal(await focused(page), 'button.kit-button:Sheet with a text field', 'focus returns to the button that opened the sheet');
     console.log(`PASS ${test.label}: focus moves to the dialog, Tab stays inside, and focus returns to the opener`);
 }
 
@@ -429,7 +444,7 @@ async function stack(test) {
     await shot(test, 'sheet-stacked');
     await page.keyboard.press('Escape');
     await onlyFirst('Escape');
-    assert.equal(await focused(page), 'button.kit-sheets-button:Open the second sheet', 'focus returns into the first sheet');
+    assert.equal(await focused(page), 'button.kit-button:Open the second sheet', 'focus returns into the first sheet');
     await openSecond();
     await page.goBack();
     await onlyFirst('Back');
@@ -460,7 +475,7 @@ async function stack(test) {
     assert.equal(await page.evaluate(() => document.body.classList.contains('sheet-open')), true);
     await page.keyboard.press('Escape');
     await closed(test, long, short.home, 'Escape');
-    assert.equal(await focused(page), 'button.kit-sheets-button:Short sheet', 'focus returns to the button on the page');
+    assert.equal(await focused(page), 'button.kit-button:Short sheet', 'focus returns to the button on the page');
     assert.equal(await page.evaluate(() => document.body.classList.contains('sheet-open')), false);
 
     // Back from both, one at a time, ends on the page.
@@ -480,7 +495,7 @@ async function stack(test) {
 async function toastAbove(test) {
     const { page } = test;
     const { dialog, home } = await open(test, 'Toast over a sheet', 'Toast');
-    const toast = page.locator('.app-toast');
+    const toast = page.locator('.kit-toast');
     const raise = async () => {
         await press(test, dialog.getByRole('button', { name: 'Show a message' }));
         await toast.waitFor();
@@ -488,7 +503,7 @@ async function toastAbove(test) {
     };
     await raise();
     assert.equal(await toast.count(), 1, 'one toast');
-    assert.ok(await dialog.evaluate((node) => !!node.querySelector(':scope > .kit-sheet-above > .app-toast')), 'the toast is shown inside the open sheet');
+    assert.ok(await dialog.evaluate((node) => !!node.querySelector(':scope > .kit-sheet-above > .kit-toast')), 'the toast is shown inside the open sheet');
     assert.ok(await onTop(toast), 'the toast is above the sheet');
     const toastBox = await box(toast);
     assert.ok(toastBox.bottom <= test.viewport.height && toastBox.top > test.viewport.height - 160, 'the toast is at the bottom edge, where it always is');
@@ -501,20 +516,20 @@ async function toastAbove(test) {
     await raise();
     await dialog.locator('.kit-sheet-close').focus();
     await page.keyboard.press('Shift+Tab');
-    assert.equal(await focused(page), 'button.toast-close:Dismiss message', 'Tab reaches the toast');
+    assert.equal(await focused(page), 'button.kit-toast-close:Dismiss message', 'Tab reaches the toast');
     // The toast outlives the sheet: it goes back to the page.
     await page.keyboard.press('Escape');
     await closed(test, dialog, home, 'Escape');
     await toast.waitFor();
     await settleMotion(page);
     assert.equal(await toast.count(), 1);
-    assert.ok(await page.evaluate(() => !document.querySelector('dialog .app-toast')), 'the toast is on the page again');
+    assert.ok(await page.evaluate(() => !document.querySelector('dialog .kit-toast')), 'the toast is on the page again');
     assert.ok(await onTop(toast));
     // One that is already showing moves into a sheet that opens over it.
     const short = await open(test, 'Short sheet', 'Short sheet');
     await toast.waitFor();
     await settleMotion(page);
-    assert.ok(await short.dialog.evaluate((node) => !!node.querySelector(':scope > .kit-sheet-above > .app-toast')), 'a toast on the page moves into the sheet');
+    assert.ok(await short.dialog.evaluate((node) => !!node.querySelector(':scope > .kit-sheet-above > .kit-toast')), 'a toast on the page moves into the sheet');
     assert.ok(await onTop(toast));
     await press(test, toast.getByRole('button', { name: 'Dismiss message' }));
     await toast.waitFor({ state: 'detached' });
@@ -535,7 +550,7 @@ async function eventsStop(test) {
     const { page, mobile } = test;
     // The listeners hear the page itself.
     await listen(page);
-    const heading = await box(page.locator('.kit-sheets-heading'));
+    const heading = await pageSpot(page, 'Sheet');
     await pressAt(test, heading.left + 10, heading.top + 10);
     await page.mouse.move(heading.left + 20, heading.top + 12);
     await page.mouse.wheel(0, 40);
@@ -603,7 +618,7 @@ async function keyboardResize(test) {
     assert.ok(rect.bottom <= 420 + 1, `the sheet ends above the keyboard (${rect.bottom})`);
     assert.ok(rect.top >= 0, 'the sheet starts inside the window');
     if (test.mobile) near(rect.bottom, 420, 'a bottom sheet sits on the keyboard');
-    const fieldBox = await box(dialog.locator('#kit-sheets-text'));
+    const fieldBox = await box(dialog.getByLabel('Text to paste on the phone', { exact: true }));
     assert.ok(fieldBox.bottom <= 420, 'the field is above the keyboard');
     await shot(test, 'sheet-keyboard');
     // iOS also moves the visual viewport down the page.
@@ -626,7 +641,7 @@ async function keyboardResize(test) {
 
 async function menu(test) {
     const { page, viewport, mobile } = test;
-    const button = page.locator('.kit-sheets-page > .kit-sheets-list').getByRole('button', { name: 'More', exact: true });
+    const button = page.locator('[data-kit-demo="at its button"]').getByRole('button', { name: 'More', exact: true });
     const list = page.getByRole('menu', { name: 'More actions' });
     const home = await at(page);
     const openMenu = async () => {
@@ -640,7 +655,7 @@ async function menu(test) {
         await list.waitFor({ state: 'detached' });
         await untilAt(page, home.index, home.overlay);
         assert.equal(await button.getAttribute('aria-expanded'), 'false', `${how} closes the menu`);
-        assert.ok(await page.locator('.kit-sheets-page').isVisible());
+        assert.ok(await page.locator('.kit-page').isVisible());
     };
     const current = () => page.evaluate(() => (document.activeElement.closest('[role="menu"]') ? document.activeElement.textContent.trim() : `outside: ${document.activeElement.textContent.trim()}`));
 
@@ -670,22 +685,22 @@ async function menu(test) {
     }
     await page.keyboard.press('Escape');
     await gone('Escape');
-    assert.equal(await focused(page), 'button.kit-sheets-button:More', 'Escape returns focus to the button');
+    assert.equal(await focused(page), 'button.kit-button:More', 'Escape returns focus to the button');
 
     await openMenu();
     await page.goBack();
     await gone('Back');
-    assert.equal(await focused(page), 'button.kit-sheets-button:More', 'Back returns focus to the button');
+    assert.equal(await focused(page), 'button.kit-button:More', 'Back returns focus to the button');
 
+    const heading = await pageSpot(page, 'Menu');
     await openMenu();
-    const heading = await box(page.locator('.kit-sheets-heading'));
     await pressAt(test, heading.left + 10, heading.top + 10);
     await gone('a press outside');
 
     await openMenu();
     await page.keyboard.press('Tab');
     await gone('Tab');
-    assert.equal(await focused(page), 'button.kit-sheets-button:More');
+    assert.equal(await focused(page), 'button.kit-button:More');
 
     // The button closes the menu it opened.
     await openMenu();
@@ -694,33 +709,30 @@ async function menu(test) {
 
     // A scroll elsewhere leaves the menu open; a scroll that moves the button closes it.
     await openMenu();
-    const scroll = (selector, top) => page.evaluate(([sel, to]) => new Promise((resolve) => {
+    const scroll = (selector, by) => page.evaluate(([sel, delta]) => new Promise((resolve) => {
         const node = document.querySelector(sel);
         node.addEventListener('scroll', () => resolve(), { once: true });
-        node.scrollTop = to;
-    }), [selector, top]);
-    await page.evaluate(() => {
+        // Down, or up when the scroller is already at its end.
+        node.scrollTop += node.scrollTop + node.clientHeight + delta > node.scrollHeight ? -delta : delta;
+    }), [selector, by]);
+    const pageTop = await page.evaluate(() => {
         const other = document.createElement('div');
         other.id = 'kit-sheets-other-scroller';
         other.style.cssText = 'position: fixed; left: 0; bottom: 0; width: 40px; height: 40px; overflow: auto';
         other.innerHTML = '<div style="height: 400px"></div>';
         document.body.append(other);
-        const spacer = document.createElement('div');
-        spacer.id = 'kit-sheets-spacer';
-        spacer.style.height = '2000px';
-        document.querySelector('.kit-sheets-page').append(spacer);
+        return document.querySelector('.kit-page').scrollTop;
     });
     await scroll('#kit-sheets-other-scroller', 100);
     await page.waitForTimeout(100);
     assert.equal(await button.getAttribute('aria-expanded'), 'true', 'a scroll that does not move the button leaves the menu open');
     assert.ok(await list.evaluate((node) => !node.hasAttribute('data-exiting')));
-    await scroll('.kit-sheets-page', 40);
+    await scroll('.kit-page', 40);
     await gone('a scroll that moves the button');
-    await page.evaluate(() => {
+    await page.evaluate((top) => {
         document.getElementById('kit-sheets-other-scroller').remove();
-        document.getElementById('kit-sheets-spacer').remove();
-        document.querySelector('.kit-sheets-page').scrollTop = 0;
-    });
+        document.querySelector('.kit-page').scrollTop = top;
+    }, pageTop);
 
     // An item that is on or off leaves the menu open; an action closes it.
     await openMenu();
@@ -735,7 +747,7 @@ async function menu(test) {
     await page.keyboard.press('Enter');
     await gone('an item');
     await page.getByText('Last choice: Move.').waitFor();
-    assert.equal(await focused(page), 'button.kit-sheets-button:More', 'choosing an item returns focus to the button');
+    assert.equal(await focused(page), 'button.kit-button:More', 'choosing an item returns focus to the button');
     await openMenu();
     await press(test, list.getByRole('menuitem', { name: 'Delete' }));
     await gone('an item');
@@ -755,7 +767,7 @@ async function menu(test) {
         assert.ok(await renamed.evaluate((node) => document.activeElement === node), `the sheet opened from the menu (${how}) has focus`);
         await page.keyboard.press('Escape');
         await closed(test, renamed, home, 'Escape');
-        assert.equal(await focused(page), 'button.kit-sheets-button:More', `a sheet opened from a menu item (${how}) returns focus to the menu's button`);
+        assert.equal(await focused(page), 'button.kit-button:More', `a sheet opened from a menu item (${how}) returns focus to the menu's button`);
     }
 
     // Presses in the menu do not reach the listeners that drive a phone.
@@ -794,7 +806,7 @@ async function menu(test) {
     await shot(test, 'menu-in-sheet');
     await page.keyboard.press('Escape');
     await sheetStays('Escape');
-    assert.equal(await focused(page), 'button.kit-sheets-button:More');
+    assert.equal(await focused(page), 'button.kit-button:More');
     await openInSheet();
     assert.equal(await closeRequest(footer.dialog), true);
     await sheetStays('the close request');
@@ -815,6 +827,10 @@ async function run(browser, viewport, colorScheme, checks) {
         for (const check of checks.filter(chosen)) await check(test);
         assert.equal(await openSheets(test.page), 0);
         assert.deepEqual(test.errors, [], `${test.label}: no page error`);
+    } catch (error) {
+        // The contexts run side by side; the first failure stops the others, so say which.
+        console.error(`FAIL ${test.label}:`, error);
+        throw error;
     } finally {
         await test.context.close();
     }

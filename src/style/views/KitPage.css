@@ -115,6 +115,25 @@
 .kit-demo-sheet > .kit-disclosure {
     margin-top: var(--space-20);
 }
+.kit-demo-note {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+}
+/* Inside the example sheets. */
+.kit-demo-text {
+    margin: 0 0 var(--space-12);
+}
+.kit-demo-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+}
+.kit-demo-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+}
 @media (max-width: 599px) {
     .kit-demo {
         grid-template-columns: minmax(0, 1fr);

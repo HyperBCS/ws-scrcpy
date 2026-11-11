@@ -1,17 +1,20 @@
 import { Component, ComponentChildren } from 'preact';
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import type { AudioPlaybackStatus, AudioSession } from '../state/audio';
 import { Disclosure } from '../ui/AnimatedDetails';
 import { AppBar, AppBarStatus } from '../ui/AppBar';
 import { Banner } from '../ui/Banner';
 import { Button, buttonClass, ButtonVariant } from '../ui/Button';
+import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { SelectField, TextAreaField, TextField } from '../ui/Field';
 import { Icon } from '../ui/Icon';
 import { IconButton, iconButtonClass } from '../ui/IconButton';
 import { IconName, ICONS, iconSvg } from '../ui/icons';
 import { InlineStatus } from '../ui/InlineStatus';
+import { Menu, MenuItem, MenuSeparator } from '../ui/Menu';
 import { SegmentedControl } from '../ui/SegmentedControl';
+import { Sheet } from '../ui/Sheet';
 import {
     SheetFooter,
     SheetGroup,
@@ -29,7 +32,8 @@ import '../../style/views/KitPage.css';
 
 /**
  * The kit page (`#!action=kit`): every shared control in every variant and state, with its name
- * beside it. It is for development and for `scripts/e2e-kit.js`, and nothing links to it.
+ * beside it, and the sheet and the menu behind buttons. It is for development and for
+ * `scripts/e2e-kit.js` and `scripts/e2e-kit-sheet.js`, and nothing links to it.
  */
 
 const VARIANTS: ReadonlyArray<ButtonVariant> = ['primary', 'secondary', 'quiet', 'danger'];
@@ -459,6 +463,208 @@ function Groups() {
     );
 }
 
+type SheetExample = 'short' | 'long' | 'field' | 'footer' | 'busy' | 'stack' | 'confirm' | 'toast';
+
+const SHEET_EXAMPLES: ReadonlyArray<{ id: SheetExample; label: string }> = [
+    { id: 'short', label: 'Short sheet' },
+    { id: 'long', label: 'Long sheet' },
+    { id: 'field', label: 'Sheet with a text field' },
+    { id: 'footer', label: 'Sheet with a footer' },
+    { id: 'busy', label: 'Sheet that stays open while busy' },
+    { id: 'stack', label: 'Sheet opened from a sheet' },
+    { id: 'confirm', label: 'Sheet with a confirm prompt' },
+    { id: 'toast', label: 'Toast over a sheet' },
+];
+const SHEET_PHONE = 'Pixel 9';
+const SHEET_ROWS = Array.from({ length: 40 }, (_, index) => `Row ${index + 1}`);
+
+/**
+ * The sheet and the menu, each example behind a button. `scripts/e2e-kit-sheet.js` runs here.
+ * The sheets are rendered after the buttons, so a list of buttons holds only the buttons.
+ */
+function SheetsAndMenu() {
+    const [example, setExample] = useState<SheetExample>();
+    const [second, setSecond] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [erased, setErased] = useState(false);
+    const [message, setMessage] = useState('');
+    const [menu, setMenu] = useState<'page' | 'sheet'>();
+    const [choice, setChoice] = useState('');
+    const [hidden, setHidden] = useState(false);
+    const erase = useArmedAction<'erase'>(example === 'confirm');
+    const pageMenuButton = useRef<HTMLButtonElement>(null);
+    const sheetMenuButton = useRef<HTMLButtonElement>(null);
+    const close = () => setExample(undefined);
+    const props = (id: SheetExample) => ({ open: example === id, onClose: close });
+
+    const menuFor = (where: 'page' | 'sheet') => (
+        <Menu
+            open={menu === where}
+            onClose={() => setMenu(undefined)}
+            anchor={where === 'page' ? pageMenuButton : sheetMenuButton}
+            label="More actions"
+        >
+            {/* An item that opens a sheet. */}
+            <MenuItem
+                onSelect={() => {
+                    setChoice('Rename');
+                    setExample('field');
+                }}
+            >
+                Rename
+            </MenuItem>
+            <MenuItem onSelect={() => setChoice('Move')}>Move</MenuItem>
+            <MenuItem onSelect={() => setChoice('Share')} disabled>
+                Share
+            </MenuItem>
+            <MenuItem onSelect={() => setHidden(!hidden)} checked={hidden}>
+                Show hidden items
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem onSelect={() => setChoice('Delete')} danger>
+                Delete
+            </MenuItem>
+        </Menu>
+    );
+    // Plain markup with the kit's classes: the menu needs the element of its button, and
+    // `Button` does not pass a ref on.
+    const menuButton = (where: 'page' | 'sheet') => (
+        <button
+            ref={where === 'page' ? pageMenuButton : sheetMenuButton}
+            type="button"
+            class={buttonClass()}
+            aria-haspopup="menu"
+            aria-expanded={menu === where}
+            onClick={() => setMenu(menu === where ? undefined : where)}
+        >
+            More
+        </button>
+    );
+
+    return (
+        <>
+            <Section title="Sheet">
+                <Demo name="examples">
+                    {SHEET_EXAMPLES.map(({ id, label }) => (
+                        <Button key={id} onClick={() => setExample(id)}>
+                            {label}
+                        </Button>
+                    ))}
+                </Demo>
+
+                <Sheet {...props('short')} title="Short sheet" subtitle={SHEET_PHONE}>
+                    <p class="kit-demo-text">A sheet is as tall as what it holds.</p>
+                    <div class="kit-demo-actions">
+                        <Button variant="primary" onClick={close}>
+                            Done
+                        </Button>
+                        {/* One sheet takes the place of another, as Stream settings does from Actions. */}
+                        <Button onClick={() => setExample('long')}>Go to the long sheet</Button>
+                    </div>
+                </Sheet>
+
+                {/* No subtitle: the sheet is not about one phone. */}
+                <Sheet {...props('long')} title="Long sheet">
+                    <SheetGroup kit title="Rows">
+                        {SHEET_ROWS.map((row) => (
+                            <SheetRow kit key={row} title={row} />
+                        ))}
+                    </SheetGroup>
+                </Sheet>
+
+                <Sheet {...props('field')} subtitle={SHEET_PHONE} title="Text field">
+                    <div class="kit-demo-fields">
+                        <TextField label="Name" autocomplete="off" />
+                        <TextAreaField label="Text to paste on the phone" />
+                    </div>
+                </Sheet>
+
+                <Sheet
+                    {...props('footer')}
+                    title="Footer"
+                    subtitle={SHEET_PHONE}
+                    footer={
+                        <>
+                            <Button onClick={close}>Cancel</Button>
+                            <Button variant="primary" onClick={close}>
+                                Save
+                            </Button>
+                        </>
+                    }
+                >
+                    <p class="kit-demo-text">The footer holds the sheet's actions and stays in view under the body.</p>
+                    {menuButton('sheet')}
+                    {menuFor('sheet')}
+                </Sheet>
+
+                <Sheet {...props('busy')} subtitle={SHEET_PHONE} dismissible={!busy} title="Busy sheet">
+                    <p class="kit-demo-text" role="status">
+                        {busy ? 'Working. The sheet stays open until this ends.' : 'Nothing is running.'}
+                    </p>
+                    {/* Two buttons, not one with two labels: the pressed one is removed while it has
+                        focus, as a button is when its result takes its place. */}
+                    <Button key={busy ? 'finish' : 'start'} onClick={() => setBusy(!busy)}>
+                        {busy ? 'Finish' : 'Start'}
+                    </Button>
+                </Sheet>
+
+                <Sheet {...props('stack')} subtitle={SHEET_PHONE} title="First sheet">
+                    <p class="kit-demo-text">
+                        The second sheet opens on top of this one. Each closes by itself, the top one first.
+                    </p>
+                    <Button onClick={() => setSecond(true)}>Open the second sheet</Button>
+                    <Sheet open={second} onClose={() => setSecond(false)} title="Second sheet" subtitle={SHEET_PHONE}>
+                        <p class="kit-demo-text">This sheet was opened from the first one.</p>
+                        <Button variant="primary" onClick={() => setSecond(false)}>
+                            Done
+                        </Button>
+                    </Sheet>
+                </Sheet>
+
+                <Sheet {...props('confirm')} subtitle={SHEET_PHONE} title="Confirm prompt">
+                    <p class="kit-demo-text" role="status">
+                        {erased ? 'The example was erased.' : 'The example is still here.'}
+                    </p>
+                    <Button variant="danger" onClick={(event) => erase.arm('erase', event.currentTarget)}>
+                        Erase the example
+                    </Button>
+                    {erase.armed && (
+                        <ConfirmPrompt
+                            kit
+                            danger
+                            action={erase}
+                            question="Erase the example?"
+                            consequence="It cannot be brought back."
+                            confirmLabel="Erase"
+                            onConfirm={() => setErased(true)}
+                        />
+                    )}
+                </Sheet>
+
+                <Sheet {...props('toast')} subtitle={SHEET_PHONE} title="Toast">
+                    <p class="kit-demo-text">
+                        A message raised while a sheet is open shows above it and can be closed there.
+                    </p>
+                    <Button onClick={() => setMessage('Saved to the phone.')}>Show a message</Button>
+                </Sheet>
+
+                {/* Outside every sheet, where a page keeps its toast. */}
+                <Toast kit message={message} identity={message} duration={0} onDismiss={() => setMessage('')} />
+            </Section>
+
+            <Section title="Menu">
+                <Demo name="at its button">
+                    {menuButton('page')}
+                    {menuFor('page')}
+                    <p class="kit-demo-note" role="status">
+                        {choice ? `Last choice: ${choice}.` : 'Nothing chosen yet.'}
+                    </p>
+                </Demo>
+            </Section>
+        </>
+    );
+}
+
 const TABS = [
     { id: 'screen', title: 'Screen' },
     { id: 'files', title: 'Files' },
@@ -529,8 +735,8 @@ export function KitPage() {
                 <header class="kit-page-header">
                     <h1 class="kit-page-title">Kit</h1>
                     <p class="kit-page-note">
-                        Every shared control in every variant and state. This page is for development and nothing links
-                        to it.
+                        Every shared control in every variant and state, and the sheet and the menu. This page is for
+                        development and nothing links to it.
                     </p>
                 </header>
                 <Buttons />
@@ -541,6 +747,7 @@ export function KitPage() {
                 <Segments />
                 <Messages />
                 <Groups />
+                <SheetsAndMenu />
                 <Bars />
             </div>
         </main>
