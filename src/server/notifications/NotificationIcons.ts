@@ -11,6 +11,9 @@ const NEGATIVE_TTL = 3_600_000;
 // For a lookup that did not get an answer (a timeout), or when it is not known whether the
 // phone is attached.
 const RETRY_TTL = 60_000;
+// notification_icon.py exits with this when the phone answered and has no usable icon. It exits
+// with 1 when it could not ask the phone, its own 6 s timeout included.
+const NO_ICON_EXIT = 3;
 const PNG_HEADER = Buffer.from('89504e470d0a1a0a', 'hex');
 
 function validPng(value: Buffer): boolean {
@@ -112,7 +115,10 @@ export class NotificationIcons {
         return operation;
     }
 
-    /** `answered` is false when the lookup was cut short, so the result says nothing about the icon. */
+    /**
+     * `answered` is false when the phone was not asked or did not answer in time, so the result
+     * says nothing about the icon.
+     */
     private async fetch(
         source: string,
         app: string,
@@ -139,8 +145,7 @@ export class NotificationIcons {
                     (error, stdout) =>
                         resolve({
                             png: error ? null : stdout,
-                            // The probe exits with a number when the phone has no such icon.
-                            answered: !error || (typeof error.code === 'number' && !error.killed),
+                            answered: !error || (error.code === NO_ICON_EXIT && !error.killed),
                         }),
                 );
             });
