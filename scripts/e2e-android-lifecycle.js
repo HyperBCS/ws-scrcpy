@@ -1,7 +1,8 @@
 /* eslint-disable */
 // E2E_OUT=/tmp/ws-scrcpy-android-lifecycle node scripts/test-browser.js android-lifecycle
 // What the browser shows for the Android server lifecycle: adb unavailable, Wake from the card
-// while the stream service is stopped, and a stream whose service the owner stopped.
+// while the stream service is stopped, a stream whose service the owner stopped, and the card
+// over the picture of a phone whose screen is off.
 // Every socket is a fixture: nothing reaches a server or a phone.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -51,12 +52,19 @@ async function start(browser, { mobile, dark, device }) {
         colorScheme: dark ? 'dark' : 'light',
     });
     const page = await context.newPage();
-    const state = { errors: [], commands: [], streams: [], tracker: undefined, onCommand: undefined };
+    const state = { errors: [], commands: [], streams: [], keys: [], tracker: undefined, onCommand: undefined };
     page.on('pageerror', (error) => state.errors.push(error.message));
     await page.routeWebSocket('**', (socket) => {
         const target = new URL(socket.url());
         if (target.pathname === '/__lifecycle_fixture__' || target.searchParams.get('action') === 'proxy-adb') {
             state.streams.push(socket);
+            // The key messages the page sends to the phone: type 0, action, key code.
+            socket.onMessage((data) => {
+                const bytes = Buffer.from(data);
+                for (let offset = 0; bytes[offset] === 0 && offset + 14 <= bytes.length; offset += 14) {
+                    state.keys.push({ action: bytes[offset + 1], code: bytes.readInt32BE(offset + 2) });
+                }
+            });
             setTimeout(() => socket.send(initialStreamPacket()), 100);
             return;
         }
@@ -212,6 +220,57 @@ async function stoppedStream(browser, layout, label) {
     await context.close();
 }
 
+/**
+ * A phone whose screen is off, on its page: the card over the picture has the kit's Wake button,
+ * which sends one wake key to the phone and hides the card. The header and the tabs stay above
+ * the dimmed picture and take a press.
+ */
+async function sleepCard(browser, layout, label) {
+    const device = phone({ pid: 123 });
+    const { context, page, state } = await start(browser, { ...layout, device });
+    await page.goto(`${BASE}#!action=device&udid=${UDID}&view=screen`);
+    await page.locator('.kit-bar-status').getByText('Connected', { exact: true }).waitFor();
+    const overlay = page.locator('.sleep-overlay');
+    const card = overlay.locator('.sleep-overlay-card');
+    await card.getByText('Screen is off', { exact: true }).waitFor();
+    const wake = card.getByRole('button', { name: 'Wake', exact: true });
+    assert.deepEqual(
+        await card.locator('button').evaluateAll((buttons) => buttons.map((button) => button.className)),
+        ['kit-button kit-button-primary'],
+        `${label}: the card has one action, the kit's primary button`,
+    );
+    assert.equal(await card.locator('svg.kit-icon').count(), 1, `${label}: the moon is an icon of the set`);
+    assert.equal((await card.textContent()).trim(), 'Screen is offWake', `${label}: no character stands in for an icon`);
+    const box = await wake.boundingBox();
+    assert(box.height >= 44 && box.width >= 44, `${label}: Wake is a 44px target`);
+    await fits(page, card, `${label} sleep card`);
+    // Drawn over the overlay, not dimmed under it.
+    const above = await page.evaluate(() => {
+        const hits = (element) => {
+            const rect = element.getBoundingClientRect();
+            return element.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+        };
+        const header = document.querySelector('header.kit-bar');
+        return {
+            back: hits(header.querySelector('.kit-bar-back')),
+            switch: hits([...header.querySelectorAll('button')].find((button) => button.textContent === 'Switch')),
+            tabs: [...document.querySelectorAll('nav.kit-tabs .kit-tab')].every(hits),
+        };
+    });
+    assert.deepEqual(above, { back: true, switch: true, tabs: true }, `${label}: the header and the tabs take a press over the overlay`);
+    await page.screenshot({ path: path.join(OUT, `${label}-sleep-card.png`) });
+
+    state.keys.length = 0;
+    await wake.click();
+    await overlay.waitFor({ state: 'detached' });
+    for (let waited = 0; state.keys.length < 2 && waited < 2000; waited += 50) await pause(50);
+    const WAKEUP = 224;
+    assert.deepEqual(state.keys, [{ action: 0, code: WAKEUP }, { action: 1, code: WAKEUP }], `${label}: Wake sends one wake key`);
+    assert.equal(state.streams.length, 1, `${label}: one stream for the page`);
+    assert.deepEqual(state.errors, [], 'no browser runtime errors');
+    await context.close();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -223,9 +282,10 @@ async function main() {
                 await adbUnavailable(browser, layout, label);
                 await wakeFromCard(browser, layout, label);
                 await stoppedStream(browser, layout, label);
+                await sleepCard(browser, layout, label);
             }
         }
-        console.log('PASS: adb notice, Wake from the card, and the stopped stream service state');
+        console.log('PASS: adb notice, Wake from the card, the stopped stream service state, and Wake on the screen');
     } finally {
         await browser.close();
     }
