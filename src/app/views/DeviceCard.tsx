@@ -555,7 +555,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                 {/* Shown for a disconnected phone too: the schedule is kept on the server, and its
                     last run matters most when the phone has dropped off. */}
                 <SettingsButton
-                    title="iPhone settings"
+                    title="Scheduled unlock"
                     name={name}
                     onClick={() => openApplSettingsSheet(descriptor.udid, entry.key)}
                 />

@@ -371,6 +371,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         <button
                             type="button"
                             class="sheet-button"
+                            aria-label="Open Scheduled unlock"
                             onClick={() => {
                                 closeAllSheets();
                                 openApplSettingsSheet(client.getDeviceUdid());

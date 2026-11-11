@@ -683,7 +683,7 @@ async function streamSheetsFlow(browser) {
             const scheduled = actionsDialog.locator('.sheet-row', { hasText: 'Scheduled unlock' });
             await scheduled.scrollIntoViewIfNeeded();
             await page.screenshot({ path: path.join(OUT, `stream-actions-settings-row-${width}.png`) });
-            await scheduled.getByRole('button', { name: 'Open', exact: true }).click();
+            await scheduled.getByRole('button', { name: 'Open Scheduled unlock', exact: true }).click();
             await settingsDialog.waitFor();
             await actionsDialog.waitFor({ state: 'hidden' });
             await page.getByRole('button', { name: 'Close Scheduled unlock' }).click();
