@@ -660,6 +660,30 @@ test('restart reaches serve-web once; a second one straight after is dropped', a
     });
 });
 
+test('a restart with an id is answered: done, or how long to wait when it comes too soon', async () => {
+    fs.rmSync(logFile, { force: true });
+    await withEnv({ FAKE_LOG: logFile }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const first = openViewer('iphone-restart-reply');
+        const second = openViewer('iphone-restart-reply');
+        await until(() => [first, second].every(({ socket }) => socket.texts().some((m) => m.type === 'codec')));
+        const results = ({ socket }) => socket.texts().filter((m) => m.type === 'result');
+        first.socket.message(JSON.stringify({ type: 'restart', id: 41 }));
+        assert(await until(() => results(first).length === 1));
+        assert.deepEqual(results(first)[0], { type: 'result', id: 41, ok: true });
+        // The Actions sheet used to stay on "Restarting the picture" here: no reply ever came.
+        second.socket.message(JSON.stringify({ type: 'restart', id: 7 }));
+        assert(await until(() => results(second).length === 1));
+        const refused = results(second)[0];
+        assert.equal(refused.id, 7);
+        assert.equal(refused.ok, false);
+        assert.match(refused.error, /^The picture was restarted a moment ago\. Try again in (30|29) s\.$/);
+        assert.equal(results(first).length, 1, 'the answer goes to the viewer that asked');
+        assert.equal(calls().filter((line) => line.startsWith('post /restart')).length, 1);
+        runner.release();
+    });
+});
+
 test('a stop during the preflight waits until serve-web can shut down in order', async () => {
     fs.rmSync(logFile, { force: true });
     await withEnv({ FAKE_LOG: logFile, FAKE_PREFLIGHT_MS: '600' }, async () => {

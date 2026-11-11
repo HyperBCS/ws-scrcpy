@@ -678,12 +678,33 @@ export class CoreDeviceProxy extends Mw {
                 return;
             case 'restart': {
                 // At most one video restart per phone every 30 s, counting the unlock driver's.
-                if (this.runner.videoRestartWaitMs(this.udid) > 0) {
-                    console.log(`${this.name} restart ignored: the video was restarted a moment ago`);
+                // The viewer is told how long to wait: a request dropped without a reply left the
+                // Actions sheet on "Restarting the picture" for good.
+                const wait = this.runner.videoRestartWaitMs(this.udid);
+                if (wait > 0) {
+                    console.log(`${this.name} restart refused: the video was restarted a moment ago`);
+                    if (message.id !== undefined) {
+                        const seconds = Math.max(1, Math.ceil(wait / 1000));
+                        this.send({
+                            type: 'result',
+                            id: message.id,
+                            ok: false,
+                            error: `The picture was restarted a moment ago. Try again in ${seconds} s.`,
+                        });
+                    }
                     return;
                 }
                 this.runner.noteVideoRestart(this.udid);
-                await this.runner.request(this.udid, 'POST', '/restart');
+                const reply = await this.runner.request(this.udid, 'POST', '/restart');
+                if (message.id !== undefined) {
+                    const ok = reply.status >= 200 && reply.status < 300;
+                    this.send({
+                        type: 'result',
+                        id: message.id,
+                        ok,
+                        error: ok ? undefined : reply.body || `HTTP ${reply.status}`,
+                    });
+                }
                 return;
             }
             case 'restart-session':

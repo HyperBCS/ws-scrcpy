@@ -261,26 +261,30 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.receiver.send({ type: 'clipboard', op: 'get' });
     }
 
-    public setClipboard(text: string): number {
+    // These three are answered with a `result` event carrying the returned id. `undefined` means
+    // the socket was closed and nothing was sent, so no result will come.
+    public setClipboard(text: string): number | undefined {
         const id = this.nextRequestId++;
-        this.receiver.send({ type: 'clipboard', op: 'set', text, id });
-        return id;
+        return this.receiver.send({ type: 'clipboard', op: 'set', text, id }) ? id : undefined;
     }
 
-    public rotate(direction: 'left' | 'right'): number {
+    public rotate(direction: 'left' | 'right'): number | undefined {
         this.touchHandler?.releaseActiveTouch();
         const id = this.nextRequestId++;
-        this.receiver.send({ type: 'rotate', direction, id });
-        return id;
+        return this.receiver.send({ type: 'rotate', direction, id }) ? id : undefined;
     }
 
     public requestKeyframe(): void {
         this.receiver.send({ type: 'pli' });
     }
 
-    /** Restarts the device's video inside the running serve-web process (picture recovery). */
-    public restartStream(): void {
-        this.receiver.send({ type: 'restart' });
+    /**
+     * Restarts the device's video inside the running serve-web process (picture recovery). The
+     * server allows one every 30 s per phone and says how long to wait when it refuses.
+     */
+    public restartStream(): number | undefined {
+        const id = this.nextRequestId++;
+        return this.receiver.send({ type: 'restart', id }) ? id : undefined;
     }
 
     /**

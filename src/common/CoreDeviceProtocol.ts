@@ -75,8 +75,10 @@ export type CoreDeviceClientMessage =
     | { type: 'clipboard'; op: 'set'; text: string; id?: number }
     | { type: 'rotate'; direction: 'left' | 'right'; id?: number }
     | { type: 'pli' }
-    // Restarts the device's video inside the running serve-web process (picture recovery).
-    | { type: 'restart' }
+    // Restarts the device's video inside the running serve-web process (picture recovery). With
+    // an `id` the server answers with a `result`, also when it refuses because the video was
+    // restarted a moment ago.
+    | { type: 'restart'; id?: number }
     // Kills the serve-web process so the next connection gets a fresh one. This is the only
     // recovery for its per-process HID and pasteboard channels, which wedge independently of
     // video: the socket closes and the viewer reconnects into a new process.

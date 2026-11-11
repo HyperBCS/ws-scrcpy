@@ -154,6 +154,11 @@ export function ApplSettingsSheet() {
     const confirmRemove = useArmedAction<'passcode'>(!!target);
     // A reply that lands after the sheet closed, or reopened for another phone, is dropped.
     const generation = useRef(0);
+    // The request whose reply is still wanted. A run that a device update has already reported
+    // as finished gives its turn up, so its late reply cannot clear a newer request's state.
+    const request = useRef(0);
+    // `lastRun.at` when Run now was pressed; a different one in a later update is this run's result.
+    const runBaseline = useRef<number | undefined>(undefined);
 
     useEffect(() => {
         generation.current++;
@@ -190,23 +195,20 @@ export function ApplSettingsSheet() {
     const zoneLabel =
         schedule.timeZone ?? (schedule.serverTimeZone ? `Server time (${schedule.serverTimeZone})` : 'Server time');
 
-    function send<T>(
-        kind: Pending,
-        request: () => Promise<T>,
-        done: (result: T) => void,
-        fail: (message: string) => void,
-    ) {
+    function send<T>(kind: Pending, run: () => Promise<T>, done: (result: T) => void, fail: (message: string) => void) {
         const current = generation.current;
+        const turn = ++request.current;
+        const wanted = () => generation.current === current && request.current === turn;
         setPending(kind);
-        request().then(
+        run().then(
             (result) => {
-                if (generation.current === current) {
+                if (wanted()) {
                     setPending(undefined);
                     done(result);
                 }
             },
             (error: Error) => {
-                if (generation.current === current) {
+                if (wanted()) {
                     setPending(undefined);
                     fail(error.message);
                 }
@@ -357,10 +359,24 @@ export function ApplSettingsSheet() {
         );
     };
 
+    // The reply to Run now is lost when the tracker socket drops during the run, and the run goes
+    // on without it. Its result still arrives with the device update, so that ends the wait: the
+    // button does not read "Running" for three minutes after the run has finished.
+    useEffect(() => {
+        const last = broadcast?.lastRun;
+        if (pending !== 'run' || !broadcast || broadcast.running || !last || last.at === runBaseline.current) {
+            return;
+        }
+        request.current++;
+        setPending(undefined);
+        setRunNote({ text: describeRun(last), tone: runTone(last.outcome) });
+    }, [broadcast, pending]);
+
     const onRunNow = () => {
         if (!tracker || !renderTarget) {
             return;
         }
+        runBaseline.current = broadcast?.lastRun?.at;
         setRunNote({ text: 'Running. This takes about 30 seconds.', tone: 'neutral' });
         send(
             'run',

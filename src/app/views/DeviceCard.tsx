@@ -1,6 +1,6 @@
 import { ComponentChildren } from 'preact';
 import { AnimatedDetails } from '../ui/AnimatedDetails';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { DeviceEntry, deviceName } from '../state/devices';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
@@ -24,6 +24,7 @@ import { DeviceStatusInfo, getDeviceStatusInfo, isDeviceStarting, markStarting }
 import { sendWakeKey } from '../googDevice/client/wake';
 import { openApplSettingsSheet, openSettingsSheet } from '../state/settingsSheet';
 import { unlockCardLine } from '../state/unlockSchedule';
+import { replyText, sendServiceCommand, TrackerCommandAborted } from '../client/trackerCommand';
 import { isToolAction } from './ToolView';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { hasRunningStreamService } from '../state/streamService';
@@ -338,6 +339,15 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const canStop = isActive && (session === 'ready' || session === 'starting');
     const canRecover = isActive && !busy;
 
+    // Each command ends with its reply, an error, a closed socket or a time limit
+    // (`sendServiceCommand`), so a button cannot stay disabled. Leaving the list withdraws them.
+    const leaving = useRef<AbortController>();
+    useEffect(() => {
+        const controller = new AbortController();
+        leaving.current = controller;
+        return () => controller.abort();
+    }, []);
+
     /**
      * Debug actions live here as well as in the stream page's Actions sheet, because the failures
      * they recover from (a wedged session, an unmounted developer image) are exactly the ones that
@@ -346,39 +356,40 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const runCommand = (command: string, label: string, done: string) => {
         setBusy(label);
         setFeedback(`${label}…`);
-        const tracker = entry.tracker;
-        const onReply = (data: { udid?: string; error?: string; result?: unknown }) => {
-            if (data.udid !== descriptor.udid) {
-                return;
-            }
-            tracker.off(command as never, onReply as never);
-            setBusy('');
-            setFeedback(data.error || (typeof data.result === 'string' && data.result) || done);
-        };
-        tracker.on(command as never, onReply as never);
-        tracker.sendCommand(command, { udid: descriptor.udid });
+        sendServiceCommand(entry.tracker, command, descriptor.udid, leaving.current?.signal).then(
+            (result) => {
+                setBusy('');
+                setFeedback(replyText(result, done));
+            },
+            (error: Error) => {
+                if (!(error instanceof TrackerCommandAborted)) {
+                    setBusy('');
+                    setFeedback(error.message);
+                }
+            },
+        );
     };
-
-    useEffect(() => {
-        if (!enabling) {
-            return;
-        }
-        const tracker = entry.tracker;
-        const onReply = (data: { udid?: string; error?: string; result?: unknown }) => {
-            if (data.udid !== descriptor.udid) {
-                return;
-            }
-            setEnabling(false);
-            setFeedback(data.error ? data.error : 'Developer Mode is on.');
-        };
-        tracker.on(ControlCenterCommand.ENABLE_DEVELOPER_MODE as never, onReply as never);
-        return () => tracker.off(ControlCenterCommand.ENABLE_DEVELOPER_MODE as never, onReply as never);
-    }, [enabling, entry.tracker, descriptor.udid]);
 
     const enableDeveloperMode = () => {
         setEnabling(true);
         setFeedback('Enabling Developer Mode… the phone will restart and ask you to confirm.');
-        entry.tracker.sendCommand(ControlCenterCommand.ENABLE_DEVELOPER_MODE, { udid: descriptor.udid });
+        sendServiceCommand(
+            entry.tracker,
+            ControlCenterCommand.ENABLE_DEVELOPER_MODE,
+            descriptor.udid,
+            leaving.current?.signal,
+        ).then(
+            () => {
+                setEnabling(false);
+                setFeedback('Developer Mode is on.');
+            },
+            (error: Error) => {
+                if (!(error instanceof TrackerCommandAborted)) {
+                    setEnabling(false);
+                    setFeedback(error.message);
+                }
+            },
+        );
     };
 
     const isAsleep = statusInfo.status === 'asleep';
