@@ -1877,10 +1877,12 @@ video full screen, with both players.
 
 **Decoder errors.** `WebCodecsPlayer` keeps the last SPS and PPS. After a decoder error it builds
 a new decoder, configures it from that copy and resumes at the next keyframe; the canvas keeps
-the last picture meanwhile. Non-keyframe slices before a keyframe are dropped, not buffered. If
-no keyframe arrives within 2 s the player emits `keyframe-request` and `StreamClientScrcpy` sends
-`RESET_VIDEO`, at most three times in five minutes because it restarts the encoder for every
-viewer. More than three errors in 5 s pause decoding for 5 s with a stream notice; the player is
+the last picture meanwhile. Non-keyframe slices before a keyframe are dropped, not buffered, and
+new parameter sets replace the cached copy in the buffer. If no keyframe arrives within 2 s the
+player emits `keyframe-request` and `StreamClientScrcpy` sends `RESET_VIDEO`, at most three times
+in five minutes because it restarts the encoder for every viewer. Nothing is requested or reported
+while the player is paused by a disconnect: the next connection brings parameter sets and a
+keyframe. More than three errors in 5 s pause decoding for 5 s with a stream notice; the player is
 no longer stopped for good. `MsePlayer` reports a media element error the same way and starts
 again at the next SPS. Both iPhone players emit `decoder-error` and the client answers with a
 `pli`. Whether `RESET_VIDEO` brings a keyframe on the owner's phones is not verified.
