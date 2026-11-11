@@ -2377,6 +2377,15 @@ async function kitControls(browser) {
             assert.equal(await undo.textContent(), 'Undo');
             assert.equal(await toast.locator('button.kit-toast-close').getAttribute('aria-label'), 'Dismiss undo notice');
             assert.equal(await undo.evaluate(el => getComputedStyle(el).borderTopWidth), '0px', `${label}: no rule of the page reaches the toast's buttons`);
+            // A notice waits while a sheet is open: at the foot of a phone's screen it would
+            // cover the sheet's last action. It comes back once the sheet has gone.
+            await article(page, 'Incoming call').getByRole('button', { name: 'Actions for Incoming call', exact: true }).click();
+            await sheet.waitFor();
+            await toast.waitFor({ state: 'detached', timeout: 3000 });
+            assert.equal(await page.locator('.kit-toast').count(), 0, `${label}: no notice over the sheet`);
+            await page.keyboard.press('Escape');
+            await sheet.waitFor({ state: 'hidden' });
+            await toast.locator('.kit-toast-message').getByText('Archived', { exact: true }).waitFor();
             await undo.click();
             await article(page, 'Coffee at four?').waitFor();
             assert.deepEqual(f.restored, [{ key: 'a-chat', read: false }], `${label}: Undo restores the notification as it was`);
