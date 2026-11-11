@@ -52,8 +52,7 @@ const BUTTONS = [
 ];
 
 export interface GoogToolBoxOptions {
-    // Start with keyboard capture enabled instead of requiring the user to open the tools sheet
-    // and tick the checkbox first.
+    // Physical keyboard capture at start. Settings can change it while streaming.
     captureKeyboard?: boolean;
     // Sound remains reachable when playback is unavailable so Settings can explain recovery.
     audioSession?: AudioSession;
@@ -140,17 +139,16 @@ export class GoogToolBox extends ToolBox {
             client.setHandleKeyboardEvents(true);
         }
 
-        // Replaces `ConfigureScrcpy` (the old 646-line manual-DOM dialog, deleted): a bottom
-        // sheet with a "Playback" group (instant, client-side) and a "Stream quality" group
-        // (codec/encoder/bitrate/..., behind an explicit Apply that restarts the scrcpy server).
-        // The device-list tracker connection this needs (for LIST_ENCODERS/UPDATE_STREAM_CONFIG)
-        // isn't this client's own -- it's looked up by udid, same as `DeviceSwitcherSheet` does.
         const tools = new ToolBoxButton('Actions', SvgImage.Icon.MORE);
         tools.addEventListener('click', () => {
             openSheet('tools');
         });
         elements.push(tools);
 
+        // The settings sheet has a "Playback" group (applied in this browser) and a "Stream
+        // quality" group (applied with Apply, which restarts the scrcpy server). The tracker
+        // connection it needs for LIST_ENCODERS and UPDATE_STREAM_CONFIG is not this client's own;
+        // it is looked up by udid, as `DeviceSwitcherSheet` does.
         const settings = new ToolBoxButton('Settings', SvgImage.Icon.TUNE);
         settings.addEventListener('click', () => {
             closeAllSheets();

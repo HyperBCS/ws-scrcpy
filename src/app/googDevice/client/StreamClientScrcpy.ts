@@ -258,9 +258,8 @@ export class StreamClientScrcpy
         this.sendMessage(new CommandControlMessage(ControlMessage.TYPE_RESET_VIDEO));
     };
 
-    // Tears down the DOM this client owns and stops the underlying receiver/player. Wired up as
-    // the more-box "Stop" action, and also the right thing for a host view to call from its own
-    // unmount (see `views/StreamView.tsx`) -- safe to call more than once.
+    // Tears down the DOM this client owns and stops the receiver and player. The host view calls
+    // it on unmount (see `views/StreamView.tsx`). Safe to call more than once.
     public stop = (ev?: string | Event): void => {
         if (ev && ev instanceof Event && ev.type === 'error') {
             console.error(TAG, ev);

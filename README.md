@@ -411,8 +411,8 @@ over plain `http://`. Add `&player=mse` or `&player=hevc` to the stream URL to f
 one decoder.
 * If the device list stops noticing an iPhone being plugged in, `usbmuxd` has
 wedged: `sudo systemctl restart usbmuxd`.
-* Dropping a file on the stream does not push it to the phone. The page shows a
-notice instead; upload through **Files**, which uses adb.
+* Dropping a file on an Android stream does not push it to the phone. The page
+shows a notice instead; upload through **Files**, which uses adb.
 * Changing anything in the stream settings sheet's *Stream quality* group
 restarts the scrcpy server on the device, which briefly disconnects every viewer
 of that device (they reconnect automatically).
