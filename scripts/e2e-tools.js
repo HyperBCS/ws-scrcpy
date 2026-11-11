@@ -20,7 +20,7 @@ function frame(type, id, data) {
     return packet;
 }
 async function fixtures(page) {
-    const state = { starts: [], input: [], closed: [], sends: [], update: undefined, close: undefined };
+    const state = { starts: [], input: [], resizes: [], closed: [], sends: [], update: undefined, close: undefined };
     await page.routeWebSocket('**', socket => {
         const url = new URL(socket.url());
         if (url.searchParams.get('action') === 'proxy-adb') {
@@ -51,10 +51,21 @@ async function fixtures(page) {
                         socket.send(frame(32,id,'Fixture terminal ready\r\n$ '));
                     }
                 } else state.input.push(body);
+            } else if (packet[0] === 16 && channels.get(id) === 'SHEL') {
+                // Shell messages after start travel in binary frames; text frames are typed input.
+                const message = JSON.parse(body);
+                if (message.data?.type === 'resize') state.resizes.push(message.data);
             } else state.sends.push(body);
         });
     });
     return state;
+}
+async function until(condition, label, timeout = 5000) {
+    const deadline = Date.now() + timeout;
+    while (!(await condition())) {
+        if (Date.now() > deadline) throw Error(`Timed out waiting for: ${label}`);
+        await new Promise(resolve => setTimeout(resolve, 25));
+    }
 }
 async function geometry(page) {
     await settleMotion(page);
@@ -112,13 +123,25 @@ async function main() {
             await page.keyboard.type('c');
             await page.waitForTimeout(50);
             assert.deepEqual(state.input,['\t','\x03','\x0c','c'],'Ctrl rewrites every key while held and nothing after');
-            if(mobile) {
-                await page.setViewportSize({width,height:320});
-                await page.waitForFunction(()=>document.querySelector('.tool-view').getBoundingClientRect().height <= visualViewport.height+1);
-                await geometry(page);
-                await page.setViewportSize({width,height});
-                await page.waitForFunction(()=>Math.abs(document.querySelector('.tool-view').getBoundingClientRect().height-visualViewport.height)<1);
+            // The remote pty follows the terminal. The phone keyboard and a shorter window change
+            // the rows, a narrower window the columns.
+            const shownRows = () => page.locator('.terminal-container .xterm-rows > div').count();
+            const started = state.starts[0];
+            assert.equal(await shownRows(),started.rows,'the terminal shows the rows it started with');
+            assert.deepEqual(state.resizes,[],'no resize is sent while the size is unchanged');
+            await page.setViewportSize({width,height:320});
+            await page.waitForFunction(()=>document.querySelector('.tool-view').getBoundingClientRect().height <= visualViewport.height+1);
+            if(mobile) await geometry(page);
+            await until(async()=>{ const last=state.resizes.at(-1); return !!last && last.rows<started.rows && last.rows===await shownRows(); },'the smaller row count reaches the device');
+            assert.equal(state.resizes.at(-1).cols,started.cols,'a height change keeps the columns');
+            if(!mobile) {
+                await page.setViewportSize({width:900,height:320});
+                await until(()=>state.resizes.at(-1).cols<started.cols,'the smaller column count reaches the device');
             }
+            await page.setViewportSize({width,height});
+            await page.waitForFunction(()=>Math.abs(document.querySelector('.tool-view').getBoundingClientRect().height-visualViewport.height)<1);
+            await until(()=>{ const last=state.resizes.at(-1); return last.cols===started.cols && last.rows===started.rows; },'the restored size reaches the device');
+            assert.deepEqual(state.input,['\t','\x03','\x0c','c'],'a resize is never typed into the shell');
             await page.getByRole('button',{name:'Switch',exact:true}).click();
             const sheet=page.locator('.bottom-sheet-root.open');
             await sheet.getByRole('button',{name:/Phone B/}).click();

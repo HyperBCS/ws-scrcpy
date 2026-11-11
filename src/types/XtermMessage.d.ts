@@ -11,8 +11,14 @@ export interface XtermStartMessage extends XtermSize {
     udid: string;
 }
 
+export interface XtermResizeMessage extends XtermSize {
+    type: 'resize';
+}
+
 export interface XtermStopMessage {
     type: 'stop';
 }
 
-export type XtermClientMessage = XtermStartMessage | XtermStopMessage;
+// The start message is the first text frame. After it, text frames are typed input and the
+// other messages travel as JSON in binary frames, so input can never be read as a message.
+export type XtermClientMessage = XtermStartMessage | XtermResizeMessage | XtermStopMessage;

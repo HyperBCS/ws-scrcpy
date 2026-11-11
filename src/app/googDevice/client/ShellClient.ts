@@ -12,6 +12,8 @@ import { ToolEntry } from '../../client/Tool';
 import { shellTool } from './deviceTools';
 
 const TAG = '[ShellClient]';
+// A window drag or the phone keyboard sliding in refits the terminal many times in a row.
+const RESIZE_DEBOUNCE_MS = 100;
 
 /**
  * Maps typed text to the control characters a physical Ctrl key would produce. Phone keyboards
@@ -52,6 +54,8 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
     private readonly container: HTMLElement;
     private readonly resizeObserver: ResizeObserver;
     private closed = false;
+    private started = false;
+    private resizeTimer?: number;
     private controlActive = false;
 
     constructor(params: ParamsShell, mount?: HTMLElement) {
@@ -76,6 +80,7 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         // rewrite it; output is written back in `onSocketMessage`.
         this.term.onData((data) => this.send(this.controlActive ? withControl(data) : data));
         this.term.onBinary((data) => this.send(data));
+        this.term.onResize(this.scheduleResize);
         // On phones, opening a tool should not immediately cover it with the keyboard.
         if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
             this.term.focus();
@@ -107,6 +112,7 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         }
         console.log(TAG, `Connection closed: ${event.reason}`);
         this.closed = true;
+        this.started = false;
         this.term.options.disableStdin = true;
         this.term.writeln('\r\n[Shell disconnected. Use Reconnect to open a new session.]');
     }
@@ -150,7 +156,29 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
             },
         };
         this.ws.send(JSON.stringify(message));
+        this.started = true;
     }
+
+    /**
+     * Tells the device the new terminal size. Without it the remote pty keeps the size it started
+     * with, so full-screen programs draw off screen and long lines wrap at the wrong column.
+     */
+    private scheduleResize = (): void => {
+        window.clearTimeout(this.resizeTimer);
+        this.resizeTimer = window.setTimeout(this.sendSize, RESIZE_DEBOUNCE_MS);
+    };
+
+    private sendSize = (): void => {
+        this.resizeTimer = undefined;
+        // Before the start message there is no pty, and that message carries the size itself.
+        if (this.destroyed || this.closed || !this.started || this.ws?.readyState !== this.ws?.OPEN) {
+            return;
+        }
+        const { cols, rows } = this.term;
+        const message: MessageXtermClient = { id: 1, type: 'shell', data: { type: 'resize', cols, rows } };
+        // A binary frame: the server types every text frame into the shell.
+        this.ws?.send(new TextEncoder().encode(JSON.stringify(message)));
+    };
 
     public focus(): void {
         if (!this.destroyed && !this.closed) {
@@ -175,6 +203,7 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
             return;
         }
         this.resizeObserver.disconnect();
+        window.clearTimeout(this.resizeTimer);
         this.destroy();
         this.term.dispose();
         this.container.remove();

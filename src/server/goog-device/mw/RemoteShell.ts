@@ -31,7 +31,13 @@ export function parseShellMessage(message: unknown): XtermClientMessage | undefi
     if (type === 'stop') {
         return { type };
     }
-    if (type === 'start' && typeof udid === 'string' && udid && isTerminalSize(cols) && isTerminalSize(rows)) {
+    if (!isTerminalSize(cols) || !isTerminalSize(rows)) {
+        return undefined;
+    }
+    if (type === 'resize') {
+        return { type, cols, rows };
+    }
+    if (type === 'start' && typeof udid === 'string' && udid) {
         return { type, udid, cols, rows };
     }
     return undefined;
@@ -110,7 +116,12 @@ export class RemoteShell extends Mw {
             if (!this.term) {
                 return;
             }
-            return this.term.write(event.data as string);
+            // Typed input is a text frame and goes to the shell as it is. Messages travel in
+            // binary frames, so nothing typed or pasted can be taken for one.
+            if (typeof event.data === 'string') {
+                return this.term.write(event.data);
+            }
+            return this.handleControl(event.data);
         }
         let message: XtermClientMessage | undefined;
         try {
@@ -127,7 +138,27 @@ export class RemoteShell extends Mw {
         if (message.type === 'start') {
             this.term = this.createTerminal(message);
             this.initialized = true;
-        } else {
+        } else if (message.type === 'stop') {
+            this.release();
+        }
+    }
+
+    private handleControl(data: Exclude<SocketMessageEvent['data'], string>): void {
+        let message: XtermClientMessage | undefined;
+        try {
+            const bytes = Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data);
+            message = parseShellMessage(JSON.parse(bytes.toString('utf8')));
+        } catch {
+            message = undefined;
+        }
+        if (message?.type === 'resize') {
+            try {
+                this.term?.resize(message.cols, message.rows);
+            } catch (error) {
+                // The pty refuses a resize once adb has exited. The exit closes the channel.
+                console.error(`[${RemoteShell.TAG}]`, 'Resize failed:', (error as Error).message);
+            }
+        } else if (message?.type === 'stop') {
             this.release();
         }
     }

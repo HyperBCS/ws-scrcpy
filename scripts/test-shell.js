@@ -139,3 +139,54 @@ test('text after start is typed into the shell unchanged', () => {
     socket.message('ls\r');
     assert.deepEqual(terminal.written, ['ls\r']);
 });
+
+const resize = (cols, rows) => shellMessage({ type: 'resize', cols, rows });
+const binary = (text) => new Uint8Array(Buffer.from(text)).buffer;
+
+test('a resize message in a binary frame resizes the pty', () => {
+    const { socket, terminal } = openShell();
+    socket.message(binary(resize(120, 40)));
+    // A multiplexed channel delivers an ArrayBuffer and a plain socket a Buffer.
+    socket.message(Buffer.from(resize(64, 18)));
+    assert.deepEqual(terminal.resized, [
+        [120, 40],
+        [64, 18],
+    ]);
+    assert.deepEqual(terminal.written, [], 'a message is never typed into the shell');
+});
+
+test('typed text that looks like a resize message is still input', () => {
+    const { socket, terminal } = openShell();
+    socket.message(resize(120, 40));
+    assert.deepEqual(terminal.resized, []);
+    assert.deepEqual(terminal.written, [resize(120, 40)]);
+});
+
+test('a resize outside the allowed range, or a malformed binary frame, is ignored', () => {
+    const { socket, terminal } = openShell();
+    for (const message of [resize(0, 24), resize(80, 501), resize(80.5, 24), resize('80', 24), 'not json', '{}']) {
+        socket.message(binary(message));
+    }
+    socket.message(binary(shellMessage({ type: 'start', udid: 'other', cols: 80, rows: 24 })));
+    assert.deepEqual(terminal.resized, []);
+    assert.deepEqual(terminal.written, []);
+    assert.equal(socket.closed, undefined, 'the session stays open');
+});
+
+test('a resize that the pty refuses does not throw out of the socket handler', (t) => {
+    const logged = t.mock.method(console, 'error', () => undefined);
+    const { socket, terminal } = openShell();
+    terminal.resize = () => {
+        throw Error('ioctl(2) failed, EBADF');
+    };
+    socket.message(binary(resize(100, 30)));
+    assert.equal(logged.mock.callCount(), 1);
+    assert.equal(socket.closed, undefined);
+});
+
+test('a stop message in a binary frame ends the session', () => {
+    const { socket, terminal } = openShell();
+    socket.message(binary(shellMessage({ type: 'stop' })));
+    assert.equal(terminal.killed, 1);
+    assert.equal(socket.readyState, socket.CLOSED);
+});
