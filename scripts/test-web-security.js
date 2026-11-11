@@ -374,6 +374,30 @@ test('an Android device has one route, whatever addresses it reports', async () 
     assert.equal('SCRCPY_LISTENS_ON_ALL_INTERFACES' in flags, false, 'the build flag is gone');
 });
 
+// ------------------------------------------------------------------ Notifications (C-notifications-14, -15)
+
+test('notification requests are not limited per address', async () => {
+    const { port } = await startServer();
+    // Tailscale Serve forwards every HTTPS client from 127.0.0.1. The limit was 180 a minute.
+    const statuses = new Set();
+    for (let index = 0; index < 200; index++) {
+        statuses.add((await get(port, '/api/notifications/summary')).status);
+    }
+    assert.deepEqual([...statuses], [200]);
+});
+
+test('the private app link comes from WS_PUBLIC_URL only', async () => {
+    await startServer();
+    const { privateAppUrl } = require('../src/app/state/privateApp');
+    assert.equal(privateAppUrl('https://phone.example'), 'https://phone.example/#!action=notifications');
+    assert.equal(privateAppUrl('https://phone.example/app/'), 'https://phone.example/app/#!action=notifications');
+    assert.equal(privateAppUrl(''), '', 'no address configured, no link');
+    assert.equal(privateAppUrl(undefined), '');
+    assert.equal(privateAppUrl('not a url'), '');
+    const view = fs.readFileSync(path.join(__dirname, '../src/app/views/NotificationsView.tsx'), 'utf8');
+    assert.doesNotMatch(view, /https?:\/\/[^'"\s]*\.ts\.net/, 'no host name is built into the client');
+});
+
 // ------------------------------------------------------------------ adb server (C-server-core-4)
 
 /** Speaks enough of the adb host protocol for forwards. Each connection carries one request. */

@@ -315,6 +315,59 @@ async function headers(browser) {
     }
 }
 
+/**
+ * The notifications page over plain HTTP on a name that is not loopback, where alerts cannot work.
+ * The link to the secure address comes from the server's WS_PUBLIC_URL, or is not shown.
+ */
+async function privateAppNotice() {
+    // Chromium treats 127.0.0.1 as secure; this name resolves to it and is not.
+    const browser = await playwright.chromium.launch({ headless: true, args: ['--host-resolver-rules=MAP insecure.test 127.0.0.1'] });
+    try {
+        for (const [label, mobile, dark, publicUrl] of [
+            ['phone-light', true, false, ''],
+            ['desktop-dark', false, true, ''],
+            ['phone-dark', true, true, 'https://phone.example'],
+            ['desktop-light', false, false, 'https://phone.example'],
+        ]) {
+            const context = await browser.newContext({
+                viewport: mobile ? PHONE : DESKTOP, isMobile: mobile, hasTouch: mobile, colorScheme: dark ? 'dark' : 'light',
+            });
+            const page = await context.newPage();
+            const errors = [];
+            page.on('pageerror', (error) => errors.push(error.message));
+            await page.routeWebSocket('**', () => {});
+            await page.route('**/api/notifications/**', (route) => route.fulfill({ json: {
+                sources: [], notifications: [], bluetooth: [], statuses: {}, pairing: null, pairingOpen: false, error: '',
+                delivery: { sent: 0, failed: 0, lastError: '' }, unread: 0, unreadBySource: {}, publicKey: '', publicUrl,
+            } }));
+            const url = new URL(BASE);
+            url.hostname = 'insecure.test';
+            url.hash = '!action=notifications';
+            await page.goto(url.toString());
+            assert.equal(await page.evaluate(() => isSecureContext), false, 'the fixture page is not a secure context');
+            await page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+            const notice = page.locator('.notification-receiver .notification-notice');
+            await notice.waitFor();
+            const link = notice.getByRole('link', { name: 'Open private app', exact: true });
+            if (publicUrl) {
+                assert.equal(await link.getAttribute('href'), 'https://phone.example/#!action=notifications');
+            } else {
+                assert.equal(await link.count(), 0, `${label}: no link without a configured address`);
+                assert.match(await notice.textContent(), /Set WS_PUBLIC_URL on the server/);
+            }
+            assert.doesNotMatch(await page.content(), /ts\.net/, `${label}: no host name is built in`);
+            assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${label}: no sideways scroll`);
+            await notice.scrollIntoViewIfNeeded();
+            await page.screenshot({ path: path.join(OUT, `private-app-${publicUrl ? 'link' : 'hint'}-${label}.png`) });
+            assert.deepEqual(errors, []);
+            await context.close();
+        }
+        console.log('PASS', 'the private app link is the configured address, or a hint to set one');
+    } finally {
+        await browser.close();
+    }
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await playwright[browserName].launch({ headless: true });
@@ -325,6 +378,7 @@ async function main() {
     } finally {
         await browser.close();
     }
+    if (browserName === 'chromium') await privateAppNotice();
 }
 main().catch((error) => {
     console.error(error);
