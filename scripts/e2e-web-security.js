@@ -351,8 +351,8 @@ async function privateAppNotice() {
             url.hash = '!action=notifications';
             await page.goto(url.toString());
             assert.equal(await page.evaluate(() => isSecureContext), false, 'the fixture page is not a secure context');
-            await page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
-            const notice = page.locator('.notification-receiver .notification-notice');
+            await page.getByRole('radio', { name: 'Setup & delivery', exact: true }).click();
+            const notice = page.locator('.notification-receiver .notification-card');
             await notice.waitFor();
             const link = notice.getByRole('link', { name: 'Open private app', exact: true });
             if (publicUrl) {

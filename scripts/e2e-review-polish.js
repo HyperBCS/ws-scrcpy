@@ -28,7 +28,7 @@ async function main() {
             await f.page.getByRole('heading', { name: 'Status arrived over a slow connection', exact: true }).waitFor({ timeout: 14000 });
             assert(requests <= 2, 'polling never piles up slow requests');
             await f.page.unroute('**/api/notifications/status');
-            await f.page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+            await f.page.getByRole('radio', { name: 'Setup & delivery', exact: true }).click();
             const poll = () => f.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
             f.pairingOpen = true; await poll();
             await f.page.waitForFunction(() => document.querySelector('.notification-pairing')?.dataset.expanded === 'true');
@@ -92,7 +92,7 @@ async function main() {
         await recoveryPage.getByRole('heading', { name: "Can't reach the server" }).waitFor();
         assert.equal(await recoveryPage.locator('input[type="password"]').count(), 0);
         offline = false; await recoveryPage.getByRole('button', { name: 'Try again', exact: true }).click();
-        await recoveryPage.getByRole('button', { name: 'Setup & delivery', exact: true }).waitFor();
+        await recoveryPage.getByRole('radio', { name: 'Setup & delivery', exact: true }).waitFor();
         await recovery.close(); console.log('PASS notification connection failures recover with Retry, without setup credentials');
 
     } finally { await browser.close(); }

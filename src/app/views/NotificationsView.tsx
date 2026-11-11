@@ -1,8 +1,17 @@
 import { Presence } from '../ui/Presence';
 import { Toast } from '../ui/Toast';
-import { AnimatedDetails } from '../ui/AnimatedDetails';
+import { Disclosure } from '../ui/AnimatedDetails';
+import { Banner } from '../ui/Banner';
+import { Button } from '../ui/Button';
+import { Checkbox } from '../ui/Checkbox';
+import { SelectField, TextField } from '../ui/Field';
+import { Icon } from '../ui/Icon';
+import { InlineStatus } from '../ui/InlineStatus';
+import { SegmentedControl } from '../ui/SegmentedControl';
+import { topSheet } from '../ui/Sheet';
+import { Switch } from '../ui/Switch';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { devices, deviceName, findDeviceByUdid } from '../state/devices';
 import {
     notificationRequest as api,
@@ -26,7 +35,8 @@ import type {
     NotificationStatus as Status,
 } from '../../common/Notification';
 import { readStorage, writeStorage } from '../ui/storage';
-import '../../style/views/Notifications.css';
+import '../../style/views/NotificationsPage.css';
+import '../../style/views/NotificationsSetup.css';
 
 function choicesKey(sources: string[], receiver: string): string {
     return JSON.stringify({ sources: [...sources].sort(), receiver });
@@ -49,32 +59,42 @@ function SourceSettings({
     const [filter, setFilter] = useState(source.apps.join(', '));
     const confirm = useArmedAction<'erase-text' | 'remove'>();
     const count = `${stored} stored notification${stored === 1 ? '' : 's'}`;
+    const textRow = useRef<HTMLLabelElement>(null);
+    const textId = useId();
     useEffect(() => setFilter(source.apps.join(', ')), [source.apps.join(', ')]);
     return (
-        <AnimatedDetails class="notification-details">
-            <summary>Settings for {source.name}</summary>
+        <Disclosure title={`Settings for ${source.name}`}>
+            <label class="kit-row kit-row-toggle" ref={textRow}>
+                <div class="kit-row-text">
+                    <span class="kit-row-title" id={`${textId}-title`}>
+                        Include notification text
+                    </span>
+                    <span class="kit-row-desc" id={`${textId}-desc`}>
+                        Missing message text? Check Show Previews in this iPhone’s notification settings.
+                    </span>
+                </div>
+                <Switch
+                    checked={source.preview}
+                    disabled={busy}
+                    labelledBy={`${textId}-title`}
+                    describedBy={`${textId}-desc`}
+                    onChange={(preview) => {
+                        if (preview || !stored) {
+                            update({ ...source, preview });
+                            return;
+                        }
+                        // Turning text off also erases the text already stored, so it is
+                        // confirmed first and the switch stays on until then.
+                        const input = textRow.current?.querySelector('input');
+                        if (input) input.checked = true;
+                        confirm.arm('erase-text', textRow.current);
+                    }}
+                />
+            </label>
             <div class="notification-details-content">
-                <label class="notification-check">
-                    <input
-                        type="checkbox"
-                        checked={source.preview}
-                        disabled={busy}
-                        onChange={(e) => {
-                            const preview = e.currentTarget.checked;
-                            if (preview || !stored) {
-                                update({ ...source, preview });
-                                return;
-                            }
-                            // Turning text off also erases the text already stored, so it is
-                            // confirmed first and the box stays ticked until then.
-                            e.currentTarget.checked = true;
-                            confirm.arm('erase-text', e.currentTarget.closest('label'));
-                        }}
-                    />
-                    <span>Include notification text</span>
-                </label>
                 {confirm.armed === 'erase-text' && (
                     <ConfirmPrompt
+                        kit
                         action={confirm}
                         question={`Stop storing notification text from ${source.name}?`}
                         consequence={`The text of its ${count} is erased from the server and cannot be restored.`}
@@ -83,25 +103,20 @@ function SourceSettings({
                         onConfirm={() => update({ ...source, preview: false })}
                     />
                 )}
-                <p class="notification-help">
-                    Missing message text? Check Show Previews in this iPhone’s notification settings.
-                </p>
-                <AnimatedDetails class="notification-details">
-                    <summary>
-                        Filter by app · {source.apps.length ? `${source.apps.length} selected` : 'All apps'}
-                    </summary>
+                <Disclosure
+                    title="Filter by app"
+                    note={source.apps.length ? `${source.apps.length} selected` : 'All apps'}
+                >
                     <div class="notification-details-content">
-                        <label>
-                            App identifiers
-                            <input
-                                value={filter}
-                                onInput={(e) => setFilter(e.currentTarget.value)}
-                                placeholder="For example: com.apple.MobileSMS"
-                                disabled={busy}
-                            />
-                        </label>
-                        <p class="notification-help">Comma-separated. Leave empty for all apps.</p>
-                        <button
+                        <TextField
+                            label="App identifiers"
+                            hint="Comma-separated. Leave empty for all apps."
+                            value={filter}
+                            onInput={(e) => setFilter(e.currentTarget.value)}
+                            placeholder="For example: com.apple.MobileSMS"
+                            disabled={busy}
+                        />
+                        <Button
                             disabled={busy || filter === source.apps.join(', ')}
                             onClick={() =>
                                 update({
@@ -114,23 +129,20 @@ function SourceSettings({
                             }
                         >
                             Save app filter
-                        </button>
+                        </Button>
                     </div>
-                </AnimatedDetails>
+                </Disclosure>
                 <div class="notification-remove-source">
                     <p class="notification-help">
                         Removing this iPhone deletes its link and its {count} from the server. Nothing changes on the
                         iPhone.
                     </p>
-                    <button
-                        class="notification-danger"
-                        disabled={busy}
-                        onClick={(e) => confirm.arm('remove', e.currentTarget)}
-                    >
+                    <Button variant="danger" disabled={busy} onClick={(e) => confirm.arm('remove', e.currentTarget)}>
                         Remove iPhone
-                    </button>
+                    </Button>
                     {confirm.armed === 'remove' && (
                         <ConfirmPrompt
+                            kit
                             action={confirm}
                             question={
                                 stored
@@ -145,7 +157,7 @@ function SourceSettings({
                     )}
                 </div>
             </div>
-        </AnimatedDetails>
+        </Disclosure>
     );
 }
 
@@ -259,7 +271,8 @@ export function NotificationsView() {
         return promise;
     };
     useEffect(() => {
-        document.body.className = 'list';
+        // Not `list`: that class pads the body for the screen edges, and the bar does that itself.
+        document.body.className = 'notifications';
         mounted.current = true;
         let alive = true;
         const poll = () => {
@@ -393,78 +406,84 @@ export function NotificationsView() {
 
     return (
         <div class="notifications-view">
-            <AppBar title="Notifications">
+            <AppBar kit title="Notifications">
                 <UnreadBadge
                     count={historySource && !unlinkedRequest ? status?.unreadBySource?.[historySource.id] || 0 : 0}
                 />
             </AppBar>
             <main class="notifications-page">
                 <div class="notification-page-header">
-                    {status && !status.sources.length && <p>Connect an iPhone to receive its notifications.</p>}
+                    {status && !status.sources.length && (
+                        <p class="notification-page-intro">Connect an iPhone to receive its notifications.</p>
+                    )}
                 </div>
                 {/* The inbox shows this inside its search bar, which stays on screen while scrolling. */}
                 {connectionError && status && activePanel === 'setup' && (
-                    <p role="alert" class="notification-notice notification-error">
-                        Connection interrupted. {connectionError}
-                    </p>
+                    <Banner tone="error">Connection interrupted. {connectionError}</Banner>
                 )}
+                {/* The kit banner as classes: this element is the one that grows and shrinks. */}
                 <Presence
                     show={!!error}
                     kind="collapse"
                     role="alert"
                     // Sticky on Setup only: in the inbox the search bar would cover it. The inbox
                     // reports its own failures at the bottom of the screen.
-                    class={`notification-notice notification-error ${activePanel === 'setup' ? 'notification-feedback' : ''}`}
+                    class={`kit-banner kit-banner-error ${activePanel === 'setup' ? 'notification-feedback' : ''}`}
                 >
-                    {error}
+                    <Icon name="warning" size={16} />
+                    <span class="kit-banner-text">{error}</span>
                 </Presence>
-                <Toast message={message} identity={message} onDismiss={() => setMessage('')} />
+                {/* Not over a sheet of the inbox: it would cover the sheet's last action. */}
+                <Toast
+                    kit
+                    message={topSheet.value ? '' : message}
+                    identity={message}
+                    onDismiss={() => setMessage('')}
+                />
                 {!status && !connectionError && (
                     <p role="status" class="notification-empty">
                         Loading…
                     </p>
                 )}
                 {!status && connectionError && (
-                    <section class="notification-card">
-                        <h2>Can't reach the server</h2>
-                        <button
-                            class="notification-primary"
-                            disabled={busy}
-                            onClick={() =>
-                                void run(async () => {
-                                    await refresh();
-                                })
-                            }
-                        >
-                            Try again
-                        </button>
-                        <AnimatedDetails class="notification-details">
-                            <summary>Connection details</summary>
-                            <p class="notification-help">{connectionError}</p>
-                        </AnimatedDetails>
+                    <section class="notification-section">
+                        <div class="kit-card notification-card">
+                            <h2 class="notification-card-title">Can't reach the server</h2>
+                            <Button
+                                variant="primary"
+                                disabled={busy}
+                                onClick={() =>
+                                    void run(async () => {
+                                        await refresh();
+                                    })
+                                }
+                            >
+                                Try again
+                            </Button>
+                        </div>
+                        <Disclosure title="Connection details">
+                            <div class="notification-details-content">
+                                <p class="notification-help">{connectionError}</p>
+                            </div>
+                        </Disclosure>
                     </section>
                 )}
                 {status && (
                     <>
-                        <nav
-                            class="notification-page-tabs"
-                            style={{ '--segment-index': activePanel === 'setup' ? 1 : 0 }}
-                            aria-label="Notification pages"
-                        >
-                            <button
-                                disabled={!historySource}
-                                aria-pressed={activePanel === 'history'}
-                                onClick={openInbox}
-                            >
-                                Inbox
-                            </button>
-                            <button
-                                aria-pressed={activePanel === 'setup'}
-                                onClick={() => changeNotificationPage({ panel: 'setup' })}
-                            >
-                                Setup &amp; delivery
-                            </button>
-                        </nav>
+                        <div class="notification-page-tabs">
+                            <SegmentedControl
+                                label="Notification pages"
+                                options={[
+                                    { value: 'history', label: 'Inbox', disabled: !historySource },
+                                    { value: 'setup', label: 'Setup & delivery' },
+                                ]}
+                                value={activePanel}
+                                onChange={(panel) =>
+                                    panel === 'history' ? openInbox() : changeNotificationPage({ panel: 'setup' })
+                                }
+                                full
+                            />
+                        </div>
                         <div class="notification-panels">
                             <Presence show={activePanel === 'history'} class="notification-panel">
                                 <NotificationHistory
@@ -480,32 +499,28 @@ export function NotificationsView() {
                                 />
                             </Presence>
                             <Presence show={activePanel === 'setup'} class="notification-panel" keepMounted>
-                                <section class="notification-card" aria-labelledby="notification-sender-heading">
-                                    <div class="notification-section-heading">
-                                        <h2 id="notification-sender-heading">Send from an iPhone</h2>
-                                    </div>
+                                <section class="notification-section" aria-labelledby="notification-sender-heading">
+                                    <h2 id="notification-sender-heading" class="notification-section-title">
+                                        Send from an iPhone
+                                    </h2>
                                     <p class="notification-help">Keep the iPhone within Bluetooth range of the NUC.</p>
-                                    {status.error && (
-                                        <p role="alert" class="notification-notice notification-error">
-                                            {status.error}
-                                        </p>
-                                    )}
+                                    {status.error && <Banner tone="error">{status.error}</Banner>}
                                     {status.sources.map((s) => {
                                         const state = feedState(status.statuses[s.id]);
+                                        const feedText =
+                                            status.statuses[s.id] ||
+                                            'Waiting for Bluetooth. Keep the iPhone near the NUC.';
                                         return (
                                             <article class="notification-source" key={s.id}>
                                                 <div class="notification-source-heading">
-                                                    <h3>{s.name}</h3>
+                                                    <h3 class="notification-source-name">{s.name}</h3>
                                                     <FeedBadge state={state} />
                                                 </div>
-                                                {state !== 'connected' && (
-                                                    <p
-                                                        class={`notification-help ${state === 'attention' ? 'notification-error' : ''}`}
-                                                    >
-                                                        {status.statuses[s.id] ||
-                                                            'Waiting for Bluetooth. Keep the iPhone near the NUC.'}
-                                                    </p>
-                                                )}
+                                                {state === 'attention' ? (
+                                                    <InlineStatus tone="error">{feedText}</InlineStatus>
+                                                ) : state !== 'connected' ? (
+                                                    <p class="notification-help">{feedText}</p>
+                                                ) : null}
                                                 <SourceSettings
                                                     source={s}
                                                     stored={status.storedBySource?.[s.id] || 0}
@@ -527,8 +542,11 @@ export function NotificationsView() {
                                             </article>
                                         );
                                     })}
-                                    <AnimatedDetails
-                                        class="notification-details notification-pairing"
+                                    <Disclosure
+                                        class="notification-pairing"
+                                        title={
+                                            status.sources.length ? 'Add another iPhone' : 'Connect your first iPhone'
+                                        }
                                         open={
                                             !status.sources.length ||
                                             unlinkedRequest ||
@@ -537,17 +555,16 @@ export function NotificationsView() {
                                             !!status.pairingRejected
                                         }
                                     >
-                                        <summary>
-                                            {status.sources.length ? 'Add another iPhone' : 'Connect your first iPhone'}
-                                        </summary>
                                         <div class="notification-details-content">
                                             {unlinkedRequest && (
-                                                <p class="notification-notice" role="status">
+                                                <Banner tone="info">
                                                     {unlinkedName} is not linked yet. Follow these steps to receive its
                                                     notifications.
-                                                </p>
+                                                </Banner>
                                             )}
-                                            <p>Use the iPhone whose notifications you want to forward.</p>
+                                            <p class="notification-text">
+                                                Use the iPhone whose notifications you want to forward.
+                                            </p>
                                             <ol class="notification-setup-steps">
                                                 <li>Connect that iPhone to the NUC by USB.</li>
                                                 <li>
@@ -560,13 +577,13 @@ export function NotificationsView() {
                                                 </li>
                                             </ol>
                                             {status.pairingRejected && (
-                                                <p role="alert" class="notification-notice notification-error">
+                                                <Banner tone="error">
                                                     An iPhone tried to pair while pairing was not open. Tap{' '}
                                                     <strong>Start Bluetooth pairing</strong>, then choose ws-scrcpy on
                                                     the iPhone again.
-                                                </p>
+                                                </Banner>
                                             )}
-                                            <button
+                                            <Button
                                                 disabled={busy || status.pairingOpen}
                                                 onClick={() =>
                                                     void run(async () => {
@@ -581,20 +598,20 @@ export function NotificationsView() {
                                                 {status.pairingOpen
                                                     ? 'Waiting for your iPhone…'
                                                     : 'Start Bluetooth pairing'}
-                                            </button>
+                                            </Button>
                                             {status.pairingOpen && (
-                                                <p role="status" class="notification-help">
-                                                    The NUC is discoverable for two minutes.
-                                                </p>
+                                                <InlineStatus>The NUC is discoverable for two minutes.</InlineStatus>
                                             )}
                                             {status.pairing && (
-                                                <div class="notification-notice">
-                                                    <p>Does this code match the one on the sending iPhone?</p>
+                                                <div class="kit-card notification-card">
+                                                    <p class="notification-card-text">
+                                                        Does this code match the one on the sending iPhone?
+                                                    </p>
                                                     <strong class="notification-pairing-code">
                                                         {status.pairing.code}
                                                     </strong>
-                                                    <button
-                                                        class="notification-primary"
+                                                    <Button
+                                                        variant="primary"
                                                         disabled={busy}
                                                         onClick={() =>
                                                             void run(async () => {
@@ -604,55 +621,53 @@ export function NotificationsView() {
                                                         }
                                                     >
                                                         Codes match
-                                                    </button>
+                                                    </Button>
                                                 </div>
                                             )}
                                             <div class="notification-link-phones">
-                                                <h3>Match the two connections</h3>
+                                                <h3 class="notification-subheading">Match the two connections</h3>
                                                 <p class="notification-help">
                                                     Choose the same iPhone in both lists. This connects its screen
                                                     controls with its Bluetooth notifications.
                                                 </p>
-                                                <label>
-                                                    iPhone connected to the NUC by USB
-                                                    <select
-                                                        value={chosenPhone}
-                                                        disabled={busy}
-                                                        onChange={(e) => setPhone(e.currentTarget.value)}
-                                                    >
-                                                        <option value="">
-                                                            {unlinkedPhones.length
+                                                <SelectField
+                                                    label="iPhone connected to the NUC by USB"
+                                                    value={chosenPhone}
+                                                    disabled={busy}
+                                                    options={[
+                                                        {
+                                                            value: '',
+                                                            label: unlinkedPhones.length
                                                                 ? 'Choose an iPhone'
-                                                                : 'No new iPhone connected by USB'}
-                                                        </option>
-                                                        {unlinkedPhones.map((p) => (
-                                                            <option key={p.key} value={p.descriptor.udid}>
-                                                                {deviceName(p)}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </label>
-                                                <label>
-                                                    The same iPhone in Bluetooth
-                                                    <select
-                                                        value={chosenAddress}
-                                                        disabled={busy}
-                                                        onChange={(e) => setAddress(e.currentTarget.value)}
-                                                    >
-                                                        <option value="">
-                                                            {pairings.length
+                                                                : 'No new iPhone connected by USB',
+                                                        },
+                                                        ...unlinkedPhones.map((p) => ({
+                                                            value: p.descriptor.udid,
+                                                            label: deviceName(p),
+                                                        })),
+                                                    ]}
+                                                    onChange={(e) => setPhone(e.currentTarget.value)}
+                                                />
+                                                <SelectField
+                                                    label="The same iPhone in Bluetooth"
+                                                    value={chosenAddress}
+                                                    disabled={busy}
+                                                    options={[
+                                                        {
+                                                            value: '',
+                                                            label: pairings.length
                                                                 ? 'Choose its Bluetooth name'
-                                                                : 'Complete Bluetooth pairing first'}
-                                                        </option>
-                                                        {pairings.map((b) => (
-                                                            <option key={b.address} value={b.address}>
-                                                                {b.name} · {b.address}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </label>
-                                                <button
-                                                    class="notification-primary"
+                                                                : 'Complete Bluetooth pairing first',
+                                                        },
+                                                        ...pairings.map((b) => ({
+                                                            value: b.address,
+                                                            label: `${b.name} · ${b.address}`,
+                                                        })),
+                                                    ]}
+                                                    onChange={(e) => setAddress(e.currentTarget.value)}
+                                                />
+                                                <Button
+                                                    variant="primary"
                                                     disabled={busy || !chosenPhone || !chosenAddress}
                                                     onClick={() =>
                                                         void run(async () => {
@@ -678,19 +693,19 @@ export function NotificationsView() {
                                                     }
                                                 >
                                                     Use this iPhone
-                                                </button>
+                                                </Button>
                                             </div>
                                         </div>
-                                    </AnimatedDetails>
+                                    </Disclosure>
                                 </section>
 
                                 <section
-                                    class="notification-card notification-receiver"
+                                    class="notification-section notification-receiver"
                                     aria-labelledby="notification-receiver-heading"
                                 >
-                                    <div class="notification-section-heading">
-                                        <h2 id="notification-receiver-heading">Receive on this device</h2>
-                                    </div>
+                                    <h2 id="notification-receiver-heading" class="notification-section-title">
+                                        Receive on this device
+                                    </h2>
                                     <div class="notification-receiver-state">
                                         <span class={`notification-badge ${enabled ? 'ready' : ''}`}>
                                             {!workerLoaded
@@ -700,7 +715,7 @@ export function NotificationsView() {
                                                   : 'Notifications off'}
                                         </span>
                                         {enabled && (
-                                            <p>
+                                            <p class="notification-receiver-sources">
                                                 {!confirmed
                                                     ? 'Review and save your choices below.'
                                                     : activeSources.length
@@ -710,19 +725,17 @@ export function NotificationsView() {
                                         )}
                                     </div>
                                     {!window.isSecureContext ? (
-                                        <div class="notification-notice">
+                                        <div class="kit-card notification-card">
                                             {privateUrl ? (
                                                 <>
-                                                    <p>
+                                                    <p class="notification-card-text">
                                                         Open the secure app with Tailscale connected to receive
                                                         notifications here.
                                                     </p>
-                                                    <a class="ui-button" href={privateUrl}>
-                                                        Open private app
-                                                    </a>
+                                                    <Button href={privateUrl}>Open private app</Button>
                                                 </>
                                             ) : (
-                                                <p>
+                                                <p class="notification-card-text">
                                                     Notifications need this app's secure (HTTPS) address.
                                                     {status &&
                                                         ' Set WS_PUBLIC_URL on the server to link to it from here.'}
@@ -730,7 +743,7 @@ export function NotificationsView() {
                                             )}
                                         </div>
                                     ) : ios && !installed ? (
-                                        <div class="notification-notice">
+                                        <div class="kit-card notification-card">
                                             <strong>Add this app to your Home Screen</strong>
                                             <ol class="notification-setup-steps">
                                                 <li>
@@ -743,15 +756,15 @@ export function NotificationsView() {
                                             </ol>
                                         </div>
                                     ) : !supported ? (
-                                        <p class="notification-notice">
+                                        <Banner tone="warning">
                                             This browser doesn’t support background notifications. Open the app in a
                                             browser that supports Web Push.
-                                        </p>
+                                        </Banner>
                                     ) : blockedPermission ? (
-                                        <p class="notification-notice">
+                                        <Banner tone="warning">
                                             Notifications are blocked in this device’s settings. Allow notifications for
                                             ws-scrcpy, then return here.
-                                        </p>
+                                        </Banner>
                                     ) : null}
                                     {!status.sources.length && (
                                         <p class="notification-help">Connect an iPhone above first.</p>
@@ -763,30 +776,30 @@ export function NotificationsView() {
                                             notifications here.
                                         </p>
                                     )}
-                                    <AnimatedDetails
-                                        class="notification-details"
+                                    <Disclosure
+                                        title="Choose phones and delivery options"
                                         open={!enabled && !!status.sources.length}
                                     >
-                                        <summary>Choose phones and delivery options</summary>
                                         <div class="notification-details-content">
-                                            <fieldset disabled={busy}>
-                                                <legend>Get notifications from</legend>
+                                            <fieldset class="notification-choices" disabled={busy}>
+                                                <legend class="notification-choices-title">
+                                                    Get notifications from
+                                                </legend>
                                                 {status.sources.length ? (
                                                     status.sources.map((s) => (
-                                                        <label class="notification-check" key={s.id}>
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={selected.includes(s.id)}
-                                                                onChange={(e) =>
-                                                                    setSelected(
-                                                                        e.currentTarget.checked
-                                                                            ? [...selected, s.id]
-                                                                            : selected.filter((id) => id !== s.id),
-                                                                    )
-                                                                }
-                                                            />
-                                                            <span>{s.name}</span>
-                                                        </label>
+                                                        <Checkbox
+                                                            key={s.id}
+                                                            checked={selected.includes(s.id)}
+                                                            onChange={(checked) =>
+                                                                setSelected(
+                                                                    checked
+                                                                        ? [...selected, s.id]
+                                                                        : selected.filter((id) => id !== s.id),
+                                                                )
+                                                            }
+                                                        >
+                                                            {s.name}
+                                                        </Checkbox>
                                                     ))
                                                 ) : (
                                                     <p class="notification-help">
@@ -794,28 +807,23 @@ export function NotificationsView() {
                                                     </p>
                                                 )}
                                             </fieldset>
-                                            <label>
-                                                This app is open on
-                                                <select
-                                                    value={receiver}
-                                                    disabled={busy}
-                                                    onChange={(e) => setReceiver(e.currentTarget.value)}
-                                                >
-                                                    <option value="">A different phone, tablet or computer</option>
-                                                    {status.sources.map((s) => (
-                                                        <option key={s.id} value={s.id}>
-                                                            {s.name} itself
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </label>
-                                            <p class="notification-help">
-                                                Prevents this iPhone from receiving its own notifications.
-                                            </p>
+                                            <SelectField
+                                                label="This app is open on"
+                                                hint="Prevents this iPhone from receiving its own notifications."
+                                                value={receiver}
+                                                disabled={busy}
+                                                options={[
+                                                    { value: '', label: 'A different phone, tablet or computer' },
+                                                    ...status.sources.map((s) => ({
+                                                        value: s.id,
+                                                        label: `${s.name} itself`,
+                                                    })),
+                                                ]}
+                                                onChange={(e) => setReceiver(e.currentTarget.value)}
+                                            />
                                             {subscription && (
-                                                <button
+                                                <Button
                                                     disabled={busy}
-                                                    class="notification-turn-off"
                                                     onClick={() =>
                                                         void run(async () => {
                                                             await api('subscriptions', 'DELETE', {
@@ -828,16 +836,16 @@ export function NotificationsView() {
                                                     }
                                                 >
                                                     Turn off on this device
-                                                </button>
+                                                </Button>
                                             )}
                                         </div>
-                                    </AnimatedDetails>
+                                    </Disclosure>
                                     <div class="notification-actions">
                                         {subscription && !blockedPermission ? (
                                             <>
                                                 {changed && (
-                                                    <button
-                                                        class="notification-primary"
+                                                    <Button
+                                                        variant="primary"
                                                         disabled={busy || !initialized}
                                                         onClick={() =>
                                                             void run(async () => {
@@ -847,10 +855,10 @@ export function NotificationsView() {
                                                         }
                                                     >
                                                         Save changes
-                                                    </button>
+                                                    </Button>
                                                 )}
-                                                <button
-                                                    class={changed ? '' : 'notification-primary'}
+                                                <Button
+                                                    variant={changed ? 'secondary' : 'primary'}
                                                     disabled={busy || changed}
                                                     onClick={() =>
                                                         void run(async () => {
@@ -877,16 +885,16 @@ export function NotificationsView() {
                                                     }
                                                 >
                                                     Send test notification
-                                                </button>
+                                                </Button>
                                             </>
                                         ) : (
-                                            <button
-                                                class="notification-primary"
+                                            <Button
+                                                variant="primary"
                                                 disabled={busy || !canEnable || blockedPermission}
                                                 onClick={enable}
                                             >
                                                 Enable on this device
-                                            </button>
+                                            </Button>
                                         )}
                                     </div>
                                     {changed && subscription && (
@@ -898,18 +906,17 @@ export function NotificationsView() {
                                         </p>
                                     )}
                                     {!!status.delivery.lastError && (
-                                        <p role="alert" class="notification-error">
+                                        <InlineStatus tone="error">
                                             Some notifications could not be sent. See delivery details below.
-                                        </p>
+                                        </InlineStatus>
                                     )}
                                     {unregistered && (
-                                        <p role="alert" class="notification-error">
+                                        <InlineStatus tone="error">
                                             The server has no record of this device, so nothing can be delivered to it.
                                             Send a test notification to register it again.
-                                        </p>
+                                        </InlineStatus>
                                     )}
-                                    <AnimatedDetails class="notification-details notification-delivery-details">
-                                        <summary>Delivery details</summary>
+                                    <Disclosure class="notification-delivery-details" title="Delivery details">
                                         <div class="notification-details-content">
                                             {receivers.length ? (
                                                 <ul class="notification-receivers">
@@ -925,7 +932,7 @@ export function NotificationsView() {
                                                                 {r.failed ? `, ${r.failed} failed` : ''}
                                                             </span>
                                                             {r.lastError && (
-                                                                <p class="notification-error">{r.lastError}</p>
+                                                                <InlineStatus tone="error">{r.lastError}</InlineStatus>
                                                             )}
                                                         </li>
                                                     ))}
@@ -937,7 +944,9 @@ export function NotificationsView() {
                                             )}
                                             {status.delivery.lastError &&
                                                 !receivers.some((r) => r.lastError === status.delivery.lastError) && (
-                                                    <p class="notification-error">{status.delivery.lastError}</p>
+                                                    <InlineStatus tone="error">
+                                                        {status.delivery.lastError}
+                                                    </InlineStatus>
                                                 )}
                                             <p class="notification-help">
                                                 Counted since the server started
@@ -947,7 +956,7 @@ export function NotificationsView() {
                                                 . Acceptance by the push service doesn’t confirm a banner appeared.
                                             </p>
                                         </div>
-                                    </AnimatedDetails>
+                                    </Disclosure>
                                 </section>
                             </Presence>
                         </div>

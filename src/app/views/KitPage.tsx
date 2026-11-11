@@ -362,6 +362,8 @@ function Switches() {
 
 function Checkboxes() {
     const [remember, setRemember] = useState(false);
+    const [first, setFirst] = useState(true);
+    const [second, setSecond] = useState(false);
     return (
         <Section title="Checkbox">
             <Demo name="off or on">
@@ -369,9 +371,20 @@ function Checkboxes() {
                     Remember in this browser
                 </Checkbox>
             </Demo>
+            <Demo name="in a list that is saved">
+                <Checkbox checked={first} onChange={setFirst}>
+                    Bench iPhone
+                </Checkbox>
+                <Checkbox checked={second} onChange={setSecond}>
+                    Spare iPhone
+                </Checkbox>
+            </Demo>
             <Demo name="disabled">
+                <Checkbox checked={false} disabled onChange={nothing}>
+                    Unavailable, off
+                </Checkbox>
                 <Checkbox checked disabled onChange={nothing}>
-                    Unavailable, ticked
+                    Unavailable, on
                 </Checkbox>
             </Demo>
         </Section>

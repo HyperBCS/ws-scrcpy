@@ -440,7 +440,7 @@ async function otherStates(test) {
 /** Notifications: the inbox, the sheets it opens, and Setup. */
 async function notificationStates(test) {
     const { page } = test;
-    const dialog = page.locator('dialog.notification-action-sheet');
+    const dialog = page.locator('dialog.kit-sheet[open]');
     await page.goto(`${BASE}#!action=notifications&source=${IPHONE}`);
     await page.locator('article.notification-history-item').first().waitFor();
     await shoot(test, 'notifications-inbox');
@@ -463,16 +463,16 @@ async function notificationStates(test) {
     await dialog.waitFor();
     await settleMotion(page);
     await press(test, dialog.getByRole('button', { name: 'Archive', exact: true }));
-    const toast = page.locator('.app-toast');
+    const toast = page.locator('.kit-toast');
     await toast.first().waitFor();
     await dialog.waitFor({ state: 'hidden' });
     await shoot(test, 'notifications-toast');
     while (await toast.count()) {
-        await press(test, toast.first().locator('.toast-close'));
+        await press(test, toast.first().locator('.kit-toast-close'));
         await settleMotion(page);
     }
 
-    await press(test, page.getByRole('button', { name: 'Setup & delivery', exact: true }));
+    await press(test, page.getByRole('radio', { name: 'Setup & delivery', exact: true }));
     await page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
     await shoot(test, 'notifications-setup');
     await press(test, page.locator('summary').filter({ hasText: 'Settings for Bench iPhone' }));

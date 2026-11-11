@@ -2,7 +2,7 @@ import { ComponentChildren } from 'preact';
 import '../../style/kit/Checkbox.css';
 
 interface CheckboxProps {
-    /** Shown beside the box, and its name. */
+    /** Shown beside the box, and its name. A press on it ticks the box. */
     children: ComponentChildren;
     checked: boolean;
     onChange: (checked: boolean) => void;
@@ -12,8 +12,9 @@ interface CheckboxProps {
 }
 
 /**
- * A box to tick, for a choice that takes effect with the action of its form. A setting that
- * applies at once is a `Switch`.
+ * A box to tick, for a choice that takes effect with the action of its form, or for one item of
+ * a list from which several can be chosen and then saved. A setting that applies at once is a
+ * `Switch`.
  */
 export function Checkbox({ children, checked, onChange, disabled, describedBy }: CheckboxProps) {
     return (

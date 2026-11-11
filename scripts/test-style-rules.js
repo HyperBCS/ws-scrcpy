@@ -30,8 +30,6 @@ const ALLOWED = {
     'ui/Toast.css': { colours: 1, fontSizes: 1, radii: 1, zIndex: 1 },
     // The order of what lies over the picture: the controls (8) and their shield (4).
     'views/FloatingToolbar.css': { zIndex: 2 },
-    'views/NotificationActionSheet.css': { colours: 2, fontSizes: 4, radii: 4 },
-    'views/Notifications.css': { colours: 6, fontSizes: 44, radii: 15, zIndex: 3, otherLayers: 2 },
     // The sleep overlay, one step under the header (4).
     'views/SleepOverlay.css': { zIndex: 1 },
     // The black behind the picture, twice, and the order of the picture, its touch layer and

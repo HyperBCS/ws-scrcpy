@@ -1,0 +1,155 @@
+@layer tokens, base, components, views;
+
+@layer views {
+/* Setup and delivery (`views/NotificationsView.tsx`): two sections on the page's surface, each
+   a title with the kit's cards and controls under it. */
+.notification-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    min-width: 0;
+    margin: 0 0 var(--space-24);
+    overflow-wrap: anywhere;
+}
+.notification-section-title {
+    margin: 0 var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-semibold);
+}
+.notification-section > .notification-help {
+    margin: 0 var(--space-4);
+}
+
+/* One linked iPhone: its name and link state, then its settings. */
+.notification-source {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    min-width: 0;
+}
+.notification-source-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+    padding: 0 var(--space-4);
+}
+.notification-source-name {
+    min-width: 0;
+    margin: 0;
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
+}
+.notification-source > .notification-help {
+    margin: 0 var(--space-4);
+}
+
+/* What a disclosure holds under its first line when that is not rows. */
+.notification-details-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    padding: var(--space-4) var(--space-16) var(--space-16);
+}
+.notification-details-content > .kit-button {
+    align-self: flex-start;
+}
+.notification-details-content > .kit-status,
+.notification-details-content > .kit-confirm,
+.notification-remove-source > .kit-confirm {
+    margin: 0;
+}
+.notification-text {
+    margin: 0;
+}
+.notification-subheading {
+    margin: 0;
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
+}
+/* Removal sits apart from the ordinary settings above it. */
+.notification-remove-source {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    padding-top: var(--space-12);
+    border-top: 1px solid var(--border);
+}
+.notification-remove-source > .kit-button {
+    align-self: flex-start;
+}
+
+/* Pairing: the steps, the code to compare, and the two lists that name the same iPhone. */
+.notification-setup-steps {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    margin: 0;
+    padding-left: var(--space-20);
+}
+.notification-pairing-code {
+    font-size: var(--font-size-24);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: 4px;
+    font-variant-numeric: tabular-nums;
+}
+.notification-link-phones {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    padding-top: var(--space-16);
+    border-top: 1px solid var(--border);
+}
+.notification-link-phones > .kit-button {
+    align-self: flex-start;
+}
+
+/* This device as a receiver: whether it is on, the iPhones it listens to, and its actions. */
+.notification-receiver-state {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-4) var(--space-8);
+    padding: 0 var(--space-4);
+}
+.notification-receiver-sources {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+}
+.notification-choices {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+.notification-choices-title {
+    padding: 0;
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-semibold);
+}
+.notification-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+}
+.notification-actions > .kit-button {
+    flex: 1 1 170px;
+}
+.notification-section > .kit-status {
+    margin: 0 var(--space-4);
+}
+.notification-receivers {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.notification-receivers .kit-status {
+    margin: var(--space-4) 0 0;
+}
+}

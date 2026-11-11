@@ -12,11 +12,19 @@ import { NotificationFilter, readNotificationPage } from '../state/notificationP
 import { changeNotificationPage, openScreenFromNotifications, takeNotificationScroll } from '../state/notificationNav';
 import { findDeviceByUdid, isDeviceAvailable } from '../state/devices';
 import { Toast } from '../ui/Toast';
+import { Banner } from '../ui/Banner';
+import { Button } from '../ui/Button';
+import { SelectField, TextField } from '../ui/Field';
+import { IconButton } from '../ui/IconButton';
+import { InlineStatus } from '../ui/InlineStatus';
+import { SegmentedControl } from '../ui/SegmentedControl';
+import { topSheet } from '../ui/Sheet';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { animate, reducedMotion } from '../ui/motion';
 import { NotificationCard } from './NotificationCard';
 import { NotificationActionSheet } from './NotificationActionSheet';
 import { isDismissActionLabel } from '../../common/NotificationActions';
+import '../../style/views/NotificationsInbox.css';
 
 export type { NotificationHistoryItem as HistoryItem } from '../../common/Notification';
 import type { NotificationHistoryItem as HistoryItem } from '../../common/Notification';
@@ -82,7 +90,11 @@ const QUERY_WRITE_MS = 400;
 type UndoAction = { source: string; label: string; revert: () => Promise<unknown> };
 // `retry` is offered only for actions that need no confirmation.
 type Failure = { message: string; retry?: () => void };
-const FILTER_LABELS: Record<NotificationFilter, string> = { inbox: 'All', unread: 'Unread', archive: 'Archive' };
+const FILTERS: ReadonlyArray<{ value: NotificationFilter; label: string }> = [
+    { value: 'inbox', label: 'All' },
+    { value: 'unread', label: 'Unread' },
+    { value: 'archive', label: 'Archive' },
+];
 
 function searchText(value: string): string {
     return value.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase();
@@ -200,6 +212,10 @@ export function NotificationHistory({
     const scroller = () => list.current?.closest<HTMLElement>('.notifications-page');
     const positions = useRef(new Map<string, number>());
     const reasonId = useId();
+    const sheetReasonId = useId();
+    // A sheet lies where the notices are, at the bottom of a phone's screen, and a notice drawn
+    // over it would cover its last action. The notices wait until the sheet has gone.
+    const noticesHeld = topSheet.value !== null;
     useLayoutEffect(() => {
         const next = new Map<string, number>();
         const reduced = reducedMotion();
@@ -528,11 +544,7 @@ export function NotificationHistory({
         });
     };
     return (
-        <section
-            class="notification-card notification-history"
-            aria-labelledby="notification-history-heading"
-            aria-busy={!!bulkBusy}
-        >
+        <section class="notification-history" aria-labelledby="notification-history-heading" aria-busy={!!bulkBusy}>
             <h2 id="notification-history-heading" class="visually-hidden">
                 {filter === 'archive' ? 'Archive' : filter === 'unread' ? 'Unread' : 'Inbox'}
             </h2>
@@ -540,44 +552,40 @@ export function NotificationHistory({
                 <div class="notification-history-source">
                     <div class="notification-history-device-row">
                         {sources.length > 1 ? (
-                            <label class="notification-history-device">
-                                <span class="visually-hidden">Device</span>
-                                <select
-                                    disabled={busy}
-                                    value={source.id}
-                                    onChange={(event) =>
-                                        show({
-                                            source: event.currentTarget.value,
-                                            notification: '',
-                                            filter: 'inbox',
-                                            app: '',
-                                            q: '',
-                                        })
-                                    }
-                                >
-                                    {sources.map((s) => (
-                                        <option key={s.id} value={s.id}>
-                                            {s.name}
-                                            {unreadBySource[s.id] ? ` · ${unreadBySource[s.id]} unread` : ''}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
+                            <SelectField
+                                label="Device"
+                                labelHidden
+                                disabled={busy}
+                                value={source.id}
+                                options={sources.map((s) => ({
+                                    value: s.id,
+                                    label: `${s.name}${unreadBySource[s.id] ? ` · ${unreadBySource[s.id]} unread` : ''}`,
+                                }))}
+                                onChange={(event) =>
+                                    show({
+                                        source: event.currentTarget.value,
+                                        notification: '',
+                                        filter: 'inbox',
+                                        app: '',
+                                        q: '',
+                                    })
+                                }
+                            />
                         ) : (
                             <strong class="notification-history-device-name">{source.name}</strong>
                         )}
                         {screen?.unavailable ? (
-                            <button class="notification-open-screen" disabled aria-describedby={reasonId}>
-                                Open screen
-                            </button>
-                        ) : (
-                            <a
-                                class="ui-button notification-open-screen"
-                                href={screen?.href}
-                                onClick={followScreenLink}
+                            <Button
+                                class="notification-open-screen"
+                                disabled
+                                attributes={{ 'aria-describedby': reasonId }}
                             >
                                 Open screen
-                            </a>
+                            </Button>
+                        ) : (
+                            <Button class="notification-open-screen" href={screen?.href} onClick={followScreenLink}>
+                                Open screen
+                            </Button>
                         )}
                     </div>
                     <p class="notification-feed-state">
@@ -589,35 +597,30 @@ export function NotificationHistory({
                         </span>
                     </p>
                     {screen?.unavailable && (
-                        <p id={reasonId} class="notification-help notification-screen-reason">
+                        <p id={reasonId} class="notification-help">
                             {screen.unavailable}
                         </p>
                     )}
                     {feedError ? (
-                        <p role="alert" class="notification-notice notification-error">
-                            Notifications are not being received. {sentence(feedError)}
-                        </p>
+                        <Banner tone="error">Notifications are not being received. {sentence(feedError)}</Banner>
                     ) : state === 'attention' ? (
-                        <p role="alert" class="notification-notice notification-error">
+                        <Banner tone="error">
                             {source.name}: {statusText}
-                        </p>
+                        </Banner>
                     ) : state === 'reconnecting' ? (
-                        <p role="status" class="notification-notice">
+                        <Banner tone="info">
                             New notifications from {source.name} appear when it reconnects. {statusText}
-                        </p>
+                        </Banner>
                     ) : null}
                 </div>
             )}
             <div class="notification-history-tools">
-                {connectionError && (
-                    <p role="alert" class="notification-notice notification-error notification-connection">
-                        Connection interrupted. {connectionError}
-                    </p>
-                )}
-                <div class="notification-search-row">
-                    <input
+                {connectionError && <Banner tone="error">Connection interrupted. {connectionError}</Banner>}
+                <div class="notification-search">
+                    <TextField
                         type="search"
-                        aria-label="Search notifications"
+                        label="Search notifications"
+                        labelHidden
                         placeholder="Search notifications"
                         value={query}
                         onInput={(event) => typeQuery(event.currentTarget.value)}
@@ -627,37 +630,33 @@ export function NotificationHistory({
                         enterKeyHint="search"
                         autoComplete="off"
                     />
-                    <button
-                        class="notification-filter-button"
-                        aria-haspopup="dialog"
-                        aria-label={appFilter ? 'Filters, app filter active' : 'Filters'}
+                    <Button
+                        attributes={{
+                            'aria-haspopup': 'dialog',
+                            'aria-label': appFilter ? 'Filters, app filter active' : 'Filters',
+                        }}
                         onClick={() => setMenu('filters')}
                     >
                         Filters{appFilter ? ' · 1' : ''}
-                    </button>
+                    </Button>
                 </div>
                 <div class="notification-history-toolbar">
-                    <div
-                        class="notification-segments"
-                        style={{ '--segment-index': ['inbox', 'unread', 'archive'].indexOf(filter) }}
-                        role="group"
-                        aria-label="Notification view"
-                    >
-                        {(['inbox', 'unread', 'archive'] as const).map((value) => (
-                            <button key={value} aria-pressed={filter === value} onClick={() => show({ filter: value })}>
-                                {FILTER_LABELS[value]}
-                            </button>
-                        ))}
-                    </div>
-                    <button
+                    <SegmentedControl
+                        label="Notification view"
+                        options={FILTERS}
+                        value={filter}
+                        onChange={(value) => show({ filter: value })}
+                        full
+                    />
+                    <IconButton
+                        icon="more"
+                        variant="bare"
                         class="notification-menu-button"
-                        aria-label="Notification actions"
-                        aria-haspopup="dialog"
+                        label="Notification actions"
+                        attributes={{ 'aria-haspopup': 'dialog' }}
                         disabled={busy}
                         onClick={() => setMenu('bulk')}
-                    >
-                        <span aria-hidden="true">⋯</span>
-                    </button>
+                    />
                 </div>
                 {narrowed ? (
                     <div class="notification-search-summary" role="status">
@@ -665,18 +664,20 @@ export function NotificationHistory({
                             {filtered.length} result{filtered.length === 1 ? '' : 's'}
                             {appFilter ? ` · ${apps.find(([id]) => id === appFilter)?.[1] || appFilter}` : ''}
                         </span>
-                        <button onClick={() => show({ app: '', q: '' })}>Clear filters</button>
+                        <Button variant="quiet" size="compact" onClick={() => show({ app: '', q: '' })}>
+                            Clear filters
+                        </Button>
                     </div>
                 ) : null}
                 {bulkBusy && (
-                    <p role="status" class="notification-help notification-bulk-busy">
+                    <InlineStatus>
                         {bulkBusy === 'phone' ? `Clearing on ${source?.name || 'the iPhone'}…` : 'Archiving…'}
-                    </p>
+                    </InlineStatus>
                 )}
             </div>
             {!filtered.length && (
                 <div class="notification-empty">
-                    <strong>
+                    <strong class="notification-empty-title">
                         {narrowed
                             ? 'No matching notifications'
                             : filter === 'unread'
@@ -688,11 +689,11 @@ export function NotificationHistory({
                                   : 'No notifications yet'}
                     </strong>
                     {narrowed ? (
-                        <p>Try another search or filter.</p>
+                        <p class="notification-empty-note">Try another search or filter.</p>
                     ) : filter === 'inbox' && phoneItems.length ? (
-                        <p>Archived notifications are in Archive.</p>
+                        <p class="notification-empty-note">Archived notifications are in Archive.</p>
                     ) : filter === 'archive' ? (
-                        <p>Swipe a notification left to archive it.</p>
+                        <p class="notification-empty-note">Swipe a notification left to archive it.</p>
                     ) : null}
                 </div>
             )}
@@ -719,33 +720,36 @@ export function NotificationHistory({
                 </section>
             )}
             {filtered.length > limit && (
-                <button class="notification-show-more" onClick={() => setLimit(limit + 25)}>
+                <Button full class="notification-show-more" onClick={() => setLimit(limit + 25)}>
                     Show older notifications ({filtered.length - limit})
-                </button>
+                </Button>
             )}
             {filter === 'archive' && !!filtered.length && (
                 <p class="notification-history-note">Notifications are kept for 30 days, up to 500 per iPhone.</p>
             )}
             <Toast
+                kit
                 className="notification-undo"
                 dismissLabel="Dismiss undo notice"
-                message={undo?.source === source?.id ? undo?.label || '' : ''}
+                message={!noticesHeld && undo?.source === source?.id ? undo?.label || '' : ''}
                 identity={undo}
                 duration={12000}
                 onDismiss={() => setUndo(null)}
                 action={{ label: 'Undo', run: undoLast, disabled: busy }}
             />
             <Toast
+                kit
                 className="notification-phone-result"
-                message={phoneResult}
+                message={noticesHeld ? '' : phoneResult}
                 identity={phoneResult}
                 onDismiss={() => setPhoneResult('')}
             />
             <Toast
+                kit
                 className="notification-failure"
                 tone="error"
                 dismissLabel="Dismiss error"
-                message={failure?.message || ''}
+                message={(!noticesHeld && failure?.message) || ''}
                 identity={failure}
                 duration={0}
                 onDismiss={() => setFailure(null)}
@@ -756,28 +760,25 @@ export function NotificationHistory({
                 title="Filter notifications"
                 onClose={() => setMenu(null)}
             >
-                <label>
-                    App
-                    <select
-                        aria-label="App"
-                        value={appFilter}
-                        onChange={(event) => show({ app: event.currentTarget.value })}
-                    >
-                        <option value="">All apps</option>
-                        {appFilter && !apps.some(([id]) => id === appFilter) && (
-                            <option value={appFilter}>{appFilter}</option>
-                        )}
-                        {apps.map(([id, name]) => (
-                            <option key={id} value={id}>
-                                {name}
-                            </option>
-                        ))}
-                    </select>
-                </label>
-                <button disabled={!narrowed} onClick={() => show({ app: '', q: '' })}>
+                <SelectField
+                    label="App"
+                    value={appFilter}
+                    options={[
+                        { value: '', label: 'All apps' },
+                        // An app named in the address that this iPhone has no notification from.
+                        ...(appFilter && !apps.some(([id]) => id === appFilter)
+                            ? [{ value: appFilter, label: appFilter }]
+                            : []),
+                        ...apps.map(([id, name]) => ({ value: id, label: name })),
+                    ]}
+                    onChange={(event) => show({ app: event.currentTarget.value })}
+                />
+                <Button full disabled={!narrowed} onClick={() => show({ app: '', q: '' })}>
                     Clear filters
-                </button>
-                <button onClick={() => setMenu(null)}>Done</button>
+                </Button>
+                <Button full variant="primary" onClick={() => setMenu(null)}>
+                    Done
+                </Button>
             </NotificationActionSheet>
             <NotificationActionSheet
                 open={menu === 'bulk'}
@@ -785,20 +786,22 @@ export function NotificationHistory({
                 description={`${count(filtered.length)} in this view.`}
                 onClose={() => setMenu(null)}
             >
-                <button disabled={busy || !matchingUnread.length} onClick={markAllRead}>
+                <Button full disabled={busy || !matchingUnread.length} onClick={markAllRead}>
                     Mark all read
-                </button>
-                <button disabled={busy || !localDismissals.length} onClick={archiveAll}>
+                </Button>
+                <Button full disabled={busy || !localDismissals.length} onClick={archiveAll}>
                     Archive all
-                </button>
-                <button
+                </Button>
+                <Button
+                    full
                     disabled={busy || !phoneDismissals.length}
                     onClick={(event) => clearAllOnPhone(event.currentTarget)}
                 >
                     Clear all on iPhone
-                </button>
+                </Button>
                 {bulkConfirm.armed && confirmation && (
                     <ConfirmPrompt
+                        kit
                         action={bulkConfirm}
                         question={`Clear ${count(confirmation.snapshot.length)} on ${confirmation.name}?`}
                         consequence="They are removed from the iPhone and cannot be brought back there. They stay here, marked as read."
@@ -817,34 +820,39 @@ export function NotificationHistory({
                     onClose={() => setMenuKey('')}
                 >
                     {screen?.unavailable ? (
-                        <button disabled>
-                            Open iPhone screen
-                            <small class="notification-action-reason">{screen.unavailable}</small>
-                        </button>
+                        <>
+                            <Button full disabled attributes={{ 'aria-describedby': sheetReasonId }}>
+                                Open iPhone screen
+                            </Button>
+                            <p id={sheetReasonId} class="notification-help">
+                                {screen.unavailable}
+                            </p>
+                        </>
                     ) : (
-                        <a href={screen?.href} onClick={followScreenLink}>
+                        <Button full href={screen?.href} onClick={followScreenLink}>
                             Open iPhone screen
-                        </a>
+                        </Button>
                     )}
                     {!menuItem.dismissed && (
-                        <button disabled={busy} onClick={() => localAction(menuItem, 'read')}>
+                        <Button full disabled={busy} onClick={() => localAction(menuItem, 'read')}>
                             {menuItem.read ? 'Mark unread' : 'Mark read'}
-                        </button>
+                        </Button>
                     )}
                     {!menuItem.dismissed && (
-                        <button disabled={busy} onClick={() => localAction(menuItem, 'dismiss')}>
+                        <Button full disabled={busy} onClick={() => localAction(menuItem, 'dismiss')}>
                             Archive
-                        </button>
+                        </Button>
                     )}
                     {menuItem.dismissed && (
-                        <button disabled={busy} onClick={() => moveToInbox(menuItem)}>
+                        <Button full disabled={busy} onClick={() => moveToInbox(menuItem)}>
                             Move to inbox
-                        </button>
+                        </Button>
                     )}
                     {menuItem.active && menuItem.canDismiss && menuItem.negativeActionLabel && (
                         <>
                             <h3 class="notification-action-sheet-group">On {source?.name || 'the iPhone'}</h3>
-                            <button
+                            <Button
+                                full
                                 disabled={busy || accepted.includes(menuItem.key)}
                                 onClick={(event) => {
                                     if (isDismissActionLabel(menuItem.negativeActionLabel)) phoneAction(menuItem);
@@ -854,9 +862,10 @@ export function NotificationHistory({
                                 {accepted.includes(menuItem.key)
                                     ? 'Action sent'
                                     : `${menuItem.negativeActionLabel} on iPhone`}
-                            </button>
+                            </Button>
                             {phoneConfirm.armed === menuItem.key && (
                                 <ConfirmPrompt
+                                    kit
                                     action={phoneConfirm}
                                     question={`${menuItem.negativeActionLabel} on ${source?.name || 'the iPhone'}?`}
                                     consequence={`This runs on the iPhone for “${menuItem.title || menuItem.appName || 'this notification'}” and cannot be undone from here.`}

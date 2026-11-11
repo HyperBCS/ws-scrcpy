@@ -2,7 +2,8 @@
 
 @layer components {
 /* A box to tick, with its label beside it (`ui/Checkbox.tsx`), for a choice that takes effect
-   with the action of its form. A setting that applies at once is a switch. Markup:
+   with the action of its form, or for one item of a list that is saved. A setting that applies
+   at once is a switch. Markup:
    <label class="kit-check"><input type="checkbox"><span>Remember in this browser</span></label>
    The box is the browser's own, in the accent colour. The label makes the target 44px high. */
 .kit-check {
@@ -14,6 +15,7 @@
     min-height: var(--control-height);
     color: var(--text);
     font-size: var(--font-size-15);
+    font-weight: var(--font-weight-regular);
     line-height: 1.4;
     cursor: pointer;
 }

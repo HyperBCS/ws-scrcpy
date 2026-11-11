@@ -38,7 +38,7 @@ const COLOUR_TOKENS = [
 // The kinds of control the focus walk must meet.
 const FOCUS_KINDS = [
     'kit-button', 'kit-icon-button', 'input.kit-field', 'select.kit-field', 'textarea.kit-field', 'kit-range', 'kit-switch',
-    'kit-segment', 'kit-tab', 'kit-bar-back', 'kit-bar-title', 'kit-disclosure',
+    'kit-segment', 'kit-tab', 'kit-bar-back', 'kit-bar-title', 'kit-disclosure', 'kit-check',
 ];
 
 /** Everything that can be read off the page at rest, as a list of faults. */
@@ -118,7 +118,7 @@ function audit({ mobile, tokens }) {
     for (const element of all('input.kit-field, select.kit-field, .kit-tab, .kit-bar-back, .kit-segment, .kit-range, .kit-toast-close, .kit-toast-action')) {
         if (height(element) !== 44) faults.push(`${height(element)}px high, not 44px: ${name(element)}`);
     }
-    for (const element of all('textarea.kit-field, .kit-row, .kit-disclosure > summary, .kit-bar-title')) {
+    for (const element of all('textarea.kit-field, .kit-row, .kit-disclosure > summary, .kit-bar-title, .kit-check')) {
         if (height(element) < 44) faults.push(`${height(element)}px high, under 44px: ${name(element)}`);
     }
     for (const element of all('.kit-switch')) {
@@ -234,6 +234,7 @@ async function focused() {
     if (element.classList.contains('kit-field')) kind = `${element.tagName.toLowerCase()}.kit-field`;
     if (element.matches('.kit-segment > input')) kind = 'kit-segment';
     if (element.matches('.kit-disclosure > summary')) kind = 'kit-disclosure';
+    if (element.matches('.kit-check > input')) kind = 'kit-check';
     const again = element.hasAttribute('data-kit-walked');
     element.setAttribute('data-kit-walked', '');
     return {
