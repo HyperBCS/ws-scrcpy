@@ -22,6 +22,11 @@ import { goToDeviceList } from '../state/router';
 import { clientParams, parseRoute } from '../state/routes';
 import { closeAllSheets } from '../state/stream';
 
+// The sheets are signals, not history entries, and several are mounted here, above the pages.
+// They close with the page they were opened on, as the overlays the router knows about do.
+// Before this, a sheet opened from the list stayed open over the page Back led to.
+route.subscribe(() => closeAllSheets());
+
 /**
  * The one place a tab title is set; see `state/pageTitle.ts`. Its own component, so a device
  * update re-renders this and not the whole app.

@@ -3,7 +3,7 @@
 // Routes and history against socket fixtures. The in-app back control goes back to the list and
 // the browser's Back after it never shows a phone's stream again; every open of a screen makes
 // exactly one stream socket, also from an older link and from a link that names only the phone;
-// older links and delivered push links open the right page.
+// older links and delivered push links open the right page; a sheet closes with its page.
 // No device, adb or pymobiledevice3 is involved.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -337,6 +337,30 @@ async function linksOpenOnce(browser) {
     console.log('PASS older links, short links and push links open the right page, with one stream socket per screen');
 }
 
+/** A sheet opened from the list is mounted above the pages. It closes when the page under it changes. */
+async function sheetsCloseWithTheRoute(browser) {
+    const test = await start(browser);
+    const { page } = test;
+    try {
+        await card(page, `android:${PIXEL}`).waitFor();
+        await page.locator('.device-list-header .notifications-link').click();
+        await page.locator('.notifications-page').waitFor();
+        await page.goBack();
+        await page.locator('#devices').waitFor();
+        await card(page, `android:${PIXEL}`).getByRole('button', { name: 'Settings for Google Pixel 9', exact: true }).click();
+        const sheet = page.locator('.bottom-sheet-root.open');
+        await sheet.waitFor();
+        await settleMotion(page);
+        await page.goForward();
+        await page.locator('.notifications-page').waitFor();
+        await sheet.waitFor({ state: 'hidden' });
+        await settleMotion(page);
+        assert.equal(await page.locator('.bottom-sheet-root.open').count(), 0, 'the settings sheet does not stay open over Notifications');
+        assert.deepEqual(test.errors, []);
+        console.log('PASS a sheet opened from the list closes when the browser moves to another page');
+    } finally { await test.context.close(); }
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch();
@@ -346,6 +370,7 @@ async function main() {
             await backAfterSwitching(browser, viewport);
         }
         await linksOpenOnce(browser);
+        await sheetsCloseWithTheRoute(browser);
     } finally {
         await browser.close();
     }

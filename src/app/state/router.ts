@@ -15,7 +15,8 @@ import { canonicalRoute, parseRoute, rememberPhone } from './routes';
 // browser's Back from the list leaves the app and never reopens a phone's stream.
 //
 // `history.state` is shared. The router keeps `nav`, Files keeps `files`; both survive each
-// other's writes.
+// other's writes. An overlay (a sheet, a dialog, a menu) has an entry of its own under the same
+// address, marked in `nav`, so the browser's Back closes it.
 export type RouteParams = URLSearchParams;
 export type NavigateParams = Record<string, string | number | boolean | undefined>;
 export type RouteTarget = URLSearchParams | NavigateParams;
@@ -26,6 +27,20 @@ interface Nav {
     index: number;
     /** The index of the nearest list entry below this one, -1 when there is none. */
     below: number;
+    /** On an overlay's entry: how many overlay entries sit on the page, this one included. */
+    overlay?: number;
+}
+
+interface Overlay {
+    onLeave: () => void;
+    /** The index of its history entry, once that is made. */
+    index?: number;
+}
+
+/** A history entry that belongs to an open overlay. */
+export interface OverlayEntry {
+    /** The overlay closed by itself: its entry is stepped back over. Safe to call twice. */
+    release(): void;
 }
 
 /** How long a step through history may take before the router stops waiting for it. */
@@ -73,7 +88,8 @@ function readNav(state: unknown): Nav | undefined {
     if (!nav || !Number.isInteger(nav.index) || !Number.isInteger(nav.below)) {
         return undefined;
     }
-    return { index: nav.index as number, below: nav.below as number };
+    const overlay = Number.isInteger(nav.overlay) && (nav.overlay as number) > 0 ? nav.overlay : undefined;
+    return { index: nav.index as number, below: nav.below as number, ...(overlay ? { overlay } : {}) };
 }
 
 function withNav(state: unknown, nav: Nav): Record<string, unknown> {
@@ -86,7 +102,7 @@ function position(): Nav {
 
 /** `below` for an entry made on top of the entry `nav`, whose address is `hash`. */
 function belowAfter(nav: Nav, hash: string): number {
-    return isList(hash) ? nav.index : nav.below;
+    return isList(hash) && !nav.overlay ? nav.index : nav.below;
 }
 
 // A link opened in this tab, a reload, or a return from another site. An older address is
@@ -128,7 +144,21 @@ export function clearLeaveGuard(guard: LeaveGuard): void {
     }
 }
 
+const overlays: Overlay[] = [];
+
+/** Closes every open overlay. Their history entries are left to the caller. */
+function closeOverlays(): void {
+    overlays
+        .splice(0)
+        .reverse()
+        .forEach((overlay) => overlay.onLeave());
+}
+
 function accept(): void {
+    if (location.hash !== shown.hash) {
+        // An overlay belongs to the page it was opened on.
+        closeOverlays();
+    }
     shown = { hash: location.hash, state: history.state };
     route.value = hashParams();
 }
@@ -173,6 +203,23 @@ function whenLanded(run: () => void): void {
     }
 }
 
+/**
+ * Closes the open overlays and steps back over their entries, then runs `then` on the entry of
+ * the page itself. A route written from an overlay's entry would leave the page's own entry
+ * below it, and Back would show that page again.
+ */
+function leaveOverlays(then: () => void): void {
+    closeOverlays();
+    whenLanded(() => {
+        const over = position().overlay;
+        if (over) {
+            travel(-over, then);
+        } else {
+            then();
+        }
+    });
+}
+
 function write(next: RouteParams, mode: 'push' | 'replace', state: unknown): void {
     const hash = hashOf(next);
     const here = position();
@@ -201,7 +248,12 @@ function commit(target: RouteTarget, mode: 'push' | 'replace', state: unknown): 
         });
         return;
     }
-    whenLanded(() => write(next, mode, state));
+    if (mode === 'replace' && hashOf(next) === location.hash && !position().overlay) {
+        // The same address with other state (Files tags its entries): no page is left.
+        write(next, mode, state);
+        return;
+    }
+    leaveOverlays(() => write(next, mode, state));
 }
 
 /** Opens a page as a new history entry, so the browser's Back returns to this one. */
@@ -237,7 +289,7 @@ export function goUp(): void {
         });
         return;
     }
-    whenLanded(() => {
+    leaveOverlays(() => {
         const here = position();
         const target = here.below >= 0 ? here.below : 0;
         if (!isList(location.hash) && target < here.index) {
@@ -249,6 +301,45 @@ export function goUp(): void {
     });
 }
 
+/**
+ * Gives an open overlay a history entry under the same address. `onLeave` runs when that entry
+ * is left: by the browser's Back, or because the route changed. An overlay that closes by
+ * itself calls `release`. Views use `ui/overlayHistory.ts`.
+ */
+export function pushOverlay(onLeave: () => void): OverlayEntry {
+    const overlay: Overlay = { onLeave };
+    overlays.push(overlay);
+    whenLanded(() => {
+        if (!overlays.includes(overlay)) {
+            return;
+        }
+        const here = position();
+        const nav = {
+            index: here.index + 1,
+            below: belowAfter(here, location.hash),
+            overlay: (here.overlay ?? 0) + 1,
+        };
+        history.pushState(withNav(history.state, nav), '');
+        overlay.index = nav.index;
+    });
+    return {
+        release: () => {
+            const at = overlays.indexOf(overlay);
+            if (at < 0) {
+                return;
+            }
+            // An overlay opened from this one sits on top of it and goes with it.
+            const first = overlays.splice(at).find((gone) => gone.index !== undefined)?.index;
+            whenLanded(() => {
+                const here = position();
+                if (first !== undefined && here.overlay && here.index >= first) {
+                    travel(first - 1 - here.index);
+                }
+            });
+        },
+    };
+}
+
 /** An entry a link or an assigned hash made has no `nav` yet: it follows the page that was shown. */
 function tagEntry(): Nav {
     const nav = readNav(history.state);
@@ -256,14 +347,36 @@ function tagEntry(): Nav {
         return nav;
     }
     const from = readNav(shown.state) ?? { index: 0, below: -1 };
-    const tagged = { index: from.index + 1, below: belowAfter(from, shown.hash) };
+    const above = overlays.filter((overlay) => overlay.index !== undefined).length;
+    const tagged = { index: from.index + above + 1, below: belowAfter(from, shown.hash) };
     history.replaceState(withNav(history.state, tagged), '');
     return tagged;
 }
 
 window.addEventListener('popstate', () => {
-    if (landing !== undefined && readNav(history.state)?.index === landing) {
-        landed();
+    const here = readNav(history.state);
+    if (landing !== undefined) {
+        if (here?.index === landing) {
+            landed();
+        }
+        return;
+    }
+    if (!here) {
+        return;
+    }
+    // Back from an overlay: the overlays whose entries were left close.
+    while (overlays.length) {
+        const top = overlays[overlays.length - 1];
+        if (top.index === undefined || top.index <= here.index) {
+            break;
+        }
+        overlays.pop();
+        top.onLeave();
+    }
+    // An overlay's entry without its overlay (after a reload, or reached by Forward) is skipped.
+    const open = overlays.filter((overlay) => overlay.index !== undefined).length;
+    if (here.overlay && here.overlay > open) {
+        travel(open - here.overlay);
     }
 });
 
@@ -287,7 +400,7 @@ window.addEventListener('hashchange', () => {
                 return;
             }
             clearLeaveGuard(guard);
-            whenLanded(() => {
+            leaveOverlays(() => {
                 if (made || here.index > stay) {
                     // A new entry, or one that was ahead: anything pushed since has removed it.
                     write(next, 'push', undefined);
@@ -303,6 +416,14 @@ window.addEventListener('hashchange', () => {
     }
     accept();
 });
+
+// A page reloaded while an overlay was open sits on that overlay's entry.
+{
+    const over = position().overlay;
+    if (over) {
+        travel(-over);
+    }
+}
 
 // The exports below are the router's earlier interface. They stay for the views that still call
 // them and do the same as before, except that returning to the list no longer adds an entry.

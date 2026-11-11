@@ -1,8 +1,9 @@
 // Run with: node --test scripts/test-routes.js
 // The routes and the history policy, without a browser: both forms of a phone's address, the
 // rewrite of the older form, the push links that are already delivered, the three verbs (open
-// pushes, switch replaces, up goes back to the list or replaces with it) and the earlier exports
-// as shims. scripts/e2e-navigation.js covers the same in a browser, with stream sockets counted.
+// pushes, switch replaces, up goes back to the list or replaces with it), the earlier exports
+// as shims, and the history entries of overlays. scripts/e2e-navigation.js covers the same in a
+// browser, with stream sockets counted.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const path = require('node:path');
@@ -437,6 +438,112 @@ test('uploads in progress: the owner is asked before a verb or the browser leave
     await settled();
     assert.equal(tab.shown.at(-1), 'action=device&udid=PIXEL&view=shell', 'tab allowed: Shell');
     assert.deepEqual(tab.browser.behind(), ['#!action=list-files&udid=PIXEL&path=%2Fsdcard', '#!']);
+});
+
+test('an overlay has a history entry: Back closes it and leaves the page alone', () => {
+    const { browser, router, shown } = open('#!');
+    router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
+    const page = browser.location.hash;
+    const closed = [];
+    router.pushOverlay(() => closed.push('actions'));
+    assert.deepEqual(browser.hashes(), ['#!', page, page], 'the entry has the address of the page');
+    router.pushOverlay(() => closed.push('confirm'));
+    assert.equal(browser.hashes().length, 4);
+    const routes = shown.length;
+
+    browser.history.back();
+    browser.settle();
+    assert.deepEqual(closed, ['confirm'], 'Back closes the top overlay only');
+    browser.history.back();
+    browser.settle();
+    assert.deepEqual(closed, ['confirm', 'actions']);
+    assert.equal(browser.index, 1, 'the page is still the entry that is shown');
+    assert.equal(shown.length, routes, 'and the route did not change, so the stream was not touched');
+
+    // Forward lands on an entry whose overlay is gone. It is stepped back over.
+    browser.history.forward();
+    browser.settle();
+    assert.equal(browser.index, 1);
+    assert.deepEqual(closed, ['confirm', 'actions']);
+});
+
+test('an overlay that closes by itself steps back over its entry', () => {
+    const { browser, router } = open('#!');
+    const closed = [];
+    const sheet = router.pushOverlay(() => closed.push('settings'));
+    assert.equal(browser.index, 1);
+    sheet.release();
+    sheet.release();
+    browser.settle();
+    assert.equal(browser.index, 0, 'the close button, the backdrop and Escape end where history.back() would');
+    assert.deepEqual(closed, [], 'the overlay was closed already; it is not told again');
+
+    // One sheet replaces another in the same task: the second entry waits for the first to be left.
+    const first = router.pushOverlay(() => closed.push('first'));
+    first.release();
+    router.pushOverlay(() => closed.push('second'));
+    browser.settle();
+    assert.deepEqual(browser.hashes(), ['#!', '#!'], 'one overlay entry, not two');
+    assert.equal(browser.index, 1);
+    browser.history.back();
+    browser.settle();
+    assert.deepEqual(closed, ['second']);
+    assert.equal(browser.index, 0);
+});
+
+test('a route change closes every overlay, and the new address is written on the page entry', () => {
+    // Switch phone is a sheet: choosing a phone replaces the page under the sheet, not the sheet's entry.
+    const { browser, router, shown } = open('#!');
+    router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
+    const closed = [];
+    router.pushOverlay(() => closed.push('switcher'));
+    router.switchRoute({ action: 'device', udid: 'IPHONE', view: 'screen' });
+    assert.deepEqual(closed, ['switcher'], 'the overlay closes at once');
+    browser.settle();
+    assert.deepEqual(browser.hashes().slice(0, 2), ['#!', '#!action=device&udid=IPHONE&view=screen']);
+    assert.equal(browser.index, 1);
+    assert.deepEqual(browser.behind(), ['#!'], 'Back from the new phone is the list, not the phone before');
+    assert.deepEqual(shown.slice(-2), ['action=device&udid=PIXEL&view=screen', 'action=device&udid=IPHONE&view=screen']);
+
+    // Open from inside an overlay, and up from inside an overlay.
+    router.pushOverlay(() => closed.push('menu'));
+    router.openRoute({ action: 'notifications', source: 'IPHONE' });
+    browser.settle();
+    assert.deepEqual(browser.hashes(), ['#!', '#!action=device&udid=IPHONE&view=screen', '#!action=notifications&source=IPHONE']);
+    router.pushOverlay(() => closed.push('card menu'));
+    router.goUp();
+    browser.settle();
+    assert.deepEqual(closed, ['switcher', 'menu', 'card menu']);
+    assert.equal(browser.index, 0);
+    assert.equal(browser.location.hash, '#!');
+
+    // An address that arrives from outside the router (a link, a typed address) closes them too.
+    router.pushOverlay(() => closed.push('settings'));
+    browser.location.hash = '#!action=notifications';
+    browser.settle();
+    assert.deepEqual(closed, ['switcher', 'menu', 'card menu', 'settings']);
+    // Up from there still finds the list, with the left-over overlay entry between them.
+    router.goUp();
+    browser.settle();
+    assert.equal(browser.index, 0);
+});
+
+test('a page reloaded with an overlay open goes back to the page entry', () => {
+    const first = open('#!');
+    first.router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
+    first.router.pushOverlay(() => {});
+    assert.equal(first.browser.history.state.nav.overlay, 1);
+    // The reloaded document starts on the overlay's entry, with the page entry below it.
+    const browser = fakeBrowser('#!');
+    browser.history.pushState({ nav: { index: 1, below: 0 } }, '', '#!action=device&udid=PIXEL&view=screen');
+    browser.history.pushState(first.browser.history.state, '');
+    global.window = browser.window;
+    global.location = browser.location;
+    global.history = browser.history;
+    for (const key of Object.keys(require.cache)) if (key.includes(`${path.sep}src${path.sep}app${path.sep}`)) delete require.cache[key];
+    require('../src/app/state/router');
+    browser.settle();
+    assert.equal(browser.index, 1, 'Back is not spent on an overlay that is no longer open');
 });
 
 test('links: a phone link names the phone and the view only, and following one goes through the router', () => {
