@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { liveTextOpen, streamConnected } from '../state/stream';
 import '../../style/views/LiveTextOverlay.css';
+import { useOverlayHistory } from '../ui/overlayHistory';
 import { usePresence } from '../ui/Presence';
 import { rememberDialogFocus, returnDialogFocus } from '../ui/dialogFocus';
 
@@ -72,6 +73,8 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     const close = () => {
         liveTextOpen.value = false;
     };
+    // The browser's Back closes the bar and leaves the stream open.
+    useOverlayHistory(open, close);
 
     useLayoutEffect(() => {
         if (!open) return;

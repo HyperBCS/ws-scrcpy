@@ -416,7 +416,9 @@ async function sheetsCloseWithTheRoute(browser) {
         const sheet = page.locator('.bottom-sheet-root.open');
         await sheet.waitFor();
         await settleMotion(page);
-        await page.goForward();
+        // The sheet has a history entry, so nothing is ahead for Forward. The address arrives
+        // from outside the app instead, as when a push alert is opened.
+        await page.evaluate(() => { location.hash = '#!action=notifications'; });
         await page.locator('.notifications-page').waitFor();
         await sheet.waitFor({ state: 'hidden' });
         await settleMotion(page);

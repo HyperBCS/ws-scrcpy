@@ -1,7 +1,9 @@
 import { trapDialogTab, restoreDialogFocus } from '../ui/dialogFocus';
+import { cancelConfirmPrompt } from '../ui/ConfirmAction';
 import type { ComponentChildren } from 'preact';
 import { useId, useLayoutEffect, useRef } from 'preact/hooks';
 import '../../style/views/NotificationActionSheet.css';
+import { useOverlayHistory } from '../ui/overlayHistory';
 import { usePresence } from '../ui/Presence';
 import { bindSheetDrag } from '../ui/sheetDrag';
 
@@ -32,6 +34,11 @@ export function NotificationActionSheet({ open, title, description, onClose, chi
         closing.current = true;
         callback.current();
     };
+    // The browser's Back closes the sheet and leaves Notifications open. As with Escape, the
+    // first one cancels a confirm prompt and the sheet stays.
+    useOverlayHistory(open, close, {
+        stays: () => !!dialog.current && cancelConfirmPrompt(dialog.current),
+    });
 
     useLayoutEffect(() => {
         const node = dialog.current;
@@ -67,8 +74,10 @@ export function NotificationActionSheet({ open, title, description, onClose, chi
             aria-describedby={shown.description ? descriptionId : undefined}
             onClose={close}
             onCancel={(event) => {
+                // Escape, and Back on Android, where Chrome sends Back to an open modal dialog
+                // instead of stepping through history. A confirm prompt is cancelled first.
                 event.preventDefault();
-                close();
+                if (!cancelConfirmPrompt(event.currentTarget)) close();
             }}
             onKeyDown={(event) => trapDialogTab(event, event.currentTarget)}
             onPointerDown={(event) => {

@@ -3,6 +3,7 @@ import { cancelConfirmPrompt } from './ConfirmAction';
 import { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import '../../style/ui/BottomSheet.css';
+import { useOverlayHistory } from './overlayHistory';
 import { usePresence } from './Presence';
 import { bindSheetDrag } from './sheetDrag';
 
@@ -39,6 +40,14 @@ export function BottomSheet({
             closeRef.current();
         }
     };
+    // The browser's Back does what Escape does: it cancels a confirm prompt first, then closes
+    // the sheet, and leaves a sheet open that may not be closed now. Another page closes it.
+    useOverlayHistory(open, () => closeRef.current(), {
+        stays: () => {
+            const panel = panelRef.current;
+            return (!!panel && cancelConfirmPrompt(panel)) || !dismissibleRef.current;
+        },
+    });
 
     useLayoutEffect(() => {
         const root = rootRef.current;
