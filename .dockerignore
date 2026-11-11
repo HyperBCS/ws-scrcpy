@@ -6,3 +6,12 @@ node_modules
 python/venv
 
 data
+
+# Secrets and local state. Dockerfile.dev copies the whole context into the image, so anything
+# not listed here ends up in a layer: the adb key the Android phones trust, the HTTPS private key,
+# the config that points at it, per-device stream settings and logs.
+adbkeys
+certs
+config.https.yaml
+stream-config.json
+logs

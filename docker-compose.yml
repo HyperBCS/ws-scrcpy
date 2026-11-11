@@ -4,9 +4,10 @@
 #
 # Host networking is deliberate, not laziness:
 #   * adbkit defaults to 127.0.0.1:5037 (src/server/goog-device/adb/index.ts), and
-#     AdbUtils.ts:180 spawns `adb ... forward --remove` with no -H flag, so it too
-#     goes to 127.0.0.1:5037. Under bridge networking that spawned client would fork
+#     Device.ts and RemoteShell.ts spawn `adb -s <serial> shell` with no -H flag, so they
+#     too go to 127.0.0.1:5037. Under bridge networking a spawned client would fork
 #     its own server inside the container, blind to USB, while adbkit used the host's.
+#     adbkit itself never starts a server: start the host's adb server before this.
 #   * Android video/audio/control use a loopback TCP forward owned by the host adb
 #     daemon, so they also share its network namespace without mounting the host /tmp.
 #   * CoreDeviceRunner binds each device's serve-web to loopback (it has no auth);
@@ -15,6 +16,9 @@
 #
 # Verified on hardware 2026-09-21: the iOS path (tunnel, screenshot, serve-web, HEVC
 # stream, clean teardown) works with only the usbmuxd socket mounted.
+#
+# Not yet run in Docker (2026-11-11): the unprivileged user, `init`, `cap_drop`, the
+# health check and the 80 s grace below. See the notes on each.
 services:
   ws-scrcpy:
     image: ws-scrcpy:latest
@@ -23,13 +27,34 @@ services:
       dockerfile: Dockerfile
     container_name: ws-scrcpy
     restart: unless-stopped
-    # The server gives each iPhone's serve-web up to 30 s to return the phone's display sessions
-    # before it kills it. A shorter grace here would cut that off with SIGKILL.
-    stop_grace_period: 40s
+    # Reaps the children that outlive their parent (adb, ffmpeg, python) and passes SIGTERM on to
+    # the server, which stops its own children in order.
+    init: true
+    # How long `docker stop` waits before SIGKILL. It must outlast the server's own shutdown
+    # budget, CoreDeviceRunner.shutdownBudgetMs(): 35 s for a serve-web still in its preflight to
+    # become able to handle SIGTERM, 30 s for it to return the phone's display sessions, and 5 s.
+    # That is 70 s; this adds 10 s. A shorter grace cuts serve-web off with SIGKILL, which is what
+    # wedges the phone's display service. scripts/test-web-security.js compares the two numbers.
+    stop_grace_period: 80s
     network_mode: host
     # Load config/apparmor-ws-scrcpy on the host before starting (see README).
     security_opt:
       - apparmor=ws-scrcpy-bluetooth
+    # Nothing in the container opens raw sockets. The server runs as `node` (see
+    # config/docker-entrypoint.sh), which has no capabilities at all.
+    cap_drop:
+      - NET_RAW
+    # The host's bluetooth group, for hosts whose D-Bus policy lets only that group talk to BlueZ.
+    # `getent group bluetooth` on the host gives the number; set BLUETOOTH_GID if it differs.
+    group_add:
+      - "${BLUETOOTH_GID:-111}"
+    healthcheck:
+      # Loopback only. A static file, so the check does not depend on a phone or on Bluetooth.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8000/manifest.json').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     environment:
       WS_NOTIFICATION_DATA: /app/data
       WS_SCRCPY_STREAM_CONFIG_PATH: /app/data/stream-config.json
@@ -50,13 +75,24 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     container_name: ws-scrcpy-dev
-    # The server gives each iPhone's serve-web up to 30 s to return the phone's display sessions
-    # before it kills it. A shorter grace here would cut that off with SIGKILL.
-    stop_grace_period: 40s
+    init: true
+    # See the production service: the server's shutdown budget is 70 s.
+    stop_grace_period: 80s
     network_mode: host
     # Load config/apparmor-ws-scrcpy on the host before starting (see README).
     security_opt:
       - apparmor=ws-scrcpy-bluetooth
+    cap_drop:
+      - NET_RAW
+    group_add:
+      - "${BLUETOOTH_GID:-111}"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8000/manifest.json').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # The first webpack build has to finish before anything is served.
+      start_period: 180s
     environment:
       WS_NOTIFICATION_DATA: /app/data
       WS_SCRCPY_STREAM_CONFIG_PATH: /app/data/stream-config.json

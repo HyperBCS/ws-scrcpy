@@ -9,6 +9,11 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY python ./python
 RUN npm run setup:ios
+# .dockerignore keeps the adb key, the HTTPS key and local settings out of this layer.
 COPY . .
+# The server runs as `node`, not root (see config/docker-entrypoint.sh). webpack writes dist/.
+RUN install -m 755 config/docker-entrypoint.sh /usr/local/bin/ws-scrcpy-entrypoint \
+    && mkdir -p /app/dist /app/data && chown node:node /app/dist /app/data
 EXPOSE 8000 8443
+ENTRYPOINT ["ws-scrcpy-entrypoint"]
 CMD ["npm", "run", "dev"]

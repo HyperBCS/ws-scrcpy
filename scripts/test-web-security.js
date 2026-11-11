@@ -438,6 +438,106 @@ test('lint checks the test scripts and the service worker', async () => {
     assert.match(scripts.lint, /\bscripts\//, 'npm run lint covers scripts/');
 });
 
+// ------------------------------------------------------------------ Deployment (C-server-core-10, P1-carry-stop-grace)
+
+const repo = (...parts) => path.join(__dirname, '..', ...parts);
+function composeServices() {
+    const compose = require('yaml').parse(fs.readFileSync(repo('docker-compose.yml'), 'utf8'));
+    return Object.entries(compose.services);
+}
+
+test('docker stop waits longer than the server needs to stop the phone sessions', async () => {
+    await startServer();
+    const { CoreDeviceRunner } = require('../src/server/appl-device/services/CoreDeviceRunner');
+    const budgetSeconds = CoreDeviceRunner.shutdownBudgetMs() / 1000;
+    assert.equal(budgetSeconds, 70, 'a change to the budget has to be carried into docker-compose.yml');
+    for (const [name, service] of composeServices()) {
+        const grace = /^(\d+)s$/.exec(service.stop_grace_period);
+        assert.ok(grace, `${name} sets stop_grace_period in seconds`);
+        assert.ok(
+            Number(grace[1]) >= budgetSeconds + 10,
+            `${name}: ${service.stop_grace_period} leaves 10 s over the ${budgetSeconds} s budget`,
+        );
+    }
+});
+
+test('the containers run with an init process, a loopback health check and no raw sockets', () => {
+    const services = composeServices();
+    assert.deepEqual(services.map(([name]) => name).sort(), ['ws-scrcpy', 'ws-scrcpy-dev']);
+    for (const [name, service] of services) {
+        assert.equal(service.init, true, `${name} reaps orphaned children`);
+        assert.deepEqual(service.cap_drop, ['NET_RAW'], name);
+        assert.equal(service.privileged, undefined, name);
+        assert.equal(service.user, undefined, `${name} starts as root so the entrypoint can hand the volume over`);
+        assert.ok(service.group_add.length, `${name} joins the host bluetooth group`);
+        const check = service.healthcheck.test;
+        assert.equal(check[0], 'CMD');
+        assert.match(check.join(' '), /http:\/\/127\.0\.0\.1:8000\//, `${name} checks over loopback`);
+        // The check has to be valid JavaScript, or every container is reported unhealthy.
+        assert.doesNotThrow(() => new Function(check[check.length - 1]), name);
+    }
+    for (const file of ['Dockerfile', 'Dockerfile.dev']) {
+        const text = fs.readFileSync(repo(file), 'utf8');
+        assert.match(text, /^ENTRYPOINT \["ws-scrcpy-entrypoint"\]$/m, `${file} starts through the entrypoint`);
+        assert.match(text, /config\/docker-entrypoint\.sh/, file);
+        assert.doesNotMatch(text, /maintainer/i, `${file} names no upstream maintainer`);
+    }
+});
+
+test('secrets and local state stay out of the image build context', () => {
+    const ignored = fs
+        .readFileSync(repo('.dockerignore'), 'utf8')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith('#'));
+    for (const entry of ['adbkeys', 'certs', 'config.https.yaml', 'stream-config.json', 'logs', 'data', '.git']) {
+        assert.ok(ignored.includes(entry), `${entry} is in .dockerignore`);
+    }
+    assert.equal(ignored.includes('config'), false, 'the entrypoint in config/ is still copied');
+});
+
+/** Runs the entrypoint with stand-ins for the commands that need root. Returns what they were asked to do. */
+function runEntrypoint(t, { uid, args, env = {} }) {
+    const { execFileSync } = require('node:child_process');
+    const bin = fs.mkdtempSync(path.join(temporary, 'entrypoint-'));
+    const log = path.join(bin, 'calls.log');
+    const stub = (name, body) => fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    stub('id', `echo ${uid}`);
+    stub('mkdir', `echo "mkdir $*" >> "${log}"`);
+    stub('chown', `echo "chown $*" >> "${log}"`);
+    stub('getent', 'echo "node:x:1000:1000::/home/node:/bin/bash"');
+    // The real setpriv changes the user and then runs what follows `--`.
+    stub(
+        'setpriv',
+        `echo "setpriv $*" >> "${log}"\nwhile [ "$1" != "--" ]; do shift; done\nshift\necho "HOME=$HOME" >> "${log}"\nexec "$@"`,
+    );
+    const output = execFileSync('/bin/sh', [repo('config/docker-entrypoint.sh'), ...args], {
+        env: { PATH: `${bin}${path.delimiter}${process.env.PATH}`, HOME: '/root', ...env },
+        encoding: 'utf8',
+    });
+    return { output, calls: fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : [] };
+}
+
+test('the entrypoint hands the data volume to the node user and drops root before the server starts', (t) => {
+    const started = runEntrypoint(t, { uid: 0, args: ['echo', 'server', 'started'] });
+    assert.deepEqual(started.calls, [
+        'mkdir -p /app/data',
+        'chown -R node:node /app/data',
+        'setpriv --reuid=node --regid=node --keep-groups -- echo server started',
+        'HOME=/home/node',
+    ]);
+    assert.equal(started.output, 'server started\n', 'the command runs after the drop, with its arguments');
+
+    const elsewhere = runEntrypoint(t, { uid: 0, args: ['true'], env: { WS_NOTIFICATION_DATA: '/srv/data' } });
+    assert.deepEqual(elsewhere.calls.slice(0, 2), ['mkdir -p /srv/data', 'chown -R node:node /srv/data']);
+
+    // Started as another user (compose `user:`): nothing to change, and no attempt to.
+    const unprivileged = runEntrypoint(t, { uid: 1000, args: ['echo', 'server', 'started'] });
+    assert.deepEqual(unprivileged.calls, []);
+    assert.equal(unprivileged.output, 'server started\n');
+    assert.ok(fs.statSync(repo('config/docker-entrypoint.sh')).mode & 0o111, 'the script is executable');
+});
+
 // ------------------------------------------------------------------ adb server (C-server-core-4)
 
 /** Speaks enough of the adb host protocol for forwards. Each connection carries one request. */

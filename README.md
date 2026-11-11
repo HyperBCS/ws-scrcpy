@@ -446,6 +446,15 @@ file mounts the system bus socket and persists settings in `ws-scrcpy-data`.
 On a host without AppArmor, omit the compose `security_opt` entries. Do not run
 another Bluetooth daemon for this container or remove existing device bonds.
 
+The server in the container runs as the unprivileged `node` user (uid 1000). The
+entrypoint, `config/docker-entrypoint.sh`, starts as root only to hand the data
+volume over to that user, then drops root. Compose adds the host's bluetooth
+group for hosts whose D-Bus policy lets only that group talk to BlueZ: check the
+number with `getent group bluetooth` and set `BLUETOOTH_GID` in `.env` if it is
+not 111. `docker ps` shows the result of a loopback health check, and
+`docker stop` waits 80 seconds so the iPhone screen sessions can be returned.
+The image built before this change still reads the same volume.
+
 Safari on iOS/iPadOS 16.4+ requires a trusted HTTPS origin and installation using
 **Share → Add to Home Screen** for background push. A certificate warning or the
 plain LAN URL is insufficient. The configured private address for this server is

@@ -25,16 +25,20 @@ RUN npm run dist && npm prune --omit=dev --ignore-scripts
 # absolute shebangs stay valid in the runner, which also uses /app.
 
 FROM base AS runner
-LABEL maintainer="Vitaly Repin <vitaly.repin@gmail.com>"
-# adb: AdbUtils.ts spawns the binary for `forward --remove`, so the client must exist
-# even though adbkit speaks the protocol itself. python3: the venv symlinks to it.
-# ffmpeg: CoreDeviceAudio.ts:307 spawns it to decode the phone's AAC-ELD audio.
+# adb: Device.ts and RemoteShell.ts spawn the client for `adb shell`. It talks to the host's adb
+# server; nothing here starts one (src/server/goog-device/adb/index.ts). python3: the venv
+# symlinks to it. ffmpeg: CoreDeviceAudio.ts spawns it to decode the phone's AAC-ELD audio.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         adb python3 python3-dbus python3-gi ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/dist /app/dist
 COPY --from=builder /app/node_modules /app/node_modules
 COPY --from=builder /app/python /app/python
+# The server runs as `node`, not root: the entrypoint hands the data volume over and drops root.
+COPY config/docker-entrypoint.sh /usr/local/bin/ws-scrcpy-entrypoint
+RUN chmod 755 /usr/local/bin/ws-scrcpy-entrypoint \
+    && mkdir -p /app/data && chown node:node /app/data
 # Server dist; `resolveBin()` walks cwd and its parent, finding /app/python/venv.
 WORKDIR /app/dist
+ENTRYPOINT ["ws-scrcpy-entrypoint"]
 CMD ["node", "index.js"]
