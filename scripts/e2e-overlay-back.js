@@ -423,9 +423,9 @@ async function notificationsPage(browser, viewport) {
         await page.locator('.device-list-header .notifications-link').click();
         await page.locator('.notifications-page').waitFor();
         await page.locator('article.notification-history-item').first().waitFor();
-        const dialog = () => page.locator('dialog.notification-action-sheet');
+        const dialog = () => page.locator('dialog.kit-sheet[open]');
         const ways = {
-            'the close button': () => press(test, dialog().locator('.notification-action-sheet-close')),
+            'the close button': () => press(test, dialog().locator('.kit-sheet-close')),
             Escape: () => page.keyboard.press('Escape'),
             'the backdrop': () => (test.mobile ? page.touchscreen.tap(8, 8) : page.mouse.click(8, 8)),
         };
@@ -443,9 +443,9 @@ async function notificationsPage(browser, viewport) {
         await dialog().waitFor();
         await settleMotion(page);
         await press(test, dialog().getByRole('button', { name: 'Decline on iPhone', exact: true }));
-        await dialog().locator('.confirm-prompt').waitFor();
+        await dialog().locator('.kit-confirm').waitFor();
         await page.goBack();
-        await dialog().locator('.confirm-prompt').waitFor({ state: 'detached' });
+        await dialog().locator('.kit-confirm').waitFor({ state: 'detached' });
         await untilAt(page, home.index + 1, 1);
         await page.waitForTimeout(150);
         assert.equal(await dialog().isVisible(), true, `${label}: Back with a prompt open leaves the sheet open`);
@@ -457,16 +457,16 @@ async function notificationsPage(browser, viewport) {
         // Chrome on Android sends Back to an open modal dialog as a close request: a cancel
         // event, and no step through history. The prompt goes first there too.
         const closeRequest = () => page.evaluate(() => {
-            const node = document.querySelector('dialog.notification-action-sheet');
+            const node = document.querySelector('dialog.kit-sheet[open]');
             node.dispatchEvent(new Event('cancel', { cancelable: true }));
         });
         await press(test, page.getByRole('button', { name: 'Actions for Design review', exact: true }));
         await dialog().waitFor();
         await settleMotion(page);
         await press(test, dialog().getByRole('button', { name: 'Decline on iPhone', exact: true }));
-        await dialog().locator('.confirm-prompt').waitFor();
+        await dialog().locator('.kit-confirm').waitFor();
         await closeRequest();
-        await dialog().locator('.confirm-prompt').waitFor({ state: 'detached' });
+        await dialog().locator('.kit-confirm').waitFor({ state: 'detached' });
         await page.waitForTimeout(150);
         assert.equal(await dialog().isVisible(), true, `${label}: a close request with a prompt open leaves the sheet open`);
         assert.deepEqual(await at(page), { ...home, index: home.index + 1, overlay: 1 }, `${label}: and its entry`);

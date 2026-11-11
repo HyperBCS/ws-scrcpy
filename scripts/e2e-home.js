@@ -539,7 +539,7 @@ async function installedApp(browser) {
         await page.route('**/api/notifications/**', (route) => route.fulfill({ json: { sources: [], notifications: [], bluetooth: [], statuses: {}, pairing: null, pairingOpen: false, error: '', delivery: { sent: 0, failed: 0, lastError: '' }, unread: 0, unreadBySource: {}, publicKey: '', publicUrl: 'https://example.test' } }));
         // The shortcut opens Notifications in the served app.
         await page.goto(new URL(shortcut.url, new URL('manifest.json', BASE)).href);
-        await page.locator('.notifications-view .stream-header-device > strong').getByText('Notifications', { exact: true }).waitFor();
+        await page.locator('.notifications-view h1.kit-bar-name').getByText('Notifications', { exact: true }).waitFor();
         assert.equal(await page.title(), 'Notifications · ws-scrcpy');
         // The browser bar is the colour of the page in both themes.
         for (const scheme of ['light', 'dark']) {
@@ -559,7 +559,7 @@ async function installedApp(browser) {
         await page.goto(BASE);
         await page.getByRole('heading', { name: 'No devices connected', exact: true }).or(page.getByRole('heading', { name: 'Connection lost', exact: true })).waitFor();
         await page.locator('.device-list-header').getByRole('link', { name: 'Notifications', exact: true }).click();
-        await page.locator('.notifications-view .stream-header-device > strong').getByText('Notifications', { exact: true }).waitFor();
+        await page.locator('.notifications-view h1.kit-bar-name').getByText('Notifications', { exact: true }).waitFor();
         console.log('PASS installed app: one name, a Notifications shortcut, page-coloured browser bar, inbox reachable with no devices');
     } finally {
         await context.close();

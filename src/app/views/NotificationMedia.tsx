@@ -1,4 +1,6 @@
 import { AutoHeight } from '../ui/AutoHeight';
+import { Button, buttonClass } from '../ui/Button';
+import { InlineStatus } from '../ui/InlineStatus';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { notificationTextParts, NotificationMediaLink } from '../ui/notificationContent';
 
@@ -9,6 +11,7 @@ export function NotificationText({ text }: { text: string }) {
                 part.href ? (
                     <a
                         key={index}
+                        class="notification-link"
                         href={part.href}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -39,10 +42,19 @@ function LoadedMedia({ link, failed }: { link: NotificationMediaLink; failed: ()
         };
     }, []);
     if (link.kind === 'image')
-        return <img src={link.href} alt={link.name} referrerPolicy="no-referrer" onError={failed} />;
+        return (
+            <img
+                class="notification-media-content"
+                src={link.href}
+                alt={link.name}
+                referrerPolicy="no-referrer"
+                onError={failed}
+            />
+        );
     if (link.kind === 'video')
         return (
             <video
+                class="notification-media-content"
                 ref={playerRef}
                 src={link.href}
                 controls
@@ -53,7 +65,15 @@ function LoadedMedia({ link, failed }: { link: NotificationMediaLink; failed: ()
             />
         );
     return (
-        <audio ref={playerRef} src={link.href} controls preload="metadata" aria-label={link.name} onError={failed} />
+        <audio
+            class="notification-media-content"
+            ref={playerRef}
+            src={link.href}
+            controls
+            preload="metadata"
+            aria-label={link.name}
+            onError={failed}
+        />
     );
 }
 
@@ -63,23 +83,35 @@ export function NotificationMedia({ link }: { link: NotificationMediaLink }) {
         <AutoHeight className="notification-media-size">
             <div class="notification-media">
                 <div class="notification-media-caption">
-                    <span title={link.name}>{link.name}</span>
+                    <span class="notification-media-name" title={link.name}>
+                        {link.name}
+                    </span>
                     <span>{link.host}</span>
                 </div>
                 {state === 'loaded' && <LoadedMedia link={link} failed={() => setState('error')} />}
                 {state === 'error' && (
-                    <p class="notification-help" role="status">
+                    <InlineStatus tone="warning">
                         Preview unavailable. The link may have expired or this format may not be supported.
-                    </p>
+                    </InlineStatus>
                 )}
                 <div class="notification-media-actions">
-                    <button
-                        aria-label={`${state === 'loaded' ? 'Hide' : state === 'error' ? 'Retry' : 'Load'} ${link.kind} from ${link.host}`}
+                    <Button
+                        size="compact"
+                        attributes={{
+                            'aria-label': `${state === 'loaded' ? 'Hide' : state === 'error' ? 'Retry' : 'Load'} ${link.kind} from ${link.host}`,
+                        }}
                         onClick={() => setState(state === 'loaded' ? 'idle' : 'loaded')}
                     >
                         {state === 'loaded' ? 'Hide' : state === 'error' ? 'Retry' : 'Load'} {link.kind}
-                    </button>
-                    <a href={link.href} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">
+                    </Button>
+                    {/* The link carries attributes the button component does not take, so it is the kit class on a plain link. */}
+                    <a
+                        class={buttonClass({ variant: 'quiet', size: 'compact' })}
+                        href={link.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        referrerPolicy="no-referrer"
+                    >
                         Open {link.kind}
                     </a>
                 </div>

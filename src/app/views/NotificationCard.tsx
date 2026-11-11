@@ -8,6 +8,10 @@ import { notificationMediaLinks } from '../ui/notificationContent';
 import { NotificationMedia, NotificationText } from './NotificationMedia';
 import { animate, finished, MOTION } from '../ui/motion';
 import { AutoHeight } from '../ui/AutoHeight';
+import { Button } from '../ui/Button';
+import { Icon } from '../ui/Icon';
+import { IconButton } from '../ui/IconButton';
+import '../../style/views/NotificationsInbox.css';
 
 function AppIcon({ source, app, name }: { source: string; app?: string; name: string }) {
     const [url, setUrl] = useState('');
@@ -29,7 +33,11 @@ function AppIcon({ source, app, name }: { source: string; app?: string; name: st
     }, [source, app]);
     return (
         <span class="notification-app-icon" aria-hidden="true">
-            {url ? <img src={url} alt="" onError={() => setUrl('')} /> : name.slice(0, 1).toLocaleUpperCase()}
+            {url ? (
+                <img class="notification-app-image" src={url} alt="" onError={() => setUrl('')} />
+            ) : (
+                name.slice(0, 1).toLocaleUpperCase()
+            )}
         </span>
     );
 }
@@ -95,6 +103,8 @@ export function NotificationCard({
         const apply = action === 'read' ? latest.current.markRead : latest.current.dismiss;
         const removing = action === 'dismiss' || latest.current.removeOnRead;
         const height = container.getBoundingClientRect().height;
+        // The space under a row closes with it. The stylesheet sets how much that is.
+        const gap = getComputedStyle(container).marginBottom;
         committingRef.current = true;
         setCommitting(true);
         suppressClick.current = Date.now() + 400;
@@ -117,7 +127,7 @@ export function NotificationCard({
                 rowAnimation.current = animate(
                     container,
                     [
-                        { height: `${height}px`, marginBottom: '10px', opacity: 1 },
+                        { height: `${height}px`, marginBottom: gap, opacity: 1 },
                         { height: '0px', marginBottom: '0px', opacity: 0 },
                     ],
                     { duration: 260, delay: 60 },
@@ -140,7 +150,7 @@ export function NotificationCard({
                 if (removing) {
                     rowAnimation.current = animate(container, [
                         { height: `${fromHeight}px`, marginBottom: '0px', opacity: 0 },
-                        { height: `${height}px`, marginBottom: '10px', opacity: 1 },
+                        { height: `${height}px`, marginBottom: gap, opacity: 1 },
                     ]);
                     exitAnimation.current = animate(node, [
                         { transform: fromTransform, opacity: 0 },
@@ -226,21 +236,8 @@ export function NotificationCard({
             class={`notification-swipe-row ${direction > 0 ? 'swipe-read' : 'swipe-dismiss'} ${committing ? 'committing' : ''} ${Math.abs(offset) >= Math.max(56, Math.min(88, (card.current?.clientWidth || 256) * 0.25)) ? 'swipe-ready' : ''}`}
         >
             <div class="notification-swipe-reveal" aria-hidden="true">
-                <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    {direction > 0 ? (
-                        <path d={n.read ? 'M4 5h16v14H4z M4 6l8 6 8-6' : 'm5 12 4 4L19 6'} />
-                    ) : (
-                        <path d="M4 5h16v4H4z M6 9v11h12V9 M10 13h4" />
-                    )}
-                </svg>
-                <span>{direction > 0 ? (n.read ? 'Unread' : 'Read') : 'Archive'}</span>
+                <Icon name={direction > 0 ? (n.read ? 'mail' : 'check') : 'archive'} size={20} />
+                <span class="notification-swipe-label">{direction > 0 ? (n.read ? 'Unread' : 'Read') : 'Archive'}</span>
             </div>
             <article
                 ref={card}
@@ -336,8 +333,8 @@ export function NotificationCard({
                 <div class="notification-history-item-heading">
                     <AppIcon source={n.source} app={n.app} name={n.appName || n.app || 'App'} />
                     <div class="notification-history-app">
-                        <strong>{n.appName || n.app || 'iPhone app'}</strong>
-                        <time dateTime={new Date(n.received).toISOString()}>
+                        <strong class="notification-app-name">{n.appName || n.app || 'iPhone app'}</strong>
+                        <time class="notification-time" dateTime={new Date(n.received).toISOString()}>
                             {new Date(n.received).toLocaleString([], {
                                 month: 'short',
                                 day: 'numeric',
@@ -347,15 +344,14 @@ export function NotificationCard({
                         </time>
                     </div>
                     {!n.read && <span class="notification-unread-dot" aria-label="Unread" />}
-                    <button
-                        class="notification-menu-button"
-                        aria-label={`Actions for ${n.title || n.appName || n.app || 'notification'}`}
-                        aria-haspopup="dialog"
+                    <IconButton
+                        icon="more"
+                        variant="bare"
+                        label={`Actions for ${n.title || n.appName || n.app || 'notification'}`}
+                        attributes={{ 'aria-haspopup': 'dialog' }}
                         disabled={busy || committing}
                         onClick={openMenu}
-                    >
-                        <span aria-hidden="true">⋯</span>
-                    </button>
+                    />
                 </div>
                 <AutoHeight className="notification-preview-size">
                     <div
@@ -364,17 +360,17 @@ export function NotificationCard({
                         class={`notification-preview ${expanded ? 'expanded' : ''}`}
                     >
                         {showPreview && n.title && (
-                            <h3>
+                            <h3 class="notification-title">
                                 <NotificationText text={n.title} />
                             </h3>
                         )}
                         {showPreview && n.subtitle && (
-                            <p>
+                            <p class="notification-line">
                                 <NotificationText text={n.subtitle} />
                             </p>
                         )}
                         {showPreview && n.body && (
-                            <p class="notification-body">
+                            <p class="notification-line notification-body">
                                 <NotificationText text={n.body} />
                             </p>
                         )}
@@ -386,14 +382,18 @@ export function NotificationCard({
                     </div>
                 </AutoHeight>
                 {overflow && (
-                    <button
+                    <Button
+                        variant="quiet"
+                        size="compact"
                         class="notification-expand"
-                        aria-expanded={expanded}
-                        aria-controls={`notification-content-${n.key}`}
+                        attributes={{
+                            'aria-expanded': String(expanded),
+                            'aria-controls': `notification-content-${n.key}`,
+                        }}
                         onClick={() => setExpanded(!expanded)}
                     >
                         {expanded ? 'Show less' : 'Show more'}
-                    </button>
+                    </Button>
                 )}
                 {!!media.length && (
                     <section

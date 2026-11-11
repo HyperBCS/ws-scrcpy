@@ -28,10 +28,12 @@ const historyItems = () => [
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aELsAAAAASUVORK5CYII=', 'base64');
 const article = (page, title) => page.locator('article.notification-history-item').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
 // The page header is the shared AppBar: the back control, the title and the unread count.
-const HEADER = '.notifications-view > .stream-header';
+const HEADER = '.notifications-view > .kit-bar';
 const headerBadge = page => page.locator(`${HEADER} .notification-unread-count`);
 const backControl = page => page.locator(HEADER).getByRole('button', { name: 'Phones', exact: true });
-const pressed = (page, name) => page.getByRole('button', { name, exact: true }).getAttribute('aria-pressed');
+// The page tabs and the inbox filter are segmented controls: a radio group each.
+const segment = (page, name) => page.getByRole('radio', { name, exact: true });
+const pressed = async (page, name) => String(await segment(page, name).isChecked());
 async function openCardMenu(page, title) {
     await article(page, title).getByRole('button', { name: `Actions for ${title}`, exact: true }).click();
     const sheet = page.getByRole('dialog');
@@ -47,7 +49,7 @@ async function cardAction(page, title, name) {
 async function confirmPrompt(scope, question, button) {
     const prompt = scope.getByRole('alertdialog', { name: question, exact: true });
     await prompt.waitFor();
-    await prompt.locator('.confirm-prompt-button:not([aria-disabled])').first().waitFor();
+    await prompt.locator('.kit-confirm-actions > .kit-button:not([aria-disabled])').first().waitFor();
     await prompt.getByRole('button', { name: button, exact: true }).click();
     return prompt;
 }
@@ -79,7 +81,7 @@ async function setAppFilter(page, app) {
     await page.getByRole('button', { name: /^Filters/ }).click();
     const sheet = page.getByRole('dialog', { name: 'Filter notifications', exact: true });
     await sheet.getByRole('combobox', { name: 'App', exact: true }).selectOption(app);
-    await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
+    await sheet.locator('.kit-sheet-close').click();
     await sheet.waitFor({ state: 'detached' });
 }
 
@@ -347,11 +349,11 @@ async function fixture(browser, options = {}) {
     const url = new URL(BASE); url.hash = '!action=notifications' + (options.source ? '&source=' + encodeURIComponent(options.source) : '') + (options.notification ? '&notification=' + encodeURIComponent(options.notification) : '');
     if (options.beforeGoto) await options.beforeGoto(page);
     await page.goto(url.href);
-    await page.getByRole('button', { name: 'Setup & delivery', exact: true }).waitFor();
+    await segment(page, 'Setup & delivery').waitFor();
     if (options.history) {
         await page.locator('#notification-history-heading').waitFor();
     } else {
-        await page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+        await segment(page, 'Setup & delivery').click();
         await page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
         await page.getByText(options.registered === false ? 'Notifications off' : 'Notifications on', { exact: true }).waitFor();
     }
@@ -436,7 +438,7 @@ async function receiverChoicesAndUnlink(browser) {
         await openDetails(f.page, 'Settings for Phone B');
         const settings = f.page.locator('details').filter({ has: f.page.locator('summary').filter({ hasText: 'Settings for Phone B' }) });
         // Turning text off erases stored text, so the box stays ticked until it is confirmed.
-        const text = settings.getByRole('checkbox', { name: 'Include notification text', exact: true });
+        const text = settings.getByRole('switch', { name: 'Include notification text', exact: true });
         await text.click();
         const erase = settings.getByRole('alertdialog', { name: 'Stop storing notification text from Phone B?', exact: true });
         await erase.waitFor();
@@ -451,13 +453,13 @@ async function receiverChoicesAndUnlink(browser) {
         await confirmPrompt(settings, 'Stop storing notification text from Phone B?', 'Erase text');
         await until(() => f.sources.find(s => s.id === 'phone-b')?.preview === false, 'the confirmed change reaches the API');
         await f.page.getByText('iPhone settings saved.', { exact: true }).waitFor();
-        await f.page.waitForFunction(() => ![...document.querySelectorAll('.notification-check input')].every(input => input.checked));
+        await f.page.waitForFunction(() => ![...document.querySelectorAll('.notifications-page .kit-switch')].every(input => input.checked));
         // Turning it back on loses nothing and applies at once.
         await text.click();
         await until(() => f.sources.find(s => s.id === 'phone-b')?.preview === true, 'ticking the box applies at once');
 
         // Remove iPhone sits apart from the settings, says what is lost and needs a confirming press.
-        const remove = settings.locator('.notification-remove-source').getByRole('button', { name: 'Remove iPhone', exact: true }).and(f.page.locator('.notification-danger'));
+        const remove = settings.locator('.notification-remove-source').getByRole('button', { name: 'Remove iPhone', exact: true }).and(f.page.locator('.kit-button-danger'));
         await remove.waitFor();
         assert.match(await settings.locator('.notification-remove-source').textContent(), /deletes its link and its 1 stored notification from the server/);
         await remove.click();
@@ -666,7 +668,7 @@ async function subscriptionStateOnReturn(browser) {
         await f.page.evaluate(() => { location.hash = '!'; });
         await f.page.locator('#devices').waitFor();
         await f.page.evaluate(() => { location.hash = '!action=notifications'; });
-        await f.page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+        await segment(f.page, 'Setup & delivery').click();
         await f.page.getByText('Notifications off', { exact: true }).waitFor();
         await sleep(300);
         assert.equal(await f.page.getByText('Notifications on', { exact: true }).count(), 0, 'a stale subscription is not shown again');
@@ -680,7 +682,7 @@ async function subscriptionStateOnReturn(browser) {
     try {
         await until(() => f.removedEndpoints.length === 1, 'the subscription for the old keys is removed');
         await f.page.waitForFunction(() => window.__notificationFixture.subscribeCalls === 1);
-        await f.page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+        await segment(f.page, 'Setup & delivery').click();
         const notice = f.page.getByRole('alert').filter({ hasText: 'Notifications stopped on this device because the server’s keys changed. Tap Enable on this device to turn them on again.' });
         await notice.waitFor();
         await f.page.getByText('Notifications off', { exact: true }).waitFor();
@@ -728,7 +730,7 @@ async function perDeviceHistory(browser) {
         assert.deepEqual(f.readRequests.at(-1), { keys: ['a-chat'], read: false });
         await cardAction(f.page, 'Coffee at four?', 'Mark read');
         await waitRead(f.page, 'Coffee at four?', true);
-        await f.page.getByRole('button', { name: 'Unread', exact: true }).click();
+        await segment(f.page, 'Unread').click();
         assert.equal(await article(f.page, 'Coffee at four?').count(), 0, 'read alerts leave the Unread filter');
         await article(f.page, 'Design review').waitFor();
         await toolbarAction(f.page, 'Mark all read');
@@ -798,7 +800,7 @@ async function dismissKeepsHistory(browser) {
         assert.deepEqual(f.dismissed, ['a-chat']);
         assert.equal(await headerBadge(f.page).textContent(), '1');
         assert.deepEqual(await f.page.evaluate(() => window.__closedNotifications), ['a-chat'], 'local dismissal closes only the corresponding received push');
-        await f.page.getByRole('button', { name: 'Archive', exact: true }).click();
+        await segment(f.page, 'Archive').click();
         const old = article(f.page, 'Coffee at four?');
         await old.getByText('Archived', { exact: true }).waitFor();
         assert.equal(await article(f.page, 'Design review').count(), 0, 'Archive shows only archived notifications');
@@ -808,7 +810,7 @@ async function dismissKeepsHistory(browser) {
         await archivedMenu.waitFor({ state: 'detached' });
         assert.deepEqual(f.restored, [{ key: 'a-chat', read: true }]);
         await article(f.page, 'Coffee at four?').waitFor({ state: 'detached' });
-        await f.page.getByRole('button', { name: 'All', exact: true }).click();
+        await segment(f.page, 'All').click();
         await waitRead(f.page, 'Coffee at four?', true);
         assert.equal(f.notifications.length, 3, 'archiving preserves the historical record');
         assert.deepEqual(f.actions, [], 'local dismissal sends no Bluetooth action');
@@ -850,19 +852,19 @@ async function labeledPhoneActions(browser) {
         await prompt.waitFor({ state: 'detached' });
         assert.deepEqual(f.actions, [], 'Cancel sends nothing');
         assert.equal(await initial.getByRole('button', { name: 'Dismiss on iPhone', exact: true }).count(), 0, 'a decline call action is never mislabeled as simple dismissal');
-        await initial.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await initial.locator('.kit-sheet-close').click();
         const stale = await openCardMenu(f.page, 'A message from Alex');
         assert.equal(await stale.getByRole('button', { name: /on iPhone/ }).count(), 0, 'a stale alert has no source action');
-        await stale.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await stale.locator('.kit-sheet-close').click();
         // Closing the sheet disarms it: reopening shows no prompt.
         const armed = await openCardMenu(f.page, 'Incoming call');
         await armed.getByRole('button', { name: 'Decline on iPhone', exact: true }).click();
         await armed.getByRole('alertdialog').waitFor();
-        await armed.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await armed.locator('.kit-sheet-close').click();
         await armed.waitFor({ state: 'detached' });
         const reopened = await openCardMenu(f.page, 'Incoming call');
         assert.equal(await reopened.getByRole('alertdialog').count(), 0, 'closing the sheet disarms the phone action');
-        await reopened.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await reopened.locator('.kit-sheet-close').click();
         await reopened.waitFor({ state: 'detached' });
         f.actionError = 'The iPhone disconnected. Reconnect and try again.';
         await confirmedCardAction(f.page, 'Incoming call', 'Decline on iPhone', 'Decline on Phone B?', 'Decline');
@@ -882,7 +884,7 @@ async function labeledPhoneActions(browser) {
         const sent = accepted.getByRole('button', { name: 'Action sent', exact: true });
         await sent.waitFor();
         assert.equal(await sent.isDisabled(), true);
-        await accepted.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await accepted.locator('.kit-sheet-close').click();
         assert.equal(f.notifications.find(n => n.key === 'b-call').active, true, 'an accepted command is not presented as a confirmed phone removal');
         assert.equal(f.notifications.find(n => n.key === 'b-call').read, false);
         await assertClean(f);
@@ -897,7 +899,7 @@ async function confirmPromptLayouts(browser) {
         const f = await fixture(browser, { notifications: items, width, height });
         try {
             const measure = scope => scope.evaluate(el => {
-                const prompt = el.querySelector('.confirm-prompt');
+                const prompt = el.querySelector('.kit-confirm');
                 const box = prompt.getBoundingClientRect();
                 return {
                     inside: box.left >= 0 && box.right <= innerWidth,
@@ -914,22 +916,22 @@ async function confirmPromptLayouts(browser) {
             const source = f.page.locator('article.notification-source').filter({ hasText: 'Phone B' });
             await source.locator('.notification-remove-source').getByRole('button', { name: 'Remove iPhone', exact: true }).click();
             const removal = source.getByRole('alertdialog', { name: 'Remove Phone B and delete its 2 stored notifications?', exact: true });
-            await removal.locator('.confirm-prompt-button.danger:not([aria-disabled])').waitFor();
+            await removal.locator(':scope.kit-confirm-danger .kit-confirm-go:not([aria-disabled])').waitFor();
             check(await measure(source), 'Remove iPhone');
             for (const colorScheme of ['light', 'dark']) {
                 await f.page.emulateMedia({ colorScheme });
                 await source.screenshot({ path: path.join(SCREENSHOTS, `ws-notifications-remove-confirm-${label}-${colorScheme}.png`), animations: 'disabled' });
             }
             await f.page.emulateMedia({ colorScheme: 'light' });
-            await source.getByRole('checkbox', { name: 'Include notification text', exact: true }).click();
+            await source.getByRole('switch', { name: 'Include notification text', exact: true }).click();
             await removal.waitFor({ state: 'detached' });
-            await source.getByRole('alertdialog', { name: 'Stop storing notification text from Phone B?', exact: true }).locator('.confirm-prompt-button.danger:not([aria-disabled])').waitFor();
+            await source.getByRole('alertdialog', { name: 'Stop storing notification text from Phone B?', exact: true }).locator(':scope.kit-confirm-danger .kit-confirm-go:not([aria-disabled])').waitFor();
             check(await measure(source), 'Erase text');
             await source.screenshot({ path: path.join(SCREENSHOTS, `ws-notifications-erase-text-confirm-${label}-light.png`), animations: 'disabled' });
             assert.deepEqual(f.removed, []);
             assert.ok(!f.operations.includes('POST sources'), 'arming either prompt sends nothing');
 
-            await f.page.getByRole('button', { name: 'Inbox', exact: true }).click();
+            await segment(f.page, 'Inbox').click();
             const params = new URL(f.page.url());
             params.hash = '!action=notifications&source=phone-b';
             await f.page.goto(params.href);
@@ -937,11 +939,11 @@ async function confirmPromptLayouts(browser) {
             const decline = sheet.getByRole('button', { name: 'Decline on iPhone', exact: true });
             const pressed = await decline.boundingBox();
             await decline.click();
-            await sheet.locator('.confirm-prompt-button.danger:not([aria-disabled])').waitFor();
+            await sheet.locator('.kit-confirm-danger .kit-confirm-go:not([aria-disabled])').waitFor();
             check(await measure(sheet), 'Decline');
             // The sheet grows when the prompt appears. Wherever that moves things, the confirm
             // button must not end up where the first press landed.
-            const confirm = await sheet.locator('.confirm-prompt-button.danger').boundingBox();
+            const confirm = await sheet.locator('.kit-confirm-danger .kit-confirm-go').boundingBox();
             assert.ok(
                 confirm.y >= pressed.y + pressed.height || confirm.y + confirm.height <= pressed.y,
                 `the confirm button is clear of the first press on ${label}: ${JSON.stringify({ pressed, confirm })}`,
@@ -977,7 +979,7 @@ async function notificationDeepLink(browser) {
         // A filter chosen afterwards and a reload do not open it again.
         await cardAction(f.page, 'A message from Alex', 'Mark unread');
         await waitRead(f.page, 'A message from Alex', false);
-        await f.page.getByRole('button', { name: 'Unread', exact: true }).click();
+        await segment(f.page, 'Unread').click();
         await f.page.waitForFunction(() => location.hash === '#!action=notifications&source=phone-b&filter=unread');
         await f.page.reload();
         await opened.waitFor();
@@ -998,7 +1000,7 @@ async function feedStatusInInbox(browser) {
         const time = new Date(f.notifications[0].received).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
         await state.getByText('Connected', { exact: true }).waitFor();
         assert.equal(await state.textContent(), `ConnectedLast notification ${time}`);
-        assert.equal(await f.page.locator('.notification-history-source .notification-notice').count(), 0, 'a live feed shows no notice');
+        assert.equal(await f.page.locator('.notification-history-source .kit-banner').count(), 0, 'a live feed shows no notice');
         await capture(f, 'feed-connected');
         // The other iPhone lost its Bluetooth link: the inbox says so beside its name.
         await f.page.getByRole('combobox', { name: 'Device', exact: true }).selectOption('phone-b');
@@ -1012,9 +1014,15 @@ async function feedStatusInInbox(browser) {
         await f.page.getByRole('alert').filter({ hasText: 'Phone B: Allow notification sharing in the iPhone Bluetooth settings.' }).waitFor();
         const colours = await f.page.evaluate(() => {
             const badge = document.querySelector('.notification-feed-state .notification-badge');
-            return { badge: getComputedStyle(badge).color, danger: getComputedStyle(document.querySelector('.notification-history-source .notification-error')).color };
+            // The colour of error text, read from the token through an element that takes it.
+            const probe = document.querySelector('.notifications-page').appendChild(document.createElement('span'));
+            probe.style.cssText = 'transition: none; color: var(--danger-text)';
+            const danger = getComputedStyle(probe).color;
+            probe.remove();
+            return { badge: getComputedStyle(badge).color, danger, banner: document.querySelectorAll('.notification-history-source .kit-banner-error').length };
         });
         assert.equal(colours.badge, colours.danger, 'Action needed uses the error colour');
+        assert.equal(colours.banner, 1, 'and its message is the error banner');
         for (const colorScheme of ['light', 'dark']) {
             await f.page.emulateMedia({ colorScheme });
             await capture(f, `feed-attention-${colorScheme}`);
@@ -1025,7 +1033,7 @@ async function feedStatusInInbox(browser) {
         await f.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
         await f.page.getByRole('alert').filter({ hasText: 'Notifications are not being received. Bluetooth unavailable: org.bluez.Error.NotReady.' }).waitFor();
         // Setup uses the same three states.
-        await f.page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+        await segment(f.page, 'Setup & delivery').click();
         const badge = id => f.page.locator('.notification-source').filter({ has: f.page.getByRole('heading', { name: id, exact: true }) }).locator('.notification-badge');
         await badge('Phone B').getByText('Action needed', { exact: true }).waitFor();
         assert.equal(await badge('Phone A').textContent(), 'Connected');
@@ -1049,12 +1057,12 @@ async function openScreenFromInbox(browser) {
         const link = row.getByRole('link', { name: 'Open screen', exact: true });
         await link.waitFor();
         assert.equal(await link.evaluate(el => el.href), screenHref);
-        assert.equal(await f.page.locator('.notification-search-row a, .notification-search-row button').filter({ hasText: 'Open screen' }).count(), 0, 'the search row holds only search and filters');
+        assert.equal(await f.page.locator('.notification-search a, .notification-search button').filter({ hasText: 'Open screen' }).count(), 0, 'the search row holds only search and filters');
         const sheet = await openCardMenu(f.page, 'Coffee at four?');
         const first = sheet.locator('.notification-action-sheet-actions > :first-child');
         assert.equal(await first.textContent(), 'Open iPhone screen');
         assert.equal(await first.evaluate(el => el.href), screenHref);
-        await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await sheet.locator('.kit-sheet-close').click();
         await sheet.waitFor({ state: 'detached' });
         // A touch double tap does nothing; Enter on the focused card opens the screen.
         const card = article(f.page, 'Coffee at four?');
@@ -1096,8 +1104,9 @@ async function openScreenFromInbox(browser) {
         const sheet = await openCardMenu(f.page, 'Coffee at four?');
         const item = sheet.getByRole('button', { name: /^Open iPhone screen/ });
         assert.equal(await item.isDisabled(), true);
-        assert.equal(await item.textContent(), `Open iPhone screen${reason}`);
-        await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
+        assert.equal(await item.textContent(), 'Open iPhone screen');
+        assert.equal(await sheet.locator(`#${await item.getAttribute('aria-describedby')}`).textContent(), reason);
+        await sheet.locator('.kit-sheet-close').click();
         await assertClean(f);
     } finally { await f.context.close(); }
     console.log('PASS the iPhone screen opens from the inbox header, a card menu, Enter or a double-click, and links back with the unread count');
@@ -1138,7 +1147,7 @@ async function unlinkedDeepLink(browser) {
         assert.equal(await f.page.getByText('Connect an iPhone to receive its', { exact: false }).count(), 0);
         await capture(f, 'unlinked-source');
         // The inbox stays open for the linked iPhones.
-        const inbox = f.page.getByRole('button', { name: 'Inbox', exact: true });
+        const inbox = segment(f.page, 'Inbox');
         assert.equal(await inbox.isEnabled(), true);
         await inbox.click();
         await f.page.locator('#notification-history-heading').waitFor();
@@ -1177,7 +1186,7 @@ async function linkingStaysOnSetup(browser) {
         await f.page.reload();
         await f.page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
         assert.equal(await pressed(f.page, 'Setup & delivery'), 'true');
-        await f.page.getByRole('button', { name: 'Inbox', exact: true }).click();
+        await segment(f.page, 'Inbox').click();
         await f.page.locator('#notification-history-heading').waitFor();
         assert.equal(await f.page.getByRole('combobox', { name: 'Device', exact: true }).inputValue(), 'phone-c');
         await f.page.waitForFunction(() => location.hash === '#!action=notifications&source=phone-c');
@@ -1224,12 +1233,12 @@ async function confirmBulk(page, buttonName, accept, beforeAnswer) {
     const message = await dialog.innerText();
     if (beforeAnswer) beforeAnswer(message);
     if (accept) {
-        await dialog.locator('.confirm-prompt-button:not([aria-disabled])').first().waitFor();
+        await dialog.locator('.kit-confirm-actions > .kit-button:not([aria-disabled])').first().waitFor();
         await dialog.getByRole('button', { name: 'Clear on iPhone', exact: true }).click();
     } else {
         await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
         await dialog.waitFor({ state: 'detached' });
-        await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await sheet.locator('.kit-sheet-close').click();
     }
     await sheet.waitFor({ state: 'detached' });
     return message;
@@ -1266,7 +1275,7 @@ async function bulkArchiveAndUndo(browser) {
         assert.equal(f.bulkRestored[0].source, 'phone-a');
         assert.deepEqual(states(f.bulkRestored[0].items), states(phoneA));
         await article(f.page, 'Coffee at four?').waitFor();
-        await f.page.waitForFunction(() => document.querySelector('.notifications-view > .stream-header .notification-unread-count')?.textContent === '16');
+        await f.page.waitForFunction(() => document.querySelector('.notifications-view > .kit-bar .notification-unread-count')?.textContent === '16');
         // Mark all read can be undone too.
         await toolbarAction(f.page, 'Mark all read');
         await undo.getByText('Marked 16 notifications read', { exact: true }).waitFor();
@@ -1275,8 +1284,8 @@ async function bulkArchiveAndUndo(browser) {
         await undo.getByRole('button', { name: 'Undo', exact: true }).click();
         await until(() => f.readRequests.length === 2, 'Undo of Mark all read reaches the API');
         assert.deepEqual(f.readRequests.at(-1), { keys: marked.keys, read: false });
-        await f.page.waitForFunction(() => document.querySelector('.notifications-view > .stream-header .notification-unread-count')?.textContent === '16');
-        await f.page.getByRole('button', { name: 'Archive', exact: true }).click();
+        await f.page.waitForFunction(() => document.querySelector('.notifications-view > .kit-bar .notification-unread-count')?.textContent === '16');
+        await segment(f.page, 'Archive').click();
         await f.page.getByText('No archived notifications', { exact: true }).waitFor();
         await assertClean(f);
         console.log('PASS Archive all and Mark all read act on a per-phone snapshot at once and can be undone');
@@ -1302,7 +1311,7 @@ async function bulkDismissPhone(browser) {
             await prompt.waitFor();
             assert.match(await prompt.textContent(), /They are removed from the iPhone and cannot be brought back there\. They stay here, marked as read\./);
             const look = await prompt.evaluate(el => {
-                const [confirm, cancel] = el.querySelectorAll('.confirm-prompt-button');
+                const [confirm, cancel] = el.querySelectorAll('.kit-confirm-actions > .kit-button');
                 const rgb = value => value.match(/\d+/g).slice(0, 3).map(Number);
                 return { focus: document.activeElement === cancel, confirm: rgb(getComputedStyle(confirm).backgroundColor), cancel: getComputedStyle(cancel).backgroundColor, text: getComputedStyle(confirm).color, label: confirm.textContent };
             });
@@ -1314,7 +1323,7 @@ async function bulkDismissPhone(browser) {
             await f.page.screenshot({ path: path.join(SCREENSHOTS, `ws-notifications-bulk-confirm-${colorScheme}.png`), animations: 'disabled' });
             await prompt.getByRole('button', { name: 'Cancel', exact: true }).click();
             await prompt.waitFor({ state: 'detached' });
-            await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
+            await sheet.locator('.kit-sheet-close').click();
             await sheet.waitFor({ state: 'detached' });
         }
         await f.page.emulateMedia({ colorScheme: 'light' });
@@ -1330,14 +1339,14 @@ async function bulkDismissPhone(browser) {
         await f.page.getByRole('alert').filter({ hasText: '1 not sent or not confirmed.' }).waitFor();
         const sentMenu = await openCardMenu(f.page, 'Coffee at four?');
         await sentMenu.getByRole('button', { name: 'Action sent', exact: true }).waitFor();
-        await sentMenu.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await sentMenu.locator('.kit-sheet-close').click();
         assert.deepEqual(f.bulkActions, [{ source: 'phone-a', items: [{ key: 'a-chat', expectedLabel: 'Clear' }, { key: 'a-calendar', expectedLabel: 'Dismiss notification' }] }], 'bulk phone dismissal excludes Decline calls, stale alerts, other phones, and new arrivals');
         const retryMenu = await openCardMenu(f.page, 'Design review');
         assert.equal(await retryMenu.getByRole('button', { name: 'Dismiss notification on iPhone', exact: true }).isEnabled(), true, 'a failed member remains retryable');
-        await retryMenu.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await retryMenu.locator('.kit-sheet-close').click();
         const callMenu = await openCardMenu(f.page, 'Incoming call');
         assert.equal(await callMenu.getByRole('button', { name: 'Decline on iPhone', exact: true }).isEnabled(), true, 'other phone actions remain individual and explicit');
-        await callMenu.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await callMenu.locator('.kit-sheet-close').click();
         assert.ok(f.notifications.every(n => !n.dismissed), 'accepted Bluetooth requests are not falsely represented as removal');
         assert.deepEqual(await f.page.evaluate(() => window.__closedNotifications), ['a-chat'], 'only accepted members close matching received pushes');
         await f.page.getByRole('alert').filter({ hasText: '1 not sent or not confirmed.' }).waitFor();
@@ -1470,14 +1479,14 @@ async function accessibleActionMenus(browser) {
         await f.page.mouse.click(2, 2);
         await sheet.waitFor({ state: 'detached' });
         sheet = await openCardMenu(f.page, 'Coffee at four?');
-        const geometry = await sheet.evaluate(el => ({ height: el.getBoundingClientRect().height, width: el.getBoundingClientRect().width, viewportHeight: innerHeight, viewportWidth: innerWidth, targets: [...el.querySelectorAll('button')].map(button => button.getBoundingClientRect().height) }));
+        const geometry = await sheet.locator('.kit-sheet-panel').evaluate(el => ({ height: el.getBoundingClientRect().height, width: el.getBoundingClientRect().width, viewportHeight: innerHeight, viewportWidth: innerWidth, targets: [...el.querySelectorAll('button')].map(button => button.getBoundingClientRect().height) }));
         assert.ok(geometry.height <= geometry.viewportHeight * .75 + 1);
         assert.ok(geometry.width <= geometry.viewportWidth);
         assert.ok(geometry.targets.every(height => height >= 44));
         await capture(f, `menu-${browserName}-320`);
         await f.page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
         await capture(f, `menu-${browserName}-dark`);
-        await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await sheet.locator('.kit-sheet-close').click();
         assert.deepEqual(f.actions, []); assert.deepEqual(f.dismissed, []); assert.deepEqual(f.readRequests, []);
         await assertClean(f);
         console.log('PASS action sheets trap focus, make the background inert, restore focus and close on Escape/backdrop');
@@ -1584,15 +1593,15 @@ async function searchAndFilters(browser) {
         assert.equal(await article(f.page, 'Café plans').count(), 0);
         await search.fill('station');
         assert.equal(await f.page.locator('article.notification-history-item').count(), 0, 'app and text filters combine');
-        await f.page.getByRole('button', { name: 'Unread', exact: true }).click();
+        await segment(f.page, 'Unread').click();
         await f.page.evaluate(() => { location.hash = '!action=notifications&source=phone-b&notification=b-mail'; });
         await waitRead(f.page, 'A message from Alex', true);
         assert.equal(await search.inputValue(), '', 'opening a specific alert resets stale search text');
-        assert.equal(await f.page.getByRole('button', { name: 'All', exact: true }).getAttribute('aria-pressed'), 'true');
+        assert.equal(await pressed(f.page, 'All'), 'true');
         await f.page.getByRole('button', { name: /^Filters/ }).click();
         const sheet = f.page.getByRole('dialog', { name: 'Filter notifications', exact: true });
         assert.equal(await sheet.getByRole('combobox', { name: 'App', exact: true }).inputValue(), '', 'source/deep-link changes clear the app filter');
-        await sheet.getByRole('button', { name: 'Close actions', exact: true }).click();
+        await sheet.locator('.kit-sheet-close').click();
         await assertClean(f);
         console.log('PASS notification search and app/status filters combine, while deep links reset filters to reveal their alert');
     } finally { await f.context.close(); }
@@ -1607,7 +1616,7 @@ async function bulkRespectsFilters(browser) {
     try {
         await f.page.getByRole('searchbox', { name: 'Search notifications', exact: true }).fill('family');
         await setAppFilter(f.page, 'com.example.chat');
-        await f.page.getByRole('button', { name: 'Unread', exact: true }).click();
+        await segment(f.page, 'Unread').click();
         await article(f.page, 'Family dinner').waitFor();
         assert.equal(await f.page.locator('article.notification-history-item').count(), 1);
         const sheet = await openToolbar(f.page);
@@ -1994,7 +2003,7 @@ async function sharedHeader(browser) {
         try {
             await article(page, 'Message 1').waitFor();
             const header = page.locator(HEADER);
-            assert.equal(await header.locator('.stream-header-device > strong').textContent(), 'Notifications');
+            assert.equal(await header.locator('h1.kit-bar-name').textContent(), 'Notifications');
             assert.equal(await backControl(page).getAttribute('title'), 'Phones');
             assert.equal(await page.getByRole('link', { name: /Devices/ }).count(), 0, 'the link that added a history entry is gone');
             assert.equal(await headerBadge(page).textContent(), '60');
@@ -2010,11 +2019,11 @@ async function sharedHeader(browser) {
                 await page.emulateMedia({ colorScheme });
                 await page.locator('main').evaluate(el => { el.scrollTop = 0; });
                 await page.screenshot({ path: path.join(OUT, `notifications-header-${width}-${colorScheme}.png`), animations: 'disabled' });
-                await page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+                await segment(page, 'Setup & delivery').click();
                 await page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
                 await settleMotion(page);
                 await page.screenshot({ path: path.join(OUT, `notifications-header-setup-${width}-${colorScheme}.png`), animations: 'disabled' });
-                await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+                await segment(page, 'Inbox').click();
                 await article(page, 'Message 1').waitFor();
                 await settleMotion(page);
             }
@@ -2082,21 +2091,21 @@ async function viewStateInAddress(browser) {
         await select.selectOption('phone-a');
         await hashIs('#!action=notifications&source=phone-a');
         // The panel. A reload on Setup stays on Setup.
-        await page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+        await segment(page, 'Setup & delivery').click();
         await page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
         await hashIs('#!action=notifications&source=phone-a&panel=setup');
         await page.reload();
         await page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
         assert.equal(await pressed(page, 'Setup & delivery'), 'true', 'a reload on Setup stays on Setup');
         assert.equal(await page.locator('#notification-history-heading').count(), 0);
-        await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+        await segment(page, 'Inbox').click();
         await hashIs('#!action=notifications&source=phone-a');
         // The filter.
-        await page.getByRole('button', { name: 'Archive', exact: true }).click();
+        await segment(page, 'Archive').click();
         await hashIs('#!action=notifications&source=phone-a&filter=archive');
-        await page.getByRole('button', { name: 'Unread', exact: true }).click();
+        await segment(page, 'Unread').click();
         await hashIs('#!action=notifications&source=phone-a&filter=unread');
-        await page.getByRole('button', { name: 'All', exact: true }).click();
+        await segment(page, 'All').click();
         await hashIs('#!action=notifications&source=phone-a');
         // The app.
         await setAppFilter(page, 'com.example.chat');
@@ -2120,7 +2129,7 @@ async function viewStateInAddress(browser) {
         assert.equal(await search.inputValue(), '');
 
         // "Open screen" pressed right after typing: the text is in the address before the page is left.
-        await page.getByRole('button', { name: 'Unread', exact: true }).click();
+        await segment(page, 'Unread').click();
         await search.fill('Message');
         await page.locator('.notification-history-device-row').getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.locator('.stream-view').waitFor();
@@ -2170,6 +2179,225 @@ async function viewStateInAddress(browser) {
     } finally { await f.context.close(); }
 }
 
+// The role tokens that are colours. Nothing on the page may show any other colour.
+const COLOUR_TOKENS = [
+    'surface', 'surface-raised', 'surface-sunken', 'surface-inverse', 'border', 'border-strong', 'text', 'text-muted',
+    'accent', 'accent-text', 'accent-soft', 'accent-pressed', 'on-accent', 'on-inverse', 'danger-text', 'danger-fill',
+    'success-text', 'success-fill', 'warning-text', 'warning-fill', 'info-text', 'info-fill', 'neutral-text', 'neutral-fill', 'scrim',
+];
+/**
+ * What the page draws, as a list of faults: every button, field, switch, disclosure and message
+ * is a kit part, and every colour, type size and radius is a token's. The unread count in the
+ * bar is left out: it is the bell's badge, which the list owns.
+ */
+function auditKit(tokens) {
+    const faults = [];
+    const view = document.querySelector('.notifications-view');
+    const name = (el) => `${el.tagName.toLowerCase()}.${String(el.getAttribute('class') || '').split(' ')[0]} "${(el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 30)}"`;
+    // The browser keeps boxes for what a closed disclosure holds and does not draw it.
+    const folded = (el) => {
+        for (let details = el.closest('details:not([open])'); details; details = details.parentElement?.closest('details:not([open])')) {
+            if (!details.querySelector(':scope > summary')?.contains(el)) return true;
+        }
+        return false;
+    };
+    const drawn = (el) => el.getClientRects().length > 0 && !folded(el);
+    for (const el of view.querySelectorAll('button, a')) {
+        if (!el.matches('.kit-button, .kit-icon-button, .kit-bar-back, .kit-toast-action, .kit-toast-close, a.notification-link')) faults.push(`a button or link that is not the kit's: ${name(el)}`);
+        if (el.matches('.kit-icon-button') && !(el.getAttribute('aria-label') || '').trim()) faults.push(`an icon button without a name: ${name(el)}`);
+    }
+    for (const el of view.querySelectorAll('.kit-button, .kit-icon-button')) {
+        if (!drawn(el)) continue;
+        const compact = el.matches('.kit-button-compact, .kit-icon-button-compact') && !matchMedia('(pointer: coarse)').matches;
+        const height = Math.round(el.getBoundingClientRect().height);
+        if (height !== (compact ? 32 : 44)) faults.push(`${height}px high: ${name(el)}`);
+    }
+    for (const el of view.querySelectorAll('input, select, textarea')) {
+        if (el.matches('.kit-switch[role="switch"], .kit-check > input[type="checkbox"], .kit-segment > input[type="radio"]')) continue;
+        if (!el.matches('.kit-field')) faults.push(`a field that is not the kit's: ${name(el)}`);
+        else if (getComputedStyle(el).fontSize !== '16px') faults.push(`a field at ${getComputedStyle(el).fontSize}: ${name(el)}`);
+        else if (drawn(el) && Math.round(el.getBoundingClientRect().height) !== 44) faults.push(`a field ${el.getBoundingClientRect().height}px high: ${name(el)}`);
+    }
+    for (const el of view.querySelectorAll('details')) if (!el.matches('.kit-disclosure')) faults.push(`a disclosure that is not the kit's: ${name(el)}`);
+    for (const el of view.querySelectorAll('dialog')) if (!el.matches('.kit-sheet')) faults.push(`a dialog that is not the kit sheet: ${name(el)}`);
+    for (const el of view.querySelectorAll('[role="alert"], [role="status"]')) {
+        if (!el.matches('.kit-banner, .kit-status, .kit-toast, .kit-field-error, .notification-empty, .notification-search-summary')) faults.push(`a message that is not the kit's: ${name(el)}`);
+    }
+    if (view.querySelectorAll('[class*="confirm-prompt"], [class*="app-toast"], .ui-button, .notification-primary, .notification-danger, .stream-header').length) faults.push('a class of the older controls is still on the page');
+
+    const probe = view.appendChild(document.createElement('span'));
+    probe.style.transition = 'none';
+    const allowed = new Set(tokens.map((token) => {
+        probe.style.color = `var(--${token})`;
+        return getComputedStyle(probe).color;
+    }));
+    const length = (property) => getComputedStyle(document.documentElement).getPropertyValue(property).trim();
+    const radii = ['0px', length('--radius-sm'), length('--radius-md'), length('--radius-lg'), length('--radius-full')];
+    probe.remove();
+    const parse = (value) => {
+        const parts = /^rgba?\(([\d.]+), ([\d.]+), ([\d.]+)(?:, ([\d.]+))?\)$/.exec(value);
+        return parts ? { r: +parts[1], g: +parts[2], b: +parts[3], a: parts[4] === undefined ? 1 : +parts[4] } : undefined;
+    };
+    const colour = (style, property, where) => {
+        const value = style[property];
+        const parts = parse(value);
+        if (!parts) faults.push(`${property} ${value} cannot be read: ${where}`);
+        else if (parts.a !== 0 && !allowed.has(value)) faults.push(`${property} ${value} is not a role token: ${where}`);
+    };
+    const luminance = ({ r, g, b }) => {
+        const channel = (value) => (value / 255 <= 0.03928 ? value / 255 / 12.92 : ((value / 255 + 0.055) / 1.055) ** 2.4);
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+    };
+    const contrast = (first, second) => {
+        const [high, low] = [luminance(parse(first)), luminance(parse(second))].sort((a, b) => b - a);
+        return (high + 0.05) / (low + 0.05);
+    };
+    // The colour behind an element: the nearest solid fill. The text of a segment lies over the
+    // radio button that draws the chosen fill.
+    const behind = (el) => {
+        for (let node = el; node; node = node.parentElement) {
+            for (const layer of node.matches('.kit-segment > span') ? [node.previousElementSibling, node] : [node]) {
+                if (parse(getComputedStyle(layer).backgroundColor)?.a === 1) return getComputedStyle(layer).backgroundColor;
+            }
+        }
+        return getComputedStyle(document.body).backgroundColor;
+    };
+    const dimmed = (el) => {
+        for (let node = el; node && node !== view.parentElement; node = node.parentElement) {
+            if (node.matches(':disabled, [aria-disabled="true"]') || Number(getComputedStyle(node).opacity) < 1) return true;
+        }
+        return false;
+    };
+    for (const el of view.querySelectorAll('*')) {
+        // What is not drawn (a closed sheet, the panel that is not shown) is measured when it is.
+        // A heading for assistive technology only is never drawn.
+        if (!drawn(el) || el.closest('.notification-unread-count, .visually-hidden, option')) continue;
+        if (el.closest('svg') && el.tagName !== 'svg') continue;
+        const field = el.matches('.kit-field');
+        const text = [...el.childNodes].some((node) => node.nodeType === 3 && node.textContent.trim());
+        for (const pseudo of [undefined, '::before', '::after']) {
+            const style = getComputedStyle(el, pseudo);
+            if (pseudo && (style.content === 'none' || style.content === 'normal')) continue;
+            const where = `${name(el)}${pseudo || ''}`;
+            for (const corner of ['borderTopLeftRadius', 'borderBottomRightRadius']) {
+                if (!radii.includes(style[corner])) faults.push(`${corner} ${style[corner]} is not a radius token: ${where}`);
+            }
+            if (!pseudo && (field || text || el.tagName === 'svg')) colour(style, 'color', where);
+            colour(style, 'backgroundColor', where);
+            for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
+                if (parseFloat(style[`border${side}Width`]) > 0 && style[`border${side}Style`] !== 'none') colour(style, `border${side}Color`, where);
+            }
+        }
+        if (!field && !text) continue;
+        const style = getComputedStyle(el);
+        if (!(field ? ['16px'] : ['12px', '13px', '15px', '17px', '20px', '24px']).includes(style.fontSize)) faults.push(`font size ${style.fontSize}: ${name(el)}`);
+        if (dimmed(el)) continue;
+        if (contrast(style.color, behind(el)) < 4.5) faults.push(`text contrast ${contrast(style.color, behind(el)).toFixed(2)}:1 (${style.color} on ${behind(el)}): ${name(el)}`);
+        // The edge that makes a field findable.
+        if (field && contrast(style.borderTopColor, behind(el.parentElement)) < 3) faults.push(`border contrast under 3:1: ${name(el)}`);
+    }
+    if (document.querySelectorAll('h1').length !== 1) faults.push(`${document.querySelectorAll('h1').length} h1 elements`);
+    return faults;
+}
+
+/** The page on the kit: its controls, its tabs, its sheet, its toast, and no colour or size of its own. */
+async function kitControls(browser) {
+    for (const [width, height, ios] of [[390, 844, true], [1280, 800, false]]) {
+        const items = historyItems();
+        items.push({ key: 'a-call', source: 'phone-a', app: 'com.apple.mobilephone', appName: 'Phone', title: 'Incoming call', body: 'Sam', received: Date.now() - 30000, read: true, dismissed: false, active: true, canDismiss: true, negativeActionLabel: 'Decline' });
+        const f = await fixture(browser, { history: true, notifications: items, devices: true, width, height, ios, standalone: ios, storedSources: ['phone-a', 'phone-b'], storedReceiver: '' });
+        const { page } = f;
+        const label = `${width} px`;
+        try {
+            await page.emulateMedia({ reducedMotion: 'reduce' });
+            const audit = async (state) => {
+                for (const colorScheme of ['light', 'dark']) {
+                    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+                    if (!ios) await page.mouse.move(0, 0);
+                    await settleMotion(page);
+                    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+                    assert.deepEqual(await page.evaluate(auditKit, COLOUR_TOKENS), [], `${label}, ${colorScheme}, ${state}`);
+                }
+            };
+            await article(page, 'Coffee at four?').waitFor();
+            await audit('the inbox');
+            assert.equal(await page.locator('h1').textContent(), 'Notifications');
+            assert.equal(await backControl(page).getAttribute('title'), 'Phones');
+
+            // The page tabs and the inbox filter are the same kit control: a radio group.
+            for (const [group, options] of [['Notification pages', ['Inbox', 'Setup & delivery']], ['Notification view', ['All', 'Unread', 'Archive']]]) {
+                const control = page.getByRole('radiogroup', { name: group, exact: true });
+                assert.equal(await control.evaluate(el => el.matches('.kit-segmented.kit-segmented-full')), true, `${label}: ${group} is the kit's segmented control`);
+                assert.deepEqual(await control.locator('.kit-segment').allTextContents(), options);
+            }
+            assert.equal(await page.locator('.notifications-page .kit-segmented').count(), 2);
+            await segment(page, 'All').focus();
+            await page.keyboard.press('ArrowRight');
+            await page.waitForFunction(() => /[&]filter=unread\b/.test(location.hash));
+            assert.equal(await pressed(page, 'Unread'), 'true', `${label}: the arrow keys move the filter`);
+            await page.keyboard.press('ArrowLeft');
+            await page.waitForFunction(() => !/filter=/.test(location.hash));
+
+            // The actions of a notification are in the kit sheet. A close request (Back on
+            // Android) with a prompt armed cancels the prompt first, and closes the sheet next.
+            const sheet = page.locator('dialog.kit-sheet[open]');
+            await article(page, 'Incoming call').getByRole('button', { name: 'Actions for Incoming call', exact: true }).click();
+            await sheet.waitFor();
+            assert.equal(await sheet.count(), 1);
+            assert.equal(await sheet.evaluate(el => el.matches(':modal')), true, `${label}: the sheet is a modal dialog`);
+            assert.equal(await page.getByRole('dialog', { name: 'Phone', exact: true }).count(), 1, `${label}: the dialog is named by its title`);
+            await sheet.getByRole('button', { name: 'Decline on iPhone', exact: true }).click();
+            await sheet.locator('.kit-confirm.kit-confirm-danger').waitFor();
+            await audit('a sheet with a prompt');
+            const closeRequest = () => sheet.evaluate(el => el.dispatchEvent(new Event('cancel', { cancelable: true })));
+            await closeRequest();
+            await sheet.locator('.kit-confirm').waitFor({ state: 'detached' });
+            await page.waitForTimeout(150);
+            assert.equal(await sheet.isVisible(), true, `${label}: a close request with a prompt armed leaves the sheet open`);
+            await closeRequest();
+            await sheet.waitFor({ state: 'hidden' });
+            assert.deepEqual(f.actions, [], `${label}: nothing was sent to the iPhone`);
+            // A sheet hands focus back to the control that opened it. When there is none to go
+            // back to (Archive removes it with its notification), focus goes to the actions
+            // button of the list. Here the sheet is opened with nothing in focus.
+            await page.evaluate(() => document.activeElement?.blur());
+            await article(page, 'Incoming call').getByRole('button', { name: 'Actions for Incoming call', exact: true }).evaluate(el => el.click());
+            await sheet.waitFor();
+            await page.keyboard.press('Escape');
+            await sheet.waitFor({ state: 'hidden' });
+            await page.waitForFunction(() => document.activeElement?.matches('.notification-history-tools .notification-menu-button'));
+
+            // Archive answers with the kit toast, and Undo on it puts the notification back.
+            await cardAction(page, 'Coffee at four?', 'Archive');
+            const toast = page.locator('.kit-toast.notification-undo');
+            await toast.locator('.kit-toast-message').getByText('Archived', { exact: true }).waitFor();
+            await article(page, 'Coffee at four?').waitFor({ state: 'detached' });
+            await audit('the toast');
+            const undo = toast.locator('button.kit-toast-action');
+            assert.equal(await undo.textContent(), 'Undo');
+            assert.equal(await toast.locator('button.kit-toast-close').getAttribute('aria-label'), 'Dismiss undo notice');
+            assert.equal(await undo.evaluate(el => getComputedStyle(el).borderTopWidth), '0px', `${label}: no rule of the page reaches the toast's buttons`);
+            await undo.click();
+            await article(page, 'Coffee at four?').waitFor();
+            assert.deepEqual(f.restored, [{ key: 'a-chat', read: false }], `${label}: Undo restores the notification as it was`);
+            await toast.waitFor({ state: 'detached' });
+
+            // Setup, with its disclosures open.
+            await segment(page, 'Setup & delivery').click();
+            await page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
+            for (const name of ['Settings for Phone B', 'Add another iPhone', 'Choose phones and delivery options', 'Delivery details']) await openDetails(page, name);
+            await page.locator('summary:visible').filter({ hasText: 'Filter by app' }).click();
+            const preview = page.getByRole('switch', { name: 'Include notification text', exact: true });
+            assert.equal(await preview.evaluate(el => el.matches('input.kit-switch')), true, `${label}: a setting that applies at once is a switch`);
+            assert.equal(await page.getByRole('group', { name: 'Get notifications from', exact: true }).locator('.kit-check > input').count(), 2);
+            assert.equal(await page.getByRole('textbox', { name: 'App identifiers', exact: true }).evaluate(el => el.matches('input.kit-field')), true);
+            await audit('Setup');
+            await assertClean(f);
+        } finally { await f.context.close(); }
+    }
+    console.log('PASS every control of the page is a kit part, with the token colours, sizes, radii and contrast, in both themes at phone and desktop width');
+}
+
 async function main() {
     const browser = await ({ chromium, webkit }[browserName] || chromium).launch({ headless: true });
     try {
@@ -2178,7 +2406,7 @@ async function main() {
             notificationDeepLink, deepLinkScrollsAndFades, unlinkedDeepLink, feedStatusInInbox, openScreenFromInbox, phoneActionsOutlastDefaultTimeout, bulkArchiveAndUndo, bulkDismissPhone, compactLongNotification, stickyBarsReachScrollTop, accessibleActionMenus, richNotificationMedia,
             searchAndFilters, bulkRespectsFilters, swipeAndUndo, swipeMotionAndFailure, delayedActionDoesNotCrossDevices, standaloneTouchNotifications,
             compatibilityPointerEventsDoNotDoubleAct, nativeTouchCancellationAndMultifinger, hangingRegistrationCleanup,
-            hangingNotificationCleanup, hangingWorkerDeepLink, sharedHeader, viewStateInAddress, linkingStaysOnSetup];
+            hangingNotificationCleanup, hangingWorkerDeepLink, sharedHeader, viewStateInAddress, linkingStaysOnSetup, kitControls];
         const selected = process.env.SCENARIO ? cases.filter(run => run.name === process.env.SCENARIO) : cases;
         assert.ok(selected.length, 'SCENARIO must name an existing fixture case');
         for (const run of selected) await run(browser);

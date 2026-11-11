@@ -245,11 +245,6 @@ details {
 details > summary {
     -webkit-tap-highlight-color: transparent;
 }
-/* The disclosure marker is in kit/Disclosure.css. This hides the older marker that
-   views/Notifications.css still draws before the summary; the two rules go together. */
-.notification-details > summary::before {
-    display: none;
-}
 @media (hover: hover) {
     :where(.device-details, .settings-advanced, .settings-playback, .sheet-details, .notification-details)
         > summary:hover {

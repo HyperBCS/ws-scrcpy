@@ -1,0 +1,347 @@
+@layer tokens, base, components, views;
+
+@layer views {
+/* The inbox (`views/NotificationHistory.tsx`, `NotificationCard.tsx`, `NotificationMedia.tsx`):
+   the iPhone it shows, the search bar that stays in view, the list, and what the sheets hold.
+   The inbox is the page; a card is one notification. */
+
+/* The iPhone shown: its name or picker, the way to its screen, and its link state. */
+.notification-history-source {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    margin-bottom: var(--space-4);
+}
+.notification-history-device-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    min-width: 0;
+}
+.notification-history-device-row > .kit-field-group {
+    flex: 1 1 0;
+}
+.notification-history-device-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--font-size-17);
+    font-weight: var(--font-weight-semibold);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.notification-open-screen {
+    flex: none;
+}
+.notification-feed-state {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-4) var(--space-8);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+}
+
+/* Search, filters and the actions of the list. The bar stays at the top while the list scrolls. */
+.notification-history-tools {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-header);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    margin-bottom: var(--space-8);
+    padding: var(--space-8) 0;
+    background: var(--surface);
+}
+.notification-search,
+.notification-history-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    min-width: 0;
+}
+.notification-search > .kit-field-group,
+.notification-history-toolbar > .kit-segmented {
+    flex: 1 1 0;
+    min-width: 0;
+}
+.notification-search-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding-left: var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+}
+.notification-history-tools > .kit-status {
+    margin: 0 var(--space-4);
+}
+
+/* The list. A row holds one card and what a swipe shows behind it. */
+.notification-history-group {
+    position: relative;
+}
+.notification-swipe-row {
+    position: relative;
+    isolation: isolate;
+    box-sizing: border-box;
+    margin-bottom: var(--space-12);
+    overflow: hidden;
+    border-radius: var(--radius-md);
+}
+.notification-swipe-reveal {
+    position: absolute;
+    inset: 0 auto 0 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-4);
+    width: clamp(0px, calc(var(--swipe-distance, 0px) - var(--space-8)), 100%);
+    min-width: 0;
+    overflow: hidden;
+    border-radius: var(--radius-md);
+    background: var(--neutral-fill);
+    color: var(--neutral-text);
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-semibold);
+    opacity: 0.8;
+    transform: scale(0.96);
+    transition:
+        opacity var(--motion-fast),
+        transform var(--motion-fast) var(--ease-out);
+}
+.swipe-read .notification-swipe-reveal {
+    background: var(--success-fill);
+    color: var(--success-text);
+}
+.swipe-dismiss .notification-swipe-reveal {
+    left: auto;
+    right: 0;
+}
+.notification-swipe-label {
+    flex: none;
+}
+.swipe-ready .notification-swipe-reveal,
+.committing .notification-swipe-reveal {
+    opacity: 1;
+    transform: scale(1);
+}
+.notification-swipe-row.committing .notification-swipe-reveal {
+    opacity: 0;
+    transition: opacity var(--motion-exit);
+}
+
+.notification-history-item {
+    position: relative;
+    padding: var(--space-12) var(--space-16);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    touch-action: pan-y pinch-zoom;
+    /* The outline of a notification opened from a push fades after a few seconds. */
+    transition:
+        transform var(--motion-settle) var(--ease-out),
+        box-shadow 600ms ease;
+}
+.notification-history-item.highlighted {
+    box-shadow: inset 0 0 0 2px var(--accent);
+}
+/* Enter opens the iPhone's screen, so a focused card shows it. The row clips anything outside. */
+.notification-history-item:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: calc(var(--focus-ring-offset) * -1);
+}
+.notification-history-item.swiping {
+    transition: none;
+    user-select: none;
+}
+.notification-history-item.swiping,
+.committing .notification-history-item {
+    will-change: transform;
+}
+.committing .notification-history-item {
+    pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+    .notification-history-item {
+        transition: none;
+    }
+}
+
+/* A card: the app, when it arrived, and the actions button; then the text. The button is 44px
+   in a 32px line, so the line pulls it into the card's padding. */
+.notification-history-item-heading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    margin: calc(var(--space-4) * -1) calc(var(--space-8) * -1) 0 0;
+}
+.notification-app-icon {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 32px;
+    height: 32px;
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    background: var(--surface-sunken);
+    color: var(--text-muted);
+    font-size: var(--font-size-17);
+    font-weight: var(--font-weight-semibold);
+}
+.notification-app-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+.notification-history-app {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+}
+.notification-app-name {
+    overflow: hidden;
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-semibold);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.notification-time,
+.notification-history-status {
+    color: var(--text-muted);
+    font-size: var(--font-size-12);
+}
+.notification-unread-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--accent);
+}
+.notification-preview-size,
+.notification-media-size {
+    min-width: 0;
+}
+.notification-preview {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+}
+.notification-preview.expanded {
+    display: block;
+    overflow: visible;
+    -webkit-line-clamp: unset;
+}
+.notification-title {
+    margin: 0;
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
+}
+.unread .notification-title {
+    font-weight: var(--font-weight-bold);
+}
+.notification-line {
+    margin: 0;
+}
+.notification-body {
+    white-space: pre-wrap;
+}
+.notification-link {
+    color: var(--accent-text);
+    text-decoration: underline;
+    overflow-wrap: anywhere;
+}
+.notification-link:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+}
+/* The words of the button line up with the text above it. */
+.notification-expand {
+    margin-left: calc(var(--space-12) * -1);
+}
+
+/* A picture, a sound or a film that a notification links to, loaded when asked for. */
+.notification-media-list {
+    display: grid;
+    gap: var(--space-8);
+    margin-top: var(--space-8);
+}
+.notification-media {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    min-width: 0;
+    padding: var(--space-8) var(--space-12);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    touch-action: auto;
+}
+.notification-media-caption {
+    display: flex;
+    flex-direction: column;
+    color: var(--text-muted);
+    font-size: var(--font-size-12);
+    overflow-wrap: anywhere;
+}
+.notification-media-name {
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+}
+.notification-media-content {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-height: 320px;
+    border-radius: var(--radius-sm);
+    object-fit: contain;
+}
+.notification-media-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+}
+
+.notification-show-more {
+    margin-top: var(--space-4);
+}
+.notification-history-note {
+    margin: var(--space-16) 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-12);
+}
+
+/* What the inbox's sheets hold: one action under the other, each as wide as the sheet. Actions
+   that run on the phone sit under a line and a title of their own, apart from the local ones. */
+.notification-action-sheet-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+}
+/* The body scrolls when the actions do not fit; none of them gives up height instead. */
+.notification-action-sheet-actions > * {
+    flex: none;
+}
+.notification-action-sheet-group {
+    margin: var(--space-4) 0 0;
+    padding: var(--space-12) var(--space-4) 0;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-semibold);
+    overflow-wrap: anywhere;
+}
+.notification-action-sheet-actions > .notification-help {
+    margin: 0 var(--space-4);
+}
+.notification-action-sheet-actions > .kit-confirm {
+    margin: 0;
+}
+}

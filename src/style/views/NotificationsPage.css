@@ -1,0 +1,131 @@
+@layer tokens, base, components, views;
+
+@layer views {
+/* The Notifications page (`views/NotificationsView.tsx`): the bar stays in place and the page
+   under it scrolls. Every control is a kit part; these rules place the parts and set the text
+   between them. The inbox is in NotificationsInbox.css and Setup in NotificationsSetup.css.
+   No rule here selects a button, a field, a paragraph or a link by its tag. */
+.notifications-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--surface);
+}
+.notifications-view > .kit-bar .notification-unread-count {
+    margin-right: var(--space-8);
+}
+.notifications-page {
+    flex: 1 1 auto;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 720px;
+    min-height: 0;
+    margin: 0 auto;
+    /* No top padding on the scroller: Chromium offsets its sticky children by it. The block at
+       its top carries it. The bottom leaves room for a toast under the last notification. */
+    padding: 0 max(var(--space-16), env(safe-area-inset-right, 0px)) calc(var(--control-height) * 2 + env(safe-area-inset-bottom, 0px))
+        max(var(--space-16), env(safe-area-inset-left, 0px));
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    color: var(--text);
+    font-size: var(--font-size-15);
+    line-height: 1.4;
+}
+.notification-page-header {
+    padding-top: var(--space-20);
+}
+@media (max-width: 599px) {
+    .notification-page-header {
+        padding-top: var(--space-12);
+    }
+}
+.notification-page-intro {
+    margin: 0 0 var(--space-16);
+    color: var(--text-muted);
+}
+/* A banner at the top of the page, above the two panels. */
+.notifications-page > .kit-banner {
+    margin-bottom: var(--space-12);
+}
+/* The outcome of an action on Setup stays in view while the page scrolls. */
+.notification-feedback {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-header);
+    box-shadow: var(--shadow-raised);
+}
+.notification-page-tabs {
+    margin-bottom: var(--space-16);
+}
+
+/* Text between the controls: an explanation, and the line shown where a list is empty. */
+.notification-help {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-regular);
+    overflow-wrap: anywhere;
+}
+.notification-empty {
+    margin: 0;
+    padding: var(--space-32) var(--space-16);
+    color: var(--text-muted);
+    text-align: center;
+}
+.notification-empty-title {
+    display: block;
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+}
+.notification-empty-note {
+    margin: var(--space-4) 0 0;
+    font-size: var(--font-size-13);
+}
+
+/* A card that holds a few lines and one action: a step that is waiting for the owner. */
+.notification-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-8);
+    padding: var(--space-12) var(--space-16);
+    overflow-wrap: anywhere;
+}
+.notification-card-title {
+    margin: 0;
+    font-size: var(--font-size-17);
+    font-weight: var(--font-weight-semibold);
+}
+.notification-card-text {
+    margin: 0;
+}
+.notification-card > .kit-disclosure {
+    align-self: stretch;
+}
+
+/* The state of a link, as a chip: connected, reconnecting, or in need of the owner. */
+.notification-badge {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    height: 24px;
+    padding: 0 var(--space-8);
+    border-radius: var(--radius-full);
+    background: var(--neutral-fill);
+    color: var(--neutral-text);
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-bold);
+    white-space: nowrap;
+}
+.notification-badge.ready {
+    background: var(--success-fill);
+    color: var(--success-text);
+}
+.notification-badge.reconnecting {
+    background: var(--warning-fill);
+    color: var(--warning-text);
+}
+.notification-badge.attention {
+    color: var(--danger-text);
+}
+}
