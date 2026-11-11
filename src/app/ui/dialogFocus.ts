@@ -53,10 +53,10 @@ const returnTargets = new WeakMap<HTMLElement, HTMLElement[]>();
 /**
  * Call when a sheet appears, before it takes focus. A sheet opened from inside another one
  * (Actions > Stream settings) inherits that sheet's return targets, because the control that
- * opened it is hidden by the time it closes.
+ * opened it is hidden by the time it closes. `active` is where focus goes back to, when that
+ * is not the control that has focus now.
  */
-export function rememberDialogFocus(panel: HTMLElement): void {
-    const active = document.activeElement;
+export function rememberDialogFocus(panel: HTMLElement, active: Element | null = document.activeElement): void {
     const focused = active instanceof HTMLElement && active !== document.body ? active : undefined;
     // The outgoing sheet turns inert as it closes, which can drop focus to the body first.
     const opener = focused
@@ -87,4 +87,26 @@ export function returnDialogFocus(panel: HTMLElement, fallback?: HTMLElement | n
         return;
     }
     (target ?? fallback)?.focus({ preventScroll: true });
+}
+
+const REMOTE_EVENTS = [
+    'touchstart',
+    'touchmove',
+    'touchend',
+    'touchcancel',
+    'mousedown',
+    'mousemove',
+    'mouseup',
+    'wheel',
+];
+
+/**
+ * The listeners that drive the phone are on `document.body`. A gesture in a sheet or a menu
+ * ends at `root`, the last touchend of a drag included; scrolling inside it still works.
+ * Returns what removes the stop.
+ */
+export function stopRemoteInteraction(root: HTMLElement): () => void {
+    const stop = (event: Event) => event.stopPropagation();
+    REMOTE_EVENTS.forEach((name) => root.addEventListener(name, stop));
+    return () => REMOTE_EVENTS.forEach((name) => root.removeEventListener(name, stop));
 }

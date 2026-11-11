@@ -1,0 +1,263 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* The one sheet. Markup, for code that builds it without Preact:
+     dialog.kit-sheet                      opened with showModal()
+       .kit-sheet-backdrop
+       .kit-sheet-panel
+         header.kit-sheet-header
+           .kit-sheet-handle
+           .kit-sheet-heading > h2.kit-sheet-title + p.kit-sheet-subtitle
+           button.kit-sheet-close > svg
+         .kit-sheet-body
+         footer.kit-sheet-footer
+   The dialog covers the window and is not seen itself. The panel is the sheet: at the bottom
+   edge below 600px, a centred dialog from there. ui/Sheet.tsx sets the --sheet- properties. */
+.kit-sheet {
+    position: fixed;
+    inset: 0;
+    /* The part of the window that an on-screen keyboard leaves in view. */
+    top: var(--sheet-viewport-top, 0px);
+    bottom: auto;
+    box-sizing: border-box;
+    width: auto;
+    height: var(--sheet-viewport-height, 100dvh);
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+    background: transparent;
+    color: var(--text);
+    font-size: var(--font-size-15);
+    line-height: 1.4;
+}
+
+/* The backdrop is an element, so that it can be pressed and dimmed during a drag. */
+.kit-sheet::backdrop {
+    background: transparent;
+}
+
+/* The dialog takes focus when it opens so the phone keyboard stays down. It is a container,
+   not a control: no ring round the window. */
+.kit-sheet:focus,
+.kit-sheet:focus-visible {
+    outline: none;
+}
+
+.kit-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--scrim);
+    opacity: var(--sheet-backdrop-opacity, 1);
+    transition: opacity var(--motion-exit) var(--ease-out);
+    animation: kit-sheet-backdrop-in var(--motion-settle) var(--ease-out);
+}
+
+.kit-sheet[data-exiting] .kit-sheet-backdrop {
+    opacity: 0;
+}
+
+.kit-sheet.dragging .kit-sheet-backdrop {
+    transition: none;
+}
+
+@keyframes kit-sheet-backdrop-in {
+    from {
+        opacity: 0;
+    }
+}
+
+.kit-sheet-panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    max-height: 88%;
+    /* Keeps the sheet's content clear of the home indicator and the notch. */
+    padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    background: var(--surface);
+    box-shadow: var(--shadow-raised);
+    transform: translateY(var(--sheet-drag-y, 0px));
+}
+
+/* The header is where a bottom sheet is dragged down to close it. */
+.kit-sheet-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    flex: none;
+    padding: var(--space-16) var(--space-12) var(--space-8) var(--space-20);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    cursor: grab;
+}
+
+.kit-sheet.dragging .kit-sheet-header {
+    cursor: grabbing;
+}
+
+.kit-sheet[data-dismissible='false'] .kit-sheet-header {
+    cursor: default;
+}
+
+/* Drawn in the header's top padding, so the header is the same height with and without it. */
+.kit-sheet-handle {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 36px;
+    height: 4px;
+    margin-left: -18px;
+    border-radius: var(--radius-full);
+    background: var(--border-strong);
+}
+
+.kit-sheet-heading {
+    flex: 1;
+    min-width: 0;
+}
+
+.kit-sheet-title {
+    margin: 0;
+    font-size: var(--font-size-20);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+/* The phone the sheet acts on. */
+.kit-sheet-subtitle {
+    margin: 0;
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.kit-sheet-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    box-sizing: border-box;
+    width: var(--control-height);
+    height: var(--control-height);
+    margin: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+}
+
+.kit-sheet-close svg {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.kit-sheet-close:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+}
+
+@media (hover: hover) {
+    .kit-sheet-close:hover:not(:disabled) {
+        background: var(--surface-sunken);
+    }
+}
+
+.kit-sheet-close:disabled {
+    opacity: var(--disabled-opacity);
+    cursor: default;
+}
+
+.kit-sheet-body {
+    box-sizing: border-box;
+    flex: 0 1 auto;
+    min-width: 0;
+    min-height: 0;
+    padding: 0 var(--space-16) var(--space-20);
+    /* Explicitly vertical: overflow-y alone computes overflow-x to auto, which lets a touch
+       browser pull the content sideways even when it fits. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* The sheet's actions: side by side and equal on a phone. */
+.kit-sheet-footer {
+    display: flex;
+    gap: var(--space-8);
+    flex: none;
+    padding: var(--space-12) var(--space-16);
+    border-top: 1px solid var(--border);
+}
+
+.kit-sheet-footer > * {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+/* Holds what `AboveSheet` renders in the dialog. It has no box of its own. */
+.kit-sheet-above {
+    display: contents;
+}
+
+/* From 600px: a dialog, 560px wide and centred across the window, whatever the pointer. */
+@media (min-width: 600px) {
+    .kit-sheet-panel {
+        /* The top edge is fixed and the dialog grows downwards. Centred between top and
+           bottom, every control moved each time a message appeared or a section opened. */
+        --kit-sheet-top: clamp(32px, 12%, 108px);
+        top: var(--kit-sheet-top);
+        bottom: auto;
+        width: min(560px, calc(100% - 2 * var(--space-24)));
+        height: fit-content;
+        max-height: min(80%, calc(100% - var(--kit-sheet-top) - var(--space-32)));
+        margin: 0 auto;
+        padding: 0;
+        border-radius: var(--radius-lg);
+        transform: none;
+    }
+
+    .kit-sheet-handle {
+        display: none;
+    }
+
+    .kit-sheet-header,
+    .kit-sheet.dragging .kit-sheet-header {
+        touch-action: auto;
+        cursor: default;
+    }
+
+    /* The actions sit at the right edge at their own width. */
+    .kit-sheet-footer {
+        justify-content: flex-end;
+    }
+
+    .kit-sheet-footer > * {
+        flex: 0 0 auto;
+    }
+}
+}

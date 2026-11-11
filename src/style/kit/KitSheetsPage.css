@@ -1,0 +1,126 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* The page at #!action=kit-sheets. The button and the field here stand in for the kit's
+   controls and go when those take their place. */
+.kit-sheets-page {
+    position: fixed;
+    inset: 0;
+    box-sizing: border-box;
+    overflow-y: auto;
+    padding: var(--space-16);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--font-size-15);
+    line-height: 1.4;
+}
+
+.kit-sheets-heading {
+    margin: 0 0 var(--space-4);
+    font-size: var(--font-size-24);
+    font-weight: var(--font-weight-bold);
+}
+
+.kit-sheets-section {
+    margin: var(--space-24) 0 var(--space-8);
+    font-size: var(--font-size-17);
+    font-weight: var(--font-weight-semibold);
+}
+
+.kit-sheets-note {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+}
+
+.kit-sheets-list {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-8);
+}
+
+.kit-sheets-text {
+    margin: 0 0 var(--space-12);
+}
+
+.kit-sheets-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: var(--control-height);
+    margin: 0;
+    padding: 0 var(--space-16);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: inherit;
+    font-weight: var(--font-weight-semibold);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.kit-sheets-button.primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+}
+
+.kit-sheets-button.danger {
+    color: var(--danger-text);
+}
+
+.kit-sheets-button:focus-visible,
+.kit-sheets-field:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+}
+
+.kit-sheets-label {
+    display: block;
+    margin: var(--space-12) 0 var(--space-4);
+    font-weight: var(--font-weight-semibold);
+}
+
+.kit-sheets-field {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    height: var(--control-height);
+    padding: 0 var(--space-12);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--font-size-input);
+}
+
+.kit-sheets-field.area {
+    height: 88px;
+    padding: var(--space-8) var(--space-12);
+    resize: none;
+}
+
+.kit-sheets-rows {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+}
+
+.kit-sheets-rows li {
+    display: flex;
+    align-items: center;
+    min-height: var(--control-height);
+    padding: 0 var(--space-16);
+}
+
+.kit-sheets-rows li + li {
+    border-top: 1px solid var(--border);
+}
+}

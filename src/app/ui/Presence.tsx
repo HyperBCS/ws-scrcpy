@@ -4,8 +4,19 @@ import { animate, finished, MOTION } from './motion';
 
 export type MotionKind = 'fade' | 'toast' | 'popover' | 'sheet' | 'collapse';
 
-/** Keeps the real element mounted through its exit, including when an exit is interrupted. */
-export function usePresence<T extends HTMLElement>(visible: boolean, kind: MotionKind = 'fade') {
+// Where a sheet of the older kind is a dialog. `sheetDrag.ts` has the same query.
+const DESKTOP_DIALOG = '(min-width: 760px) and (min-height: 540px) and (hover: hover) and (pointer: fine)';
+
+/**
+ * Keeps the real element mounted through its exit, including when an exit is interrupted.
+ * `dialog` is the media query under which a `sheet` is a dialog: it rises a little instead of
+ * sliding up from the bottom edge.
+ */
+export function usePresence<T extends HTMLElement>(
+    visible: boolean,
+    kind: MotionKind = 'fade',
+    dialog = DESKTOP_DIALOG,
+) {
     const ref = useRef<T>(null);
     const [retained, setRetained] = useState(visible);
     const animation = useRef<Animation>();
@@ -38,9 +49,7 @@ export function usePresence<T extends HTMLElement>(visible: boolean, kind: Motio
         if (visible) node.style.removeProperty('--sheet-backdrop-opacity');
         node.inert = !visible;
         if (visible) setRetained(true);
-        const desktop = window.matchMedia(
-            '(min-width: 760px) and (min-height: 540px) and (hover: hover) and (pointer: fine)',
-        ).matches;
+        const desktop = window.matchMedia(dialog).matches;
         const hiddenTransform =
             kind === 'toast'
                 ? 'translateY(20px) scale(0.96)'

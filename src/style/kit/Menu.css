@@ -1,0 +1,113 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* The one menu. Markup, for code that builds it without Preact:
+     .kit-menu[role=menu]
+       button.kit-menu-item[role=menuitem]            (add .kit-menu-danger for a removal)
+       button.kit-menu-item[role=menuitemcheckbox][aria-checked]   (or menuitemradio)
+       .kit-menu-separator[role=separator]
+       .kit-menu-title
+   `bindMenu` in ui/Menu.tsx places it and gives it its keys. */
+.kit-menu {
+    /* A popover is centred by the browser; this one is placed at its button. */
+    position: fixed;
+    inset: auto;
+    z-index: var(--z-overlay);
+    box-sizing: border-box;
+    min-width: 180px;
+    max-width: min(280px, calc(100vw - 16px));
+    max-height: calc(100dvh - 16px);
+    margin: 0;
+    padding: var(--space-4);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    color: var(--text);
+    box-shadow: var(--shadow-raised);
+    font-size: var(--font-size-15);
+    line-height: 1.4;
+}
+
+.kit-menu[hidden] {
+    display: none;
+}
+
+/* The menu takes focus only when it has no item to give it to. */
+.kit-menu:focus {
+    outline: none;
+}
+
+.kit-menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    box-sizing: border-box;
+    width: 100%;
+    min-height: var(--control-height);
+    margin: 0;
+    padding: 0 var(--space-12);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: var(--font-weight-semibold);
+    text-align: left;
+    cursor: pointer;
+}
+
+.kit-menu-item:focus-visible {
+    /* Inside the item: the menu cuts off what is drawn outside it. */
+    outline: var(--focus-ring);
+    outline-offset: calc(-1 * var(--focus-ring-offset));
+    background: var(--surface-sunken);
+}
+
+@media (hover: hover) {
+    .kit-menu-item:hover:not(:disabled) {
+        background: var(--surface-sunken);
+    }
+}
+
+.kit-menu-item:disabled {
+    opacity: var(--disabled-opacity);
+    cursor: default;
+}
+
+.kit-menu-danger {
+    color: var(--danger-text);
+}
+
+/* The check is a drawn shape, not a character: generated text would join the item's name. */
+.kit-menu-item[aria-checked]::before {
+    content: '';
+    flex: none;
+    box-sizing: border-box;
+    width: 7px;
+    height: 12px;
+    margin: 0 var(--space-4) 3px;
+    border: solid transparent;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+.kit-menu-item[aria-checked='true']::before {
+    border-color: currentColor;
+}
+
+.kit-menu-separator {
+    height: 1px;
+    margin: var(--space-4) 0;
+    background: var(--border);
+}
+
+.kit-menu-title {
+    padding: var(--space-8) var(--space-12) var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-semibold);
+}
+}

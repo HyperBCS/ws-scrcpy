@@ -21,8 +21,9 @@ import { ErrorBoundary, ScreenFailed } from '../ui/ErrorBoundary';
 import { goUp, onPageChange } from '../state/router';
 import { clientParams, LIST_PAGE_NAME, parseRoute } from '../state/routes';
 import { closeAllSheets } from '../state/stream';
-// Last, so that it moves no stylesheet of the views above to an earlier place in the bundle.
+// Last, so that they move no stylesheet of the views above to an earlier place in the bundle.
 import { KitPage } from './KitPage';
+import { KitSheetsPage } from './KitSheetsPage';
 
 // The sheets are signals, not history entries, and several are mounted here, above the pages.
 // They close with the page they were opened on. Before this, a sheet opened from the list stayed
@@ -69,6 +70,7 @@ export function App() {
     } else {
         view = <DeviceList />;
     }
+    if (params.get('action') === 'kit-sheets') view = <KitSheetsPage />;
 
     // One failing view must not blank the app. The view and the sheets fail apart, so a broken
     // sheet leaves the screen behind it in use. Navigating away clears a failed view.
