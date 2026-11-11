@@ -1,6 +1,15 @@
-import { trapDialogTab } from '../../ui/dialogFocus';
+import { stopRemoteInteraction, trapDialogTab } from '../../ui/dialogFocus';
 import { CONFIRM_GUARD_MS } from '../../ui/ConfirmAction';
 import { transitionVisibility, cancelVisibility } from '../../ui/motion';
+import { buttonClass } from '../../ui/Button';
+import { iconButtonClass } from '../../ui/IconButton';
+import { IconName, iconSvg } from '../../ui/icons';
+import { bindMenu, MenuAnchor, placeMenu } from '../../ui/Menu';
+import { SHEET_DIALOG } from '../../ui/Sheet';
+import { bindSheetDrag } from '../../ui/sheetDrag';
+import '../../../style/kit/Icon.css';
+import '../../../style/kit/Field.css';
+import '../../../style/kit/InlineStatus.css';
 import '../../../style/filelisting.css';
 import { ParamsFileListing } from '../../../types/ParamsFileListing';
 import { ManagerClient } from '../../client/ManagerClient';
@@ -103,6 +112,55 @@ const SORT_TITLES: Record<SortKey, string> = {
     size: 'Size',
     type: 'Type',
     modified: 'Modified',
+};
+
+// The explorer writes its markup as strings, so it takes the kit's classes as strings. Its
+// toolbar and its rows are dense: 32px under a mouse and 44px under a finger.
+const BUTTON = buttonClass({ size: 'compact' });
+const BUTTON_PRIMARY = buttonClass({ variant: 'primary', size: 'compact' });
+const BUTTON_DANGER = buttonClass({ variant: 'danger', size: 'compact' });
+const BUTTON_QUIET = buttonClass({ variant: 'quiet', size: 'compact' });
+const ICON_BUTTON = iconButtonClass({ variant: 'bare', size: 'compact' });
+const ICON_BUTTON_DANGER = iconButtonClass({ variant: 'bare', size: 'compact', danger: true });
+const ICON_BUTTON_OUTLINED = iconButtonClass({ size: 'compact' });
+/** The check of a menu item that is on or off. The kit hides it while the item is off. */
+const CHECK = iconSvg('check', 20);
+const ROW_MENU_ICON = iconSvg('more', 20);
+// The answers of a dialog are full size at every width. The one that removes something takes
+// the solid fill of the kit's confirm prompt, inside a footer marked `kit-confirm-danger`.
+const ANSWER = buttonClass();
+const ANSWER_PRIMARY = buttonClass({ variant: 'primary' });
+const ANSWER_REMOVES = `${buttonClass()} kit-confirm-go`;
+const MENU_SEPARATOR = '<div class="kit-menu-separator" role="separator"></div>';
+
+/** The icon of each toolbar button, by its command. */
+const TOOLBAR_ICONS: Record<string, IconName> = {
+    back: 'arrowLeft',
+    forward: 'arrowRight',
+    up: 'arrowUp',
+    home: 'house',
+    refresh: 'refresh',
+    places: 'folder',
+    'edit-path': 'edit',
+    'filter-toggle': 'search',
+    actions: 'more',
+};
+/** The same for the phone's selection bar. */
+const SELECTION_ICONS: Record<string, IconName> = {
+    'end-selection': 'close',
+    download: 'download',
+    copy: 'copy',
+    cut: 'move',
+    delete: 'trash',
+};
+
+/** The name of each menu, for assistive technology. A menu has no title of its own. */
+const MENU_LABELS = {
+    view: 'View',
+    places: 'Quick access',
+    actions: 'Actions',
+    item: 'Item actions',
+    folder: 'Folder actions',
 };
 
 const LONG_PRESS_MS = 450;
@@ -208,14 +266,22 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private active = true;
     /** The last result or failure reported while hidden, shown when the tab is shown again. */
     private missed?: { message: string; error: boolean };
-    /** The history entries of the open menu and the open dialog: Back closes the top one. */
-    private menuEntry?: OverlayEntry;
+    /** Ends what `bindMenu` set up for the open menu, its history entry included. */
+    private unbindMenu?: () => void;
     /** `left` once Back has closed the dialog through its entry. */
     private dialogEntry?: { entry: OverlayEntry; left: boolean };
     /** Gives up the dialog's entry once a closed question has had no successor. */
     private dialogRelease?: ReturnType<typeof setTimeout>;
     /** Holds the dialog on the page itself while the question before leaving is open. */
     private dialogHolder?: HTMLElement;
+    /** The panel of the question that is shown: the part of the sheet that moves. */
+    private dialogPanel?: HTMLElement;
+    /** True from an answer until the dialog has closed, so a second press answers nothing. */
+    private dialogClosing = false;
+    /** Ends the header drag and the viewport tracking of the open dialog. */
+    private unbindSheet?: () => void;
+    /** Lets presses in the dialog reach the page's listeners again. */
+    private readonly allowRemote: () => void;
     /** Results of the folder operations in flight, reported together when the last one answers. */
     private batch: { done: string[]; failed: string[]; many?: (count: number) => string } = { done: [], failed: [] };
     /** Set while the list shows a folder that could not be opened, in place of its rows. */
@@ -250,8 +316,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private longPressedAt = 0;
     /** Rebuilds the open menu after a setting inside it changes, keeping any Back item. */
     private menuBuilder?: () => string[];
-    /** Where the open menu was asked for, in viewport coordinates. */
-    private menuAnchor = { x: 0, y: 0 };
+    /** The button the open menu belongs to, or the point a context menu was asked for at. */
+    private menuAnchor?: MenuAnchor;
     private typeAhead = { text: '', at: 0 };
     /**
      * The one row that Tab stops on. The arrow keys move between rows, so the list is a single
@@ -266,7 +332,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private rovingFromFocus = false;
     private path: string;
     private pendingPath?: string;
-    private closeMenuListener?: (event: Event) => void;
     /** Checks the open dialog's field. A message keeps the dialog open and is shown under the field. */
     private dialogCheck?: () => string;
 
@@ -282,7 +347,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 <div class="fx-history">
                     <button
                         type="button"
-                        class="fx-button fx-icon-button"
+                        class="${ICON_BUTTON}"
                         data-command="back"
                         aria-label="Back"
                         title="Back"
@@ -290,7 +355,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     ></button>
                     <button
                         type="button"
-                        class="fx-button fx-icon-button"
+                        class="${ICON_BUTTON}"
                         data-command="forward"
                         aria-label="Forward"
                         title="Forward"
@@ -298,21 +363,21 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     ></button>
                     <button
                         type="button"
-                        class="fx-button fx-icon-button"
+                        class="${ICON_BUTTON}"
                         data-command="up"
                         aria-label="Up one folder"
                         title="Up one folder"
                     ></button>
                     <button
                         type="button"
-                        class="fx-button fx-icon-button fx-home"
+                        class="${ICON_BUTTON} fx-home"
                         data-command="home"
                         aria-label="Device root"
                         title="Device root"
                     ></button>
                     <button
                         type="button"
-                        class="fx-button fx-icon-button fx-refresh"
+                        class="${ICON_BUTTON} fx-refresh"
                         data-command="refresh"
                         aria-label="Refresh"
                         title="Refresh"
@@ -320,7 +385,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     ></button>
                     <button
                         type="button"
-                        class="fx-button fx-icon-button fx-places-toggle"
+                        class="${ICON_BUTTON} fx-places-toggle"
                         data-command="places"
                         aria-haspopup="menu"
                         aria-expanded="false"
@@ -331,7 +396,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 <div class="fx-selection-bar" role="toolbar" aria-label="Selected items">
                     <button
                         type="button"
-                        class="fx-button fx-icon-button"
+                        class="${ICON_BUTTON}"
                         data-command="end-selection"
                         aria-label="Close selection"
                         title="Close selection"
@@ -339,7 +404,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     <span class="fx-selection-count"></span>
                     <button
                         type="button"
-                        class="fx-button fx-icon-button"
+                        class="${ICON_BUTTON}"
                         data-command="download"
                         aria-label="Download selected files"
                         title="Download"
@@ -347,7 +412,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     ></button>
                     <button
                         type="button"
-                        class="fx-button fx-icon-button"
+                        class="${ICON_BUTTON}"
                         data-command="copy"
                         aria-label="Copy selected items"
                         title="Copy"
@@ -355,7 +420,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     ></button>
                     <button
                         type="button"
-                        class="fx-button fx-icon-button"
+                        class="${ICON_BUTTON}"
                         data-command="cut"
                         aria-label="Move selected items"
                         title="Move"
@@ -363,7 +428,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     ></button>
                     <button
                         type="button"
-                        class="fx-button fx-icon-button fx-danger"
+                        class="${ICON_BUTTON_DANGER}"
                         data-command="delete"
                         aria-label="Delete selected items"
                         title="Delete"
@@ -385,7 +450,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     />
                     <button
                         type="button"
-                        class="fx-button fx-icon-button fx-address-toggle"
+                        class="${ICON_BUTTON} fx-address-toggle"
                         data-command="edit-path"
                         aria-label="Type a folder path"
                         title="Type a folder path"
@@ -394,7 +459,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 <div class="fx-mobile-tools">
                     <button
                         type="button"
-                        class="fx-button fx-icon-button"
+                        class="${ICON_BUTTON_OUTLINED}"
                         data-command="filter-toggle"
                         aria-pressed="false"
                         aria-label="Filter this folder"
@@ -402,7 +467,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     ></button>
                     <button
                         type="button"
-                        class="fx-button fx-icon-button"
+                        class="${ICON_BUTTON_OUTLINED}"
                         data-command="actions"
                         aria-haspopup="menu"
                         aria-expanded="false"
@@ -413,35 +478,26 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 <div class="fx-commands" role="toolbar" aria-label="File commands">
                     <button
                         type="button"
-                        class="fx-button fx-primary"
+                        class="${BUTTON_PRIMARY}"
                         data-command="upload"
                         aria-label="Upload files to this folder"
                     >
                         Upload
                     </button>
-                    <button type="button" class="fx-button" data-command="new-folder">New folder</button>
-                    <button type="button" class="fx-button fx-contextual" data-command="download" disabled>
-                        Download
-                    </button>
-                    <button type="button" class="fx-button fx-contextual" data-command="rename" disabled>Rename</button>
-                    <button type="button" class="fx-button fx-contextual fx-danger" data-command="delete" disabled>
-                        Delete
-                    </button>
-                    <button type="button" class="fx-button fx-contextual" data-command="cut" disabled>Cut</button>
-                    <button type="button" class="fx-button fx-contextual" data-command="copy" disabled>Copy</button>
-                    <button type="button" class="fx-button fx-contextual" data-command="paste" disabled>Paste</button>
+                    <button type="button" class="${BUTTON}" data-command="new-folder">New folder</button>
+                    <button type="button" class="${BUTTON}" data-command="download" disabled>Download</button>
+                    <button type="button" class="${BUTTON}" data-command="rename" disabled>Rename</button>
+                    <button type="button" class="${BUTTON_DANGER}" data-command="delete" disabled>Delete</button>
+                    <button type="button" class="${BUTTON}" data-command="cut" disabled>Cut</button>
+                    <button type="button" class="${BUTTON}" data-command="copy" disabled>Copy</button>
+                    <button type="button" class="${BUTTON}" data-command="paste" disabled>Paste</button>
                     <span class="fx-bar-spacer"></span>
-                    <button
-                        type="button"
-                        class="fx-button fx-select-toggle"
-                        data-command="selection-mode"
-                        aria-pressed="false"
-                    >
+                    <button type="button" class="${BUTTON}" data-command="selection-mode" aria-pressed="false">
                         Select
                     </button>
                     <button
                         type="button"
-                        class="fx-button"
+                        class="${BUTTON}"
                         data-command="view-menu"
                         aria-haspopup="menu"
                         aria-expanded="false"
@@ -451,7 +507,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     <label class="fx-filter">
                         <input
                             type="search"
-                            class="fx-filter-input"
+                            class="kit-field fx-filter-input"
                             placeholder="Filter"
                             aria-label="Filter items in this folder"
                         />
@@ -464,7 +520,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     <div class="fx-transfers" role="group" aria-label="Uploads" hidden>
                         <div class="fx-transfer-summary">
                             <span class="fx-transfer-total"></span>
-                            <button type="button" class="fx-button" data-upload-cancel="all">Cancel all</button>
+                            <button type="button" class="${BUTTON}" data-upload-cancel="all">Cancel all</button>
                         </div>
                     </div>
                     <div class="fx-items" tabindex="0" role="group" aria-label="Folder contents">
@@ -512,8 +568,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     >Connecting to device…</span
                 >
             </div>
-            <div class="fx-menu" role="menu" hidden></div>
-            <dialog class="fx-dialog"></dialog>
+            <div class="kit-menu kit-menu-compact fx-menu" role="menu" tabindex="-1" hidden></div>
+            <dialog class="kit-sheet fx-dialog" role="dialog" tabindex="-1" aria-labelledby="fx-dialog-title"></dialog>
             <div class="fx-toast-host"></div>
             <input type="file" multiple hidden aria-label="Choose files to upload" />
         </section>`.content;
@@ -535,6 +591,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.dialog.addEventListener('cancel', this.onDialogCancel);
         this.dialog.addEventListener('submit', this.onDialogSubmit);
         this.dialog.addEventListener('keydown', this.onDialogKeyDown);
+        this.dialog.addEventListener('click', this.onDialogClick);
+        this.dialog.addEventListener('close', this.onDialogClose);
+        // The question before leaving is asked over the Screen tab too: a press in it must not
+        // reach the listeners that drive the phone.
+        this.allowRemote = stopRemoteInteraction(this.dialog);
         this.picker = this.wrapper.querySelector('input[type="file"]') as HTMLInputElement;
         this.wrapper.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) => {
             const map = button.closest('.fx-selection-bar') ? this.barButtons : this.buttons;
@@ -592,43 +653,27 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     // ---------------------------------------------------------------- chrome
 
+    /** Each icon button gets its icon from the kit's set. Its name is the `aria-label` in the markup. */
     private decorateIcons(): void {
-        const shapes: Record<string, string> = {
-            back: '<path d="m14 6-6 6 6 6"/>',
-            forward: '<path d="m10 6 6 6-6 6"/>',
-            up: '<path d="M12 19V6m-6 6 6-6 6 6"/>',
-            refresh: '<path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v4h-4"/>',
-            'edit-path': '<path d="M4 17h16M7 13l9-9 3 3-9 9H7z"/>',
-            home: '<path d="M4 11 12 4l8 7v9h-5v-6H9v6H4z"/>',
-            places: '<path d="M4 6.5h5l1.5 2h9v9H4zM4 6.5V17"/>',
-            'filter-toggle': '<circle cx="10.5" cy="10.5" r="6"/><path d="m20 20-5.2-5.2"/>',
-            actions:
-                '<circle cx="12" cy="5.5" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="18.5" r="1.7" fill="currentColor" stroke="none"/>',
-        };
-        const bar: Record<string, string> = {
-            'end-selection': '<path d="M6 6l12 12M18 6 6 18"/>',
-            download: '<path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/>',
-            copy: '<rect x="8.5" y="8.5" width="11" height="11.5" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v8.5a2 2 0 0 0 2 2h2"/>',
-            cut: '<path d="M3.5 7h5l1.5 2h10v10h-16zM3.5 7v12"/><path d="M10 14h6.5m-2.5-2.5 2.5 2.5-2.5 2.5"/>',
-            delete: '<path d="M5 7h14M10 7V4.5h4V7M7 7l1 13h8l1-13"/>',
-        };
-        const draw = (map: Map<string, HTMLButtonElement>, list: Record<string, string>) =>
-            Object.entries(list).forEach(([command, shape]) => {
+        const draw = (map: Map<string, HTMLButtonElement>, icons: Record<string, IconName>) =>
+            Object.entries(icons).forEach(([command, icon]) => {
                 const button = map.get(command);
                 if (button) {
-                    button.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shape}</svg>`;
+                    button.innerHTML = iconSvg(icon, 20);
                 }
             });
-        draw(this.buttons, shapes);
-        draw(this.barButtons, bar);
+        draw(this.buttons, TOOLBAR_ICONS);
+        draw(this.barButtons, SELECTION_ICONS);
     }
 
     private renderPlaces(): void {
         this.places.innerHTML = PLACES.map(
             (place) =>
-                `<button type="button" class="fx-place" data-place="${esc(place.path)}"${
+                `<button type="button" class="${BUTTON_QUIET} fx-place" data-place="${esc(place.path)}"${
                     place.path === this.path ? ' aria-current="page"' : ''
-                }>${iconMarkup(place.path === '/' ? 'special' : 'folder')}<span>${esc(place.title)}</span></button>`,
+                }>${place.path === '/' ? iconSvg('house', 20) : iconMarkup('folder')}<span>${esc(
+                    place.title,
+                )}</span></button>`,
         ).join('');
     }
 
@@ -662,6 +707,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.tableHead.querySelectorAll<HTMLElement>('th[aria-sort]').forEach((cell) => {
             const key = cell.querySelector<HTMLElement>('.fx-sort')?.dataset.sort;
             cell.setAttribute('aria-sort', key === sort ? (ascending ? 'ascending' : 'descending') : 'none');
+            // The arrow is an icon in a hidden span: the column's name stays the button's name.
+            const arrow = cell.querySelector<HTMLElement>('.fx-sort-arrow');
+            if (arrow) {
+                arrow.innerHTML = key === sort ? iconSvg(ascending ? 'arrowUp' : 'arrowDown', 16) : '';
+            }
         });
         try {
             localStorage.setItem(PREFERENCES_KEY, JSON.stringify(this.preferences));
@@ -755,7 +805,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 <td class="entry-size" data-label="Size">${directory ? '—' : esc(formatSize(entry.size))}</td>
                 <td class="entry-type" data-label="Type">${esc(typeLabel(entry))}</td>
                 <td class="entry-time" data-label="Modified">${esc(formatModified(entry.mtime))}</td>
-                <td class="fx-cell-menu"><button type="button" class="fx-row-menu" tabindex="${tabIndex}" aria-haspopup="menu" aria-label="Actions for ${name}"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg></button></td>
+                <td class="fx-cell-menu"><button type="button" class="${ICON_BUTTON} fx-row-menu" tabindex="${tabIndex}" aria-haspopup="menu" aria-label="Actions for ${name}">${ROW_MENU_ICON}</button></td>
             </tr>`;
         });
         if (!rows.length && this.listingError && !this.loading) {
@@ -766,11 +816,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 <span class="fx-failed-reason">${esc(this.listingError)}</span>
                 <span class="fx-failed-path">${esc(this.path)}</span>
                 <span class="fx-failed-actions">
-                    <button type="button" class="fx-button" data-command="refresh">Retry</button>
+                    <button type="button" class="${BUTTON}" data-command="refresh">Retry</button>
                     ${
                         this.path === '/'
                             ? ''
-                            : '<button type="button" class="fx-button" data-command="up">Up one folder</button>'
+                            : `<button type="button" class="${BUTTON}" data-command="up">Up one folder</button>`
                     }
                 </span>
             </div></td></tr>`);
@@ -897,6 +947,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private renderToast(message: string, error: boolean): void {
         render(
             h(Toast, {
+                kit: true,
                 message,
                 identity: this.toastCount,
                 tone: error ? 'error' : 'success',
@@ -1014,6 +1065,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             }
             return;
         }
+        // A row's menu button closes the menu it opened.
+        const rowMenu = target.closest<HTMLElement>('.fx-row-menu');
+        const wasOpenHere = !!rowMenu && rowMenu === this.menuAnchor;
         this.closeMenu();
         const name = row.dataset.name as string;
         if (Date.now() - this.longPressedAt < 600) {
@@ -1022,10 +1076,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             event.preventDefault();
             return;
         }
-        if (target.closest('.fx-row-menu')) {
+        if (rowMenu) {
             // The menu acts on its own row and leaves the selection as it is.
             event.preventDefault();
-            this.openRowMenu(target.closest('.fx-row-menu') as HTMLElement, name);
+            if (!wasOpenHere) {
+                this.openRowMenu(rowMenu, name);
+            }
             return;
         }
         if (target.closest('.fx-check')) {
@@ -1091,9 +1147,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             if (!this.selection.has(name)) {
                 this.selectOnly(name);
             }
-            this.openMenu(() => this.itemMenuItems(), event.clientX, event.clientY);
+            this.openMenu(() => this.itemMenuItems(), { x: event.clientX, y: event.clientY }, MENU_LABELS.item);
         } else if (target.closest('.fx-items')) {
-            this.openMenu(() => this.folderMenuItems(), event.clientX, event.clientY);
+            this.openMenu(() => this.folderMenuItems(), { x: event.clientX, y: event.clientY }, MENU_LABELS.folder);
         }
     };
 
@@ -1131,13 +1187,16 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (!this.active || this.dialog.open) {
             return;
         }
-        if (!this.menu.hidden && !this.menu.inert && this.onMenuKeyDown(event)) {
+        const target = event.target as HTMLElement | null;
+        // A key pressed in the open menu is the menu's. The kit answers the ones it knows; the
+        // rest must not start a command on the list behind it.
+        if (this.unbindMenu && target && this.menu.contains(target)) {
             return;
         }
-        const target = event.target as HTMLElement | null;
         const typing = !!target?.closest('input, textarea, select');
         if (event.key === 'Escape') {
-            if (!this.menu.hidden) {
+            // Escape with focus outside the open menu still closes it.
+            if (this.unbindMenu) {
                 this.closeMenu();
                 event.preventDefault();
             } else if (typing && target === this.filterInput) {
@@ -1317,15 +1376,15 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         } else if (files) {
             items.push(this.menuItem('download', `Download ${files} file${files === 1 ? '' : 's'}`));
         }
-        items.push('<div class="fx-menu-separator" role="separator"></div>');
+        items.push(MENU_SEPARATOR);
         items.push(this.menuItem('cut', 'Cut'));
         items.push(this.menuItem('copy', 'Copy'));
         items.push(this.menuItem('paste', 'Paste', !this.clipboard?.names.length));
         items.push(this.menuItem('copy-path', 'Copy path'));
-        items.push('<div class="fx-menu-separator" role="separator"></div>');
+        items.push(MENU_SEPARATOR);
         items.push(this.menuItem('rename', 'Rename', selected.length !== 1));
-        items.push(this.menuItem('delete', 'Delete', false, 'fx-menu-danger'));
-        items.push('<div class="fx-menu-separator" role="separator"></div>');
+        items.push(this.menuItem('delete', 'Delete', false, true));
+        items.push(MENU_SEPARATOR);
         items.push(this.menuItem('properties', 'Properties', selected.length !== 1));
         return items;
     }
@@ -1336,7 +1395,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             this.menuItem('new-folder', 'New folder'),
             this.menuItem('upload', 'Upload files'),
             this.menuItem('paste', 'Paste', !this.clipboard?.names.length),
-            '<div class="fx-menu-separator" role="separator"></div>',
+            MENU_SEPARATOR,
             this.menuItem('select-all', 'Select all'),
         ];
     }
@@ -1348,27 +1407,28 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private actionsMenuItems(): string[] {
         const ready = this.canModify();
         const selected = this.selectedEntries();
-        const items = selected.length
-            ? [...this.itemMenuItems(), '<div class="fx-menu-separator" role="separator"></div>']
-            : [];
+        const items = selected.length ? [...this.itemMenuItems(), MENU_SEPARATOR] : [];
         items.push(
             this.menuItem('upload', 'Upload files', !ready),
             this.menuItem('new-folder', 'New folder', !ready),
             ...(selected.length ? [] : [this.menuItem('paste', 'Paste', !ready || !this.clipboard?.names.length)]),
             this.menuItem('refresh', 'Refresh', !this.hasConnection() || this.loading),
-            '<div class="fx-menu-separator" role="separator"></div>',
-            `<button type="button" role="menuitemcheckbox" aria-checked="${this.selectionMode}" data-menu="command" data-value="selection-mode">Select items</button>`,
+            MENU_SEPARATOR,
+            this.checkItem('menuitemcheckbox', 'Select items', this.selectionMode, 'command', 'selection-mode'),
             this.menuItem('select-all', 'Select all'),
-            '<div class="fx-menu-separator" role="separator"></div>',
-            '<button type="button" role="menuitem" data-menu="submenu" data-value="view">View options…</button>',
+            MENU_SEPARATOR,
+            '<button type="button" class="kit-menu-item" role="menuitem" tabindex="-1" data-menu="submenu" data-value="view">View options…</button>',
         );
         return items;
     }
 
     private viewSubmenuItems(): string[] {
         return [
-            '<button type="button" role="menuitem" class="fx-menu-back" data-menu="submenu" data-value="actions">‹ Back</button>',
-            '<div class="fx-menu-separator" role="separator"></div>',
+            `<button type="button" class="kit-menu-item" role="menuitem" tabindex="-1" data-menu="submenu" data-value="actions">${iconSvg(
+                'back',
+                20,
+            )}Back</button>`,
+            MENU_SEPARATOR,
             ...this.viewMenuItems(),
         ];
     }
@@ -1376,12 +1436,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /** Quick access as a menu, for every width where the sidebar would crowd out the listing. */
     private placesMenuItems(): string[] {
         return [
-            '<div class="fx-menu-title" role="presentation">Quick access</div>',
-            ...PLACES.map(
-                (place) =>
-                    `<button type="button" role="menuitemradio" aria-checked="${
-                        place.path === this.path
-                    }" data-menu="place" data-value="${esc(place.path)}">${esc(place.title)}</button>`,
+            '<div class="kit-menu-title" role="presentation">Quick access</div>',
+            ...PLACES.map((place) =>
+                this.checkItem('menuitemradio', place.title, place.path === this.path, 'place', place.path),
             ),
         ];
     }
@@ -1389,73 +1446,66 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private viewMenuItems(): string[] {
         const { view, sort, ascending, showHidden } = this.preferences;
         const radio = (value: string, title: string, checked: boolean, key: string) =>
-            `<button type="button" role="menuitemradio" aria-checked="${checked}" data-menu="${key}" data-value="${value}">${esc(
-                title,
-            )}</button>`;
+            this.checkItem('menuitemradio', title, checked, key, value);
         return [
-            '<div class="fx-menu-title" role="presentation">Layout</div>',
+            '<div class="kit-menu-title" role="presentation">Layout</div>',
             radio('details', 'Details', view === 'details', 'view'),
             radio('list', 'List', view === 'list', 'view'),
             radio('tiles', 'Tiles', view === 'tiles', 'view'),
-            '<div class="fx-menu-separator" role="separator"></div>',
-            '<div class="fx-menu-title" role="presentation">Sort by</div>',
+            MENU_SEPARATOR,
+            '<div class="kit-menu-title" role="presentation">Sort by</div>',
             ...(Object.keys(SORT_TITLES) as SortKey[]).map((key) => radio(key, SORT_TITLES[key], sort === key, 'sort')),
             radio('asc', 'Ascending', ascending, 'order'),
             radio('desc', 'Descending', !ascending, 'order'),
-            '<div class="fx-menu-separator" role="separator"></div>',
-            `<button type="button" role="menuitemcheckbox" aria-checked="${showHidden}" data-menu="hidden">Hidden items</button>`,
+            MENU_SEPARATOR,
+            this.checkItem('menuitemcheckbox', 'Hidden items', showHidden, 'hidden'),
         ];
     }
 
-    private menuItem(command: string, title: string, disabled = false, className = ''): string {
-        return `<button type="button" role="menuitem" data-menu="command" data-value="${command}" class="${className}"${
+    /** A kit menu item that runs a command. `danger` is for one that removes something. */
+    private menuItem(command: string, title: string, disabled = false, danger = false): string {
+        return `<button type="button" class="kit-menu-item${
+            danger ? ' kit-menu-danger' : ''
+        }" role="menuitem" tabindex="-1" data-menu="command" data-value="${command}"${
             disabled ? ' disabled' : ''
         }>${esc(title)}</button>`;
     }
 
-    private openMenu(build: () => string[], clientX: number, clientY: number): void {
-        this.forgetMenuTargets();
-        if (!this.menuEntry) {
-            this.menuEntry = this.overlayEntry(() => this.closeMenu());
-        }
-        this.menuBuilder = build;
-        this.menuAnchor = { x: clientX, y: clientY };
-        this.menu.innerHTML = build().join('');
-        this.menu.hidden = false;
-        this.menu.scrollTop = 0;
-        this.placeMenu();
-        transitionVisibility(this.menu, true);
-        this.menu.querySelector<HTMLElement>('button:not([disabled])')?.focus();
-        if (!this.closeMenuListener) {
-            this.closeMenuListener = (event: Event) => {
-                const target = event.target;
-                if (target instanceof Node && this.menu.contains(target)) {
-                    return;
-                }
-                this.closeMenu();
-            };
-            document.addEventListener('pointerdown', this.closeMenuListener, true);
-        }
+    /** A kit menu item that is on or off, or one of a set. Its check is always drawn. */
+    private checkItem(
+        role: 'menuitemcheckbox' | 'menuitemradio',
+        title: string,
+        checked: boolean,
+        kind: string,
+        value = '',
+    ): string {
+        return `<button type="button" class="kit-menu-item" role="${role}" aria-checked="${checked}" tabindex="-1" data-menu="${kind}" data-value="${esc(
+            value,
+        )}">${CHECK}${esc(title)}</button>`;
     }
 
-    /** Keeps the whole menu inside the explorer, whatever it holds now. */
-    private placeMenu(): void {
-        const { x, y } = this.menuAnchor;
-        const bounds = this.wrapper.getBoundingClientRect();
-        // Layout size, not the painted one: the menu scales while it opens.
-        const width = this.menu.offsetWidth;
-        const height = this.menu.offsetHeight;
-        const left = Math.max(4, Math.min(x - bounds.left, bounds.width - width - 4));
-        const top = Math.max(4, Math.min(y - bounds.top, bounds.height - height - 4));
-        this.menu.style.left = `${left}px`;
-        this.menu.style.top = `${top}px`;
-        this.menu.style.transformOrigin = `${x - bounds.left - left}px ${y - bounds.top - top}px`;
+    /**
+     * Opens the one menu at its button, or at a point for a context menu. `bindMenu` places it
+     * in the top layer, gives it the arrow keys and a history entry, and asks for it to close
+     * on Escape, Tab, a press outside and the browser's Back.
+     */
+    private openMenu(build: () => string[], anchor: MenuAnchor, label: string): void {
+        // A menu that is open gives way first: its keys, its entry and its button are its own.
+        this.closeMenu();
+        this.claimForward();
+        this.menuBuilder = build;
+        this.menuAnchor = anchor;
+        this.menu.setAttribute('aria-label', label);
+        this.menu.innerHTML = build().join('');
+        this.menu.scrollTop = 0;
+        // Shown before it is bound: the kit measures the menu and gives its first item focus.
+        transitionVisibility(this.menu, true);
+        this.unbindMenu = bindMenu(this.menu, anchor, () => this.closeMenu());
     }
 
     private openRowMenu(button: HTMLElement, name: string): void {
-        const rect = button.getBoundingClientRect();
         const targets = [name];
-        this.openMenu(() => this.itemMenuItems(this.targetEntries(targets)), rect.left, rect.bottom);
+        this.openMenu(() => this.itemMenuItems(this.targetEntries(targets)), button, MENU_LABELS.item);
         // Set after `openMenu`, which forgets the targets of the menu it replaces.
         this.menuTargets = targets;
         button.closest('tr')?.classList.add('fx-menu-for');
@@ -1466,55 +1516,46 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.tableBody.querySelectorAll('.fx-menu-for').forEach((row) => row.classList.remove('fx-menu-for'));
     }
 
+    /**
+     * Builds the items of the open menu again. The kit placed the menu for the items it had
+     * and gave one of them focus, so both are done again here: the new items may be taller
+     * (View options inside Actions), and focus went with the old ones.
+     */
     private refreshMenu(focus?: string): void {
-        if (this.menu.hidden || !this.menuBuilder) {
+        if (!this.unbindMenu || !this.menuBuilder || !this.menuAnchor) {
             return;
         }
         this.menu.innerHTML = this.menuBuilder().join('');
-        // The new contents may be taller (View options inside Actions).
-        this.placeMenu();
+        placeMenu(this.menu, this.menuAnchor);
         const target = focus ? this.menu.querySelector<HTMLElement>(focus) : null;
-        (target || this.menu.querySelector<HTMLElement>('button:not([disabled])'))?.focus();
+        (target || this.menu.querySelector<HTMLElement>('.kit-menu-item:not(:disabled)') || this.menu).focus();
     }
 
     private closeMenu(): void {
-        if (this.menu.hidden || this.menu.inert) {
+        const unbind = this.unbindMenu;
+        if (!unbind) {
             return;
         }
-        this.menuEntry?.release();
-        this.menuEntry = undefined;
+        this.unbindMenu = undefined;
+        // Ends the keys, the press outside and the history entry, and returns focus to the button.
+        unbind();
         transitionVisibility(this.menu, false, () => {
             this.menu.innerHTML = '';
+            this.leaveTopLayer();
         });
         this.menuBuilder = undefined;
+        this.menuAnchor = undefined;
         this.forgetMenuTargets();
         ['view-menu', 'places', 'actions'].forEach((command) =>
             this.buttons.get(command)?.setAttribute('aria-expanded', 'false'),
         );
-        if (this.closeMenuListener) {
-            document.removeEventListener('pointerdown', this.closeMenuListener, true);
-            this.closeMenuListener = undefined;
-        }
     }
 
-    private onMenuKeyDown(event: KeyboardEvent): boolean {
-        const options = Array.from(this.menu.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
-        if (!options.length) {
-            return false;
+    /** A closed menu leaves the top layer, where `bindMenu` put it. */
+    private leaveTopLayer(): void {
+        if (typeof this.menu.hidePopover === 'function' && this.menu.matches(':popover-open')) {
+            this.menu.hidePopover();
         }
-        const current = options.indexOf(document.activeElement as HTMLButtonElement);
-        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-            event.preventDefault();
-            const next = event.key === 'ArrowDown' ? current + 1 : current - 1;
-            options[(next + options.length) % options.length].focus();
-            return true;
-        }
-        if (event.key === 'Tab') {
-            event.preventDefault();
-            this.closeMenu();
-            return true;
-        }
-        return false;
     }
 
     private runMenuItem(item: HTMLElement): void {
@@ -1548,7 +1589,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.applyPreferences();
         this.renderItems();
         // The View menu stays open while several settings are adjusted, like Explorer's ribbon.
-        this.refreshMenu(`[data-menu="${kind}"]`);
+        // Focus stays on the item that was chosen.
+        this.refreshMenu(`[data-menu="${kind}"][data-value="${CSS.escape(value)}"]`);
     }
 
     private sortBy(key: SortKey): void {
@@ -1624,14 +1666,20 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 if (!button) {
                     return;
                 }
-                const rect = button.getBoundingClientRect();
+                // The button closes the menu it opened.
+                if (this.menuAnchor === button) {
+                    this.closeMenu();
+                    return;
+                }
+                if (command === 'view-menu') {
+                    this.openMenu(() => this.viewMenuItems(), button, MENU_LABELS.view);
+                } else if (command === 'places') {
+                    this.openMenu(() => this.placesMenuItems(), button, MENU_LABELS.places);
+                } else {
+                    this.openMenu(() => this.actionsMenuItems(), button, MENU_LABELS.actions);
+                }
+                // Set after `openMenu`, which closes the menu before it.
                 button.setAttribute('aria-expanded', 'true');
-                const builders: Record<string, () => string[]> = {
-                    'view-menu': () => this.viewMenuItems(),
-                    places: () => this.placesMenuItems(),
-                    actions: () => this.actionsMenuItems(),
-                };
-                this.openMenu(builders[command], rect.left, rect.bottom);
                 return;
             }
             case 'filter-toggle':
@@ -1991,19 +2039,53 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             ['Modified', formatModified(entry.mtime)],
             ['Permissions', formatMode(entry.mode)],
         ];
-        this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form">
-            <h2>Properties</h2>
-            <dl class="fx-properties">${rows
+        this.dialog.innerHTML = this.sheetMarkup({
+            title: 'Properties',
+            close: 'Close Properties',
+            body: `<dl class="fx-properties">${rows
                 .map(([title, value]) => `<dt>${esc(title)}</dt><dd>${esc(value)}</dd>`)
-                .join('')}</dl>
-            <div class="fx-dialog-actions">
-                <button type="submit" class="fx-button fx-primary" value="close">Close</button>
-            </div>
-        </form>`;
+                .join('')}</dl>`,
+            actions: `<button type="submit" class="${ANSWER_PRIMARY}" value="close">Close</button>`,
+        });
         this.presentDialog();
+        this.dialog.querySelector<HTMLButtonElement>('[value="close"]')?.focus();
     }
 
     // ---------------------------------------------------------------- dialogs
+
+    /**
+     * The kit's sheet as markup (`style/kit/Sheet.css`): the backdrop, then the panel with the
+     * title, the body and the actions. The panel is the form, so Enter in a field answers.
+     * `close` names the close button; `danger` gives the answer marked `kit-confirm-go` the
+     * solid fill that a removal is confirmed on.
+     */
+    private sheetMarkup(parts: {
+        title: string;
+        close: string;
+        body: string;
+        actions: string;
+        danger?: boolean;
+        className?: string;
+    }): string {
+        return `<div class="kit-sheet-backdrop" data-dialog="close"></div>
+            <form method="dialog" class="kit-sheet-panel fx-dialog-form ${parts.className || ''}" novalidate>
+                <header class="kit-sheet-header">
+                    <div class="kit-sheet-handle" aria-hidden="true"></div>
+                    <div class="kit-sheet-heading">
+                        <h2 class="kit-sheet-title" id="fx-dialog-title">${esc(parts.title)}</h2>
+                    </div>
+                    <button type="button" class="${iconButtonClass({
+                        variant: 'bare',
+                    })} kit-sheet-close" data-dialog="close" aria-label="${esc(parts.close)}" title="${esc(
+                        parts.close,
+                    )}">${iconSvg('close', 24)}</button>
+                </header>
+                <div class="kit-sheet-body">${parts.body}</div>
+                <footer class="kit-sheet-footer fx-dialog-actions${parts.danger ? ' kit-confirm-danger' : ''}">${
+                    parts.actions
+                }</footer>
+            </form>`;
+    }
 
     private prompt(options: {
         title: string;
@@ -2014,20 +2096,24 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         /** Returns what is wrong with the name, or nothing. The dialog stays open on a problem. */
         check?: (value: string) => string;
     }): Promise<string | undefined> {
-        this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form" novalidate>
-            <h2>${esc(options.title)}</h2>
-            <label class="fx-dialog-field">
-                <span>${esc(options.label)}</span>
-                <input type="text" name="value" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="fx-dialog-error" />
-            </label>
-            <p class="fx-dialog-error" id="fx-dialog-error" role="alert" hidden></p>
-            <div class="fx-dialog-actions">
-                <button type="button" class="fx-button" data-dialog="cancel">Cancel</button>
-                <button type="submit" class="fx-button fx-primary" value="confirm">${esc(options.confirm)}</button>
-            </div>
-        </form>`;
+        // The kit's field with its label above it and its error line under it.
+        this.dialog.innerHTML = this.sheetMarkup({
+            title: options.title,
+            close: `Close ${options.title}`,
+            body: `<div class="kit-field-group">
+                <label class="kit-field-label" for="fx-dialog-field">${esc(options.label)}</label>
+                <input class="kit-field" id="fx-dialog-field" type="text" name="value" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="fx-dialog-error" />
+                <p class="kit-field-error fx-dialog-error" id="fx-dialog-error" role="alert" hidden>${iconSvg(
+                    'errorCircle',
+                    16,
+                )}<span></span></p>
+            </div>`,
+            actions: `<button type="button" class="${ANSWER}" data-dialog="cancel">Cancel</button>
+                <button type="submit" class="${ANSWER_PRIMARY}" value="confirm">${esc(options.confirm)}</button>`,
+        });
         const input = this.dialog.querySelector('input[name="value"]') as HTMLInputElement;
         const error = this.dialog.querySelector('.fx-dialog-error') as HTMLElement;
+        const errorText = error.querySelector('span') as HTMLElement;
         input.value = options.value;
         input.addEventListener('input', () => {
             error.hidden = true;
@@ -2035,11 +2121,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         });
         this.dialogCheck = () => {
             const problem = options.check?.(input.value.trim()) || '';
-            error.textContent = problem;
+            errorText.textContent = problem;
             error.hidden = !problem;
-            input.toggleAttribute('aria-invalid', !!problem);
             if (problem) {
+                input.setAttribute('aria-invalid', 'true');
                 input.focus();
+            } else {
+                input.removeAttribute('aria-invalid');
             }
             return problem;
         };
@@ -2057,16 +2145,18 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         cancel?: string;
         danger?: boolean;
     }): Promise<boolean> {
-        this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form">
-            <h2>${esc(options.title)}</h2>
-            <p class="fx-dialog-message">${esc(options.message)}</p>
-            <div class="fx-dialog-actions">
-                <button type="button" class="fx-button" data-dialog="cancel">${esc(options.cancel || 'Cancel')}</button>
-                <button type="submit" class="fx-button ${
-                    options.danger ? 'fx-danger-solid' : 'fx-primary'
-                }" value="confirm">${esc(options.confirm)}</button>
-            </div>
-        </form>`;
+        this.dialog.innerHTML = this.sheetMarkup({
+            title: options.title,
+            close: 'Close this question',
+            body: `<p class="fx-dialog-message">${esc(options.message)}</p>`,
+            danger: options.danger,
+            actions: `<button type="button" class="${ANSWER}" data-dialog="cancel">${esc(
+                options.cancel || 'Cancel',
+            )}</button>
+                <button type="submit" class="${
+                    options.danger ? ANSWER_REMOVES : ANSWER_PRIMARY
+                }" value="confirm">${esc(options.confirm)}</button>`,
+        });
         return this.showDialog(() => {
             const confirm = this.dialog.querySelector<HTMLButtonElement>('[value="confirm"]');
             if (!options.danger) {
@@ -2113,24 +2203,21 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                   ? 'This folder already has a folder with this name. Folders are not replaced.'
                   : 'This folder already has an item with this name.') + sameName;
         const others = remaining === 1 ? 'the other conflict' : `the other ${remaining} conflicts`;
-        this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form fx-conflict">
-            <h2>${esc(title)}</h2>
-            <p class="fx-dialog-message">${esc(message)}</p>
-            ${
-                remaining > 0
-                    ? `<label class="fx-dialog-check"><input type="checkbox" name="all" /><span>Do the same for ${others}</span></label>`
-                    : ''
-            }
-            <div class="fx-dialog-actions">
-                <button type="submit" class="fx-button" value="skip">Skip</button>
-                <button type="submit" class="fx-button" value="keep">Keep both</button>
+        this.dialog.innerHTML = this.sheetMarkup({
+            title,
+            close: 'Close this question',
+            className: 'fx-conflict',
+            body: `<p class="fx-dialog-message">${esc(message)}</p>
                 ${
-                    canReplace
-                        ? '<button type="submit" class="fx-button fx-danger-solid" value="replace">Replace</button>'
+                    remaining > 0
+                        ? `<label class="fx-dialog-check"><input type="checkbox" name="all" /><span>Do the same for ${others}</span></label>`
                         : ''
-                }
-            </div>
-        </form>`;
+                }`,
+            danger: canReplace,
+            actions: `<button type="submit" class="${ANSWER}" value="skip">Skip</button>
+                <button type="submit" class="${ANSWER}" value="keep">Keep both</button>
+                ${canReplace ? `<button type="submit" class="${ANSWER_REMOVES}" value="replace">Replace</button>` : ''}`,
+        });
         const all = this.dialog.querySelector<HTMLInputElement>('input[name="all"]');
         return this.showDialog(() => {
             this.dialog.querySelector<HTMLButtonElement>('[value="keep"]')?.focus();
@@ -2172,9 +2259,68 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             });
         };
         this.dialog.addEventListener('close', closed);
-        transitionVisibility(this.dialog, true);
+        // The panel of the question before may still be leaving, when the browser closed the
+        // dialog itself during that exit (a second Back with no press in between). Its exit
+        // ends here: when it finished, it would close this question.
+        this.stopDialogMotion();
+        this.dialogPanel = this.dialog.querySelector<HTMLElement>('.kit-sheet-panel') || undefined;
+        this.dialogClosing = false;
+        this.dialog.toggleAttribute('data-exiting', false);
+        this.dialog.style.removeProperty('--sheet-backdrop-opacity');
+        this.bindSheet();
         this.dialog.showModal();
+        if (this.dialogPanel) {
+            transitionVisibility(this.dialogPanel, true, undefined, FileListingClient.sheetAway());
+        }
     }
+
+    /** Where the panel of a closed sheet sits: under the window, or a little lower as a dialog. */
+    private static sheetAway(): string {
+        return window.matchMedia(SHEET_DIALOG).matches ? 'translateY(12px) scale(0.98)' : 'translateY(100%)';
+    }
+
+    /**
+     * What `ui/Sheet.tsx` does for a sheet while it is open, for this one: a drag on the header
+     * closes a bottom sheet, and the sheet keeps to the part of the window that an on-screen
+     * keyboard leaves in view. Ended when the dialog closes.
+     */
+    private bindSheet(): void {
+        this.unbindSheet?.();
+        this.unbindSheet = undefined;
+        const header = this.dialog.querySelector<HTMLElement>('.kit-sheet-header');
+        const panel = this.dialogPanel;
+        if (!header || !panel) {
+            return;
+        }
+        const releaseDrag = bindSheetDrag(
+            header,
+            panel,
+            this.dialog,
+            () => true,
+            () => this.closeDialog(''),
+            SHEET_DIALOG,
+        );
+        const viewport = window.visualViewport;
+        const update = () => {
+            this.dialog.style.setProperty('--sheet-viewport-height', `${viewport?.height ?? window.innerHeight}px`);
+            this.dialog.style.setProperty('--sheet-viewport-top', `${viewport?.offsetTop ?? 0}px`);
+        };
+        update();
+        viewport?.addEventListener('resize', update);
+        viewport?.addEventListener('scroll', update);
+        window.addEventListener('resize', update);
+        this.unbindSheet = () => {
+            releaseDrag();
+            viewport?.removeEventListener('resize', update);
+            viewport?.removeEventListener('scroll', update);
+            window.removeEventListener('resize', update);
+        };
+    }
+
+    private onDialogClose = (): void => {
+        this.unbindSheet?.();
+        this.unbindSheet = undefined;
+    };
 
     /**
      * Gives an open menu or dialog a history entry, so the browser's Back closes it and leaves
@@ -2182,12 +2328,17 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
      * Forward led to.
      */
     private overlayEntry(onClose: () => void): OverlayEntry {
+        this.claimForward();
+        return openOverlay(onClose);
+    }
+
+    /** An overlay's entry takes the place of whatever Forward led to, and the toolbar says so. */
+    private claimForward(): void {
         if (this.active && this.historyTop !== this.historyIndex) {
             this.historyTop = this.historyIndex;
             this.storeHistory();
             this.updateControls();
         }
-        return openOverlay(onClose);
     }
 
     /** Closes an open dialog as cancelled. Its close event comes later, in a task of its own. */
@@ -2197,18 +2348,50 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         return new Promise((resolve) => {
             this.dialog.addEventListener('close', () => resolve(), { once: true });
-            cancelVisibility(this.dialog);
+            this.stopDialogMotion();
             this.dialog.close('');
         });
     }
 
+    /** Closes the dialog with an answer, once its panel has moved away. */
     private closeDialog(value: string): void {
-        if (!this.dialog.open || this.dialog.inert) return;
-        transitionVisibility(this.dialog, false, () => this.dialog.close(value));
+        if (!this.dialog.open || this.dialogClosing) return;
+        this.dialogClosing = true;
+        // The backdrop fades while the panel leaves.
+        this.dialog.toggleAttribute('data-exiting', true);
+        if (!this.dialogPanel) {
+            this.dialog.close(value);
+            return;
+        }
+        transitionVisibility(this.dialogPanel, false, () => this.dialog.close(value), FileListingClient.sheetAway());
     }
 
-    private onDialogKeyDown = (event: KeyboardEvent): void => trapDialogTab(event, this.dialog);
+    private stopDialogMotion(): void {
+        if (this.dialogPanel) {
+            cancelVisibility(this.dialogPanel);
+        }
+    }
 
+    private onDialogKeyDown = (event: KeyboardEvent): void => {
+        if (event.key === 'Escape' && !event.isComposing) {
+            // Answered here, as in `ui/Sheet.tsx`, so the browser raises no close request of
+            // its own: one it raises a second time cannot be refused, and skips the exit.
+            event.preventDefault();
+            event.stopPropagation();
+            this.closeDialog('');
+            return;
+        }
+        trapDialogTab(event, this.dialog);
+    };
+
+    /** The backdrop, the close button and Cancel all close the dialog without an answer. */
+    private onDialogClick = (event: MouseEvent): void => {
+        if (event.target instanceof Element && event.target.closest('[data-dialog]')) {
+            this.closeDialog('');
+        }
+    };
+
+    /** The browser's own request to close: Back in Chrome on Android goes to an open modal dialog. */
     private onDialogCancel = (event: Event): void => {
         event.preventDefault();
         this.closeDialog('');
@@ -2238,9 +2421,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             // `presentDialog`.
             this.presentDialog();
             this.dialog.addEventListener('close', finish);
-            this.dialog.querySelector<HTMLButtonElement>('[data-dialog="cancel"]')?.addEventListener('click', () => {
-                this.closeDialog('');
-            });
             onOpen();
         });
     }
@@ -2797,7 +2977,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             }
             const row = document.createElement('div');
             row.className = 'file-listing-upload-progress';
-            row.innerHTML = `<span class="fx-upload-name">${esc(data.fileName)}</span><span class="fx-upload-state"></span><button type="button" class="fx-button fx-upload-cancel" data-upload-cancel="${
+            row.innerHTML = `<span class="fx-upload-name">${esc(data.fileName)}</span><span class="kit-status kit-status-neutral fx-upload-state"></span><button type="button" class="${BUTTON} fx-upload-cancel" data-upload-cancel="${
                 data.key
             }" aria-label="${esc(`Cancel the upload of ${data.fileName}`)}">Cancel</button>`;
             this.transfers.appendChild(row);
@@ -2937,8 +3117,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /**
      * The explorer is hidden while another tab of the phone's page is shown, and a dialog inside
      * a hidden element is not drawn. For the question before leaving, the dialog moves to the
-     * page itself. Its holder has the explorer's class, which the dialog's buttons take their
-     * sizes from, and makes no box of its own.
+     * page itself. Its holder has the explorer's class, which the rules for the dialog's own
+     * parts start from, and makes no box of its own.
      */
     private liftDialog(): void {
         if (this.dialogHolder) {
@@ -2991,7 +3171,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             this.renderHandle = 0;
         }
         cancelVisibility(this.menu);
-        cancelVisibility(this.dialog);
+        this.stopDialogMotion();
+        this.unbindSheet?.();
+        this.unbindSheet = undefined;
+        this.allowRemote();
         this.returnDialog();
         clearTimeout(this.dialogRelease);
         this.dialogEntry?.entry.release();
@@ -2999,6 +3182,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.dialog.removeEventListener('cancel', this.onDialogCancel);
         this.dialog.removeEventListener('submit', this.onDialogSubmit);
         this.dialog.removeEventListener('keydown', this.onDialogKeyDown);
+        this.dialog.removeEventListener('click', this.onDialogClick);
+        this.dialog.removeEventListener('close', this.onDialogClose);
         if (this.dialog.open) {
             this.dialog.close('');
         }

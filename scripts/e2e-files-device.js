@@ -7,6 +7,8 @@
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { chromium } = require('playwright');
+// A row's menu closes when the list scrolls its button away, so the button is pressed at rest.
+const { pressAtRest } = require('./e2e-files');
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const SERIAL = process.env.SERIAL;
 const SCRATCH = 'ws-scrcpy-explorer-check';
@@ -60,7 +62,7 @@ async function command(page, button, item = button) {
     console.log('PASS New folder created a real directory on the device');
 
     // Rename
-    await page.locator(`.fx-row[data-name="${SCRATCH}"] .fx-row-menu`).click();
+    await pressAtRest(page, page.locator(`.fx-row[data-name="${SCRATCH}"] .fx-row-menu`));
     await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
     await page.locator('.fx-dialog input[name="value"]').fill(`${SCRATCH}-renamed`);
     await page.getByRole('button', { name: 'Rename', exact: true }).last().click();
@@ -85,7 +87,7 @@ async function command(page, button, item = button) {
     console.log('PASS Download round-tripped the file');
 
     // Properties reflect real device metadata.
-    await page.locator('.fx-row[data-name="hello.txt"] .fx-row-menu').click();
+    await pressAtRest(page, page.locator('.fx-row[data-name="hello.txt"] .fx-row-menu'));
     await page.getByRole('menuitem', { name: 'Properties', exact: true }).click();
     const properties = await page.locator('.fx-properties').innerText();
     assert(properties.includes('16 bytes'), `properties show the real size: ${properties}`);
@@ -95,7 +97,7 @@ async function command(page, button, item = button) {
     // Delete the whole scratch folder from its parent.
     await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
     await page.locator(`.fx-row[data-name="${SCRATCH}-renamed"]`).waitFor();
-    await page.locator(`.fx-row[data-name="${SCRATCH}-renamed"] .fx-row-menu`).click();
+    await pressAtRest(page, page.locator(`.fx-row[data-name="${SCRATCH}-renamed"] .fx-row-menu`));
     await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
     await page.getByRole('button', { name: 'Delete', exact: true }).last().click();
     await page.locator(`.fx-row[data-name="${SCRATCH}-renamed"]`).waitFor({ state: 'detached' });

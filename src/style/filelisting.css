@@ -1,22 +1,15 @@
 @layer tokens, base, components, views;
 
 @layer views {
-/* Device file explorer. Compact by default on a mouse, and every control grows to a 44px touch
-   target on coarse pointers -- the phone browser is the primary client, so the layout follows the
-   input device rather than the viewport width. */
-
-body.file-listing-page {
-    overflow: auto;
-    position: absolute;
-}
+/* Files for one phone. Its buttons, fields, menus, dialog and toast are the kit's (style/kit/):
+   this file lays them out and styles what only the explorer has, which is the path, the list
+   and the upload rows. Every colour, size, radius and layer is a token. Controls and rows are
+   32px under a mouse and 44px under a finger, as the kit's compact controls are, so the layout
+   follows the pointer and not the width of the window. */
 
 .file-explorer {
-    --fx-gap: 6px;
-    --fx-control: 30px;
-    --fx-row: 30px;
-    --fx-radius: 7px;
-    --fx-accent: var(--accent-solid, #2868e8);
-    --fx-selected: color-mix(in srgb, var(--fx-accent) 16%, transparent);
+    --fx-control: var(--control-height-compact);
+    --fx-row: var(--control-height-compact);
     position: relative;
     display: flex;
     flex-direction: column;
@@ -24,25 +17,25 @@ body.file-listing-page {
     min-height: 0;
     height: 100%;
     box-sizing: border-box;
-    font-size: 12.5px;
-    line-height: 1.35;
-    color: var(--text-color);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--font-size-13);
+    line-height: 1.4;
 }
 
-@media (hover: none) and (pointer: coarse) {
+@media (pointer: coarse) {
     .file-explorer {
-        --fx-control: 44px;
-        --fx-row: 44px;
-        --fx-gap: 5px;
-        font-size: 13.5px;
+        --fx-control: var(--control-height);
+        --fx-row: var(--control-height);
+        font-size: var(--font-size-15);
     }
 }
 
-/* The crumbs and the path field swap with the `hidden` attribute, which the `display: flex`
-   rules below would otherwise override -- the editor then appeared next to the crumbs instead
-   of in their place. */
+/* The crumbs and the path field swap with the `hidden` attribute, and so do other parts. A
+   `display` of their own would keep them on screen: two classes outweigh every one-class
+   `display` rule in this file, and this layer outweighs the kit's. */
 .file-explorer [hidden] {
-    display: none !important;
+    display: none;
 }
 
 .fx-sr-only {
@@ -53,32 +46,48 @@ body.file-listing-page {
     clip-path: inset(50%);
 }
 
+/* The explorer's own controls take the kit's focus ring. It is drawn inside the control, where
+   a table cell or a scrolling bar would cut a ring outside it off. */
+.fx-crumb:focus-visible,
+.fx-sort:focus-visible,
+.fx-row-menu:focus-visible,
+.fx-items:focus-visible,
+.file-explorer .entry-name a:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: calc(-1 * var(--focus-ring-offset));
+}
+
+.fx-check-all:focus-visible,
+.fx-dialog-check input:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+}
+
 /* ------------------------------------------------------------------ chrome */
 
 /* One wrapping flex row. A desktop gets history + address on the first line and the command
    bar on the second; a phone reorders the same children (see the narrow layout) so the address
    bar owns a whole line and the commands collapse into the Actions menu. */
 .fx-chrome {
-    flex: 0 0 auto;
+    flex: none;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--fx-gap);
-    padding: var(--fx-gap);
-    border-bottom: 1px solid var(--device-border-color);
-    background: var(--header-bg-color);
+    gap: var(--space-8);
+    padding: var(--space-8);
+    border-bottom: 1px solid var(--border);
 }
 
 .fx-history {
     display: flex;
-    flex: 0 0 auto;
-    gap: 2px;
+    flex: none;
+    gap: var(--space-4);
 }
 
 .fx-mobile-tools {
     display: none;
-    flex: 0 0 auto;
-    gap: 2px;
+    flex: none;
+    gap: var(--space-4);
 }
 
 /* A phone's selection bar. It takes the history row's place while anything is selected (see
@@ -87,177 +96,120 @@ body.file-listing-page {
     display: none;
     flex: 1 1 auto;
     align-items: center;
-    gap: 2px;
     min-width: 0;
+    border-radius: var(--radius-md);
+    background: var(--accent-soft);
 }
 
 .fx-selection-count {
     flex: 1 1 auto;
     min-width: 0;
-    padding: 0 6px;
-    font-weight: 650;
+    padding: 0 var(--space-4);
+    font-weight: var(--font-weight-semibold);
     white-space: nowrap;
-}
-
-/* The row whose ⋮ menu is open. The menu acts on it alone, whatever is selected. */
-.fx-row.fx-menu-for {
-    background: var(--device-list-hover-color);
-    box-shadow: inset 3px 0 0 var(--fx-accent);
-}
-
-.fx-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    flex: 0 0 auto;
-    box-sizing: border-box;
-    min-height: var(--fx-control);
-    padding: 0 9px;
-    border: 1px solid var(--button-border-color);
-    border-radius: var(--fx-radius);
-    background: var(--main-bg-color);
-    color: var(--text-color);
-    font: inherit;
-    font-weight: 600;
-    white-space: nowrap;
-    cursor: pointer;
-}
-
-.fx-icon-button {
-    width: var(--fx-control);
-    min-width: var(--fx-control);
-    padding: 0;
-}
-
-.fx-button.fx-primary {
-    background: var(--fx-accent);
-    border-color: var(--fx-accent);
-    color: #fff;
-}
-
-.fx-button.fx-danger {
-    color: var(--status-unauthorized-color);
-}
-
-.fx-button.fx-danger-solid {
-    background: var(--status-danger-solid);
-    border-color: var(--status-danger-solid);
-    color: #fff;
-}
-
-.fx-button:disabled {
-    opacity: 0.4;
-    cursor: default;
-}
-
-.fx-select-toggle[aria-pressed='true'] {
-    border-color: var(--fx-accent);
-    background: var(--fx-selected);
 }
 
 /* Address bar -------------------------------------------------------- */
 
+/* The path: crumbs in a box with the look of the kit's field, and a field in the same box
+   while a path is typed. The box is the field, so it carries the border and the ring. */
 .fx-address {
     display: flex;
     flex: 1 1 auto;
     align-items: center;
     min-width: 0;
     box-sizing: border-box;
-    min-height: var(--fx-control);
-    padding-left: 4px;
-    border: 1px solid var(--button-border-color);
-    border-radius: var(--fx-radius);
-    background: var(--main-bg-color);
+    height: var(--fx-control);
+    padding-left: var(--space-4);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    cursor: text;
+}
+
+.fx-address:has(.fx-address-input:focus-visible) {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
 }
 
 .fx-breadcrumb {
     display: flex;
     flex: 1 1 auto;
     align-items: center;
-    gap: 1px;
+    /* As high as the box, borders included, so each crumb is a full-height target. */
+    align-self: stretch;
     min-width: 0;
+    margin: -1px 0;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
     white-space: nowrap;
+    /* A long path scrolls to its end, and its start fades out. Any solid colour masks. */
+    mask-image: linear-gradient(to right, transparent 0, var(--text) var(--space-16));
 }
 
 .fx-breadcrumb::-webkit-scrollbar {
     display: none;
 }
 
-.fx-breadcrumb {
-    mask-image: linear-gradient(to right, transparent 0, #000 16px);
-}
-
+/* A crumb is pressed over the whole height of the box. Its fill, under the pointer, is drawn
+   inside a clear border above and below, so it stays clear of the box's edge. */
 .fx-crumb {
-    flex: 0 0 auto;
-    min-height: calc(var(--fx-control) - 6px);
-    padding: 0 6px;
-    border: 0;
-    border-radius: 5px;
+    flex: none;
+    align-self: stretch;
+    box-sizing: border-box;
+    padding: 0 var(--space-4);
+    border: solid transparent;
+    border-width: var(--space-4) 0;
+    border-radius: var(--radius-md);
     background: transparent;
-    color: var(--text-color);
+    background-clip: padding-box;
+    color: var(--text);
     font: inherit;
     font-family: var(--font-stack-mono);
     cursor: pointer;
+    transition: background-color var(--motion-fast) ease;
 }
 
 .fx-crumb[aria-current='page'] {
-    font-weight: 700;
-    color: var(--button-text-color);
+    color: var(--accent-text);
+    font-weight: var(--font-weight-bold);
 }
 
 .fx-crumb-part {
     display: inline-flex;
-    flex: 0 0 auto;
+    flex: none;
     align-items: center;
+    align-self: stretch;
 }
 
 .fx-crumb-separator {
-    flex: 0 0 auto;
-    padding: 0 1px;
-    color: var(--text-color-light);
+    flex: none;
+    color: var(--text-muted);
     /* Same face as the folder names, so every slash in the bar is the same glyph. */
     font-family: var(--font-stack-mono);
-}
-
-.fx-crumb-root {
-    padding: 0 5px;
-}
-
-.fx-address[data-command] {
-    cursor: text;
-}
-
-/* Rows from the previous folder linger, dimmed and inert, while the next one loads. Rows left
-   behind by a lost connection look the same. */
-.file-explorer.fx-loading tbody,
-.file-explorer.fx-offline tbody {
-    opacity: 0.45;
-    pointer-events: none;
-    transition: opacity 120ms;
 }
 
 .fx-address-input {
     flex: 1 1 auto;
     min-width: 0;
-    height: calc(var(--fx-control) - 4px);
-    padding: 0 4px;
+    height: 100%;
+    margin: 0;
+    padding: 0 var(--space-4);
     border: 0;
     background: transparent;
-    color: var(--text-color);
-    font: inherit;
+    color: var(--text);
     font-family: var(--font-stack-mono);
-    /* 16px stops iOS Safari zooming the page when the field takes focus. */
-    font-size: 16px;
+    /* The input size stops iOS Safari zooming the page when the field takes focus. */
+    font-size: var(--font-size-input);
+    /* The box around it shows the ring. */
     outline: none;
 }
 
+/* The kit's icon button at the end of the box. It covers the box's border on three sides, so
+   it keeps its full size and its corners follow the box's. */
 .fx-address-toggle {
-    border: 0;
-    background: transparent;
+    margin: -1px -1px -1px 0;
 }
 
 /* Command bar -------------------------------------------------------- */
@@ -266,8 +218,12 @@ body.file-listing-page {
     display: flex;
     flex: 1 1 100%;
     align-items: center;
-    gap: var(--fx-gap);
+    gap: var(--space-8);
     min-width: 0;
+    /* The bar scrolls sideways, which cuts off what is drawn outside it. The padding leaves
+       room for the focus ring of its buttons, and the margin takes the room back. */
+    margin: calc(-1 * var(--space-4));
+    padding: var(--space-4);
     flex-wrap: nowrap;
     overflow-x: auto;
     overscroll-behavior-x: contain;
@@ -285,30 +241,12 @@ body.file-listing-page {
 .fx-filter {
     display: flex;
     flex: 0 1 180px;
-    align-items: center;
     min-width: 90px;
-    box-sizing: border-box;
-    border: 1px solid var(--button-border-color);
-    border-radius: var(--fx-radius);
-    background: var(--main-bg-color);
 }
 
+/* The kit's field at the height of the bar it is in. */
 .fx-filter-input {
-    width: 100%;
-    min-width: 0;
     height: var(--fx-control);
-    padding: 0 8px;
-    border: 0;
-    border-radius: inherit;
-    background: transparent;
-    color: var(--text-color);
-    font: inherit;
-    font-size: 16px;
-    outline: none;
-}
-
-.fx-filter:focus-within {
-    border-color: var(--fx-accent);
 }
 
 /* ------------------------------------------------------------------ body */
@@ -321,40 +259,22 @@ body.file-listing-page {
     min-width: 0;
 }
 
+/* Quick access: a column of the kit's quiet buttons beside the list, from 900px. */
 .fx-places {
     display: none;
-    flex: 0 0 auto;
-    gap: 3px;
-    padding: var(--fx-gap);
-    border-bottom: 1px solid var(--device-border-color);
+    flex: none;
+    gap: var(--space-4);
+    padding: var(--space-8);
 }
 
 .fx-place {
-    display: inline-flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: 5px;
-    min-height: var(--fx-control);
-    padding: 0 9px;
-    border: 1px solid transparent;
-    border-radius: 999px;
-    background: var(--main-bg-color);
-    color: var(--text-color);
-    font: inherit;
-    white-space: nowrap;
-    cursor: pointer;
+    justify-content: flex-start;
+    color: var(--text);
 }
 
 .fx-place[aria-current='page'] {
-    border-color: var(--fx-accent);
-    background: var(--fx-selected);
-    font-weight: 650;
-}
-
-.fx-place .fx-icon {
-    width: 15px;
-    height: 15px;
-    color: var(--button-text-color);
+    background: var(--accent-soft);
+    color: var(--accent-text);
 }
 
 .fx-main {
@@ -363,14 +283,16 @@ body.file-listing-page {
     flex-direction: column;
     min-height: 0;
     min-width: 0;
+    /* A container, so the list can drop a column by its own width. */
+    container: fx-main / inline-size;
 }
 
 .fx-transfers {
-    flex: 0 0 auto;
+    flex: none;
     max-height: 22%;
     overflow-y: auto;
-    padding: 4px var(--fx-gap);
-    border-bottom: 1px solid var(--device-border-color);
+    padding: var(--space-4) var(--space-8);
+    border-bottom: 1px solid var(--border);
 }
 
 /* "Uploading 3 of 40, 45%" and Cancel all stay in view above the rows. */
@@ -379,10 +301,10 @@ body.file-listing-page {
     top: 0;
     display: flex;
     align-items: center;
-    gap: var(--fx-gap);
-    padding: 2px 0;
-    background: var(--main-bg-color);
-    font-weight: 650;
+    gap: var(--space-8);
+    padding: var(--space-4) 0;
+    background: var(--surface);
+    font-weight: var(--font-weight-semibold);
 }
 
 .fx-transfer-total {
@@ -393,9 +315,8 @@ body.file-listing-page {
 .file-listing-upload-progress {
     display: flex;
     align-items: center;
-    gap: var(--fx-gap);
-    padding: 2px 0;
-    color: var(--text-color-light);
+    gap: var(--space-8);
+    padding: var(--space-4) 0;
 }
 
 .fx-upload-name {
@@ -404,18 +325,21 @@ body.file-listing-page {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--text-color);
+    color: var(--text);
 }
 
+/* How far an upload is: the kit's status line, beside the name instead of under a control. */
 .fx-upload-state {
-    flex: 0 0 auto;
+    flex: none;
+    margin: 0;
     font-variant-numeric: tabular-nums;
 }
 
 .file-listing-upload-progress.error .fx-upload-state {
-    color: var(--status-unauthorized-color);
+    color: var(--danger-text);
 }
 
+/* The list is a raised surface, as a card of rows is elsewhere in the app. */
 .fx-items {
     flex: 1 1 0;
     min-height: 0;
@@ -423,10 +347,7 @@ body.file-listing-page {
     overflow: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
-}
-
-.fx-items:focus-visible {
-    outline-offset: -3px;
+    background: var(--surface-raised);
 }
 
 /* ------------------------------------------------------------------ table */
@@ -440,47 +361,34 @@ body.file-listing-page {
 .fx-table thead th {
     position: sticky;
     top: 0;
-    z-index: 1;
+    z-index: var(--z-header);
     padding: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-raised);
+    font-weight: var(--font-weight-semibold);
     text-align: left;
-    font-weight: 600;
-    background: var(--header-bg-color);
-    border-bottom: 1px solid var(--device-border-color);
 }
 
 .fx-sort {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-4);
     width: 100%;
-    min-height: 26px;
-    padding: 0 8px;
+    min-height: var(--fx-control);
+    padding: 0 var(--space-8);
     border: 0;
+    border-radius: var(--radius-sm);
     background: transparent;
-    color: var(--text-color-light);
+    color: var(--text-muted);
     font: inherit;
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     text-align: left;
     cursor: pointer;
 }
 
-/* The arrow lives in an aria-hidden span: generated content on the button itself would become
-   part of its accessible name ("Name▲"), which breaks both screen readers and the fixtures. */
-.fx-sort-arrow {
-    font-size: 8px;
-}
-
-.fx-table th[aria-sort='ascending'] .fx-sort-arrow::after {
-    content: '▲';
-}
-
-.fx-table th[aria-sort='descending'] .fx-sort-arrow::after {
-    content: '▼';
-}
-
 .fx-table th[aria-sort='ascending'] .fx-sort,
 .fx-table th[aria-sort='descending'] .fx-sort {
-    color: var(--text-color);
+    color: var(--text);
 }
 
 /* Size and Modified are as wide as their longest text ("1023 KB", "2026-09-21 14:05") at any
@@ -498,10 +406,6 @@ body.file-listing-page {
 }
 
 /* Type is the first column to go when the list itself is narrow. */
-.fx-main {
-    container: fx-main / inline-size;
-}
-
 @container fx-main (max-width: 720px) {
     .file-explorer[data-view='details'] .fx-col-type,
     .file-explorer[data-view='details'] .entry-type {
@@ -515,48 +419,57 @@ body.file-listing-page {
 }
 
 .fx-table td {
-    padding: 0 8px;
+    padding: 0 var(--space-8);
     vertical-align: middle;
-    border-bottom: 1px solid color-mix(in srgb, var(--device-border-color) 55%, transparent);
+    border-bottom: 1px solid var(--border);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-/* Keyboard focus is drawn inside the row. The cells clip their contents, so the app's usual
-   outline, 3px outside the element, was never visible here. */
-.file-explorer .entry-name a:focus-visible,
-.fx-row-menu:focus-visible,
-.fx-sort:focus-visible {
-    outline-offset: -3px;
-    border-radius: 6px;
+/* Rows from the previous folder linger, dimmed and inert, while the next one loads. Rows left
+   behind by a lost connection look the same. */
+.file-explorer.fx-loading tbody,
+.file-explorer.fx-offline tbody {
+    opacity: var(--disabled-opacity);
+    pointer-events: none;
+    transition: opacity var(--motion-fast);
+}
+
+/* The row whose ⋮ menu is open. The menu acts on it alone, whatever is selected. */
+.fx-row.fx-menu-for {
+    background: var(--surface-sunken);
+    box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .fx-row:has(:focus-visible) {
-    background: var(--device-list-hover-color);
+    background: var(--surface-sunken);
 }
 
 .fx-row.selected,
 .fx-row.selected:has(:focus-visible) {
-    background: var(--fx-selected);
+    background: var(--accent-soft);
 }
 
 .fx-row.fx-cut {
-    opacity: 0.55;
+    opacity: var(--disabled-opacity);
 }
 
-.entry-name {
-    position: relative;
-    padding: 0 !important;
+/* A cell that holds one control has no padding of its own. `.fx-table td` weighs one class and
+   one element, so these are written with two classes. */
+.fx-table .entry-name {
+    padding: 0;
 }
 
 .file-explorer .entry-name a {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: var(--space-8);
     min-height: var(--fx-row);
-    padding: 0 8px;
-    color: var(--text-color);
+    padding: 0 var(--space-8);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
     text-decoration: none;
     overflow: hidden;
 }
@@ -567,45 +480,43 @@ body.file-listing-page {
     white-space: nowrap;
 }
 
+/* The kit's icon for the kind of file. A folder stands out from the files around it. */
 .file-explorer .fx-icon {
-    flex: 0 0 auto;
-    width: 17px;
-    height: 17px;
-    color: var(--text-color-light);
+    color: var(--text-muted);
 }
 
 .file-explorer .fx-icon-folder {
-    color: var(--status-starting-color);
-}
-
-.file-explorer .fx-icon-apk {
-    color: var(--status-ready-color);
-}
-
-.file-explorer .fx-icon-image,
-.file-explorer .fx-icon-video {
-    color: var(--status-streaming-color);
+    color: var(--accent-text);
 }
 
 .entry-size,
 .entry-type,
 .entry-time {
-    color: var(--text-color-light);
+    color: var(--text-muted);
     font-variant-numeric: tabular-nums;
 }
 
-.fx-check {
-    width: 15px;
-    height: 15px;
-    margin: 0 auto;
+.fx-check,
+.fx-check-all {
     display: block;
-    accent-color: var(--fx-accent);
+    width: 18px;
+    height: 18px;
+    margin: 0 auto;
+    accent-color: var(--accent);
+}
+
+@media (pointer: coarse) {
+    .fx-check,
+    .fx-check-all {
+        width: 22px;
+        height: 22px;
+    }
 }
 
 /* The checkbox column only takes space once selecting is under way -- Explorer reveals it the
    same way, and on a phone it would otherwise eat a quarter of the name column. */
-.fx-cell-select {
-    padding: 0 !important;
+.fx-table .fx-cell-select {
+    padding: 0;
 }
 
 .file-explorer:not(.fx-selecting) .fx-table .fx-cell-select {
@@ -617,52 +528,32 @@ body.file-listing-page {
     display: none;
 }
 
-.fx-row-menu {
-    display: grid;
-    place-items: center;
-    width: 100%;
-    min-height: var(--fx-row);
-    border: 0;
-    border-radius: var(--fx-radius);
-    background: transparent;
-    color: var(--text-color-light);
-    cursor: pointer;
-}
-
-.fx-cell-menu {
-    padding: 0 !important;
+.fx-table td.fx-cell-menu {
+    padding: 0;
     text-align: center;
 }
 
-.fx-empty {
-    padding: 18px 10px !important;
-    color: var(--text-color-light);
+.fx-table .fx-empty {
+    padding: var(--space-20) var(--space-12);
+    color: var(--text-muted);
     text-align: center;
-    white-space: normal !important;
+    white-space: normal;
 }
 
 /* A folder that could not be listed says so where the list would be. */
 .fx-failed-box {
     display: grid;
     justify-items: center;
-    gap: 6px;
+    gap: var(--space-8);
     max-width: 440px;
     margin: 0 auto;
-    padding: 10px 0;
-    line-height: 1.45;
+    padding: var(--space-12) 0;
 }
 
-/* Sizes below that were a share of the explorer's own size are written for both of its sizes:
-   12.5px, and 13.5px on a touch screen. */
 .fx-failed-box strong {
-    color: var(--text-color);
-    font-size: 13.75px;
-}
-
-@media (hover: none) and (pointer: coarse) {
-    .fx-failed-box strong {
-        font-size: 14.85px;
-    }
+    color: var(--text);
+    font-size: var(--font-size-17);
+    font-weight: var(--font-weight-semibold);
 }
 
 .fx-failed-reason,
@@ -678,8 +569,8 @@ body.file-listing-page {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 8px;
-    margin-top: 6px;
+    gap: var(--space-8);
+    margin-top: var(--space-8);
 }
 
 /* ------------------------------------------------------------------ list and tile views */
@@ -697,8 +588,8 @@ body.file-listing-page {
 .file-explorer[data-view='list'] tbody,
 .file-explorer[data-view='tiles'] tbody {
     display: grid;
-    gap: 2px;
-    padding: var(--fx-gap);
+    gap: var(--space-4);
+    padding: var(--space-8);
 }
 
 .file-explorer[data-view='list'] tbody {
@@ -707,16 +598,19 @@ body.file-listing-page {
 
 .file-explorer[data-view='tiles'] tbody {
     grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
-    gap: 5px;
 }
 
 .file-explorer[data-view='list'] tr,
 .file-explorer[data-view='tiles'] tr {
     display: flex;
-    align-items: center;
     min-width: 0;
     border: 1px solid transparent;
-    border-radius: var(--fx-radius);
+    border-radius: var(--radius-sm);
+}
+
+/* A row of the list is one line; a tile is a column (below). */
+.file-explorer[data-view='list'] tr {
+    align-items: center;
 }
 
 .file-explorer[data-view='list'] td,
@@ -738,22 +632,25 @@ body.file-listing-page {
     min-width: 0;
 }
 
+/* The checkbox of a tile is placed against the tile. */
 .file-explorer[data-view='tiles'] tr {
+    position: relative;
     flex-direction: column;
     align-items: stretch;
-    padding: 5px 2px;
+    padding: var(--space-4);
     text-align: center;
 }
 
 .file-explorer[data-view='tiles'] .entry-name a {
     flex-direction: column;
-    gap: 3px;
-    padding: 2px 4px;
+    gap: var(--space-4);
+    padding: var(--space-4);
 }
 
-.file-explorer[data-view='tiles'] .fx-icon {
-    width: 30px;
-    height: 30px;
+/* The icons of the tiles only: quick access has icons of the same kind beside the list. */
+.file-explorer[data-view='tiles'] .entry-name .fx-icon {
+    width: 32px;
+    height: 32px;
 }
 
 .file-explorer[data-view='tiles'] .entry-name .fx-name {
@@ -766,29 +663,18 @@ body.file-listing-page {
     -webkit-box-orient: vertical;
 }
 
-.file-explorer[data-view='tiles'] tr {
-    position: relative;
-}
-
 /* The checkbox belongs in the tile's corner; in the column layout it would otherwise sit on its
-   own line above the icon. */
+   own line above the icon. Nothing else in a tile is positioned, so it is drawn on top. */
 .file-explorer[data-view='tiles'] .fx-cell-select {
     position: absolute;
-    top: 3px;
-    left: 3px;
-    z-index: 1;
+    top: var(--space-4);
+    left: var(--space-4);
 }
 
 .file-explorer[data-view='tiles'] .entry-size {
     display: block;
+    font-size: var(--font-size-12);
     text-align: center;
-    font-size: 10.625px;
-}
-
-@media (hover: none) and (pointer: coarse) {
-    .file-explorer[data-view='tiles'] .entry-size {
-        font-size: 11.475px;
-    }
 }
 
 .file-explorer[data-view='tiles'] .fx-row[data-kind='folder'] .entry-size {
@@ -813,132 +699,25 @@ body.file-listing-page {
 
 .file-explorer[data-view='list'] .fx-row.selected,
 .file-explorer[data-view='tiles'] .fx-row.selected {
-    border-color: var(--fx-accent);
-}
-
-/* ------------------------------------------------------------------ menu */
-
-/* The tool frame clips whatever leaves it, so a menu taller than the explorer scrolls inside
-   itself. `openMenu` and `refreshMenu` keep it within the same 4px margin. */
-.fx-menu {
-    position: absolute;
-    z-index: 20;
-    box-sizing: border-box;
-    min-width: 156px;
-    max-width: min(240px, 90%);
-    max-height: calc(100% - 8px);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: 4px;
-    border: 1px solid var(--button-border-color);
-    border-radius: 9px;
-    background: var(--main-bg-color);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-}
-
-.fx-menu[hidden] {
-    display: none;
-}
-
-.fx-menu button {
-    display: block;
-    width: 100%;
-    min-height: var(--fx-control);
-    padding: 0 8px;
-    border: 0;
-    border-radius: 5px;
-    background: transparent;
-    color: var(--text-color);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-}
-
-.fx-menu button:disabled {
-    opacity: 0.4;
-    cursor: default;
-}
-
-.fx-menu button.fx-menu-danger {
-    color: var(--status-unauthorized-color);
-}
-
-/* The check is a masked shape, not a '✓' character: generated text joins the item's accessible
-   name ("✓ Select items"), which breaks screen readers and role queries alike. */
-.fx-menu [role='menuitemradio']::before,
-.fx-menu [role='menuitemcheckbox']::before {
-    content: '';
-    display: inline-block;
-    width: 12.5px;
-    height: 12.5px;
-    margin-right: 4.375px;
-    vertical-align: -1.875px;
-}
-
-@media (hover: none) and (pointer: coarse) {
-    .fx-menu [role='menuitemradio']::before,
-    .fx-menu [role='menuitemcheckbox']::before {
-        width: 13.5px;
-        height: 13.5px;
-        margin-right: 4.725px;
-        vertical-align: -2.025px;
-    }
-}
-
-.fx-menu [role='menuitemradio'][aria-checked='true']::before,
-.fx-menu [role='menuitemcheckbox'][aria-checked='true']::before {
-    background-color: var(--button-text-color);
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
-        center / contain no-repeat;
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
-        center / contain no-repeat;
-}
-
-.fx-menu-separator {
-    height: 1px;
-    margin: 4px 2px;
-    background: var(--device-border-color);
-}
-
-.fx-menu-title {
-    padding: 4px 8px 2px;
-    color: var(--text-color-light);
-    font-size: 11.25px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.675px;
-}
-
-@media (hover: none) and (pointer: coarse) {
-    .fx-menu-title {
-        font-size: 12.15px;
-        letter-spacing: 0.729px;
-    }
+    border-color: var(--accent);
 }
 
 /* ------------------------------------------------------------------ status bar */
 
 .fx-statusbar {
     display: flex;
-    flex: 0 0 auto;
+    flex: none;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-    padding: 3px var(--fx-gap);
-    border-top: 1px solid var(--device-border-color);
-    background: var(--header-bg-color);
-    color: var(--text-color-light);
-    font-size: 11.5px;
-}
-
-@media (hover: none) and (pointer: coarse) {
-    .fx-statusbar {
-        font-size: 12.42px;
-    }
+    gap: var(--space-12);
+    padding: var(--space-4) var(--space-8);
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--font-size-12);
 }
 
 .fx-counts {
-    flex: 0 0 auto;
+    flex: none;
     white-space: nowrap;
 }
 
@@ -951,123 +730,52 @@ body.file-listing-page {
 }
 
 .file-explorer .error {
-    color: var(--status-unauthorized-color);
+    color: var(--danger-text);
 }
 
-/* ------------------------------------------------------------------ dialogs */
+/* ------------------------------------------------------------------ dialog */
 
-.fx-dialog {
-    width: min(360px, calc(100vw - 32px));
-    padding: 0;
-    border: 1px solid var(--button-border-color);
-    border-radius: 12px;
-    background: var(--main-bg-color);
-    color: var(--text-color);
-}
-
-.fx-dialog::backdrop {
-    background: rgba(0, 0, 0, 0.45);
-}
-
-.fx-dialog-form {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding: 14px;
-    font: inherit;
-    font-size: 13px;
-}
-
-.fx-dialog h2 {
-    margin: 0;
-    font-size: 15px;
-    /* A title can quote a file name, which may have no space to break at. */
-    overflow-wrap: anywhere;
-}
-
+/* The dialog is the kit's sheet (`dialog.kit-sheet`) with the kit's field and buttons. These
+   are the parts only Files puts in it. */
 .fx-dialog-message {
     margin: 0;
-    line-height: 1.45;
-    color: var(--text-color-light);
+    color: var(--text-muted);
     overflow-wrap: anywhere;
-}
-
-.fx-dialog-field {
-    display: grid;
-    gap: 5px;
-}
-
-.fx-dialog-field span {
-    color: var(--text-color-light);
-}
-
-.fx-dialog-field input {
-    box-sizing: border-box;
-    width: 100%;
-    min-height: 44px;
-    padding: 0 9px;
-    border: 1px solid var(--button-border-color);
-    border-radius: var(--fx-radius);
-    background: var(--main-bg-color);
-    color: var(--text-color);
-    font: inherit;
-    font-size: 16px;
-}
-
-.fx-dialog-error {
-    margin: -4px 0 0;
-    color: var(--status-unauthorized-color);
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-}
-
-.fx-dialog-field input[aria-invalid] {
-    border-color: var(--status-unauthorized-color);
-}
-
-.fx-dialog-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-}
-
-.fx-dialog-actions .fx-button {
-    min-height: 44px;
-    padding: 0 14px;
 }
 
 .fx-dialog-check {
     display: flex;
     align-items: center;
-    gap: 10px;
-    min-height: 44px;
+    gap: var(--space-12);
+    min-height: var(--control-height);
+    margin-top: var(--space-8);
     cursor: pointer;
 }
 
 .fx-dialog-check input {
-    flex: 0 0 auto;
-    width: 18px;
-    height: 18px;
+    flex: none;
+    width: 22px;
+    height: 22px;
     margin: 0;
-    accent-color: var(--fx-accent);
+    accent-color: var(--accent);
 }
 
-/* Three answers must stay on one row at 320px. */
-.fx-conflict .fx-dialog-actions .fx-button {
-    padding: 0 12px;
+/* Three answers share the width of a bottom sheet, and must stay on one row at 320px. */
+@media (max-width: 599px) {
+    .fx-conflict .kit-button {
+        padding: 0 var(--space-8);
+    }
 }
 
 .fx-properties {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 5px 12px;
+    gap: var(--space-4) var(--space-12);
     margin: 0;
-    max-height: 50vh;
-    overflow-y: auto;
 }
 
 .fx-properties dt {
-    color: var(--text-color-light);
+    color: var(--text-muted);
 }
 
 .fx-properties dd {
@@ -1081,18 +789,18 @@ body.file-listing-page {
 .file-listing-drop::after {
     content: 'Drop files to upload to this folder';
     position: absolute;
-    inset: 6px;
+    inset: var(--space-8);
+    z-index: var(--z-overlay);
     display: grid;
     place-items: center;
-    padding: 16px;
+    padding: var(--space-16);
+    border: 2px dashed var(--accent);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    color: var(--text);
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
     text-align: center;
-    border: 2px dashed var(--fx-accent);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--main-bg-color) 92%, transparent);
-    color: var(--text-color);
-    font-size: 15px;
-    font-weight: 600;
-    z-index: 30;
     pointer-events: none;
 }
 
@@ -1104,15 +812,10 @@ body.file-listing-page {
     }
     .fx-places {
         display: flex;
-        flex: 0 0 168px;
+        flex: 0 0 184px;
         flex-direction: column;
         overflow-y: auto;
-        border-right: 1px solid var(--device-border-color);
-        border-bottom: 0;
-    }
-    .fx-place {
-        justify-content: flex-start;
-        border-radius: var(--fx-radius);
+        border-right: 1px solid var(--border);
     }
     .fx-places-toggle {
         display: none;
@@ -1127,7 +830,6 @@ body.file-listing-page {
         flex-wrap: nowrap;
     }
     .fx-address {
-        flex: 1 1 auto;
         min-width: 140px;
         max-width: 42%;
     }
@@ -1200,16 +902,10 @@ body.file-listing-page {
         flex: 1 1 100%;
     }
     /* Rows: the whole row is the tap target, so the name and its caption pack tightly. */
-    .file-explorer[data-view='details'] .fx-row {
-        min-height: var(--fx-row);
-    }
     .file-explorer[data-view='details'] .entry-name a {
         min-height: 0;
-        padding: 6px 8px 0;
+        padding: var(--space-8) var(--space-8) 0;
         line-height: 1.25;
-    }
-    .fx-cell-menu .fx-row-menu {
-        min-height: 40px;
     }
     .file-explorer[data-view='details'] .fx-table {
         display: block;
@@ -1222,12 +918,13 @@ body.file-listing-page {
     }
     .file-explorer[data-view='details'] .fx-row {
         display: grid;
+        min-height: var(--fx-row);
         grid-template-columns: auto auto minmax(0, 1fr) auto;
         grid-template-areas:
             'select name name menu'
             'select size time menu';
         align-items: center;
-        border-bottom: 1px solid color-mix(in srgb, var(--device-border-color) 55%, transparent);
+        border-bottom: 1px solid var(--border);
     }
     .file-explorer[data-view='details'] .fx-row > td {
         border: 0;
@@ -1238,20 +935,20 @@ body.file-listing-page {
     .file-explorer[data-view='details'] .entry-name {
         grid-area: name;
     }
-    /* The second line reads as one caption under the name, indented past the icon. */
+    /* The second line reads as one caption under the name, indented past the 20px icon. */
     .file-explorer[data-view='details'] .entry-size {
         grid-area: size;
-        padding-left: 32px;
+        padding-left: calc(2 * var(--space-8) + 20px);
     }
     .file-explorer[data-view='details'] .fx-row[data-kind='folder'] .entry-size {
         display: none;
     }
     .file-explorer[data-view='details'] .entry-time {
         grid-area: time;
-        padding-left: 8px;
+        padding-left: var(--space-8);
     }
     .file-explorer[data-view='details'] .fx-row[data-kind='folder'] .entry-time {
-        padding-left: 32px;
+        padding-left: calc(2 * var(--space-8) + 20px);
     }
     .file-explorer[data-view='details'] .fx-cell-menu {
         grid-area: menu;
@@ -1261,16 +958,9 @@ body.file-listing-page {
     }
     .file-explorer[data-view='details'] .entry-size,
     .file-explorer[data-view='details'] .entry-time {
-        padding-top: 1px;
-        padding-bottom: 6px;
-        font-size: 10.75px;
+        padding-bottom: var(--space-8);
+        font-size: var(--font-size-12);
         line-height: 1.2;
-    }
-    @media (hover: none) and (pointer: coarse) {
-        .file-explorer[data-view='details'] .entry-size,
-        .file-explorer[data-view='details'] .entry-time {
-            font-size: 11.61px;
-        }
     }
     .file-explorer[data-view='details'] .fx-empty-row,
     .file-explorer[data-view='details'] .fx-empty-row > .fx-empty {
@@ -1279,53 +969,12 @@ body.file-listing-page {
 }
 
 @media (hover: hover) {
-    .fx-table tbody tr:not(.fx-empty-row):hover {
-        background: var(--device-list-hover-color);
+    .fx-table tbody tr:not(.fx-empty-row):hover,
+    .fx-crumb:hover {
+        background: var(--surface-sunken);
     }
     .fx-row.selected:hover {
-        background: var(--fx-selected);
+        background: var(--accent-soft);
     }
-    .fx-menu button:hover:not(:disabled),
-    .fx-crumb:hover,
-    .fx-place:hover {
-        background: var(--device-list-hover-color);
-    }
-    .fx-button:hover:not(:disabled) {
-        border-color: var(--button-text-color);
-    }
-    .fx-button.fx-primary:hover,
-    .fx-button.fx-danger-solid:hover {
-        filter: brightness(1.08);
-    }
-}
-
-.fx-menu {
-    transform-origin: top left;
-    border-radius: var(--radius-panel);
-    box-shadow: 0 12px 40px rgb(0 0 0 / 18%);
-}
-.fx-menu button,
-.fx-button,
-.fx-place {
-    transition:
-        background-color var(--motion-fast),
-        color var(--motion-fast),
-        border-color var(--motion-fast);
-}
-.fx-dialog {
-    border-radius: 20px;
-    box-shadow: 0 20px 64px rgb(0 0 0 / 25%);
-}
-.fx-dialog::backdrop {
-    animation: sheet-backdrop-in var(--motion-settle) ease-out;
-    transition: opacity var(--motion-exit);
-}
-.fx-dialog[data-exiting]::backdrop {
-    animation: none;
-    opacity: 0;
-}
-.fx-menu[data-exiting],
-.fx-dialog[data-exiting] {
-    pointer-events: none;
 }
 }

@@ -295,6 +295,90 @@ test('the server acknowledges every upload chunk while its buffer has room, so c
     assert.deepEqual(channel.closes, [1000]);
 });
 
+// ------------------------------------------------------------------ the Files stylesheet
+
+test('the Files stylesheet states each rule once and forces nothing', () => {
+    const file = path.join(__dirname, '..', 'src', 'style', 'filelisting.css');
+    const source = fs.readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    assert.equal(/!\s*important/i.test(source), false, 'no declaration is !important: the selector and the layer decide');
+    // A rule is its selector under the conditions it is inside. One that is written twice has
+    // its declarations in two places, and the later place overrides the earlier one.
+    const seen = new Set();
+    const repeated = [];
+    const open = [];
+    // A property that one selector of a list sets again in another rule under the same
+    // condition: the later rule overrides the earlier one inside this file.
+    const declared = new Map();
+    const overridden = [];
+    /** The selectors of a list, split at the commas that are not inside parentheses. */
+    const selectors = (prelude) => {
+        const parts = [''];
+        let depth = 0;
+        for (const character of prelude) {
+            if (character === ',' && depth === 0) parts.push('');
+            else {
+                depth += character === '(' ? 1 : character === ')' ? -1 : 0;
+                parts[parts.length - 1] += character;
+            }
+        }
+        return parts.map((part) => part.trim());
+    };
+    const declare = (text) => {
+        const prelude = open[open.length - 1];
+        const property = text.split(':')[0].trim();
+        if (!prelude || prelude.startsWith('@') || !property) return;
+        const conditions = open.slice(0, -1).join(' { ');
+        for (const selector of selectors(prelude)) {
+            const key = `${conditions} { ${selector} { ${property}`;
+            const rule = [...open].join(' { ');
+            if (declared.has(key) && declared.get(key) !== rule) overridden.push(key);
+            declared.set(key, rule);
+        }
+    };
+    let buffer = '';
+    for (const character of source) {
+        if (character === '{') {
+            const prelude = buffer.trim().replace(/\s+/g, ' ');
+            const key = [...open, prelude].join(' { ');
+            if (!prelude.startsWith('@')) {
+                if (seen.has(key)) repeated.push(key);
+                seen.add(key);
+            }
+            open.push(prelude);
+            buffer = '';
+        } else if (character === '}') {
+            declare(buffer);
+            open.pop();
+            buffer = '';
+        } else if (character === ';') {
+            declare(buffer);
+            buffer = '';
+        } else {
+            buffer += character;
+        }
+    }
+    assert.ok(seen.size > 50, 'the rules are found');
+    assert.deepEqual(repeated, [], 'each selector is written once under each condition');
+    assert.ok(declared.size > 300, 'the declarations are found');
+    assert.deepEqual(overridden, [], 'no rule sets a property that another rule for the same selector sets');
+});
+
+test('every kind of file has an icon of the kit set, with the classes the explorer sizes it by', () => {
+    const { iconMarkup } = require('../src/app/googDevice/client/fileTypes');
+    const { ICONS } = require('../src/app/ui/icons');
+    const paths = new Set(Object.values(ICONS));
+    const kinds = ['folder', 'apk', 'image', 'video', 'audio', 'archive', 'code', 'text', 'document', 'link', 'special', 'file'];
+    for (const kind of kinds) {
+        const markup = iconMarkup(kind);
+        assert.ok(markup.includes(`class="kit-icon fx-icon fx-icon-${kind}"`), `${kind}: ${markup}`);
+        assert.ok(markup.includes('aria-hidden="true"'), `${kind} is not read out`);
+        const drawn = markup.match(/<path d="([^"]+)"\/>/g) || [];
+        assert.equal(drawn.length, 1, `${kind} is one path`);
+        assert.ok(paths.has(/d="([^"]+)"/.exec(drawn[0])[1]), `${kind} is drawn from the kit set`);
+    }
+    assert.notEqual(iconMarkup('folder'), iconMarkup('file').replace('fx-icon-file', 'fx-icon-folder'), 'a folder and a file differ');
+});
+
 // ------------------------------------------------------------------ the explorer while its tab is hidden
 //
 // The phone's page keeps Files mounted while it shows another tab and tells it with setActive.
@@ -306,7 +390,8 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 class FakeElement {
     constructor(tag) {
-        Object.assign(this, { tagName: tag, dataset: {}, style: {}, hidden: false, inert: false, open: false, returnValue: '' });
+        Object.assign(this, { tagName: tag, dataset: {}, hidden: false, inert: false, open: false, returnValue: '' });
+        this.style = { setProperty: (name, value) => (this.style[name] = value), removeProperty: (name) => delete this.style[name] };
         Object.assign(this, { children: [], parentNode: null, listeners: {}, found: new Map(), classes: new Set(), attributes: {} });
         this.classList = {
             add: (...names) => names.forEach((name) => this.classes.add(name)),
@@ -444,7 +529,7 @@ function fakeTab(address) {
     const window = {
         addEventListener: (type, listener) => (listeners[type] ||= new Set()).add(listener),
         removeEventListener: (type, listener) => listeners[type]?.delete(listener),
-        matchMedia: () => ({ matches: true, addEventListener: () => undefined }),
+        matchMedia: () => ({ matches: true, addEventListener: () => undefined, removeEventListener: () => undefined }),
     };
     // The owner presses something. An overlay gets a history entry only after a press.
     const press = () => [...(listeners.pointerup || [])].forEach((listener) => listener({ type: 'pointerup', isTrusted: true }));
@@ -531,6 +616,8 @@ function openFiles(t, folder = '/sdcard') {
         },
         HTMLElement: FakeElement,
         HTMLButtonElement: FakeButton,
+        // The markup takes the kit's class names as values, which the template helper tells from a template.
+        HTMLTemplateElement: class {},
         getComputedStyle: () => ({ opacity: '1', transform: 'none' }),
         requestAnimationFrame: (run) => frames.push(run),
         cancelAnimationFrame: () => undefined,
@@ -758,6 +845,37 @@ test('two questions in a row each have one history entry, and Back answers the o
         ['notes (1).txt', 'new.txt'],
         'Back is Skip for that one file',
     );
+});
+
+test('a question is written as the kit sheet, and Escape answers it at the key', async (t) => {
+    const { tab, client, dialog, settle } = openFiles(t);
+    await settle();
+    tab.press();
+    const plan = client.planUploads([{ name: 'notes.txt' }, { name: 'new.txt' }]);
+    await settle();
+    assert.equal(dialog.open, true);
+    const markup = dialog.innerHTML;
+    for (const part of ['backdrop', 'panel', 'header', 'handle', 'title', 'close', 'body', 'footer']) {
+        assert.ok(markup.includes(`kit-sheet-${part}`), `the sheet has its ${part}`);
+    }
+    assert.equal(/fx-button|fx-primary|fx-danger/.test(markup), false, 'no button of the older kind');
+    assert.ok(markup.includes('class="kit-button" value="keep"'), 'the answers are kit buttons');
+    assert.ok(markup.includes('class="kit-button kit-confirm-go" value="replace"'), 'Replace is the answer that removes');
+    assert.ok(markup.includes('kit-sheet-footer fx-dialog-actions kit-confirm-danger'), 'and its footer gives it the solid danger fill');
+    assert.ok(markup.includes('aria-label="Close this question"'), 'the close button has a name');
+    // Escape is answered at keydown, so the browser raises no close request of its own.
+    let stopped = false;
+    const key = dialog.dispatch('keydown', { key: 'Escape', isComposing: false, stopPropagation: () => (stopped = true) });
+    assert.equal(key.defaultPrevented && stopped, true);
+    await settle();
+    assert.equal(dialog.open, false, 'Escape closes the question');
+    assert.deepEqual((await plan).map((upload) => upload.name), ['new.txt'], 'which skips the file');
+    // A second Escape while the dialog is closed answers nothing and throws nothing.
+    dialog.dispatch('keydown', { key: 'Escape', isComposing: false, stopPropagation: () => undefined });
+    // The closed question gives up its entry a task later.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await settle();
+    assert.equal(tab.history.state.nav.overlay, undefined);
 });
 
 test('a question that is answered and not followed by another gives up its entry', async (t) => {

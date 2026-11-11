@@ -47,8 +47,11 @@ export function menuButtonOf(element: Element | null): HTMLElement | undefined {
     return undefined;
 }
 
-/** Under the button and in line with its left edge; moved only as far as the window needs. */
-function placeMenu(menu: HTMLElement, anchor: MenuAnchor): void {
+/**
+ * Under the button and in line with its left edge; moved only as far as the window needs.
+ * `bindMenu` calls it. Code that changes the items of an open menu calls it again.
+ */
+export function placeMenu(menu: HTMLElement, anchor: MenuAnchor): void {
     const at = anchor instanceof HTMLElement ? anchor.getBoundingClientRect() : new DOMRect(anchor.x, anchor.y, 0, 0);
     const gap = anchor instanceof HTMLElement ? GAP : 0;
     const page = document.documentElement;

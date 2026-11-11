@@ -81,6 +81,26 @@
     color: var(--danger-text);
 }
 
+/* `kit-menu-compact` on the menu, for one over dense rows under a mouse: 32px items in the
+   smaller type. A finger gets the full height. */
+.kit-menu-compact {
+    font-size: var(--font-size-13);
+}
+
+.kit-menu-compact .kit-menu-item {
+    min-height: var(--control-height-compact);
+}
+
+@media (pointer: coarse) {
+    .kit-menu-compact {
+        font-size: var(--font-size-15);
+    }
+
+    .kit-menu-compact .kit-menu-item {
+        min-height: var(--control-height);
+    }
+}
+
 /* The check of an item that is on or off: a kit icon (`iconSvg('check', 20)` in markup built
    without Preact), hidden while the item is off so the label stays in place. */
 .kit-menu-item[aria-checked] > .kit-icon {

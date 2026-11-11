@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const { settleMotion } = require('./ui-motion');
-const { fixture, DEVICE, SHARED } = require('./e2e-files');
+const { fixture, pressAtRest, DEVICE, SHARED } = require('./e2e-files');
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-files';
 const UDID = 'files-fixture';
@@ -144,7 +144,7 @@ async function overlays(browser, layout) {
         await menu.waitFor();
     };
     const rowCommand = async (command) => {
-        await row(page, 'notes.txt').locator('.fx-row-menu').click();
+        await pressAtRest(page, row(page, 'notes.txt').locator('.fx-row-menu'));
         await menu.getByRole('menuitem', { name: command, exact: true }).click();
     };
     const folderKept = async (what) => {
@@ -217,31 +217,37 @@ async function overlays(browser, layout) {
     await finish();
 }
 
-/** The element can be brought fully inside the tool frame, which clips everything else. */
+/** The item can be brought fully inside its menu, which is inside the window. */
 async function reachable(page, locator, what) {
     await locator.scrollIntoViewIfNeeded();
     await settleMotion(page);
-    const frame = await page.locator('.tool-mount').boundingBox();
+    const menu = await page.locator('.kit-menu.fx-menu').boundingBox();
     const box = await locator.boundingBox();
     assert(
-        box.y >= frame.y - 0.5 && box.y + box.height <= frame.y + frame.height + 0.5,
-        `${what} is inside the tool frame (${Math.round(box.y)}..${Math.round(box.y + box.height)} of ${Math.round(frame.y)}..${Math.round(frame.y + frame.height)})`,
+        box.y >= menu.y - 0.5 && box.y + box.height <= menu.y + menu.height + 0.5,
+        `${what} is inside the menu (${Math.round(box.y)}..${Math.round(box.y + box.height)} of ${Math.round(menu.y)}..${Math.round(menu.y + menu.height)})`,
     );
     const viewport = page.viewportSize();
-    assert(box.y + box.height <= viewport.height, `${what} is on screen`);
+    assert(box.y >= 0 && box.y + box.height <= viewport.height, `${what} is on screen`);
 }
 
+// The kit puts a menu in the top layer, so the tool frame no longer cuts it off. It keeps
+// inside the window, 8px from every edge, and scrolls when it is taller than that.
 async function menuFits(page, what) {
     await settleMotion(page);
-    const frame = await page.locator('.tool-mount').boundingBox();
-    const menu = await page.locator('.fx-menu').boundingBox();
+    const viewport = page.viewportSize();
+    const menu = await page.locator('.kit-menu.fx-menu').boundingBox();
     assert(
-        menu.y >= frame.y && menu.y + menu.height <= frame.y + frame.height + 0.5,
-        `${what} stays inside the tool frame (${Math.round(menu.y)}..${Math.round(menu.y + menu.height)} of ${Math.round(frame.y + frame.height)})`,
+        menu.y >= 8 - 0.5 && menu.y + menu.height <= viewport.height - 8 + 0.5,
+        `${what} stays inside the window (${Math.round(menu.y)}..${Math.round(menu.y + menu.height)} of ${viewport.height})`,
+    );
+    assert(
+        menu.x >= 8 - 0.5 && menu.x + menu.width <= viewport.width - 8 + 0.5,
+        `${what} stays inside the window sideways (${Math.round(menu.x)}..${Math.round(menu.x + menu.width)} of ${viewport.width})`,
     );
 }
 
-// Menus on short screens: every item can be reached, because the menu scrolls inside the frame.
+// Menus on short screens: every item can be reached, because the menu scrolls inside the window.
 async function menus(browser) {
     // A phone in portrait with little height, and the longest Actions menu.
     let session = await start(browser, { width: 390, height: 664, touch: true }, ROOT);
@@ -258,10 +264,10 @@ async function menus(browser) {
     await page.keyboard.press('Escape');
     await session.finish();
 
-    // A phone in landscape: the row menu and the View menu are both taller than the frame.
+    // A phone in landscape: the row menu and the View menu are both taller than the window.
     session = await start(browser, { width: 926, height: 428, touch: true }, ROOT);
     page = session.page;
-    await row(page, 'notes.txt').locator('.fx-row-menu').click();
+    await pressAtRest(page, row(page, 'notes.txt').locator('.fx-row-menu'));
     await page.locator('.fx-menu').waitFor();
     await menuFits(page, 'the row menu');
     await reachable(page, page.getByRole('menuitem', { name: 'Properties', exact: true }), 'Properties');
@@ -269,12 +275,12 @@ async function menus(browser) {
     await page.screenshot({ path: path.join(OUT, 'flows-menu-landscape-row.png') });
     await page.keyboard.press('Escape');
     await page.locator('.fx-menu').waitFor({ state: 'hidden' });
-    await page.locator('.fx-commands').getByRole('button', { name: 'View', exact: true }).click();
+    await pressAtRest(page, page.locator('.fx-commands').getByRole('button', { name: 'View', exact: true }));
     await page.locator('.fx-menu').waitFor();
     await menuFits(page, 'the View menu');
     assert(
         await page.locator('.fx-menu').evaluate((menu) => menu.scrollHeight > menu.clientHeight),
-        'the View menu scrolls when it is taller than the frame',
+        'the View menu scrolls when it is taller than the window',
     );
     await reachable(page, page.getByRole('menuitemcheckbox', { name: 'Hidden items' }), 'Hidden items');
     await reachable(page, page.getByRole('menuitemradio', { name: 'Descending', exact: true }), 'Descending');
@@ -424,7 +430,7 @@ async function dialogs(browser) {
     await problem.waitFor();
     assert.equal(await problem.innerText(), 'A name cannot contain “/”.');
     assert.equal(await field.inputValue(), 'a/b', 'the typed name is still there');
-    assert.equal(await field.getAttribute('aria-invalid'), '', 'the field is marked invalid');
+    assert.equal(await field.getAttribute('aria-invalid'), 'true', 'the field is marked invalid');
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('name')), 'value');
     await settleMotion(page);
     await page.screenshot({ path: path.join(OUT, 'flows-dialog-invalid-name.png') });
@@ -473,7 +479,7 @@ async function dialogs(browser) {
 async function errors(browser, layout, name) {
     const { page, finish, traffic } = await start(browser, layout, ROOT, 'light');
     const box = page.locator('.fx-failed-box');
-    const toast = page.locator('.app-toast:not([data-exiting])');
+    const toast = page.locator('.kit-toast:not([data-exiting])');
     const statusLine = () => page.locator('.fx-status').innerText();
 
     await open(page, 'denied');
@@ -515,30 +521,30 @@ async function errors(browser, layout, name) {
     await ready(page);
 
     // A result is a toast that names the item and stays after the folder is listed again.
-    await row(page, 'photo.png').locator('.fx-row-menu').click();
+    await pressAtRest(page, row(page, 'photo.png').locator('.fx-row-menu'));
     await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
     await page.locator('.fx-dialog[open] input[name="value"]').fill('picture.png');
     await page.locator('.fx-dialog[open]').getByRole('button', { name: 'Rename', exact: true }).click();
     await row(page, 'picture.png').waitFor();
     await ready(page);
     assert.equal(await toast.getAttribute('role'), 'status');
-    assert.equal(await toast.locator('.toast-message').innerText(), 'Renamed photo.png to picture.png.');
+    assert.equal(await toast.locator('.kit-toast-message').innerText(), 'Renamed photo.png to picture.png.');
     assert.equal(await statusLine(), '', 'the status line keeps to counts');
 
     // A refusal names the item and gives the device's reason, in full.
-    await row(page, 'denied').locator('.fx-row-menu').click();
+    await pressAtRest(page, row(page, 'denied').locator('.fx-row-menu'));
     await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
     await page.locator('.fx-dialog[open] input[name="value"]').fill('allowed');
     await page.locator('.fx-dialog[open]').getByRole('button', { name: 'Rename', exact: true }).click();
-    const failure = page.locator('.app-toast[role="alert"]:not([data-exiting])');
+    const failure = page.locator('.kit-toast[role="alert"]:not([data-exiting])');
     await failure.waitFor();
     await ready(page);
     await settleMotion(page);
     assert.equal(
-        await failure.locator('.toast-message').innerText(),
+        await failure.locator('.kit-toast-message').innerText(),
         'Could not rename “denied”: Operation not permitted by fixture',
     );
-    const message = await failure.locator('.toast-message').evaluate((el) => ({
+    const message = await failure.locator('.kit-toast-message').evaluate((el) => ({
         cut: el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1,
         left: el.getBoundingClientRect().left,
         right: el.getBoundingClientRect().right,
@@ -678,7 +684,7 @@ async function phoneSelection(browser, layout, name, scheme) {
     await page.screenshot({ path: path.join(OUT, `flows-selection-bar-${name}.png`) });
 
     // A ⋮ on a row that is not selected acts on that row and leaves the selection alone.
-    await row(page, 'archive').locator('.fx-row-menu').click();
+    await pressAtRest(page, row(page, 'archive').locator('.fx-row-menu'));
     await page.locator('.fx-menu').waitFor();
     assert.equal(await page.locator('.fx-row.fx-menu-for').getAttribute('data-name'), 'archive');
     assert.deepEqual(await selected(), ['notes.txt', 'photo.png'], 'the menu keeps the selection');
@@ -717,7 +723,7 @@ async function phoneSelection(browser, layout, name, scheme) {
     await tap('archive');
     assert.equal((await selected()).includes('archive'), false, 'after Select all a tap toggles, it does not open');
     await bar.getByRole('button', { name: 'Copy selected items', exact: true }).click();
-    await page.locator('.app-toast .toast-message').filter({ hasText: 'ready to paste.' }).waitFor();
+    await page.locator('.kit-toast .kit-toast-message').filter({ hasText: 'ready to paste.' }).waitFor();
     await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
     await page.getByRole('button', { name: 'Actions', exact: true }).click();
     await page.getByRole('menuitemcheckbox', { name: 'Select items', exact: true }).click();
@@ -765,7 +771,7 @@ async function uploads(browser, layout, name, scheme) {
     const rows = page.locator('.file-listing-upload-progress');
     const rowFor = (file) => rows.filter({ has: page.locator('.fx-upload-name', { hasText: file }) });
     const summary = page.locator('.fx-transfer-total');
-    const toastText = page.locator('.app-toast:not([data-exiting]) .toast-message');
+    const toastText = page.locator('.kit-toast:not([data-exiting]) .kit-toast-message');
 
     traffic.holdAppends = true;
     const size = 1024 * 1024;

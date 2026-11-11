@@ -327,9 +327,17 @@ const row = (page, name) => page.locator(`.fx-row[data-name="${name}"]`);
 // Ctrl+click toggles one row's selection on every pointer type, so a single helper covers all
 // five layouts. Touch-only selection (Select mode plus checkboxes) is exercised separately.
 // The toolbar exists on a desktop; a phone reaches the same commands through the Actions menu.
+// The command bar scrolls sideways on a short screen and the list scrolls, and a menu closes
+// when its button is scrolled away. The owner sees a button before pressing it, so the page is
+// at rest by then: the button is brought into view, and the scroll is over, before the press.
+async function pressAtRest(page, button) {
+    await button.evaluate((element) => element.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await button.click();
+}
 async function command(page, button, item = button) {
     const toolbar = page.locator('.fx-commands').getByRole('button', { name: button, exact: true });
-    if (await toolbar.isVisible()) return toolbar.click();
+    if (await toolbar.isVisible()) return pressAtRest(page, toolbar);
     await page.getByRole('button', { name: 'Actions', exact: true }).click();
     await page.locator('.fx-menu').waitFor();
     await page.locator('.fx-menu').getByRole(item === 'Select items' ? 'menuitemcheckbox' : 'menuitem', { name: item, exact: true }).click();
@@ -689,7 +697,7 @@ async function main() {
             );
             assert.equal(await row(page, 'clip.mp4').locator('.entry-size').innerText(), '64 B');
             await select(page, 'film.mkv');
-            await row(page, 'film.mkv').locator('.fx-row-menu').click();
+            await pressAtRest(page, row(page, 'film.mkv').locator('.fx-row-menu'));
             await page.getByRole('menuitem', { name: 'Properties', exact: true }).click();
             assert(
                 (await page.locator('.fx-properties').innerText()).includes((5 * 1024 ** 3 + 7).toLocaleString('en-US')),
@@ -847,7 +855,7 @@ async function main() {
             await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
 
             // Properties reads the stat data already in the listing.
-            await page.locator('.fx-row[data-name="notes.txt"] .fx-row-menu').click();
+            await pressAtRest(page, page.locator('.fx-row[data-name="notes.txt"] .fx-row-menu'));
             await page.getByRole('menuitem', { name: 'Properties', exact: true }).click();
             const properties = await page.locator('.fx-properties').innerText();
             assert(properties.includes('notes.txt') && properties.includes(ROOT), 'properties name the exact path');
@@ -910,8 +918,10 @@ async function main() {
             await pick(['notes.txt', 'Replacement']);
             const question = await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
             await settleMotion(page);
-            const questionBox = await question.boundingBox();
+            // The dialog element covers the window. Its panel is the sheet that is seen.
+            const questionBox = await question.locator('.kit-sheet-panel').boundingBox();
             assert(questionBox.x >= 0 && questionBox.x + questionBox.width <= width, 'the dialog fits the screen');
+            assert(questionBox.y >= 0 && questionBox.y + questionBox.height <= height + 0.5, 'and its height');
             for (const button of await question.locator('.fx-dialog-actions button').all()) {
                 const box = await button.boundingBox();
                 assert(box.height >= 44, `conflict answer height ${box.height}`);
@@ -1010,7 +1020,7 @@ async function main() {
             await row(page, 'late.txt').waitFor();
             await settled(page);
             assert.equal(
-                await page.locator('.app-toast[role="alert"] .toast-message').innerText(),
+                await page.locator('.kit-toast[role="alert"] .kit-toast-message').innerText(),
                 'late.txt: An item with this name already exists.',
             );
             await pick(['late.txt', 'Browser copy']);
@@ -1022,7 +1032,7 @@ async function main() {
             await uploaded('on-time.txt');
             await settled(page);
             assert.equal(
-                await page.locator('.app-toast[role="alert"] .toast-message').innerText(),
+                await page.locator('.kit-toast[role="alert"] .kit-toast-message').innerText(),
                 'later.txt: An item with this name already exists.',
                 'the failure is still shown after the folder is listed again',
             );
@@ -1076,7 +1086,7 @@ async function main() {
             await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
             await page.goBack();
             await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
-            await page.locator('.app-toast .toast-message').filter({ hasText: 'Skipped notes.txt.' }).waitFor();
+            await page.locator('.kit-toast .kit-toast-message').filter({ hasText: 'Skipped notes.txt.' }).waitFor();
             assert.equal(await page.evaluate(() => location.hash), address(ROOT), 'Back closed the question, not the folder');
             assert.equal(traffic.starts.length, startsBeforeBack, 'nothing was sent');
             assert.equal(files.get(ROOT + '/notes.txt').toString(), notesBeforeBack);
@@ -1132,4 +1142,4 @@ if (require.main === module)
         process.exitCode = 1;
     });
 
-module.exports = { fixture, DEVICE, SHARED };
+module.exports = { fixture, pressAtRest, DEVICE, SHARED };
