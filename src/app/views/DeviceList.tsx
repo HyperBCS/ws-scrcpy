@@ -8,6 +8,9 @@ import { DeviceCard } from './DeviceCard';
 import { DeviceIcon } from '../ui/DeviceIcon';
 import { TrackerStatusNotice } from '../ui/TrackerStatusNotice';
 import { NotificationsLink } from '../ui/NotificationsLink';
+import { AppBar, AppBarStatus } from '../ui/AppBar';
+import { IconButton } from '../ui/IconButton';
+import { InlineStatus } from '../ui/InlineStatus';
 import '../../style/views/DeviceList.css';
 
 interface HostGroup {
@@ -58,78 +61,59 @@ export function DeviceList() {
     const disconnected = hostsStatus.value === 'disconnected' || hostsStatus.value === 'error';
 
     return (
-        <main id="devices" ref={scroller} onScroll={(event) => rememberListScroll(event.currentTarget.scrollTop)}>
-            <div class="devices-content">
-                <header class="device-list-header">
-                    <h1>{LIST_PAGE_NAME}</h1>
-                    <div class="device-list-summary" role="status">
-                        <span
-                            class={`device-list-summary-dot ${attention ? 'attention' : available ? 'available' : ''}`}
-                        />
-                        {listSummary(entries.length, available, attention)}
-                    </div>
-                    <div class="device-list-actions">
-                        <NotificationsLink />
-                        {/* An installed app has no browser reload button, and pull-to-refresh is off. */}
-                        <button
-                            type="button"
-                            class="device-list-reload"
-                            title="Reload"
-                            aria-label="Reload"
-                            onClick={() => location.reload()}
-                        >
-                            <svg
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="1.8"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                aria-hidden="true"
-                            >
-                                <path d="M20 11a8 8 0 1 0-2.3 6.3" />
-                                <path d="M20 4v7h-7" />
-                            </svg>
-                        </button>
-                    </div>
-                </header>
-                <TrackerStatusNotice />
+        <div class="devices-page">
+            <AppBar
+                kit
+                root
+                title={LIST_PAGE_NAME}
+                status={<AppBarStatus kit>{listSummary(entries.length, available, attention)}</AppBarStatus>}
+            >
+                <NotificationsLink />
+                {/* An installed app has no browser reload button, and pull-to-refresh is off. */}
+                <IconButton icon="refresh" label="Reload" onClick={() => location.reload()} />
+            </AppBar>
+            <main id="devices" ref={scroller} onScroll={(event) => rememberListScroll(event.currentTarget.scrollTop)}>
+                <div class="devices-content">
+                    <TrackerStatusNotice />
 
-                {!entries.length ? (
-                    <section class="device-list-empty" role="status">
-                        <DeviceIcon className="device-empty-icon" />
-                        <h2>{disconnected ? 'Connection lost' : 'No devices connected'}</h2>
-                        <p>
-                            {disconnected
-                                ? 'Reconnecting…'
-                                : 'Connect a device by USB or wireless debugging, then unlock it.'}
-                        </p>
-                        {hostsError.value && disconnected && <p class="device-empty-error">{hostsError.value}</p>}
-                    </section>
-                ) : (
-                    groups.map((group) => (
-                        <section
-                            key={group.key}
-                            class="tracker-block"
-                            aria-label={groups.length > 1 ? group.name : 'Connected devices'}
-                        >
-                            {groups.length > 1 && (
-                                <div class="tracker-name">
-                                    <span>{group.name}</span>
-                                    <span>
-                                        {group.entries.length} device{group.entries.length === 1 ? '' : 's'}
-                                    </span>
-                                </div>
+                    {!entries.length ? (
+                        <section class="device-list-empty" role="status">
+                            <DeviceIcon />
+                            <h2>{disconnected ? 'Connection lost' : 'No devices connected'}</h2>
+                            <p>
+                                {disconnected
+                                    ? 'Reconnecting…'
+                                    : 'Connect a device by USB or wireless debugging, then unlock it.'}
+                            </p>
+                            {hostsError.value && disconnected && (
+                                <InlineStatus tone="error">{hostsError.value}</InlineStatus>
                             )}
-                            <div class="device-list">
-                                {group.entries.map((entry) => (
-                                    <DeviceCard key={entry.key} entry={entry} />
-                                ))}
-                            </div>
                         </section>
-                    ))
-                )}
-            </div>
-        </main>
+                    ) : (
+                        groups.map((group) => (
+                            <section
+                                key={group.key}
+                                class="tracker-block"
+                                aria-label={groups.length > 1 ? group.name : 'Connected devices'}
+                            >
+                                {groups.length > 1 && (
+                                    <div class="tracker-name">
+                                        <span>{group.name}</span>
+                                        <span>
+                                            {group.entries.length} device{group.entries.length === 1 ? '' : 's'}
+                                        </span>
+                                    </div>
+                                )}
+                                <div class="device-list">
+                                    {group.entries.map((entry) => (
+                                        <DeviceCard key={entry.key} entry={entry} />
+                                    ))}
+                                </div>
+                            </section>
+                        ))
+                    )}
+                </div>
+            </main>
+        </div>
     );
 }

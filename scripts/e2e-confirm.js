@@ -95,7 +95,7 @@ async function start(browser, { mobile = true, dark = false, device = iphone(), 
 const prompt = (scope, name) => scope.getByRole('alertdialog', { name, exact: true });
 // A trigger can share its name with the confirm button it arms ("Reboot"); this is the trigger.
 const trigger = (scope, name) =>
-    scope.getByRole('button', { name, exact: true }).and(scope.page().locator(':not(.confirm-prompt-button)'));
+    scope.getByRole('button', { name, exact: true }).and(scope.page().locator(':not(.confirm-prompt-button, .kit-confirm-go, .kit-confirm-cancel)'));
 const center = (box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
 const overlaps = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
@@ -116,7 +116,7 @@ async function doubleTap(test, locator) {
 /** The confirm button ignores presses until the guard has passed; Playwright waits for that. */
 async function confirmAfterGuard(dialog, name) {
     const button = dialog.getByRole('button', { name, exact: true });
-    await dialog.locator('.confirm-prompt-button:not([aria-disabled])').first().waitFor();
+    await dialog.locator('.confirm-prompt-button:not([aria-disabled]), .kit-confirm-go:not([aria-disabled])').first().waitFor();
     await button.click();
 }
 
@@ -163,8 +163,8 @@ async function openActions(test) {
 async function shot(page, name) {
     fs.mkdirSync(OUT, { recursive: true });
     // An armed prompt is captured once it has been scrolled into view and its guard has passed.
-    if (await page.locator('.confirm-prompt').count()) {
-        await page.locator('.confirm-prompt-button.danger:not([aria-disabled])').waitFor({ timeout: 2000 }).catch(() => undefined);
+    if (await page.locator('.confirm-prompt, .kit-confirm').count()) {
+        await page.locator('.confirm-prompt-button.danger:not([aria-disabled]), .kit-confirm-danger .kit-confirm-go:not([aria-disabled])').waitFor({ timeout: 2000 }).catch(() => undefined);
     }
     await settleMotion(page);
     await page.screenshot({ path: path.join(OUT, `${name}.png`), animations: 'disabled' });

@@ -439,7 +439,7 @@ async function switchReplaces(browser, viewport) {
     const label = `${viewport.name} switch`;
     const pick = async (name) => {
         await page.getByRole('button', { name: 'Switch', exact: true }).click();
-        const sheet = page.locator('.bottom-sheet-root.open');
+        const sheet = page.locator('dialog.kit-sheet[open]');
         await sheet.waitFor();
         await settleMotion(page);
         await sheet.getByRole('button', { name }).click();

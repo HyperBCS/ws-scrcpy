@@ -6,6 +6,7 @@ import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
 import { hasRunningStreamService } from './streamService';
 import { unlockCardLine } from './unlockSchedule';
+import type { ChipTone } from '../ui/Chip';
 
 // Single status vocabulary for both the device list and the stream view, replacing the old
 // binary red/green dot. `not-active` used to just mean "can't touch this", with no indication of
@@ -18,24 +19,20 @@ export type DeviceStatus =
 export interface DeviceStatusInfo {
     status: DeviceStatus;
     label: string;
-    // CSS custom property name (see tokens.css) rather than a literal colour, so light/dark
-    // theming stays in one place.
-    color: string;
-    // A plain text glyph instead of another SVG asset -- keeps the bundle small and inherits
-    // `color` via `currentColor` for free.
-    icon: string;
+    /** The tone of the chip that shows the label (`ui/Chip.tsx`). */
+    tone: ChipTone;
 }
 
 const STATUS_INFO: Record<DeviceStatus, Omit<DeviceStatusInfo, 'status'>> = {
-    streaming: { label: 'Streaming', color: 'var(--status-streaming-color)', icon: '▶' },
-    ready: { label: 'Ready', color: 'var(--status-ready-color)', icon: '●' },
-    locked: { label: 'Locked', color: 'var(--status-asleep-color)', icon: '▣' },
-    asleep: { label: 'Asleep', color: 'var(--status-asleep-color)', icon: '☾' },
-    starting: { label: 'Starting…', color: 'var(--status-starting-color)', icon: '◐' },
-    offline: { label: 'Offline', color: 'var(--status-offline-color)', icon: '○' },
-    unauthorized: { label: 'Unauthorized', color: 'var(--status-unauthorized-color)', icon: '⚠' },
-    attention: { label: 'Needs attention', color: 'var(--status-starting-color)', icon: '!' },
-    error: { label: 'Error', color: 'var(--status-unauthorized-color)', icon: '✕' },
+    streaming: { label: 'Streaming', tone: 'info' },
+    ready: { label: 'Ready', tone: 'success' },
+    locked: { label: 'Locked', tone: 'info' },
+    asleep: { label: 'Asleep', tone: 'info' },
+    starting: { label: 'Starting…', tone: 'warning' },
+    offline: { label: 'Offline', tone: 'neutral' },
+    unauthorized: { label: 'Unauthorized', tone: 'error' },
+    attention: { label: 'Needs attention', tone: 'warning' },
+    error: { label: 'Error', tone: 'error' },
 };
 
 // Optimistic "starting" flag: set the instant the user hits "Start server" (see DeviceCard),

@@ -139,13 +139,17 @@ const sheetWays = {
     'the backdrop': (test) => (test.mobile ? test.page.touchscreen.tap(8, 8) : test.page.mouse.click(8, 8)),
 };
 const bottomSheet = (name, title, open) => ({ name, open, shown: (page) => sheet(page).filter({ has: page.locator('.bottom-sheet-title', { hasText: title }) }), ways: sheetWays });
+// The same for a sheet on the kit's Sheet, a native dialog.
+const kitSheet = (page) => page.locator('dialog.kit-sheet[open]');
+const kitSheetWays = { ...sheetWays, 'the close button': (test) => press(test, kitSheet(test.page).locator('.kit-sheet-close')) };
+const dialogSheet = (name, title, open) => ({ name, open, shown: (page) => kitSheet(page).filter({ has: page.locator('.kit-sheet-title', { hasText: title }) }), ways: kitSheetWays });
 
 function streamOverlays(test, platform) {
     const { page } = test;
     const overlays = [
         bottomSheet('Actions', /^Actions$/, () => control(test, 'Actions')),
         bottomSheet('Settings', platform === 'android' ? /^Stream settings$/ : /^Scheduled unlock$/, () => control(test, 'Settings')),
-        bottomSheet('Switch', /Switch/, () => press(test, page.locator('.stream-header-switch'))),
+        dialogSheet('Switch', /Switch/, () => press(test, page.locator('.stream-header-switch'))),
         {
             name: 'Type text', open: () => control(test, 'Type text'), shown: () => page.locator('.live-text-overlay'),
             ways: {
@@ -313,7 +317,7 @@ async function streamPage(browser, viewport, platform) {
 
         // A reload with a sheet open: the page without the sheet, and Back leaves it in one step.
         await press(test, page.locator('.stream-header-switch'));
-        await sheet(page).waitFor();
+        await kitSheet(page).waitFor();
         await settleMotion(page);
         await untilAt(page, home.index + 1, 1);
         await page.reload();
@@ -321,7 +325,7 @@ async function streamPage(browser, viewport, platform) {
         await connected(page);
         await untilAt(page, home.index, 0);
         await page.waitForTimeout(300);
-        assert.equal(await sheet(page).count(), 0, `${label}: no sheet after a reload`);
+        assert.equal(await kitSheet(page).count(), 0, `${label}: no sheet after a reload`);
         assert.deepEqual(test.streams, [udid, udid, udid, udid], `${label}: the reloaded page started one stream`);
         await page.goBack();
         await page.locator('#devices').waitFor();
@@ -389,7 +393,7 @@ async function listPage(browser, viewport) {
     try {
         const overlays = [
             bottomSheet('Settings of an Android phone', /^Stream settings$/, () => press(test, card(page, `android:${PIXEL_2}`).locator('button.stream-settings-button'))),
-            bottomSheet('Settings of an iPhone', /^Scheduled unlock$/, () => press(test, card(page, `ios:${IPHONE}`).locator('button[title="Scheduled unlock"]'))),
+            bottomSheet('Settings of an iPhone', /^Scheduled unlock$/, () => press(test, card(page, `ios:${IPHONE}`).locator('button.stream-settings-button'))),
         ];
         const home = await backClosesEach(test, label, overlays, page.locator('#devices'));
         assert.equal(home.index, 0);
@@ -420,7 +424,7 @@ async function notificationsPage(browser, viewport) {
     const { page } = test;
     const label = `${viewport.name} Notifications`;
     try {
-        await page.locator('.device-list-header .notifications-link').click();
+        await page.locator('header.kit-bar-root .notifications-link').click();
         await page.locator('.notifications-page').waitFor();
         await page.locator('article.notification-history-item').first().waitFor();
         const dialog = () => page.locator('dialog.notification-action-sheet');
@@ -488,7 +492,7 @@ async function notificationsPage(browser, viewport) {
         await page.locator('#devices').waitFor();
 
         // Back from Notifications with nothing open is the list, in one step.
-        await page.locator('.device-list-header .notifications-link').click();
+        await page.locator('header.kit-bar-root .notifications-link').click();
         await page.locator('.notifications-page').waitFor();
         await overlays[1].open();
         await dialog().waitFor();

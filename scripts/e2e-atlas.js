@@ -191,8 +191,9 @@ async function start(browser, viewport, theme) {
 }
 
 const card = (page, key) => page.locator(`article.device[data-device-key="${key}"]`);
-const sheet = (page) => page.locator('.bottom-sheet-root.open');
-const sheetTitled = (page, title) => sheet(page).filter({ has: page.locator('.bottom-sheet-title', { hasText: title }) });
+// A sheet on the older container or on the kit's dialog.
+const sheet = (page) => page.locator('.bottom-sheet-root.open, dialog.kit-sheet[open]');
+const sheetTitled = (page, title) => sheet(page).filter({ has: page.locator('.bottom-sheet-title, .kit-sheet-title', { hasText: title }) });
 const tab = (page, name) => page.locator('.tool-tabs').getByRole('button', { name, exact: true });
 const connected = (page) => page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
 const screenOf = (udid) => `#!action=device&udid=${udid}&view=screen`;
@@ -225,9 +226,9 @@ async function dismiss(test, shown) {
  * holds its action back for a moment after it opens; the picture is taken once it is ready.
  */
 async function shootPrompt(test, container, name) {
-    const prompt = container.locator('.confirm-prompt');
+    const prompt = container.locator('.confirm-prompt, .kit-confirm');
     await prompt.waitFor();
-    await prompt.locator('.confirm-prompt-button:not([aria-disabled])').nth(1).waitFor();
+    await prompt.locator('.confirm-prompt-button:not([aria-disabled]), .kit-confirm-actions > .kit-button:not([aria-disabled])').nth(1).waitFor();
     await shoot(test, name);
     await test.page.keyboard.press('Escape');
     await prompt.waitFor({ state: 'detached' });
@@ -298,7 +299,7 @@ async function listStates(test) {
     await card(page, `android:${PIXEL}`).waitFor();
     await card(page, `ios:${IPHONE}`).waitFor();
     await card(page, `ios:${IPHONE_2}`).locator('.device-problem .device-unlock-schedule.problem').waitFor();
-    await card(page, `android:${PIXEL_3}`).locator('.device-asleep-banner .wake-button').waitFor();
+    await card(page, `android:${PIXEL_3}`).locator('.device-asleep-banner .kit-button').waitFor();
     await shoot(test, 'list');
 
     await press(test, card(page, `android:${PIXEL_2}`).locator('.device-details > summary'));
@@ -316,7 +317,7 @@ async function listStates(test) {
     await shoot(test, 'list-android-settings');
     await dismiss(test, sheet(page));
 
-    await press(test, card(page, `ios:${IPHONE}`).locator('button[title="Scheduled unlock"]'));
+    await press(test, card(page, `ios:${IPHONE}`).locator('button.stream-settings-button'));
     await sheetTitled(page, /^Scheduled unlock$/).waitFor();
     await shoot(test, 'list-iphone-settings');
     await dismiss(test, sheet(page));

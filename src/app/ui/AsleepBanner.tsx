@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { wakeDevice, WakeTracker } from '../googDevice/client/wake';
-import '../../style/ui/AsleepBanner.css';
+import { Banner } from './Banner';
+import { InlineStatus } from './InlineStatus';
 
 type WakeState = 'idle' | 'sending' | 'sent' | 'failed';
 
 /**
- * The device card's note that an Android screen is asleep, with its Wake button and the result
- * of pressing it. The card removes the banner once the device reports that its screen is on.
+ * The card's note that an Android screen is asleep: a banner with the Wake button, and the
+ * result of pressing it on a line under the banner. The card removes both once the phone
+ * reports that its screen is on.
  */
 export function AsleepBanner({ tracker, udid }: { tracker: WakeTracker; udid: string }) {
     const [state, setState] = useState<WakeState>('idle');
@@ -34,19 +36,14 @@ export function AsleepBanner({ tracker, udid }: { tracker: WakeTracker; udid: st
             },
         );
     };
+    const sending = state === 'sending';
     return (
-        <div class={`device-asleep-banner ${state === 'failed' ? 'wake-failed' : ''}`} role="status">
-            <span aria-hidden="true">☾</span>
-            <span class="device-asleep-text">
-                {state === 'sent'
-                    ? 'Wake sent. Waiting for the screen.'
-                    : state === 'failed'
-                      ? `Could not wake the screen. ${failure}`
-                      : 'Screen is asleep.'}
-            </span>
-            <button type="button" class="wake-button" disabled={state === 'sending'} onClick={onWake}>
-                {state === 'sending' ? 'Waking…' : 'Wake'}
-            </button>
+        <div class="device-asleep-banner">
+            <Banner tone="info" action={{ label: sending ? 'Waking…' : 'Wake', run: onWake, disabled: sending }}>
+                Screen is asleep.
+            </Banner>
+            {state === 'sent' && <InlineStatus>Wake sent. Waiting for the screen.</InlineStatus>}
+            {state === 'failed' && <InlineStatus tone="error">Could not wake the screen. {failure}</InlineStatus>}
         </div>
     );
 }

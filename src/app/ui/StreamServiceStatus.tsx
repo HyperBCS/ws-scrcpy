@@ -11,7 +11,11 @@ interface StreamServiceStatusProps {
     session?: 'ready' | 'starting' | 'stopped' | 'error';
 }
 
-/** Process state is separate from the browser's connection or the device's lock/power state. */
+/**
+ * One line that says whether the stream service runs, on a card and under the name in the bar
+ * of a phone's page. Process state is separate from the browser's connection and from the
+ * phone's lock and power state. The words say the state; the colour of the state word only helps.
+ */
 export function StreamServiceStatus({ descriptor, deviceKey, className = '', session }: StreamServiceStatusProps) {
     const info = getStreamServiceStatus(descriptor, session === 'starting' || isDeviceStarting(deviceKey));
     useEffect(() => {
@@ -21,15 +25,12 @@ export function StreamServiceStatus({ descriptor, deviceKey, className = '', ses
     }, [deviceKey, info.state]);
     return (
         <span
-            class={`stream-service-status ${className}`}
+            class={`stream-service-status ${className}`.trim()}
             data-stream-service={info.state}
             title={info.description}
             role="status"
         >
-            <span class="stream-service-status-dot" aria-hidden="true" />
-            <span>
-                Stream service: <strong>{info.label}</strong>
-            </span>
+            Stream service: <strong>{info.label}</strong>
         </span>
     );
 }

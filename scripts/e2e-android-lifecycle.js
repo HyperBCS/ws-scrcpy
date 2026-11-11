@@ -100,7 +100,7 @@ async function fits(page, locator, label) {
 async function adbUnavailable(browser, layout, label) {
     const { context, page, state } = await start(browser, layout);
     await page.goto(BASE);
-    const notice = page.locator('.tracker-status-notice');
+    const notice = page.locator('.devices-content > .kit-banner');
     await notice.waitFor();
     assert.match(await notice.textContent(), /Android devices are unavailable\. The server cannot reach adb/);
     assert.equal(await notice.getAttribute('role'), 'status');
@@ -155,7 +155,8 @@ async function wakeFromCard(browser, layout, label) {
     await banner.getByText('Could not wake the screen. The device is not connected.').waitFor();
     await fits(page, banner, `${label} wake failed`);
     const button = await banner.getByRole('button', { name: 'Wake', exact: true }).boundingBox();
-    assert(button.height >= 44 && button.width >= 44, 'the Wake button keeps a touch-sized target');
+    // The kit's compact button: 44px under a finger, 32px under a mouse.
+    assert(button.height >= (layout.mobile ? 44 : 32) && button.width >= 44, 'the Wake button keeps a touch-sized target');
     await card.screenshot({ path: path.join(OUT, `${label}-wake-failed.png`) });
 
     // The screen came on: the banner goes with the asleep state.

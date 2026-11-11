@@ -221,10 +221,10 @@ async function walk(browser, viewport) {
         assert.deepEqual(test.streams, [PIXEL], `${label}: one stream for the open`);
         // A sheet on the screen: Back closes it, and the stream stays.
         await press(test, page.locator('.stream-header-switch'));
-        await page.locator('.bottom-sheet-root.open').waitFor();
+        await page.locator('dialog.kit-sheet[open]').waitFor();
         await untilAt(page, list.index + 2, 1);
         await page.goBack();
-        await page.locator('.bottom-sheet-root.open').waitFor({ state: 'hidden' });
+        await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'hidden' });
         await untilAt(page, list.index + 1, 0);
         await nothingOver(page, `${label} screen`);
         assert.deepEqual(test.streamsClosed, [], `${label}: Back with the switcher open keeps the stream`);
@@ -275,7 +275,7 @@ async function walk(browser, viewport) {
         await quiet(page);
         assert.deepEqual(test.streams, [PIXEL, PIXEL], `${label}: Screen opens one stream`);
         await press(test, page.locator('.stream-header-switch'));
-        const sheet = page.locator('.bottom-sheet-root.open');
+        const sheet = page.locator('dialog.kit-sheet[open]');
         await sheet.waitFor();
         await settleMotion(page);
         await press(test, sheet.getByRole('button', { name: /Pixel 8/ }));
@@ -380,7 +380,7 @@ async function switcherOverListing(browser, viewport) {
         await until(() => test.held.length === 1, 'Files asks for the folder');
         const opened = await at(page);
         await press(test, page.locator('.stream-header-switch'));
-        const sheet = page.locator('.bottom-sheet-root.open');
+        const sheet = page.locator('dialog.kit-sheet[open]');
         await sheet.waitFor();
         await untilAt(page, opened.index + 1, 1);
         test.holdStat = false;
