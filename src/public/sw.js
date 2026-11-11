@@ -77,22 +77,24 @@ self.addEventListener('notificationclick', event => {
     const scope = new URL(self.registration.scope);
     if (target.origin !== self.location.origin || !target.pathname.startsWith(scope.pathname)) return;
     event.waitUntil((async () => {
-        const windows = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true })).filter(client => {
+        // Only a window this worker controls can be navigated. Another one (after a hard reload,
+        // for example) is passed over and the notification opens in a window of its own.
+        const windows = (await self.clients.matchAll({ type: 'window' })).filter(client => {
             try { const url = new URL(client.url); return url.origin === target.origin && url.pathname.startsWith(scope.pathname); } catch (_) { return false; }
         });
         // A window showing a stream, a shell or a file list is left alone: navigating it ends that session.
         const existing = windows.find(client => windowRoute(client).get('action') === 'notifications')
             || windows.find(client => !windowRoute(client).get('udid'));
         if (existing) {
+            // Chromium lets one tap either focus a window or open one, so the window is chosen
+            // first. Focus comes before navigate, while the tap still counts as a user gesture.
+            try { await existing.focus(); } catch (_) { /* Navigating still shows the notification. */ }
             try {
-                // Focus first, while the tap still counts as a user gesture.
-                await existing.focus();
-                // Rejects for a window this worker does not control, for example after a hard reload.
                 await existing.navigate(target.href);
                 return;
-            } catch (_) { /* Open a window instead. */ }
+            } catch (_) { /* Try a new window. */ }
         }
-        await self.clients.openWindow(target.href);
+        try { await self.clients.openWindow(target.href); } catch (_) { /* The browser refused a window. */ }
         // The opened page marks only this notification read.
     })());
 });

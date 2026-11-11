@@ -24,15 +24,26 @@ function worker(options = {}) {
     const order = [];
     const subscribed = [];
     let closed = 0;
+    // Chromium gives a notification click one window interaction: focus() and openWindow() each
+    // use it up, and the second of them is refused.
+    let interaction = false;
+    const interact = (what) => {
+        if (!interaction) throw new DOMException(`Not allowed to ${what}.`, 'InvalidAccessError');
+        interaction = false;
+    };
+    // `uncontrolled`: true for every window, or the URLs of the windows this worker does not control.
+    const controlled = (url) => !(options.uncontrolled === true || options.uncontrolled?.includes(url));
     const windows = (options.windows || []).map((url) => ({
         url,
         navigate: async (target) => {
             order.push('navigate');
-            if (options.uncontrolled) throw new TypeError("This service worker is not the client's active service worker.");
+            if (!controlled(url) || options.navigateFailure)
+                throw new TypeError("This service worker is not the client's active service worker.");
             navigated.push({ window: url, target });
         },
         focus: async () => {
             order.push('focus');
+            interact('focus a window');
             focused.push(url);
         },
         postMessage: (message) => messages.push(message),
@@ -72,8 +83,13 @@ function worker(options = {}) {
         },
         clients: {
             claim: async () => undefined,
-            matchAll: async () => windows,
-            openWindow: async (target) => opened.push(target),
+            matchAll: async ({ includeUncontrolled = false } = {}) =>
+                windows.filter((client) => includeUncontrolled || controlled(client.url)),
+            openWindow: async (target) => {
+                order.push('open');
+                interact('open a window');
+                opened.push(target);
+            },
         },
     };
     vm.runInNewContext(source, {
@@ -115,10 +131,12 @@ function worker(options = {}) {
             return closed;
         },
         push: (payload) => dispatch('push', { data: payload === undefined ? null : { json: () => payload } }),
-        click: (url) =>
-            dispatch('notificationclick', {
+        click: (url) => {
+            interaction = true;
+            return dispatch('notificationclick', {
                 notification: { data: { url }, close: () => closed++ },
-            }),
+            });
+        },
     };
 }
 
@@ -288,11 +306,27 @@ test('notification clicks prefer the window already on Notifications and leave d
 });
 
 test('a window this worker does not control falls back to a new window', async () => {
-    const context = worker({ windows: ['https://example.test/app/#!action=notifications'], uncontrolled: true });
+    const inbox = 'https://example.test/app/#!action=notifications';
     const target = 'https://example.test/app/#!action=notifications&notification=history-key';
+    const context = worker({ windows: [inbox], uncontrolled: true });
     await context.click(target);
     assert.deepEqual(context.navigated, []);
+    // Focusing it first would use up the one window interaction the tap allows.
+    assert.deepEqual(context.order, ['open'], 'the window it cannot navigate is not focused first');
     assert.deepEqual(context.opened, [target], 'the tap never does nothing');
+
+    // A controlled window is still preferred over one the worker cannot navigate.
+    const list = 'https://example.test/app/';
+    const mixed = worker({ windows: [inbox, list], uncontrolled: [inbox] });
+    await mixed.click(target);
+    assert.deepEqual(mixed.navigated, [{ window: list, target }]);
+    assert.deepEqual(mixed.opened, []);
+
+    // Navigation can still fail after focus. A new window is tried; a refusal is not an error.
+    const failing = worker({ windows: [list], navigateFailure: true });
+    await failing.click(target);
+    assert.deepEqual(failing.order, ['focus', 'navigate', 'open']);
+    assert.deepEqual(failing.focused, [list], 'the app window is at least brought forward');
 });
 
 test('windows of another app on the same origin are not reused', async () => {
