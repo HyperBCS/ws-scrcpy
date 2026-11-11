@@ -704,7 +704,8 @@ export function NotificationsView() {
                                         {privateUrl ? (
                                             <>
                                                 <p>
-                                                    Open the secure app with Tailscale connected to receive notifications here.
+                                                    Open the secure app with Tailscale connected to receive
+                                                    notifications here.
                                                 </p>
                                                 <a class="ui-button" href={privateUrl}>
                                                     Open private app

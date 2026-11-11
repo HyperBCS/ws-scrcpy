@@ -742,7 +742,7 @@ async function streamSheetsFlow(browser) {
             assert.equal(await actionsDialog.locator('.sheet-row', { hasText: 'Refresh info' }).getByRole('button').isEnabled(), true);
 
             // With the tracker back, a command is answered by request id and its text is shown.
-            await page.waitForFunction((udid) => !!document.querySelector('.stream-header-device strong')?.textContent.includes('iPhone fixture'), UDID, { timeout: 10000 });
+            await page.waitForFunction(() => !!document.querySelector('.stream-header-device strong')?.textContent.includes('iPhone fixture'), undefined, { timeout: 10000 });
             handlers.onCommand = (command) => (command.type === 'refresh_device' ? { result: null } : undefined);
             const refresh = actionsDialog.locator('.sheet-row', { hasText: 'Refresh info' }).getByRole('button');
             await page.waitForTimeout(2500);
