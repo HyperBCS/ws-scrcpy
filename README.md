@@ -14,6 +14,10 @@ Server:
 * Node.js v10+
 * node-gyp ([installation](https://github.com/nodejs/node-gyp#installation))
 * `adb` executable must be available in the PATH environment variable
+* A running adb server on the host (`adb start-server`). The server never starts
+  one: in a container it would have no USB access and would hold port 5037, so
+  the host's own adb server could not start. Until one answers, no Android
+  device is listed and the log says the adb server is not running.
 * For [iOS](#ios): Python 3.10+ and `usbmuxd` running on the host
   (`apt install usbmuxd` on Debian/Ubuntu); `pymobiledevice3` talks to it over
   `/var/run/usbmuxd` and fails outright without it.

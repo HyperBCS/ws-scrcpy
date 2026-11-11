@@ -373,3 +373,88 @@ test('an Android device has one route, whatever addresses it reports', async () 
     const flags = JSON.parse(fs.readFileSync(path.join(__dirname, '../webpack/default.build.config.json'), 'utf8'));
     assert.equal('SCRCPY_LISTENS_ON_ALL_INTERFACES' in flags, false, 'the build flag is gone');
 });
+
+// ------------------------------------------------------------------ adb server (C-server-core-4)
+
+/** Speaks enough of the adb host protocol for forwards. Each connection carries one request. */
+async function fakeAdbServer(forwards) {
+    const requests = [];
+    const value = (text) => text.length.toString(16).padStart(4, '0').toUpperCase() + text;
+    const server = net.createServer((socket) => {
+        let buffered = '';
+        socket.on('error', () => undefined);
+        socket.on('data', (chunk) => {
+            buffered += chunk.toString();
+            if (buffered.length < 4 || buffered.length < 4 + parseInt(buffered.slice(0, 4), 16)) return;
+            const request = buffered.slice(4);
+            requests.push(request);
+            if (request.endsWith(':list-forward')) socket.end('OKAY' + value(forwards.join('\n') + '\n'));
+            else if (request.includes(':killforward:localfilesystem:/refused'))
+                socket.end('FAIL' + value('cannot remove listener'));
+            else if (request.includes(':killforward:')) socket.end('OKAYOKAY');
+            else socket.end('FAIL' + value('unsupported in the fixture'));
+        });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    return { requests, port: server.address().port, close: () => new Promise((resolve) => server.close(resolve)) };
+}
+
+/** Points adbkit at `port` and puts a fake `adb` first on PATH that records every time it runs. */
+function adbEnvironment(t, port) {
+    const bin = fs.mkdtempSync(path.join(temporary, 'bin-'));
+    const marker = path.join(bin, 'adb-was-run');
+    fs.writeFileSync(path.join(bin, 'adb'), `#!/bin/sh\necho "$@" >> "${marker}"\n`, { mode: 0o755 });
+    const previous = { PATH: process.env.PATH, ADB_PORT: process.env.ADB_PORT, ADB_HOST: process.env.ADB_HOST };
+    process.env.PATH = `${bin}${path.delimiter}${previous.PATH}`;
+    process.env.ADB_PORT = String(port);
+    process.env.ADB_HOST = '127.0.0.1';
+    t.after(() => {
+        for (const [key, original] of Object.entries(previous)) {
+            if (original === undefined) delete process.env[key];
+            else process.env[key] = original;
+        }
+    });
+    return { adbRuns: () => (fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim().split('\n') : []) };
+}
+
+test('a refused adb connection does not start an adb server', async (t) => {
+    await startServer();
+    const { AdbExtended, NO_ADB_BINARY } = require('../src/server/goog-device/adb');
+    // Nothing listens here, as after a host reboot before the host adb server is up.
+    const { adbRuns } = adbEnvironment(t, await freePort());
+    const client = AdbExtended.createClient();
+    assert.equal(client.options.bin, NO_ADB_BINARY);
+    assert.equal(fs.existsSync(NO_ADB_BINARY), false);
+    await assert.rejects(
+        client.listDevices(),
+        /The adb server at 127\.0\.0\.1:\d+ is not running\. Start it on the host/,
+    );
+    await assert.rejects(client.trackDevices(), /is not running/, 'the tracker gets the same answer and retries later');
+    await pause(200);
+    assert.deepEqual(adbRuns(), [], 'no `adb start-server` was run');
+});
+
+test('legacy forwards are removed over the adb protocol, not with the adb client', async (t) => {
+    await startServer();
+    const { AdbUtils } = require('../src/server/goog-device/AdbUtils');
+    const adb = await fakeAdbServer([
+        'PHONE localfilesystem:/tmp/old-socket localabstract:scrcpy',
+        'PHONE tcp:27183 localabstract:scrcpy',
+        'OTHER localfilesystem:/tmp/other-socket localabstract:scrcpy',
+    ]);
+    t.after(adb.close);
+    const { adbRuns } = adbEnvironment(t, adb.port);
+    await AdbUtils.removeFileSocketForwards('PHONE');
+    assert.deepEqual(adb.requests, [
+        'host-serial:PHONE:list-forward',
+        'host-serial:PHONE:killforward:localfilesystem:/tmp/old-socket',
+    ]);
+
+    const refusing = await fakeAdbServer(['PHONE localfilesystem:/refused localabstract:scrcpy']);
+    t.after(refusing.close);
+    process.env.ADB_PORT = String(refusing.port);
+    await assert.rejects(AdbUtils.removeFileSocketForwards('PHONE'), /cannot remove listener/);
+    await pause(100);
+    assert.deepEqual(adbRuns(), [], 'the adb client was never spawned');
+});
