@@ -15,3 +15,5 @@ certs
 config.https.yaml
 stream-config.json
 logs
+# Agent worktrees and session files: whole copies of the checkout.
+.claude

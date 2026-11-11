@@ -493,19 +493,20 @@ test('secrets and local state stay out of the image build context', () => {
         .split('\n')
         .map((line) => line.trim())
         .filter((line) => line && !line.startsWith('#'));
-    for (const entry of ['adbkeys', 'certs', 'config.https.yaml', 'stream-config.json', 'logs', 'data', '.git']) {
+    for (const entry of ['adbkeys', 'certs', 'config.https.yaml', 'stream-config.json', 'logs', 'data', '.git', '.claude']) {
         assert.ok(ignored.includes(entry), `${entry} is in .dockerignore`);
     }
     assert.equal(ignored.includes('config'), false, 'the entrypoint in config/ is still copied');
 });
 
 /** Runs the entrypoint with stand-ins for the commands that need root. Returns what they were asked to do. */
-function runEntrypoint(t, { uid, args, env = {} }) {
+function runEntrypoint(t, { uid, groups = '0', args, env = {} }) {
     const { execFileSync } = require('node:child_process');
     const bin = fs.mkdtempSync(path.join(temporary, 'entrypoint-'));
     const log = path.join(bin, 'calls.log');
     const stub = (name, body) => fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-    stub('id', `echo ${uid}`);
+    // `id -G` as root in a container: the primary group 0 first, then the group_add groups.
+    stub('id', `case "$1" in -u) echo ${uid} ;; -G) echo ${groups} ;; *) exit 1 ;; esac`);
     stub('mkdir', `echo "mkdir $*" >> "${log}"`);
     stub('chown', `echo "chown $*" >> "${log}"`);
     stub('getent', 'echo "node:x:1000:1000::/home/node:/bin/bash"');
@@ -522,14 +523,20 @@ function runEntrypoint(t, { uid, args, env = {} }) {
 }
 
 test('the entrypoint hands the data volume to the node user and drops root before the server starts', (t) => {
-    const started = runEntrypoint(t, { uid: 0, args: ['echo', 'server', 'started'] });
+    const started = runEntrypoint(t, { uid: 0, groups: '0 111', args: ['echo', 'server', 'started'] });
     assert.deepEqual(started.calls, [
         'mkdir -p /app/data',
         'chown -R node:node /app/data',
-        'setpriv --reuid=node --regid=node --keep-groups -- echo server started',
+        // The bluetooth group from group_add stays; root's group 0 does not.
+        'setpriv --reuid=node --regid=node --groups=111 -- echo server started',
         'HOME=/home/node',
     ]);
     assert.equal(started.output, 'server started\n', 'the command runs after the drop, with its arguments');
+
+    const severalGroups = runEntrypoint(t, { uid: 0, groups: '0 111 44', args: ['true'] });
+    assert.equal(severalGroups.calls[2], 'setpriv --reuid=node --regid=node --groups=111,44 -- true');
+    const noGroupAdd = runEntrypoint(t, { uid: 0, groups: '0', args: ['true'] });
+    assert.equal(noGroupAdd.calls[2], 'setpriv --reuid=node --regid=node --clear-groups -- true');
 
     const elsewhere = runEntrypoint(t, { uid: 0, args: ['true'], env: { WS_NOTIFICATION_DATA: '/srv/data' } });
     assert.deepEqual(elsewhere.calls.slice(0, 2), ['mkdir -p /srv/data', 'chown -R node:node /srv/data']);
