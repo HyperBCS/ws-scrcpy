@@ -645,8 +645,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 ? 'Loading folder…'
                 : this.entries.length
                   ? 'No items match the filter.'
-                  : this.offline
-                    ? '' // Nothing was listed, so the folder is not known to be empty.
+                  : !this.hasConnection()
+                    ? '' // Offline or still connecting: nothing was listed, so the folder is not known to be empty.
                     : 'This folder is empty.';
             rows.push(`<tr class="fx-empty-row"><td colspan="6" class="fx-empty">${esc(message)}</td></tr>`);
         }

@@ -22,14 +22,17 @@ function frame(type, id, data) {
 async function fixtures(page) {
     // close() drops the whole socket, as a server restart or a lost network does. endShell() closes
     // only the shell channel, as the server does when adb exits. While refuse is set, a new socket
-    // is closed at once.
-    const state = { starts: [], input: [], resizes: [], closed: [], sends: [], update: undefined, close: undefined, endShell: undefined, refuse: false };
-    await page.routeWebSocket('**', socket => {
+    // is closed at once. While hold is set, a new socket stays connecting, as it does when the
+    // network is gone.
+    const state = { starts: [], input: [], resizes: [], closed: [], sends: [], update: undefined, close: undefined, endShell: undefined, refuse: false, hold: false };
+    await page.routeWebSocket('**', async socket => {
         const url = new URL(socket.url());
         if (url.searchParams.get('action') === 'proxy-adb') {
             setTimeout(() => socket.send(initialStreamPacket()), 40);
             return;
         }
+        // The page sees the socket open only once this handler returns.
+        while (state.hold && !page.isClosed()) await new Promise(resolve => setTimeout(resolve, 25));
         if (state.refuse) {
             socket.close();
             return;
@@ -251,7 +254,14 @@ async function main() {
             assert.equal(await page.locator('.fx-status').innerText(),'','Files leaves the message to the tool page');
             await page.locator('.tool-connection').getByText('Reconnecting…',{exact:true}).waitFor();
             assert.equal(await page.locator('.tool-error').count(),0,'no banner while Files reconnects');
+            // The next attempt mounts Files again. Until its socket opens, nothing has been listed.
+            state.hold = true;
             state.refuse = false;
+            await page.locator('.file-explorer:not(.fx-offline) .fx-empty').waitFor({state:'attached',timeout:5000});
+            await page.waitForTimeout(300);
+            assert.equal(await page.locator('.file-explorer .fx-empty').innerText(),'','a folder is not called empty while the attempt is connecting');
+            assert.equal(await page.locator('.tool-connection').innerText(),'Reconnecting…');
+            state.hold = false;
             await page.locator('.tool-connection.connected').waitFor({state:'attached'});
             assert.equal(await page.locator('.file-explorer').count(),1,'Files is mounted once after reconnecting');
             assert.equal(await page.locator('.file-explorer.fx-offline').count(),0);
