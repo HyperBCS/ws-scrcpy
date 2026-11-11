@@ -86,7 +86,7 @@ should generally be left alone.
 
 | Path | Role |
 | --- | --- |
-| `state/` | `router.ts` (hash router), `devices.ts` (merged device store), `stream.ts`, `deviceStatus.ts`, `settingsSheet.ts`, `audio.ts` (active playback session/status) |
+| `state/` | `router.ts` (the only writer of history), `routes.ts` (page addresses), `devices.ts` (merged device store), `stream.ts`, `deviceStatus.ts`, `settingsSheet.ts`, `audio.ts` (active playback session/status) |
 | `views/` | `App`, `DeviceList`, `DeviceCard`, `StreamView`, `ToolView`, `FloatingToolbar`, `SettingsSheet`, `ActionsSheet`, `DeviceSwitcherSheet`, `SleepOverlay`, `LiveTextOverlay` |
 | `googDevice/client/StreamClientScrcpy.ts` | Owns the stream lifecycle; builds some DOM imperatively |
 | `googDevice/UhidKeyboard.ts` | Virtual HID keyboard |
@@ -442,8 +442,9 @@ historical audio-disabled state below describes the original refactor, not today
 
 - **Drag-and-drop APK push over the stream is explicitly blocked.** A drop displays a notice
   directing the user to **Files** on the device list, whose uploads use adb
-  (`AdbkitFilePushStream`). Do not reattach `ScrcpyFilePushStream`: its control type `102` is a
-  NetrisTV extension that stock scrcpy misparses, potentially killing all input.
+  (`AdbkitFilePushStream`). Do not bring back a push over the stream's control socket (the
+  deleted `ScrcpyFilePushStream`): its control type `102` is a NetrisTV extension that stock
+  scrcpy misparses, potentially killing all input.
 - `ROTATE_DEVICE` and `SET_DISPLAY_POWER` do nothing on MIUI; omitted from the UI rather than
   shipped as dead buttons.
 - **No authentication of any kind.** Anyone who can reach the port gets full shell and screen
@@ -672,7 +673,7 @@ sites too. When you discover something the hard way, leave it in the code.
   and Files/Shell navigation (see the Files explorer section below: DevTools and the Screen tab
   were later removed). Tool implementations remain lazy chunks; starting a tool does not start a
   screen stream.
-- Each tool accepts an optional mount and exposes idempotent `stop()` cleanup. Route or device
+- Each tool takes the mount element `ToolView` gives it and exposes idempotent `stop()` cleanup. Route or device
   changes close its socket/channel and release owned DOM, terminal observers, polling/reconnect
   timers, and file transfers. File path-only changes reuse the active Files client. Cancelling
   a still-connecting manager also closes the connection. Failed tool loads have an explicit retry
@@ -2163,3 +2164,104 @@ the 24-hour mark still refuses connections; that `diagnostics ioregistry` is ref
 same way as the mount (the clearing rule depends on it); and how serve-web words the refusal
 when the tunnel, not the mount, is refused (only the bare message from the live log is known).
 
+### Redesign step 3a: addresses, history and dead code (2026-11-11, fixture-tested only)
+
+Packages p0-dead-code and p3-foundation, merged into `redesign`. The plan is
+`docs/REDESIGN-PLAN.md`. Nothing below has run on a phone or in WebKit.
+
+**Addresses.** `state/routes.ts` defines three pages: the list (`#!`; push alerts use
+`#!action=`), one phone (`#!action=device&udid=..&view=screen|files|shell`) and Notifications
+(`#!action=notifications...`, unchanged, so delivered push links still open it). On a phone page
+every other key is kept: `path`, `player`, `ws`, `title` and the proxied-host keys. `parseRoute`
+reads both forms. `canonicalRoute` turns an older `action=stream`, `stream-coredevice` or `shell`
+address into the new form. Files keeps `action=list-files`, because `FileListingClient` reads that
+action from `location.hash` (`routeParams`, `identityOf`); a new-form Files address is turned into
+the older one. `KEEPS_OLD_ADDRESS` in `routes.ts` is the one switch to flip when Files reads the
+new form. `clientParams` gives the stream and tool clients the older action, which they parse and
+open their sockets with. `deviceHref` and `followLink` (`state/links.ts`) build a phone link
+without `player` or `ws` and follow it through the router; no view uses them yet. The service
+worker needed only a comment: it leaves alone a window whose address has a `udid`, and both forms
+have one.
+
+**The rewrite comes before any view.** `state/router.ts` rewrites an older address with
+`replaceState` when the module loads, before the `route` signal exists, then on every
+`hashchange` before `route` is set, and inside the verbs. `route` never holds an older phone
+address, so a stream view mounts once per open. The new address does not say which platform a
+phone is. The router keeps the platform an older screen link named in `localStorage`
+(`ws-scrcpy.phones`, at most 50 phones), and `DevicePage` adds the platform and name of a phone
+it shows while the phone is listed. It does not record every phone in the list.
+
+**One page per phone.** `views/DevicePage.tsx` mounts exactly one of `StreamView`,
+`CoreDeviceStreamView` and `ToolRoute`, so leaving the screen for Files or Shell stops the
+stream. It picks the platform once per phone shown: from the list, else from the browser's
+memory, and keeps that choice for the visit whatever the list says later. If it knows neither, it
+waits 1.5 s and then shows "This phone is not connected" under an `AppBar` with a "Phones"
+button; when the phone is listed after that, its screen opens. For an Android screen it picks the
+player (webcodecs, else the first one registered) and the socket (this server, or the proxied host
+the address names) once per address, so a list update does not restart the stream. `player` and
+`ws` in the address override them; `StreamReceiverScrcpy` still refuses a socket on another
+server.
+
+**History.** `router.ts` is the only module that writes history. The verbs are `openRoute` (push),
+`switchRoute` (replace) and `goUp`. Each entry carries `history.state.nav = {index, below}`, where
+`below` is the nearest list entry under it. `goUp` steps back to that entry with `history.go`;
+when there is none, it goes back to the first entry the app has in the tab and makes it the
+list. So the list is the root, and Back from it leaves the app. `goUp` is wider than a plain
+`history.back()` on purpose: until step 3b the switcher and the tool tabs still push, and one
+step back from phone B would show phone A's stream again. `navigate`, `goToDeviceList`,
+`pushRoute` and `replaceRoute` remain as shims; `goToDeviceList` no longer pushes. `history.go`
+finishes in a later task, so the router records the entry it is heading for and holds every
+other write until `popstate` reports it, with a one-second fallback. A write that stays on the
+page it was asked from (a Files folder or corrected path, a filter, another player) is dropped if
+that step has left the page by then, so it cannot show the page again over the list. A refused
+leave (uploads in Files) returns to the page's entry instead of pushing a copy of it.
+
+**Overlays.** `ui/overlayHistory.ts` (`useOverlayHistory`, and `openOverlay` for code outside
+Preact) gives an open sheet, dialog or menu an entry under the page's address, marked
+`nav.overlay`. Back closes the top overlay and leaves the route alone. An overlay that closes any
+other way steps back over its entry and closes the overlays opened on top of it. An overlay entry
+without its overlay (after a reload, or reached by Forward) is skipped. A change of address closes
+every overlay and is written on the page's own entry; that includes a replace that stays on the
+page, such as a corrected Files path, because the page entry is under the overlay's. No view uses
+the hook yet. Until they do, `App.tsx` closes the signal sheets (`closeAllSheets`) through
+`onPageChange`, which fires when another page is shown and not for a change within the page. A
+link or button inside an overlay must go through the router (`openRoute`, `switchRoute`, `goUp`,
+`followLink`): a plain `href` or an assigned `location.hash` does not wait for the overlay's entry
+to be left, and the step back would undo it.
+
+**Header components.** `ui/AppBar.tsx` (back, title, one status slot, actions) and
+`ui/TabStrip.tsx` are the stream header and the tool tabs under their own names, with the same
+class names. The back control defaults to `goUp` and is labelled `LIST_PAGE_NAME` ("Phones",
+owner decision D1); `DEVICE_TABS` in `routes.ts` holds the tabs of decision D2. Only the "not
+connected" state uses `AppBar` so far. The header rules moved unchanged to `style/ui/AppBar.css`,
+which `views/StreamView.css` imports at its top. `App.tsx` keeps side-effect imports of
+`ToolRoute`, `StreamView` and `CoreDeviceStreamView`. Both exist only to keep the order of rules
+in `main.css`, and can go when the styles are layered (step 4a). The tab rules are still in
+`views/ToolView.css`, which `TabStrip.tsx` imports.
+
+**Unread count.** `startNotificationSummary` refreshed on `hashchange`. `pushState` and
+`replaceState` fire none, so it now refreshes through `onPageChange`.
+
+**Dead code removed** (p0-dead-code). Five files nothing imported (`MediaFormat.ts`,
+`SimpleInteractionHandler.ts`, `ToolBoxCheckbox.ts`, `ScrcpyFilePushStream.ts`,
+`DragAndPushLogger.ts`), the appium and `node-mjpeg-proxy` typings, `ReplyFileListing.d.ts` and
+`MessageFileListing.d.ts`, seven unused toolbar icons with their SVG files, and the uncalled
+`MsePlayer.jumpToEnd`, `CommandControlMessage.createSetVideoSettingsCommand` and
+`createSetScreenPowerModeCommand`, and `ControlBarLayout.trackControlBarInset`. The `Icon` enum
+in `ui/SvgImage.ts` renumbered; nothing stores the numbers. `lastFrameAt` and its per-frame
+writes in both stream clients are gone: `streamConnected` is the only liveness signal, and its
+comment says why frame timing is not one. `FileListingClient.start` and `ShellClient.start` now
+require a mount. The CSS half (`style/morebox.css`, unused classes and tokens,
+`body.file-listing-page`, the `--control-bar-*` variables that no script sets) is left for
+p4-close.
+
+**Tests.** `scripts/test-routes.js` (in `npm test`) drives the router and routes in a fake
+session history. The `navigation` browser suite (`scripts/e2e-navigation.js`, in the default
+list) counts stream sockets per open, follows older and delivered links, checks Back after the
+in-app back control on both widths, and drives the overlay entries in Chromium's own history.
+
+**Not verified.** Back and `history.go` in WebKit and in the installed app; one iPhone session
+per open and per Back on a real iPhone; an older Android link on a real phone. History entries
+made by the app before this deploy have no `nav`; the first Back onto one tags it as if it were
+ahead of the page, so `goUp` can aim at the wrong entry for that tab, and once leave the app if
+another site comes before it. Closing and reopening the tab or the installed app clears this.
