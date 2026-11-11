@@ -122,12 +122,7 @@ export function StreamView({ params, tabs }: StreamViewProps) {
                 }
             >
                 <NotificationsLink compact />
-                <Button
-                    size="compact"
-                    class="stream-header-switch"
-                    onClick={() => openSheet('devices')}
-                    disabled={!session}
-                >
+                <Button size="compact" onClick={() => openSheet('devices')} disabled={!session}>
                     Switch
                 </Button>
             </AppBar>

@@ -14,7 +14,6 @@ import { AppBar } from '../ui/AppBar';
 import { Banner } from '../ui/Banner';
 import { Button } from '../ui/Button';
 import { IconButton } from '../ui/IconButton';
-import type { IconName } from '../ui/icons';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { NotificationsLink } from '../ui/NotificationsLink';
@@ -46,14 +45,6 @@ const RETRY_DELAYS_MS = [1000, 2000, 4000];
 const RETRY_SETTLE_MS = 4000;
 /** A first connection that has not opened by now counts as lost. */
 const FIRST_CONNECT_MS = 10000;
-
-/** The keys under the terminal that a phone keyboard lacks, and what each sends. */
-const SHELL_KEYS: ReadonlyArray<{ label: string; input: string; icon?: IconName }> = [
-    { label: 'Esc', input: '\x1b' },
-    { label: 'Tab', input: '\t' },
-    { label: 'Previous command', input: '\x1b[A', icon: 'arrowUp' },
-    { label: 'Next command', input: '\x1b[B', icon: 'arrowDown' },
-];
 
 /** '' while there is nothing to report, then one state at a time. */
 type Lost = '' | 'reconnecting' | 'closed' | 'ended';
@@ -328,6 +319,9 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                 : { text: 'Connection lost.', button: 'Reconnect' };
     }
 
+    /** A key of the row under the terminal, sent as the terminal would send it. */
+    const sendKey = (input: string) => clientRef.current?.sendInput?.(input);
+
     const switchPhone = (next: DeviceEntry) => {
         if (tool) {
             const extra = tool.view === 'files' ? { path: DEFAULT_FILES_PATH } : {};
@@ -355,7 +349,7 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                     status={<StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />}
                 >
                     <NotificationsLink compact />
-                    <Button size="compact" class="stream-header-switch" onClick={() => openSheet('devices')}>
+                    <Button size="compact" onClick={() => openSheet('devices')}>
                         Switch
                     </Button>
                 </AppBar>
@@ -413,27 +407,26 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                         >
                             Ctrl
                         </Button>
-                        {SHELL_KEYS.map(({ label, input, icon }) =>
-                            icon ? (
-                                <IconButton
-                                    key={label}
-                                    icon={icon}
-                                    label={label}
-                                    size="compact"
-                                    disabled={!connected}
-                                    onClick={() => clientRef.current?.sendInput?.(input)}
-                                />
-                            ) : (
-                                <Button
-                                    key={label}
-                                    size="compact"
-                                    disabled={!connected}
-                                    onClick={() => clientRef.current?.sendInput?.(input)}
-                                >
-                                    {label}
-                                </Button>
-                            ),
-                        )}
+                        <Button size="compact" disabled={!connected} onClick={() => sendKey('\x1b')}>
+                            Esc
+                        </Button>
+                        <Button size="compact" disabled={!connected} onClick={() => sendKey('\t')}>
+                            Tab
+                        </Button>
+                        <IconButton
+                            icon="arrowUp"
+                            label="Previous command"
+                            size="compact"
+                            disabled={!connected}
+                            onClick={() => sendKey('\x1b[A')}
+                        />
+                        <IconButton
+                            icon="arrowDown"
+                            label="Next command"
+                            size="compact"
+                            disabled={!connected}
+                            onClick={() => sendKey('\x1b[B')}
+                        />
                     </div>
                 )}
             </section>

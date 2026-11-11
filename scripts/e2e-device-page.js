@@ -237,7 +237,7 @@ async function checkChrome(page, label, current, viewport, { entered = false } =
     assert.deepEqual(await page.locator('.kit-tabs-list .kit-tab[aria-current="page"]').allInnerTexts(), [current], `${label}: ${current} is the current tab`);
     assert.equal(await page.locator('.kit-bar-back').getAttribute('aria-label'), 'Phones', `${label}: the back control is named after the list`);
     assert.equal(await page.locator('.kit-bar .notifications-link').count(), 1, `${label}: the bell`);
-    assert.equal(await page.locator('.stream-header-switch').innerText(), 'Switch');
+    assert.equal(await page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }).innerText(), 'Switch');
     const boxes = await page.evaluate(() => {
         const rect = (selector) => document.querySelector(selector).getBoundingClientRect().toJSON();
         return {
@@ -615,7 +615,7 @@ async function iphonePage(browser, viewport, colorScheme) {
         const bell = header.locator('.notifications-link');
         assert.equal(await bell.getAttribute('href'), `#!action=notifications&source=${IPHONE}`, `${label}: the bell opens this iPhone's inbox`);
         assert.equal(await bell.getAttribute('aria-label'), 'Notifications, 2 unread');
-        assert.equal(await header.locator('.stream-header-switch').innerText(), 'Switch');
+        assert.equal(await header.getByRole('button', { name: 'Switch', exact: true }).innerText(), 'Switch');
         const stage = await page.locator('.stream-stage').boundingBox();
         const bar = await header.boundingBox();
         assert.ok(Math.abs(stage.y - (bar.y + bar.height)) <= 1, `${label}: the picture starts under the header`);

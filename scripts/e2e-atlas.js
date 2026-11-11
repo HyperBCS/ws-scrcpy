@@ -346,7 +346,7 @@ async function screenOverlays(test, kind) {
     await shoot(test, `${kind}-settings`);
     await dismiss(test, sheet(page));
 
-    await press(test, page.locator('.stream-header-switch'));
+    await press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }));
     await sheetTitled(page, /Switch/).waitFor();
     await shoot(test, `${kind}-switcher`);
     await dismiss(test, sheet(page));

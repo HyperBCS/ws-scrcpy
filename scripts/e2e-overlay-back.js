@@ -145,7 +145,7 @@ function streamOverlays(test, platform) {
     const overlays = [
         bottomSheet('Actions', /^Actions$/, () => control(test, 'Actions')),
         bottomSheet('Settings', platform === 'android' ? /^Stream settings$/ : /^Scheduled unlock$/, () => control(test, 'Settings')),
-        bottomSheet('Switch', /Switch/, () => press(test, page.locator('.stream-header-switch'))),
+        bottomSheet('Switch', /Switch/, () => press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }))),
         {
             name: 'Type text', open: () => control(test, 'Type text'), shown: () => page.locator('.live-text-overlay'),
             ways: {
@@ -312,7 +312,7 @@ async function streamPage(browser, viewport, platform) {
         assert.deepEqual(test.streams, [udid, udid, udid], `${label}: Back to the page opened it once`);
 
         // A reload with a sheet open: the page without the sheet, and Back leaves it in one step.
-        await press(test, page.locator('.stream-header-switch'));
+        await press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }));
         await sheet(page).waitFor();
         await settleMotion(page);
         await untilAt(page, home.index + 1, 1);

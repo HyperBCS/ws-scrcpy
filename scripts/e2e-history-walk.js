@@ -220,7 +220,7 @@ async function walk(browser, viewport) {
         await quiet(page);
         assert.deepEqual(test.streams, [PIXEL], `${label}: one stream for the open`);
         // A sheet on the screen: Back closes it, and the stream stays.
-        await press(test, page.locator('.stream-header-switch'));
+        await press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }));
         await page.locator('.bottom-sheet-root.open').waitFor();
         await untilAt(page, list.index + 2, 1);
         await page.goBack();
@@ -274,7 +274,7 @@ async function walk(browser, viewport) {
         await connected(page);
         await quiet(page);
         assert.deepEqual(test.streams, [PIXEL, PIXEL], `${label}: Screen opens one stream`);
-        await press(test, page.locator('.stream-header-switch'));
+        await press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }));
         const sheet = page.locator('.bottom-sheet-root.open');
         await sheet.waitFor();
         await settleMotion(page);
@@ -379,7 +379,7 @@ async function switcherOverListing(browser, viewport) {
         await page.locator('.tool-view-list-files').waitFor();
         await until(() => test.held.length === 1, 'Files asks for the folder');
         const opened = await at(page);
-        await press(test, page.locator('.stream-header-switch'));
+        await press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }));
         const sheet = page.locator('.bottom-sheet-root.open');
         await sheet.waitFor();
         await untilAt(page, opened.index + 1, 1);
@@ -400,7 +400,7 @@ async function switcherOverListing(browser, viewport) {
         if (viewport.mobile) await folder.click();
         else await folder.dblclick();
         await until(() => test.held.length === 1, 'Files asks for the folder');
-        await press(test, page.locator('.stream-header-switch'));
+        await press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }));
         await sheet.waitFor();
         await untilAt(page, opened.index + 1, 1);
         test.holdStat = false;

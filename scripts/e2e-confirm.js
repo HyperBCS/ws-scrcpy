@@ -526,7 +526,7 @@ async function controlsPanelShield(browser) {
         assert.equal(await fab.getAttribute('aria-expanded'), 'true', 'the panel stays open after a key press');
 
         // The shield covers the stage only: the header above it takes a press directly.
-        await page.locator('.stream-header-switch').tap();
+        await page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }).tap();
         const switcher = page.getByRole('dialog', { name: 'Switch device', exact: true });
         await switcher.waitFor();
         await page.getByRole('button', { name: 'Close Switch device', exact: true }).click();

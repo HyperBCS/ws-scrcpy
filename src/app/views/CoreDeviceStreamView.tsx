@@ -167,12 +167,7 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
         <div class="stream-view">
             <AppBar kit title={String(name)} status={<AppBarStatus kit>{statusText}</AppBarStatus>}>
                 <NotificationsLink compact udid={params.udid} />
-                <Button
-                    size="compact"
-                    class="stream-header-switch"
-                    onClick={() => openSheet('devices')}
-                    disabled={!active}
-                >
+                <Button size="compact" onClick={() => openSheet('devices')} disabled={!active}>
                     Switch
                 </Button>
             </AppBar>
