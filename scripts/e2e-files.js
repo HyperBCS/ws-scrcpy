@@ -429,9 +429,11 @@ async function main() {
             page.on('pageerror', (error) => errors.push(error.message));
             const { files, dirs, traffic } = await fixture(page);
             const url = new URL(BASE);
-            url.hash = `!${new URLSearchParams({ action: 'list-files', udid: UDID, path: ROOT })}`;
+            const address = (folder) => `#!${new URLSearchParams({ action: 'device', udid: UDID, view: 'files', path: folder })}`;
+            url.hash = address(ROOT);
             await page.goto(url.toString());
             await page.getByRole('link', { name: 'Download notes.txt', exact: true }).waitFor();
+            assert.equal(await page.evaluate(() => location.hash), address(ROOT), 'Files keeps the address of the phone page');
             await page.locator('.tool-connection.connected').waitFor({ state: 'attached' });
             assert.equal(await page.locator('.file-listing-client').count(), 1, 'one embedded client');
             assert.equal(await page.locator('.stream-header').count(), 1, 'shared tool header remains visible');
@@ -595,8 +597,16 @@ async function main() {
 
             // Navigation: folders, errors, Up, the browser's own Back and the history buttons.
             const channelsBefore = traffic.fsChannels;
+            const entriesBefore = await page.evaluate(() => history.state.nav.index);
+            assert.equal(
+                await row(page, 'empty').locator('.entry-name a').getAttribute('href'),
+                new URL(address(ROOT + '/empty'), BASE).toString(),
+                'a folder row links to its folder on the phone page',
+            );
             await open(page, 'empty');
             await page.getByText('This folder is empty.', { exact: true }).first().waitFor();
+            assert.equal(await page.evaluate(() => location.hash), address(ROOT + '/empty'), 'a folder step is written in the same form');
+            assert.equal(await page.evaluate(() => history.state.nav.index), entriesBefore + 1, 'and is one history entry');
             assert.equal(await page.locator('.fx-row:not(.fx-empty-row)').count(), 0, 'empty folder clears old entries');
             assert.equal(traffic.fsChannels, channelsBefore, 'directory navigation preserves client connection');
             await page.getByRole('button', { name: 'Back', exact: true }).click();

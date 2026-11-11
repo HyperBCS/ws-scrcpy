@@ -294,3 +294,438 @@ test('the server acknowledges every upload chunk while its buffer has room, so c
     assert.equal(acks() - afterStart, count + 1, 'and one more once the file is saved');
     assert.deepEqual(channel.closes, [1000]);
 });
+
+// ------------------------------------------------------------------ the explorer while its tab is hidden
+//
+// The phone's page keeps Files mounted while it shows another tab and tells it with setActive.
+// The explorer runs here against a stand-in for the page and the browser: elements that accept
+// what is done to them, a session history, and a Files channel answered by hand.
+
+const PHONE = 'PIXEL';
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+class FakeElement {
+    constructor(tag) {
+        Object.assign(this, { tagName: tag, dataset: {}, style: {}, hidden: false, inert: false, open: false, returnValue: '' });
+        Object.assign(this, { children: [], parentNode: null, listeners: {}, found: new Map(), classes: new Set(), attributes: {} });
+        this.classList = {
+            add: (...names) => names.forEach((name) => this.classes.add(name)),
+            remove: (...names) => names.forEach((name) => this.classes.delete(name)),
+            contains: (name) => this.classes.has(name),
+            toggle: (name, force = !this.classes.has(name)) => (force ? this.classes.add(name) : this.classes.delete(name), force),
+        };
+    }
+    set className(value) {
+        this.classes = new Set(String(value).split(/\s+/).filter(Boolean));
+    }
+    get className() {
+        return [...this.classes].join(' ');
+    }
+    /** One element per selector, the same one each time it is asked for. */
+    querySelector(selector) {
+        if (!this.found.has(selector)) this.found.set(selector, Object.assign(new FakeElement(selector), { parentNode: this }));
+        return this.found.get(selector);
+    }
+    querySelectorAll() {
+        return [];
+    }
+    closest() {
+        return null;
+    }
+    contains(node) {
+        for (let item = node; item; item = item.parentNode) if (item === this) return true;
+        return false;
+    }
+    appendChild(child) {
+        child.remove();
+        child.parentNode = this;
+        this.children.push(child);
+        return child;
+    }
+    insertBefore(child) {
+        return this.appendChild(child);
+    }
+    remove() {
+        if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+        this.parentNode = null;
+    }
+    addEventListener(type, listener, options) {
+        (this.listeners[type] ||= []).push({ listener, once: !!options?.once });
+    }
+    removeEventListener(type, listener) {
+        this.listeners[type] = (this.listeners[type] || []).filter((item) => item.listener !== listener);
+    }
+    dispatch(type, fields = {}) {
+        const event = { type, target: this, defaultPrevented: false, preventDefault: () => (event.defaultPrevented = true), ...fields };
+        for (const item of [...(this.listeners[type] || [])]) {
+            if (item.once) this.removeEventListener(type, item.listener);
+            item.listener(event);
+        }
+        return event;
+    }
+    setAttribute(name, value) {
+        this.attributes[name] = String(value);
+    }
+    getAttribute(name) {
+        return this.attributes[name] ?? null;
+    }
+    toggleAttribute(name, force = !(name in this.attributes)) {
+        if (force) this.attributes[name] = '';
+        else delete this.attributes[name];
+    }
+    focus() {
+        global.document.activeElement = this;
+    }
+    blur() {
+        if (global.document.activeElement === this) global.document.activeElement = null;
+    }
+    getBoundingClientRect() {
+        return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    }
+    showModal() {
+        this.open = true;
+    }
+    /**
+     * Like a browser, the close event comes in a later task, and promise callbacks run between
+     * two of its listeners.
+     */
+    close(value) {
+        if (!this.open) return;
+        this.open = false;
+        this.returnValue = value ?? this.returnValue;
+        setImmediate(() => {
+            for (const item of [...(this.listeners.close || [])]) {
+                setImmediate(() => {
+                    if (!this.listeners.close.includes(item)) return;
+                    if (item.once) this.removeEventListener('close', item.listener);
+                    item.listener({ type: 'close', target: this });
+                });
+            }
+        });
+    }
+}
+class FakeButton extends FakeElement {}
+
+/** A tab's session history. Back, Forward and go act at once and fire the events a browser fires. */
+function fakeTab(address) {
+    const listeners = {};
+    const entries = [{ url: new URL(address, 'http://phones.test:8000/'), state: null }];
+    let index = 0;
+    const writes = [];
+    const fire = (type) => [...(listeners[type] || [])].forEach((listener) => listener({ type }));
+    const write = (kind, state, url) => {
+        const entry = { url: url ? new URL(url, entries[index].url) : entries[index].url, state: structuredClone(state) };
+        if (kind === 'push') entries.length = ++index;
+        entries[index] = entry;
+        writes.push(`${kind} ${entry.url.hash}`);
+    };
+    const location = {};
+    for (const key of ['hash', 'href', 'origin', 'protocol', 'host', 'hostname', 'port', 'pathname'])
+        Object.defineProperty(location, key, { get: () => entries[index].url[key] });
+    const history = {
+        get state() {
+            return entries[index].state;
+        },
+        get length() {
+            return entries.length;
+        },
+        pushState: (state, _unused, url) => write('push', state, url),
+        replaceState: (state, _unused, url) => write('replace', state, url),
+        go(delta) {
+            if (index + delta < 0 || index + delta >= entries.length) return;
+            const from = entries[index].url.hash;
+            index += delta;
+            fire('popstate');
+            if (entries[index].url.hash !== from) fire('hashchange');
+        },
+        back: () => history.go(-1),
+        forward: () => history.go(1),
+    };
+    const window = {
+        addEventListener: (type, listener) => (listeners[type] ||= new Set()).add(listener),
+        removeEventListener: (type, listener) => listeners[type]?.delete(listener),
+        matchMedia: () => ({ matches: true, addEventListener: () => undefined }),
+    };
+    return { location, history, window, writes, hashes: () => entries.map((entry) => entry.url.hash) };
+}
+
+/** The phone's side of the Files channel: every folder exists and holds the same two files. */
+function fakePhone(Multiplexer) {
+    const channels = [];
+    const socket = Object.assign(Object.create(Multiplexer.prototype), {
+        OPEN: 1,
+        readyState: 1,
+        closed: 0,
+        close: () => socket.closed++,
+        createChannel(payload) {
+            const listeners = { message: new Set(), close: new Set() };
+            const channel = {
+                command: payload.subarray(0, 4).toString(),
+                path: payload.subarray(8, 8 + payload.readUInt32LE(4)).toString(),
+                answered: false,
+                closedByClient: false,
+                addEventListener: (type, listener) => listeners[type]?.add(listener),
+                removeEventListener: (type, listener) => listeners[type]?.delete(listener),
+                send: () => undefined,
+                reply: (data) => [...listeners.message].forEach((listener) => listener({ data })),
+                end: () => [...listeners.close].forEach((listener) => listener({ code: 1000 })),
+                close() {
+                    channel.closedByClient = true;
+                    channel.end();
+                },
+            };
+            channels.push(channel);
+            return channel;
+        },
+    });
+    const record = (code, name, mode) => {
+        const text = Buffer.from(name);
+        const data = Buffer.alloc(20 + text.length);
+        data.write(code);
+        data.writeUInt32LE(mode, 4);
+        data.writeUInt32LE(1700000000, 12);
+        data.writeUInt32LE(text.length, 16);
+        text.copy(data, 20);
+        return data;
+    };
+    return {
+        socket,
+        channels,
+        asked: (command) => channels.filter((channel) => channel.command === command).map((channel) => channel.path),
+        /** Answers every request that is waiting, and the requests those answers lead to. */
+        serve() {
+            for (let channel; (channel = channels.find((item) => !item.answered && !item.closedByClient)); ) {
+                channel.answered = true;
+                if (channel.command === 'STAT') channel.reply(record('STAT', '', 0o40755));
+                if (channel.command === 'LIST') {
+                    channel.reply(record('DENT', 'notes.txt', 0o100644));
+                    channel.reply(record('DENT', 'photo.png', 0o100644));
+                    channel.reply(Buffer.from('DONE'));
+                }
+                channel.end();
+            }
+        },
+    };
+}
+
+/** Opens Files for the phone in a tab that came from the list, as the phone's page does. */
+function openFiles(t, folder = '/sdcard') {
+    const tab = fakeTab('#!');
+    const body = new FakeElement('body');
+    const frames = [];
+    const storage = () => ({ getItem: () => null, setItem: () => undefined });
+    const globals = {
+        window: tab.window,
+        location: tab.location,
+        history: tab.history,
+        localStorage: storage(),
+        sessionStorage: storage(),
+        document: {
+            body,
+            activeElement: null,
+            createElement: (tag) => Object.assign(new FakeElement(tag), tag === 'template' ? { content: new FakeElement('content') } : {}),
+            addEventListener: () => undefined,
+            removeEventListener: () => undefined,
+        },
+        HTMLElement: FakeElement,
+        HTMLButtonElement: FakeButton,
+        getComputedStyle: () => ({ opacity: '1', transform: 'none' }),
+        requestAnimationFrame: (run) => frames.push(run),
+        cancelAnimationFrame: () => undefined,
+    };
+    const before = Object.fromEntries(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(global, key)]));
+    Object.entries(globals).forEach(([key, value]) => Object.defineProperty(global, key, { value, configurable: true, writable: true }));
+    require.extensions['.css'] = () => {};
+    const app = path.join(__dirname, '..', 'src', 'app') + path.sep;
+    for (const key of Object.keys(require.cache)) if (key.startsWith(app)) delete require.cache[key];
+    const { Multiplexer } = require('../src/packages/multiplexer/Multiplexer');
+    const { ManagerClient } = require('../src/app/client/ManagerClient');
+    const router = require('../src/app/state/router');
+    const { deviceRoute } = require('../src/app/state/routes');
+    const { FileListingClient } = require('../src/app/googDevice/client/FileListingClient');
+    const phone = fakePhone(Multiplexer);
+    t.mock.method(ManagerClient.prototype, 'openNewConnection', function () {
+        this.ws = phone.socket;
+        return phone.socket;
+    });
+
+    router.openRoute(deviceRoute(PHONE, 'files', { path: folder }));
+    const mount = body.appendChild(new FakeElement('mount'));
+    const params = new URLSearchParams({ action: 'list-files', udid: PHONE, path: folder });
+    const client = FileListingClient.start(FileListingClient.parseParameters(params), mount);
+    const wrapper = mount.children[0];
+    // The template marks these hidden; the stand-in elements know nothing of the markup.
+    wrapper.querySelector('.fx-menu').hidden = true;
+    wrapper.querySelector('.fx-address-input').hidden = true;
+    const toasts = [];
+    client.renderToast = (message, error) => message && toasts.push({ message, error });
+    const settle = async () => {
+        for (let round = 0; round < 4; round++) {
+            phone.serve();
+            frames.splice(0).forEach((run) => run());
+            await tick();
+        }
+    };
+    t.after(() => {
+        client.stop();
+        Object.entries(before).forEach(([key, descriptor]) =>
+            descriptor ? Object.defineProperty(global, key, descriptor) : delete global[key],
+        );
+    });
+    client.onSocketOpen();
+    const upload = (fields) =>
+        client.onFilePushUpdate({
+            key: 1,
+            pushId: 0,
+            fileName: 'clip.bin',
+            message: 'Waiting',
+            progress: 0,
+            error: false,
+            finished: false,
+            sent: 0,
+            size: 10,
+            ...fields,
+        });
+    const dialog = wrapper.querySelector('.fx-dialog');
+    return { tab, body, wrapper, client, phone, router, deviceRoute, toasts, settle, upload, dialog };
+}
+
+const address = (view, extra = '') => `#!action=device&udid=${PHONE}&view=${view}${extra}`;
+
+test('a hidden Files keeps its folder, its connection and its uploads, and writes no history', async (t) => {
+    const { tab, wrapper, client, phone, router, deviceRoute, settle, upload } = openFiles(t);
+    await settle();
+    assert.equal(client.getPath(), '/sdcard');
+    assert.deepEqual(tab.hashes(), ['#!', address('files', '&path=%2Fsdcard')], 'Files reads and keeps the address of the phone page');
+    assert.equal(tab.history.state.files.index, 0, 'the entry is tagged as the one Files opened on');
+
+    // A folder step while the tab is shown is one new entry.
+    client.navigate('/sdcard/DCIM');
+    await settle();
+    assert.deepEqual(tab.hashes().slice(2), [address('files', '&path=%2Fsdcard%2FDCIM')]);
+    upload();
+    assert.equal(wrapper.querySelector('.fx-transfers').children.length, 1, 'an upload is running');
+
+    // Another tab of the same phone: the page replaces the address and hides Files.
+    router.switchRoute(deviceRoute(PHONE, 'shell'));
+    client.setActive(false);
+    assert.equal(tab.location.hash, address('shell'), 'the change of view was not refused');
+    const written = tab.writes.length;
+    const requests = phone.channels.length;
+    client.navigate('/sdcard/Download');
+    upload({ sent: 5, message: '50%' });
+    await settle();
+    assert.equal(client.getPath(), '/sdcard/DCIM', 'the folder is kept: a folder change waits for the upload');
+    assert.equal(tab.writes.length, written, 'nothing is written to history while hidden');
+    assert.equal(tab.location.hash, address('shell'));
+    assert.equal(phone.socket.closed, 0, 'the connection stays open');
+    assert.equal(phone.channels.some((channel) => channel.closedByClient), false, 'no request was cancelled');
+    assert.equal(wrapper.querySelector('.fx-transfers').children.length, 1, 'the upload goes on');
+
+    // A key that reaches a hidden explorer does nothing.
+    const key = wrapper.dispatch('keydown', { key: 'F5', target: wrapper.querySelector('.fx-items') });
+    assert.equal(key.defaultPrevented, false);
+    assert.equal(phone.channels.length, requests, 'F5 lists nothing while hidden');
+
+    // The upload ends while hidden. The folder that was asked for is opened, without an entry.
+    upload({ finished: true, sent: 10, message: 'Uploaded' });
+    await settle();
+    assert.equal(client.getPath(), '/sdcard/Download');
+    assert.equal(tab.writes.length, written, 'still nothing written');
+
+    // The page shows the tab again: first the address, then setActive. A folder that is listed
+    // in between is not written either, though the address is the explorer's own again.
+    router.switchRoute(deviceRoute(PHONE, 'files'));
+    const entries = tab.history.length;
+    const beforeShown = tab.writes.length;
+    client.navigate('/sdcard/Music');
+    await settle();
+    assert.equal(client.getPath(), '/sdcard/Music');
+    assert.equal(tab.writes.length, beforeShown, 'hidden means no write, whatever the address is');
+    // The tab's link names no folder, so the address gets the one that is shown.
+    client.setActive(true);
+    assert.equal(tab.location.hash, address('files', '&path=%2Fsdcard%2FMusic'));
+    assert.equal(tab.history.length, entries, 'in the same history entry');
+    assert.equal(tab.history.state.files.index, 1, 'tagged with the place Files has in its own history');
+    const pressed = wrapper.dispatch('keydown', { key: 'F5', target: wrapper.querySelector('.fx-items') });
+    assert.equal(pressed.defaultPrevented, true, 'keys work again');
+});
+
+test('a Files tab that is shown again lists its folder again, reports what it missed and keeps a selection', async (t) => {
+    const { wrapper, client, phone, router, deviceRoute, toasts, settle, upload } = openFiles(t);
+    await settle();
+    const lists = () => phone.asked('LIST').length;
+    const show = async (shown) => {
+        router.switchRoute(deviceRoute(PHONE, shown ? 'files' : 'shell'));
+        client.setActive(shown);
+        await settle();
+    };
+    await show(false);
+    const before = lists();
+    await show(true);
+    assert.equal(lists(), before + 1, 'a shell command may have changed the folder');
+    assert.equal(phone.asked('LIST').at(-1), '/sdcard');
+
+    // A failed upload while hidden is not lost: it is shown when the tab is.
+    await show(false);
+    upload();
+    upload({ finished: true, error: true, message: 'No space left on the phone.' });
+    upload({ key: 2 });
+    upload({ key: 2, finished: true, message: 'Uploaded' });
+    await settle();
+    assert.deepEqual(toasts, [], 'nothing is shown in a hidden explorer');
+    await show(true);
+    assert.deepEqual(toasts, [{ message: 'clip.bin: No space left on the phone.', error: true }]);
+
+    // With a selection the rows stay as they are: listing again would clear it.
+    wrapper.querySelector('.fx-check-all').dispatch('change', { currentTarget: { checked: true } });
+    assert.equal(wrapper.classList.contains('fx-selecting'), true);
+    await show(false);
+    const kept = lists();
+    await show(true);
+    assert.equal(lists(), kept);
+    assert.equal(wrapper.classList.contains('fx-selecting'), true, 'the selection is kept');
+});
+
+test('uploads: a change of view on the same phone does not ask, leaving the phone does, also from another tab', async (t) => {
+    const { tab, body, wrapper, client, router, deviceRoute, settle, upload, dialog } = openFiles(t);
+    await settle();
+    upload();
+    const question = () => dialog.open && dialog.innerHTML.includes('Stop the upload to');
+
+    router.switchRoute(deviceRoute(PHONE, 'shell'));
+    router.switchRoute(deviceRoute(PHONE, 'screen'));
+    await settle();
+    assert.equal(tab.location.hash, address('screen'), 'Shell and Screen of the same phone are not leaving');
+    assert.equal(question(), false);
+
+    // Files is hidden under the Screen tab. Another phone, Notifications and the list all ask.
+    client.setActive(false);
+    for (const leave of [
+        () => router.switchRoute(deviceRoute('OTHER', 'screen')),
+        () => router.openRoute({ action: 'notifications' }),
+        () => router.goUp(),
+    ]) {
+        leave();
+        await settle();
+        assert.equal(question(), true, 'the question is asked');
+        assert.equal(dialog.parentNode.parentNode, body, 'on the page itself, not inside the hidden explorer');
+        assert.equal(dialog.parentNode.className, 'file-explorer');
+        // Escape, the Back gesture or "Keep uploading".
+        dialog.dispatch('cancel');
+        await settle();
+        assert.equal(tab.location.hash, address('screen'), 'refused: the phone page stays');
+        assert.equal(dialog.parentNode, wrapper, 'the dialog is back in the explorer');
+        assert.equal(body.children.length, 1, 'and its holder is gone');
+        assert.equal(wrapper.querySelector('.fx-transfers').children.length, 1, 'the upload goes on');
+    }
+
+    // The browser's Back, which has already moved when the app hears of it.
+    tab.history.back();
+    await settle();
+    assert.equal(question(), true);
+    assert.equal(tab.location.hash, address('screen'), 'the phone page is put back');
+    dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value: 'confirm' }) });
+    await settle();
+    assert.equal(tab.location.hash, '#!', 'Stop and leave goes where the owner asked');
+});

@@ -27,6 +27,7 @@ import {
 } from '../filePush/nameConflicts';
 import { DEFAULT_FILES_PATH, fileListingTool } from './deviceTools';
 import { clearLeaveGuard, LeaveGuard, pushRoute, replaceRoute, setLeaveGuard } from '../../state/router';
+import { deviceRoute, parseRoute } from '../../state/routes';
 import { formatMode, formatModified, formatSize, iconMarkup, kindOf, typeLabel } from './fileTypes';
 import { h, render } from 'preact';
 import { Toast } from '../../ui/Toast';
@@ -190,14 +191,24 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /** The batch so far, for "Uploading 3 of 40, 45%". */
     private uploadBatch = { total: 0, ended: 0, cancelled: 0, bytes: 0, endedBytes: 0 };
     private readonly transferSummary: HTMLElement;
-    /** Which tool page this explorer belongs to; any other address leaves it. */
-    private readonly identity: string;
+    /** The phone whose page this explorer is on. An address that is not that phone's leaves it. */
+    private readonly phone: string;
     /** The open "Stop uploading?" question, so a second Back does not ask twice. */
     private leaving?: Promise<boolean>;
+    /**
+     * Uploads go on while another tab of the same phone is shown, so a change of view does not
+     * ask. Leaving the phone's page stops them: another phone, the list or Notifications.
+     */
     private readonly leaveGuard: LeaveGuard = {
-        blocks: (next) => this.uploads.size > 0 && FileListingClient.identityOf(next) !== this.identity,
+        blocks: (next) => this.uploads.size > 0 && FileListingClient.phoneOf(next) !== this.phone,
         ask: () => this.confirmLeave(),
     };
+    /** False while the phone's page shows another of its tabs and keeps the explorer hidden. */
+    private active = true;
+    /** The last result or failure reported while hidden, shown when the tab is shown again. */
+    private missed?: { message: string; error: boolean };
+    /** Holds the dialog on the page itself while the question before leaving is open. */
+    private dialogHolder?: HTMLElement;
     /** Results of the folder operations in flight, reported together when the last one answers. */
     private batch: { done: string[]; failed: string[]; many?: (count: number) => string } = { done: [], failed: [] };
     /** Set while the list shows a folder that could not be opened, in place of its rows. */
@@ -257,7 +268,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.serial = params.udid;
         this.path = path.resolve('/', params.path);
         this.historyKey = `ws-scrcpy.files.history.${this.serial}`;
-        this.identity = FileListingClient.identityOf(new URLSearchParams(location.hash.replace(/^#!/, '')));
+        this.phone = FileListingClient.phoneOf(new URLSearchParams(location.hash.replace(/^#!/, '')));
         this.adoptHistory();
         const fragment = html`<section class="file-listing-client file-explorer" aria-label="Device files">
             <div class="fx-chrome">
@@ -865,6 +876,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (this.stopped) {
             return;
         }
+        if (!this.active) {
+            // Nobody sees a hidden explorer. A failure is kept over a result that follows it.
+            if (error || !this.missed?.error) {
+                this.missed = { message, error };
+            }
+            return;
+        }
         this.toastCount++;
         this.renderToast(message, error);
     }
@@ -1103,7 +1121,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private onKeyDown = (event: KeyboardEvent): void => {
         // Keys pressed in a dialog bubble up to here. They belong to the dialog: Escape must
         // close it, not clear the selection behind it.
-        if (this.dialog.open) {
+        if (!this.active || this.dialog.open) {
             return;
         }
         if (!this.menu.hidden && !this.menu.inert && this.onMenuKeyDown(event)) {
@@ -1859,7 +1877,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 replaceable,
                 async (name, item, canReplace, remaining) => {
                     const answer = await this.askConflict(name, item, canReplace, remaining);
-                    return this.stopped || this.path !== folder ? undefined : answer;
+                    return this.stopped || !this.active || this.path !== folder ? undefined : answer;
                 },
                 (name) => incomingFolders.has(name),
                 key,
@@ -2115,6 +2133,18 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private presentDialog(): void {
         transitionVisibility(this.dialog, true);
         this.dialog.showModal();
+    }
+
+    /** Closes an open dialog as cancelled. Its close event comes later, in a task of its own. */
+    private dismissDialog(): Promise<void> {
+        if (!this.dialog.open) {
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+            this.dialog.addEventListener('close', () => resolve(), { once: true });
+            cancelVisibility(this.dialog);
+            this.dialog.close('');
+        });
     }
 
     private closeDialog(value: string): void {
@@ -2422,10 +2452,17 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
     }
 
-    /** The current address, when it is this device's Files route. */
+    /**
+     * The current address, when it shows this phone's Files and the explorer is the tab that is
+     * shown. A hidden explorer gets nothing here, so it writes neither the address nor history.
+     */
     private routeParams(): URLSearchParams | undefined {
+        if (!this.active) {
+            return undefined;
+        }
         const params = new URLSearchParams(location.hash.replace(/^#!/, ''));
-        return params.get('action') === ACTION.FILE_LISTING && params.get('udid') === this.serial ? params : undefined;
+        const route = parseRoute(params);
+        return route.page === 'device' && route.view === 'files' && route.udid === this.serial ? params : undefined;
     }
 
     private historyState(): unknown {
@@ -2476,6 +2513,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
      * it counts as one step forward and is tagged now.
      */
     private syncHistory(): void {
+        if (!this.active) {
+            return;
+        }
         const tag = history.state?.files;
         if (tag && typeof tag.id === 'string' && Number.isInteger(tag.index)) {
             if (tag.id !== this.historyId) {
@@ -2496,11 +2536,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
     }
 
+    /** A link to a folder of this phone. It is the same whichever tab the address shows. */
     private link(destination: string): string {
+        const { useProxy, hostname, port, pathname, secure } = this.params;
+        const host = useProxy ? { hostname, port, pathname, secure, useProxy } : {};
         const url = new URL(location.href);
-        const params = new URLSearchParams(url.hash.replace(/^#!/, ''));
-        params.set('path', destination);
-        url.hash = `#!${params.toString()}`;
+        url.hash = `#!${deviceRoute(this.serial, 'files', { ...host, path: destination })}`;
         return url.toString();
     }
 
@@ -2534,7 +2575,60 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     public focus(): void {
-        this.items.focus();
+        if (this.active) {
+            this.items.focus();
+        }
+    }
+
+    /**
+     * The phone's page keeps the explorer mounted while it shows another tab of the same phone,
+     * and says so here. A hidden explorer keeps its folder, its connection and its uploads. It
+     * closes its menu and any open question, handles no keys and leaves the address alone.
+     */
+    public setActive(active: boolean): void {
+        if (this.stopped || active === this.active) {
+            return;
+        }
+        if (!active) {
+            this.closeMenu();
+            void this.dismissDialog();
+            this.closeAddressInput();
+            this.cancelLongPress();
+            this.enterCount = 0;
+            this.wrapper.classList.remove('file-listing-drop');
+            const focused = document.activeElement;
+            if (focused instanceof HTMLElement && this.wrapper.contains(focused)) {
+                focused.blur();
+            }
+            this.active = false;
+            return;
+        }
+        this.active = true;
+        const params = this.routeParams();
+        const asked = params?.get('path');
+        if (params && !asked) {
+            // The tab's link names no folder. The address gets the folder that is shown, in the
+            // same history entry.
+            params.set('path', this.path);
+            replaceRoute(params, this.historyState());
+        } else {
+            // Back or Forward came to one of this explorer's entries.
+            this.syncHistory();
+        }
+        this.updateControls();
+        if (this.missed) {
+            const { message, error } = this.missed;
+            this.missed = undefined;
+            this.toast(message, error);
+        }
+        // The folder may have changed on the phone meanwhile, by a shell command for one, so it
+        // is listed again. Not when the address asks for another folder, which the page opens
+        // next, and not over a selection or a filter, which a new listing would clear.
+        const elsewhere = !!asked && path.resolve('/', asked) !== this.path;
+        const editing = this.selecting() || !!this.filter || this.wrapper.classList.contains('fx-filtering');
+        if (!elsewhere && !editing && this.canModify()) {
+            this.reload();
+        }
     }
 
     /**
@@ -2641,7 +2735,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             upload = { row, name: data.fileName, sent: 0, size: data.size || 0 };
             this.uploads.set(data.key, upload);
             if (!this.uploadBatch.total) {
-                // The first upload of a batch: leaving the tool or the page now asks first.
+                // The first upload of a batch: leaving the phone's page or the app now asks first.
                 setLeaveGuard(this.leaveGuard);
                 window.addEventListener('beforeunload', this.onBeforeUnload);
             }
@@ -2730,8 +2824,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     };
 
     /**
-     * Asked before anything takes the owner away from Files while files upload: a tool tab,
-     * the device switcher, Back. Leaving stops the uploads that have not finished.
+     * Asked before anything takes the owner away from the phone's page while files upload: the
+     * phone switcher, the back control, the browser's Back. Leaving stops the uploads that have
+     * not finished. The question is asked from whichever tab of the page is shown.
      */
     private confirmLeave(): Promise<boolean> {
         if (!this.uploads.size || this.stopped) {
@@ -2741,35 +2836,73 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             // The question is already on screen.
             return Promise.resolve(false);
         }
-        if (this.dialog.open) {
-            cancelVisibility(this.dialog);
-            this.dialog.close('');
-        }
-        const count = this.uploads.size;
-        this.leaving = this.confirm({
-            title: `Stop ${count === 1 ? 'the upload' : `${count} uploads`} to ${this.deviceLabel()}?`,
-            message:
-                count === 1
-                    ? 'Leaving Files stops the upload, and the file is not saved on the device.'
-                    : 'Leaving Files stops the uploads that have not finished, and those files are not saved on the device.',
-            confirm: 'Stop and leave',
-            cancel: 'Keep uploading',
-            danger: true,
-        }).then((leave) => {
-            this.leaving = undefined;
-            if (leave) {
-                this.filePushHandler?.cancelAll();
-            }
-            return leave;
-        });
+        this.leaving = this.dismissDialog()
+            .then(() => {
+                const count = this.uploads.size;
+                if (!count || this.stopped) {
+                    return true;
+                }
+                this.liftDialog();
+                return this.confirm({
+                    title: `Stop ${count === 1 ? 'the upload' : `${count} uploads`} to ${this.deviceLabel()}?`,
+                    message:
+                        count === 1
+                            ? 'Leaving this phone stops the upload, and the file is not saved on it.'
+                            : 'Leaving this phone stops the uploads that have not finished, and those files are not saved on it.',
+                    confirm: 'Stop and leave',
+                    cancel: 'Keep uploading',
+                    danger: true,
+                });
+            })
+            .then((leave) => {
+                this.leaving = undefined;
+                this.returnDialog();
+                if (leave) {
+                    this.filePushHandler?.cancelAll();
+                }
+                return leave;
+            });
         return this.leaving;
     }
 
-    /** The parts of an address that pick the tool page; the folder is not one of them. */
-    private static identityOf(params: URLSearchParams): string {
-        return ['action', 'udid', 'hostname', 'port', 'pathname', 'secure', 'useProxy']
-            .map((key) => params.get(key))
-            .join('\n');
+    /**
+     * The explorer is hidden while another tab of the phone's page is shown, and a dialog inside
+     * a hidden element is not drawn. For the question before leaving, the dialog moves to the
+     * page itself. Its holder has the explorer's class, which the dialog's buttons take their
+     * sizes from, and makes no box of its own.
+     */
+    private liftDialog(): void {
+        if (this.dialogHolder) {
+            return;
+        }
+        const holder = document.createElement('div');
+        holder.className = 'file-explorer';
+        holder.style.display = 'contents';
+        document.body.appendChild(holder);
+        holder.appendChild(this.dialog);
+        this.dialogHolder = holder;
+    }
+
+    private returnDialog(): void {
+        if (!this.dialogHolder) {
+            return;
+        }
+        this.wrapper.insertBefore(this.dialog, this.toastHost);
+        this.dialogHolder.remove();
+        this.dialogHolder = undefined;
+    }
+
+    /**
+     * The phone an address shows and the server it is reached through. The view and the folder
+     * are not part of it. A page that is not a phone's gives the empty string.
+     */
+    private static phoneOf(params: URLSearchParams): string {
+        const route = parseRoute(params);
+        if (route.page !== 'device') {
+            return '';
+        }
+        const host = ['hostname', 'port', 'pathname', 'secure', 'useProxy'].map((key) => params.get(key));
+        return [route.udid, ...host].join('\n');
     }
     public onError(error: string | Error): void {
         this.toast(typeof error === 'string' ? error : error.message, true);
@@ -2790,6 +2923,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         cancelVisibility(this.menu);
         cancelVisibility(this.dialog);
+        this.returnDialog();
         this.dialog.removeEventListener('cancel', this.onDialogCancel);
         this.dialog.removeEventListener('submit', this.onDialogSubmit);
         this.dialog.removeEventListener('keydown', this.onDialogKeyDown);

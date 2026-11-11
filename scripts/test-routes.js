@@ -190,16 +190,24 @@ test('every older phone address is rewritten to the phone and its view, and both
         assert.deepEqual(routes.parseRoute(usp(other)), { page: 'list' }, `"${other}" is the list`);
 });
 
-test('Files keeps its older address until the explorer reads the new one', () => {
-    // FileListingClient looks for action=list-files in location.hash before it adds a folder step.
+test('Files has the address of the phone page, and its older address is rewritten to it', () => {
+    // FileListingClient reads the route, so Files keeps no address of its own.
     const { routes } = open();
     const old = 'action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM';
-    assert.equal(routes.canonicalRoute(usp(old)).toString(), old);
+    const current = 'action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM';
+    assert.equal(routes.canonicalRoute(usp(old)).toString(), current);
     assert.deepEqual(routes.parseRoute(usp(old)), { page: 'device', udid: 'PIXEL', view: 'files', platform: 'android' });
-    // A link in the new form opens Files too, under the address the explorer reads.
-    assert.equal(routes.canonicalRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM')).toString(), old);
-    assert.equal(routes.deviceRoute('PIXEL', 'files', { path: '/sdcard/DCIM' }).toString(), old);
-    assert.equal(routes.clientParams(usp(old)).toString(), old);
+    assert.deepEqual(routes.parseRoute(usp(current)), { page: 'device', udid: 'PIXEL', view: 'files' });
+    const kept = usp(current);
+    assert.equal(routes.canonicalRoute(kept), kept, 'a link in the new form is left as it is');
+    assert.equal(routes.deviceRoute('PIXEL', 'files', { path: '/sdcard/DCIM' }).toString(), current);
+    // The explorer still opens its socket under the older action.
+    assert.equal(routes.clientParams(usp(current)).toString(), old);
+    // An older Files link still opens Files: it is rewritten in place before a view reads it.
+    const tab = open(`#!${old}`);
+    assert.equal(tab.browser.location.hash, `#!${current}`);
+    assert.equal(tab.browser.hashes().length, 1);
+    assert.deepEqual(tab.shown, [current]);
 });
 
 test('the tabs of a phone page and the name of the list are the ones the owner chose', () => {
@@ -302,23 +310,23 @@ test('the earlier exports are shims: returning to the list no longer adds an ent
 
     // Files: a folder step pushes with its own state, a corrected address replaces, and the
     // router's bookkeeping and the explorer's share history.state.
-    const files = open('#!action=list-files&udid=PIXEL&path=%2Fsdcard');
-    files.router.replaceRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard'), { files: { id: 'run', index: 0 } });
-    files.router.pushRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM'), { ...files.browser.history.state, files: { id: 'run', index: 1 } });
+    const files = open('#!action=device&udid=PIXEL&view=files&path=%2Fsdcard');
+    files.router.replaceRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard'), { files: { id: 'run', index: 0 } });
+    files.router.pushRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM'), { ...files.browser.history.state, files: { id: 'run', index: 1 } });
     assert.equal(files.browser.hashes().length, 2);
     assert.deepEqual(files.browser.history.state.files, { id: 'run', index: 1 });
     assert.equal(files.browser.history.state.nav.index, 1);
-    files.router.pushRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM'));
+    files.router.pushRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM'));
     assert.equal(files.browser.hashes().length, 2, 'a push to the address that is shown adds nothing');
-    files.router.replaceRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM%2FCamera'));
+    files.router.replaceRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM%2FCamera'));
     assert.equal(files.browser.hashes().length, 2);
     assert.deepEqual(files.browser.history.state.files, { id: 'run', index: 1 }, 'replaceRoute keeps the state of the entry');
-    assert.deepEqual(files.shown.at(-1), 'action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM%2FCamera');
+    assert.deepEqual(files.shown.at(-1), 'action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM%2FCamera');
     files.router.switchRoute({ action: 'device', udid: 'PIXEL', view: 'shell' });
     assert.equal(files.browser.history.state.files, undefined, 'another view does not inherit the explorer state');
     files.browser.history.back();
     files.browser.settle();
-    assert.equal(files.shown.at(-1), 'action=list-files&udid=PIXEL&path=%2Fsdcard', 'Back between folder steps still moves the route');
+    assert.equal(files.shown.at(-1), 'action=device&udid=PIXEL&view=files&path=%2Fsdcard', 'Back between folder steps still moves the route');
 });
 
 test('views that still assign location.hash: up goes to the list, not to the stream before', () => {
@@ -395,14 +403,14 @@ test('a change within the page written while up is under way is dropped, so the 
     // Files answers a folder step just after the back control: the corrected path and the step
     // belong to Files, which is no longer shown once the list is reached.
     const { browser, router, shown } = open('#!');
-    router.openRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard'));
+    router.openRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard'));
     router.goUp();
-    router.replaceRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2F'));
-    router.pushRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM'));
+    router.replaceRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard%2F'));
+    router.pushRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM'));
     browser.settle();
     assert.equal(browser.location.hash, '#!', 'the list is shown');
     assert.equal(browser.index, 0);
-    assert.deepEqual(browser.hashes(), ['#!', '#!action=list-files&udid=PIXEL&path=%2Fsdcard'], 'the list entry is not overwritten');
+    assert.deepEqual(browser.hashes(), ['#!', '#!action=device&udid=PIXEL&view=files&path=%2Fsdcard'], 'the list entry is not overwritten');
     assert.equal(shown.at(-1), '');
 
     // Another player for the stream that is being left: no stream is started again.
@@ -415,17 +423,17 @@ test('a change within the page written while up is under way is dropped, so the 
     assert.deepEqual(stream.shown.filter(isStream), ['action=device&udid=PIXEL&view=screen']);
 
     // Without a step under way, a change within the page is written at once.
-    const files = open('#!action=list-files&udid=PIXEL&path=%2Fsdcard');
-    files.router.replaceRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2F'));
-    assert.equal(files.browser.location.hash, '#!action=list-files&udid=PIXEL&path=%2Fsdcard%2F');
+    const files = open('#!action=device&udid=PIXEL&view=files&path=%2Fsdcard');
+    files.router.replaceRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard%2F'));
+    assert.equal(files.browser.location.hash, '#!action=device&udid=PIXEL&view=files&path=%2Fsdcard%2F');
 });
 
 test('a page change is another page or view, not a folder, a corrected path or a filter', () => {
-    const { browser, router, routes } = open('#!action=list-files&udid=PIXEL&path=%2Fsdcard');
+    const { browser, router, routes } = open('#!action=device&udid=PIXEL&view=files&path=%2Fsdcard');
     const changes = [];
     router.onPageChange(() => changes.push(browser.location.hash));
-    router.replaceRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2F'));
-    router.pushRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM'));
+    router.replaceRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard%2F'));
+    router.pushRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM'));
     browser.history.back();
     browser.settle();
     assert.deepEqual(changes, [], 'Files folders and a corrected path are the same page');
@@ -458,11 +466,11 @@ test('a reload keeps the place in history, so up still goes back', () => {
 });
 
 test('uploads in progress: the owner is asked before a verb or the browser leaves the page', async () => {
-    const { browser, router, shown } = open('#!action=list-files&udid=PIXEL&path=%2Fsdcard');
+    const { browser, router, shown } = open('#!action=device&udid=PIXEL&view=files&path=%2Fsdcard');
     let answer = false;
     let asked = 0;
     const guard = {
-        blocks: (next) => next.get('action') !== 'list-files',
+        blocks: (next) => next.get('view') !== 'files',
         ask: () => {
             asked++;
             return Promise.resolve(answer);
@@ -473,8 +481,8 @@ test('uploads in progress: the owner is asked before a verb or the browser leave
     await Promise.resolve();
     browser.settle();
     assert.equal(asked, 1);
-    assert.equal(browser.location.hash, '#!action=list-files&udid=PIXEL&path=%2Fsdcard', 'refused: the page stays');
-    router.pushRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM'));
+    assert.equal(browser.location.hash, '#!action=device&udid=PIXEL&view=files&path=%2Fsdcard', 'refused: the page stays');
+    router.pushRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM'));
     assert.equal(asked, 1, 'a folder step is not leaving');
 
     // The browser's Back has already moved when the app hears of it.
@@ -482,10 +490,10 @@ test('uploads in progress: the owner is asked before a verb or the browser leave
     browser.settle();
     await Promise.resolve();
     assert.equal(asked, 2);
-    assert.equal(browser.location.hash, '#!action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM', 'the address of the page is put back');
-    assert.equal(shown.at(-1), 'action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM');
+    assert.equal(browser.location.hash, '#!action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM', 'the address of the page is put back');
+    assert.equal(shown.at(-1), 'action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM');
 
-    assert.deepEqual(browser.behind(), ['#!action=list-files&udid=PIXEL&path=%2Fsdcard'], 'the refused page is not what Back leads to');
+    assert.deepEqual(browser.behind(), ['#!action=device&udid=PIXEL&view=files&path=%2Fsdcard'], 'the refused page is not what Back leads to');
 
     answer = true;
     router.openRoute({ action: 'device', udid: 'PIXEL', view: 'shell' });
@@ -496,9 +504,9 @@ test('uploads in progress: the owner is asked before a verb or the browser leave
 
     // The browser's own Back and a tab that assigns the hash, refused and then allowed.
     const tab = open('#!');
-    tab.router.openRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard'));
+    tab.router.openRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard'));
     const answers = [false, true, false, true];
-    tab.router.setLeaveGuard({ blocks: (next) => next.get('action') !== 'list-files', ask: () => Promise.resolve(answers.shift()) });
+    tab.router.setLeaveGuard({ blocks: (next) => next.get('view') !== 'files', ask: () => Promise.resolve(answers.shift()) });
     const settled = async () => {
         tab.browser.settle();
         await Promise.resolve();
@@ -507,21 +515,21 @@ test('uploads in progress: the owner is asked before a verb or the browser leave
     tab.browser.history.back();
     await settled();
     assert.equal(tab.browser.index, 1, 'Back refused: still on Files');
-    assert.equal(tab.shown.at(-1), 'action=list-files&udid=PIXEL&path=%2Fsdcard');
+    assert.equal(tab.shown.at(-1), 'action=device&udid=PIXEL&view=files&path=%2Fsdcard');
     tab.browser.history.back();
     await settled();
     assert.equal(tab.browser.index, 0, 'Back allowed: the list');
     assert.equal(tab.shown.at(-1), '');
 
-    tab.router.openRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard'));
-    tab.router.setLeaveGuard({ blocks: (next) => next.get('action') !== 'list-files', ask: () => Promise.resolve(answers.shift()) });
+    tab.router.openRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard'));
+    tab.router.setLeaveGuard({ blocks: (next) => next.get('view') !== 'files', ask: () => Promise.resolve(answers.shift()) });
     tab.browser.location.hash = '#!action=shell&udid=PIXEL';
     await settled();
-    assert.equal(tab.browser.location.hash, '#!action=list-files&udid=PIXEL&path=%2Fsdcard', 'tab refused: still on Files');
+    assert.equal(tab.browser.location.hash, '#!action=device&udid=PIXEL&view=files&path=%2Fsdcard', 'tab refused: still on Files');
     tab.browser.location.hash = '#!action=shell&udid=PIXEL';
     await settled();
     assert.equal(tab.shown.at(-1), 'action=device&udid=PIXEL&view=shell', 'tab allowed: Shell');
-    assert.deepEqual(tab.browser.behind(), ['#!action=list-files&udid=PIXEL&path=%2Fsdcard', '#!']);
+    assert.deepEqual(tab.browser.behind(), ['#!action=device&udid=PIXEL&view=files&path=%2Fsdcard', '#!']);
 });
 
 test('an overlay has a history entry: Back closes it and leaves the page alone', () => {
