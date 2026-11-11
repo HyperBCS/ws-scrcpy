@@ -38,7 +38,7 @@ const SERIAL = process.env.SERIAL || 'WC7HFMPJGY7PUCGQ';
     await p.waitForTimeout(11000);
     await openFab(p);
 
-    const open = () => p.evaluate(() => Array.from(document.querySelectorAll('.bottom-sheet-root.open')).map((e) => e.querySelector('.bottom-sheet-title')?.textContent).join(',') || '(none)');
+    const open = () => p.evaluate(() => Array.from(document.querySelectorAll('.bottom-sheet-root.open, dialog.kit-sheet[open]')).map((e) => e.querySelector('.bottom-sheet-title, .kit-sheet-title')?.textContent).join(',') || '(none)');
     const btn = (title) => p.evaluate((t) => {
         const el = Array.from(document.querySelectorAll('.control-buttons-list [title]')).find((e) => e.getAttribute('title') === t);
         if (!el) return null;
@@ -54,11 +54,11 @@ const SERIAL = process.env.SERIAL || 'WC7HFMPJGY7PUCGQ';
         await p.waitForTimeout(1200);
         const o = await open();
         const hasContent = await p.evaluate(() => {
-            const s = document.querySelector('.bottom-sheet-root.open .bottom-sheet-body');
+            const s = document.querySelector('.bottom-sheet-root.open .bottom-sheet-body, dialog.kit-sheet[open] .kit-sheet-body');
             return s ? s.innerText.trim().length : 0;
         });
         console.log(`  ${title.padEnd(16)} -> sheet "${o}" bodyChars=${hasContent} ${o !== '(none)' ? 'OK' : '*** DEAD ***'}`);
-        await p.evaluate(() => document.querySelector('.bottom-sheet-root.open .bottom-sheet-close')?.click());
+        await p.evaluate(() => document.querySelector('.bottom-sheet-root.open .bottom-sheet-close, dialog.kit-sheet[open] .kit-sheet-close')?.click());
         await p.waitForTimeout(600);
     }
     if (errs.length) console.log('page errors:', errs.slice(0, 4));

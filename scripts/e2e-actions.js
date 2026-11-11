@@ -53,12 +53,12 @@ const focus = () => {
     };
     const clickInSheet = async (label) => {
         const found = await p.evaluate((t) => {
-            const all = Array.from(document.querySelectorAll('.bottom-sheet-root.open .sheet-button')).map((e) => e.textContent.trim());
+            const all = Array.from(document.querySelectorAll('dialog.kit-sheet[open] .kit-button')).map((e) => e.textContent.trim());
             return { all, hit: all.includes(t) };
         }, label);
         console.log(`   [debug] sheet buttons=${JSON.stringify(found.all)} hit=${found.hit}`);
         await p.evaluate((t) => {
-            const el = Array.from(document.querySelectorAll('.bottom-sheet-root.open .sheet-button')).find((e) => e.textContent.trim() === t);
+            const el = Array.from(document.querySelectorAll('dialog.kit-sheet[open] .kit-button')).find((e) => e.textContent.trim() === t);
             if (el) el.click();
         }, label);
         await p.waitForTimeout(1600);

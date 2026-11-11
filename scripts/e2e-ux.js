@@ -38,12 +38,12 @@ async function main() {
         await noOverflow(page, 'phone list');
         await screenshot(page, 'phone-devices');
         await card.getByRole('button', { name: /^Settings for / }).click();
-        const dialog = page.locator('.bottom-sheet-root.open [role="dialog"]');
+        const dialog = page.locator('dialog.kit-sheet[open]');
         await dialog.waitFor();
         await page.waitForFunction(
             () =>
                 !document
-                    .querySelector('.bottom-sheet-root.open')
+                    .querySelector('dialog.kit-sheet[open]')
                     ?.textContent.includes('Loading current device settings'),
         );
         await screenshot(page, 'phone-settings');
@@ -56,7 +56,7 @@ async function main() {
             );
         }
         await page.keyboard.press('Escape');
-        await page.locator('.bottom-sheet-root.open').waitFor({ state: 'detached' });
+        await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'detached' });
         assert(
             await card.getByRole('button', { name: /^Settings for / }).evaluate((el) => el === document.activeElement),
             'close restores focus',
@@ -89,7 +89,7 @@ async function main() {
             'remote capture must not steal dialog Tab',
         );
         await page.keyboard.press('Escape');
-        await page.locator('.bottom-sheet-root.open').waitFor({ state: 'detached' });
+        await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'detached' });
         await openControls(page);
         await page.getByRole('button', { name: 'Type text', exact: true }).click();
         await page.getByRole('textbox', { name: 'Text to send to the phone' }).waitFor();
@@ -162,7 +162,7 @@ async function main() {
         assert.equal(await desktop.locator('.floating-toolbar-fab').count(), 0, 'narrow desktop keeps its sidebar');
         await desktop.setViewportSize({ width: 1280, height: 900 });
         await desktop.getByRole('button', { name: 'Settings', exact: true }).click();
-        const desktopDialog = desktop.locator('.bottom-sheet-root.open [role="dialog"]');
+        const desktopDialog = desktop.locator('dialog.kit-sheet[open]');
         await desktopDialog.waitFor();
         await desktop.keyboard.press('Tab');
         assert(
