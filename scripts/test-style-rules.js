@@ -33,19 +33,15 @@ const ALLOWED = {
     'ui/StreamServiceStatus.css': { fontSizes: 1, radii: 1 },
     'ui/Toast.css': { colours: 1, fontSizes: 1, radii: 1, zIndex: 1 },
     'ui/TrackerStatusNotice.css': { fontSizes: 1 },
-    'views/ActionsSheet.css': { fontSizes: 2, radii: 1 },
     'views/DeviceList.css': { colours: 3, fontSizes: 26, radii: 6 },
     'views/DeviceSwitcherSheet.css': { fontSizes: 5, radii: 2 },
     'views/FloatingToolbar.css': { colours: 7, fontSizes: 4, radii: 4, zIndex: 2 },
-    'views/LiveTextOverlay.css': { colours: 4, fontSizes: 6, radii: 5, zIndex: 2 },
     'views/NotificationActionSheet.css': { colours: 2, fontSizes: 4, radii: 4 },
     'views/Notifications.css': { colours: 6, fontSizes: 44, radii: 15, zIndex: 3, otherLayers: 2 },
-    'views/SettingsSheet.css': { colours: 6, fontSizes: 16, radii: 8, zIndex: 1 },
     'views/SleepOverlay.css': { colours: 9, fontSizes: 3, radii: 3, zIndex: 1 },
     'views/StreamView.css': { colours: 3, fontSizes: 2, radii: 4, zIndex: 5 },
     'views/ToolUnavailable.css': { colours: 1, fontSizes: 1 },
     'views/ToolView.css': { colours: 1, fontSizes: 3, radii: 4 },
-    'views/UnlockSheet.css': { colours: 6, fontSizes: 7, radii: 4, zIndex: 2 },
 };
 
 const KINDS = {

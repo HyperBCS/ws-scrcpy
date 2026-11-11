@@ -1,7 +1,7 @@
 /* eslint-disable */
 // node scripts/test-browser.js sheet-chrome      (E2E_OUT=/tmp/ws-scrcpy-sheet-chrome for screenshots)
 // Sheets, stream chrome and shared UI: moving between sheets, Escape with a confirm prompt open,
-// typing while the phone picture stays usable, Copy here over plain HTTP, the error boundary,
+// Type text as a sheet, Copy here over plain HTTP, the error boundary,
 // the Listen control, message placement, spacing, contrast and labels. Every socket is a fixture;
 // nothing reaches a phone.
 const assert = require('node:assert/strict');
@@ -151,7 +151,7 @@ async function toolbar(test, title) {
     await button.click();
     await settleMotion(page);
 }
-const openDialog = (page) => page.locator('.bottom-sheet-root.open [role="dialog"]');
+const openDialog = (page) => page.locator('dialog.kit-sheet[open]');
 const sheet = (page, name) => page.getByRole('dialog', { name, exact: true });
 const activeIn = (locator) => locator.evaluate((el) => el.contains(document.activeElement));
 const activeTitle = (page) => page.evaluate(() => document.activeElement?.getAttribute('title') || document.activeElement?.className || document.activeElement?.tagName);
@@ -211,15 +211,15 @@ async function sheetToSheetFocus(browser) {
     try {
         const { page } = phone;
         await toolbar(phone, 'Actions');
-        await sheet(page, 'Actions').locator('.sheet-row', { hasText: 'Type text' }).getByRole('button', { name: 'Open', exact: true }).click();
+        await sheet(page, 'Actions').locator('.kit-row', { hasText: 'Type text' }).getByRole('button', { name: 'Open', exact: true }).click();
         await page.locator('.live-text-input').waitFor();
         await pause(500);
-        assert.equal(await page.evaluate(() => document.activeElement?.className), 'live-text-input', 'the text field keeps focus after the Actions sheet has gone');
+        assert.equal(await page.evaluate(() => document.activeElement?.className), 'kit-field live-text-input', 'the text field keeps focus after the Actions sheet has gone');
         await page.keyboard.type('a');
         for (let tries = 0; tries < 50 && phone.keys().length < 2; tries++) await pause(20);
         assert.deepEqual(phone.keys().map((message) => message.usages), [[0x04], []], 'typed keys go to the text field, not to a toolbar button');
         await page.keyboard.press('Escape');
-        await page.locator('.live-text-overlay').waitFor({ state: 'detached' });
+        await sheet(page, 'Type text').waitFor({ state: 'hidden' });
         assert.equal(await activeTitle(page), 'Actions', 'closing Type text returns focus to the toolbar button');
         assert.deepEqual(phone.errors, []);
     } finally {
@@ -235,12 +235,12 @@ async function escapeCancelsPrompt(browser) {
         const { page } = test;
         await toolbar(test, 'Actions');
         const actions = sheet(page, 'Actions');
-        const reboot = actions.getByRole('button', { name: 'Reboot', exact: true }).and(page.locator(':not(.confirm-prompt-button)'));
+        const reboot = actions.getByRole('button', { name: 'Reboot', exact: true }).and(page.locator(':not(.kit-confirm-go)'));
         const prompt = actions.getByRole('alertdialog');
         await reboot.click();
         await prompt.waitFor();
         // Open, not just still on screen: a closing sheet stays visible while it animates out.
-        const stillOpen = () => page.locator('.bottom-sheet-root.open:not([data-exiting]) [role="dialog"][aria-label="Actions"]').count();
+        const stillOpen = () => page.locator('dialog.kit-sheet[open]:not([data-exiting])').filter({ has: page.locator('.kit-sheet-title', { hasText: /^Actions$/ }) }).count();
         await page.keyboard.press('Escape');
         await prompt.waitFor({ state: 'detached' });
         await pause(400);
@@ -266,69 +266,81 @@ async function escapeCancelsPrompt(browser) {
     console.log('PASS Escape cancels a confirm prompt first and closes the sheet on the second press');
 }
 
-// U-stream-5, and the Type text title from U-system-12
-async function typeTextKeepsPicture(browser) {
+// U-system-6, and the Type text title from U-system-12. Type text was a bar that left the picture
+// in use (U-stream-5). It is now a sheet like the others: what is behind it takes no press.
+async function typeTextIsASheet(browser) {
     for (const mobile of [true, false]) {
         const test = await android(browser, { mobile });
         try {
             const { page } = test;
-            await toolbar(test, 'Type text');
-            const overlay = page.locator('.live-text-overlay');
-            await overlay.waitFor();
-            await settleMotion(page);
-            assert.equal(await page.locator('#live-text-title').textContent(), 'Type text', 'the bar has the name of the button that opens it');
-            assert.equal(await page.locator('.live-text-backdrop').count(), 0);
-            const picture = await page.locator('.touch-layer').boundingBox();
-            const bar = await page.locator('.live-text-bar').boundingBox();
-            const point = { x: picture.x + picture.width / 2, y: picture.y + picture.height / 3 };
-            assert(point.y < bar.y, 'the test presses the picture, not the bar');
-            const before = test.touches();
-            for (let press = 0; press < 2; press++) {
-                if (mobile) await page.touchscreen.tap(point.x, point.y);
-                else await page.mouse.click(point.x, point.y);
-                await pause(80);
-            }
-            assert.equal(await overlay.count(), 1, 'a press on the picture leaves Type text open');
-            assert(test.touches() >= before + 4, 'each press reaches the phone as touch down and up');
-            assert.equal(await page.evaluate(() => document.activeElement?.className), 'live-text-input', 'the text field keeps focus, so the keyboard stays up');
+            const typing = sheet(page, 'Type text');
+            const open = async () => {
+                await toolbar(test, 'Type text');
+                await typing.waitFor();
+                await settleMotion(page);
+            };
+            await open();
+            assert.equal(await typing.locator('.kit-sheet-title').textContent(), 'Type text', 'the sheet has the name of the button that opens it');
+            assert.deepEqual(
+                await typing.evaluate((dialog) => ({ modal: dialog.matches('dialog.kit-sheet:modal'), headers: dialog.querySelectorAll('.kit-sheet-header').length })),
+                { modal: true, headers: 1 },
+                'Type text is the kit sheet, with one header',
+            );
+            assert.equal(await page.locator('.live-text-overlay, .live-text-bar, .live-text-done').count(), 0, 'nothing of the older bar is left');
+            assert.equal(await page.evaluate(() => document.activeElement?.className), 'kit-field live-text-input', 'the text field has focus, so the keyboard comes up');
             const textPackets = () => test.packets.filter((packet) => packet[0] === 1).length;
             const typedBefore = textPackets();
             await page.keyboard.type('a');
             for (let tries = 0; tries < 50 && textPackets() === typedBefore; tries++) await pause(20);
-            assert.equal(textPackets(), typedBefore + 1, 'typing continues after the press');
+            assert.equal(textPackets(), typedBefore + 1, 'what is typed goes to the phone');
             await shot(page, `type-text-open-${mobile ? 'phone' : 'desktop'}-light`);
+            // A press on the picture beside the sheet closes the sheet, as on every sheet, and
+            // is not a touch on the phone.
+            const picture = await page.locator('.touch-layer').boundingBox();
+            const panel = await typing.locator('.kit-sheet-panel').boundingBox();
+            const point = { x: picture.x + picture.width / 2, y: mobile ? picture.y + picture.height / 3 : picture.y + picture.height * 0.9 };
+            assert(point.y < panel.y || point.y > panel.y + panel.height, 'the test presses the picture, not the sheet');
+            const before = test.touches();
+            if (mobile) await page.touchscreen.tap(point.x, point.y);
+            else await page.mouse.click(point.x, point.y);
+            await typing.waitFor({ state: 'hidden' });
+            await pause(80);
+            assert.equal(test.touches(), before, 'a press beside the sheet does not reach the phone');
+            await open();
             await page.keyboard.press('Escape');
-            await overlay.waitFor({ state: 'detached' });
-            await toolbar(test, 'Type text');
-            await overlay.waitFor();
-            await page.locator('.live-text-done').click();
-            await overlay.waitFor({ state: 'detached' });
+            await typing.waitFor({ state: 'hidden' });
+            await open();
+            await page.getByRole('button', { name: 'Close Type text', exact: true }).click();
+            await typing.waitFor({ state: 'hidden' });
+            // With the sheet gone the picture takes presses again.
+            if (mobile) await page.touchscreen.tap(point.x, point.y);
+            else await page.mouse.click(point.x, point.y);
+            await pause(80);
+            assert(test.touches() >= before + 2, 'positive control: the same press reaches the phone once the sheet is closed');
             assert.deepEqual(test.errors, []);
         } finally {
             await test.context.close();
         }
     }
-    // The iPhone stream: the area beside the bar belongs to the picture, not to an overlay.
+    // The iPhone stream: the same sheet.
     const phone = await ios(browser);
     try {
         const { page } = phone;
+        const typing = sheet(page, 'Type text');
         await toolbar(phone, 'Type text');
-        await page.locator('.live-text-overlay').waitFor();
+        await typing.waitFor();
         await settleMotion(page);
         const mount = await page.locator('.stream-mount').boundingBox();
-        const point = { x: mount.x + mount.width / 2, y: mount.y + mount.height / 4 };
-        assert.equal(
-            await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('.live-text-overlay'), point),
-            false,
-            'nothing of the overlay covers the picture',
-        );
+        const point = { x: mount.x + mount.width / 2, y: mount.y + mount.height * 0.9 };
         await page.mouse.click(point.x, point.y);
+        await typing.waitFor({ state: 'hidden' });
         await pause(100);
-        assert.equal(await page.locator('.live-text-overlay').count(), 1, 'a click on the iPhone picture leaves Type text open');
+        assert.equal(phone.sent.filter((message) => message.type === 'touch').length, 0, 'a click beside the sheet does not reach the iPhone');
+        assert.deepEqual(phone.errors, []);
     } finally {
         await phone.context.close();
     }
-    console.log('PASS Type text stays open while the picture is pressed, closes with Escape and Done');
+    console.log('PASS Type text is a sheet: typing reaches the phone, a press beside it closes it and sends nothing, Escape and Close close it');
 }
 
 // C-client-ui-8
@@ -469,12 +481,14 @@ async function desktopDialogTop(browser) {
         const dialog = sheet(page, 'Unlock device');
         await dialog.waitFor();
         await settleMotion(page);
-        const before = await dialog.boundingBox();
+        // The dialog element covers the window; its panel is what is seen.
+        const panel = dialog.locator('.kit-sheet-panel');
+        const before = await panel.boundingBox();
         // The feedback line appears: the dialog grows.
         await dialog.getByRole('button', { name: 'Unlock with stored passcode', exact: true }).click();
         await dialog.getByText('Unlocking with the passcode stored on the server…', { exact: true }).waitFor();
         await settleMotion(page);
-        const grown = await dialog.boundingBox();
+        const grown = await panel.boundingBox();
         assert(grown.height > before.height + 10, `the dialog grew when the feedback line appeared (${before.height} -> ${grown.height})`);
         assert(Math.abs(grown.y - before.y) < 0.5, `the top edge stays where it was (${before.y} -> ${grown.y})`);
         assert(grown.y >= 32 && grown.y + grown.height <= 900, 'the dialog stays inside the window');
@@ -494,24 +508,24 @@ async function statusInItsGroup(browser) {
             const { page } = test;
             await toolbar(test, 'Actions');
             const actions = sheet(page, 'Actions');
-            const group = (title) => actions.locator('section.sheet-group').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
+            const group = (title) => actions.locator('section.kit-group').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
             await group('Screen').getByRole('button', { name: 'Refresh', exact: true }).click();
-            const note = group('Screen').locator('.sheet-status');
+            const note = group('Screen').locator('.kit-status');
             await note.waitFor();
             assert.equal(await note.textContent(), 'Asked for a new keyframe.');
-            assert.equal(await actions.locator('.actions-sheet > .sheet-status').count(), 0, 'no message sits between two groups');
+            assert.equal(await actions.locator('.actions-sheet > .kit-status').count(), 0, 'no message sits between two groups');
             await actions.getByLabel('Text for the phone clipboard').fill('a'.repeat((1 << 18) - 13));
-            const error = group('Clipboard').locator('.sheet-status.error');
+            const error = group('Clipboard').locator('.kit-status.kit-status-error');
             await error.waitFor();
             assert.equal(await error.locator('svg').count(), 1, 'an error has an icon');
             assert((await fontSize(error)) >= 13, 'messages are 13px or larger');
             assert((await contrastOf(error)) >= 7, 'the words are in the normal text colour');
             await error.scrollIntoViewIfNeeded();
-            const card = await group('Clipboard').locator('.sheet-group-card').boundingBox();
+            const card = await group('Clipboard').locator('.kit-card').boundingBox();
             const box = await error.boundingBox();
             const gap = box.y - (card.y + card.height);
             assert(gap >= 4 && gap <= 12, `the message sits directly under its card (${gap}px)`);
-            const next = await group('Phone').locator('.sheet-group-title').boundingBox();
+            const next = await group('Phone').locator('.kit-group-title').boundingBox();
             assert(next.y - (box.y + box.height) >= 14, 'and clear of the next heading');
             await shot(page, `iphone-actions-status-${label}`);
             assert.deepEqual(test.errors, []);
@@ -530,8 +544,8 @@ async function statusInItsGroup(browser) {
         await dialog.getByLabel('Passcode for scheduled unlock').fill('1234');
         await dialog.getByLabel('Repeat the passcode').fill('4321');
         await dialog.getByRole('button', { name: 'Save on server', exact: true }).click();
-        const schedule = dialog.locator('section.sheet-group').filter({ has: page.getByRole('heading', { name: 'Schedule', exact: true }) });
-        const error = schedule.locator('.sheet-status.error');
+        const schedule = dialog.locator('section.kit-group').filter({ has: page.getByRole('heading', { name: 'Schedule', exact: true }) });
+        const error = schedule.locator('.kit-status.kit-status-error');
         await error.waitFor();
         assert.match(await error.textContent(), /do not match/);
         await error.scrollIntoViewIfNeeded();
@@ -562,28 +576,30 @@ async function applyBarAndReadability(browser) {
             }
             const settings = sheet(page, 'Stream settings');
             await settings.waitFor();
-            await page.waitForFunction(() => !document.querySelector('.bottom-sheet-root.open')?.textContent.includes('Loading settings…'));
+            await page.waitForFunction(() => !document.querySelector('dialog.kit-sheet[open]')?.textContent.includes('Loading settings…'));
             await settleMotion(page);
             if (!mobile) {
                 const ring = await settings.evaluate((el) => ({ focused: el === document.activeElement, style: getComputedStyle(el).outlineStyle }));
                 assert.deepEqual(ring, { focused: true, style: 'none' }, 'no ring round the whole dialog');
             }
-            const bar = settings.locator('.settings-sheet-apply-bar');
+            // The apply step is the footer of the sheet, kept in view under the body.
+            const bar = settings.locator('.kit-sheet-footer');
             assert.equal(await settings.getByRole('button', { name: 'Apply changes', exact: true }).count(), 0, 'no Apply before a change');
             assert.equal(await settings.getByRole('button', { name: 'Discard', exact: true }).count(), 0, 'no Discard before a change');
-            assert((await bar.boundingBox()).height < 1, 'the empty apply bar takes no room');
-            for (const small of [settings.locator('.settings-quality-preset small').first(), settings.locator('.settings-sheet-row small').first()]) {
+            assert.equal(await bar.count(), 0, 'with nothing to apply the sheet has no footer');
+            assert.equal(await page.locator('[class*="settings-sheet-"]').count(), 0, 'no row of the older Settings markup is left');
+            for (const small of [settings.locator('[data-setting="quality"] .kit-row-desc'), settings.locator('.kit-row-desc').first()]) {
                 assert((await fontSize(small)) >= 13, 'help text is 13px or larger');
             }
             await shot(page, `stream-settings-${label}`);
 
-            await settings.getByRole('button', { name: /Data saver/ }).click();
+            await settings.getByRole('radio', { name: 'Data saver', exact: true }).click();
             const discard = settings.getByRole('button', { name: 'Discard', exact: true });
             const apply = settings.getByRole('button', { name: 'Apply changes', exact: true });
             await discard.click();
             await apply.waitFor({ state: 'detached' });
             assert.equal(await activeIn(settings), true, 'after Discard focus stays in the sheet');
-            await settings.getByRole('button', { name: /Data saver/ }).click();
+            await settings.getByRole('radio', { name: 'Data saver', exact: true }).click();
             await apply.click();
             const keep = settings.getByRole('button', { name: 'Keep editing', exact: true });
             await keep.waitFor();
@@ -592,8 +608,8 @@ async function applyBarAndReadability(browser) {
             const alert = bar.locator('[role="alert"]');
             await alert.waitFor();
             await settleMotion(page);
-            assert.equal(await alert.evaluate((el) => el === document.activeElement), true, 'after a failed apply focus is on the message');
-            const items = await bar.locator('.settings-sheet-apply-items > *').evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
+            assert.equal(await alert.evaluate((el) => el.closest('.settings-apply-message') === document.activeElement), true, 'after a failed apply focus is on the message');
+            const items = await bar.locator('.settings-apply > *').evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
             assert(items.length >= 3, 'the error, the note and the buttons are shown');
             for (let index = 1; index < items.length; index++) {
                 const gap = items[index].top - items[index - 1].bottom;
@@ -614,11 +630,11 @@ async function applyBarAndReadability(browser) {
         await page.locator('.device').filter({ hasText: UDID }).getByRole('button', { name: /^Settings for / }).click();
         const settings = sheet(page, 'Stream settings');
         await settings.waitFor();
-        await page.waitForFunction(() => !document.querySelector('.bottom-sheet-root.open')?.textContent.includes('Loading settings…'));
+        await page.waitForFunction(() => !document.querySelector('dialog.kit-sheet[open]')?.textContent.includes('Loading settings…'));
         await settleMotion(page);
         const hint = settings.getByText('After applying, open the screen and tap Listen.', { exact: true });
         await hint.scrollIntoViewIfNeeded();
-        const format = await settings.locator('.settings-audio .settings-advanced').boundingBox();
+        const format = await settings.locator('.settings-advanced', { hasText: 'Audio format' }).boundingBox();
         const gap = (await hint.boundingBox()).y - (format.y + format.height);
         assert(gap >= 8, `the hint is clear of the Audio format card (${gap}px)`);
         await shot(page, 'stream-settings-from-card-phone-light');
@@ -655,26 +671,27 @@ async function namesAndLabels(browser) {
         assert.equal(await page.locator('.stream-header-device > strong').first().textContent(), ANDROID_NAME, 'the header uses the same name as the card and the sheets');
         await toolbar(droid, 'Actions');
         const actions = sheet(page, 'Actions');
-        assert.equal(await actions.locator('.bottom-sheet-subtitle').textContent(), ANDROID_NAME);
+        assert.equal(await actions.locator('.kit-sheet-subtitle').textContent(), ANDROID_NAME);
         // The playback status line comes from the audio player and is left out here.
         const ownCopy = await actions.evaluate((el) => {
             const copy = el.cloneNode(true);
-            copy.querySelectorAll('[data-audio-state] .sheet-row-desc').forEach((node) => node.remove());
+            copy.querySelectorAll('[data-audio-state] .kit-row-desc').forEach((node) => node.remove());
             return copy.textContent;
         });
         assert.doesNotMatch(ownCopy, /\b(the|this) device\b|device's/i, 'the controlled phone is called a phone');
-        assert((await fontSize(actions.locator('.sheet-button').first())) >= 14, 'button labels are 14px');
-        assert((await contrastOf(actions.locator('.sheet-button:not(.primary):not(:disabled)').first())) >= 4.5, 'outline button labels meet 4.5:1');
+        // A button in a row is the kit's compact button: 13px, the size under 15 on the type scale.
+        assert((await fontSize(actions.locator('.kit-button').first())) >= 13, 'button labels are 13px or larger');
+        assert((await contrastOf(actions.locator('.kit-button:not(.kit-button-primary):not(:disabled)').first())) >= 4.5, 'outline button labels meet 4.5:1');
         await shot(page, 'android-actions-phone-light');
         await actions.getByRole('button', { name: 'Open Stream settings', exact: true }).click();
         const settings = sheet(page, 'Stream settings');
         await settings.waitFor();
-        assert.equal(await settings.locator('.bottom-sheet-subtitle').textContent(), ANDROID_NAME);
+        assert.equal(await settings.locator('.kit-sheet-subtitle').textContent(), ANDROID_NAME);
         assert.equal(await page.locator('.settings-device-context, .settings-device-dot').count(), 0, 'no pill and no dot');
-        await page.waitForFunction(() => !document.querySelector('.bottom-sheet-root.open')?.textContent.includes('Loading settings…'));
+        await page.waitForFunction(() => !document.querySelector('dialog.kit-sheet[open]')?.textContent.includes('Loading settings…'));
         const settingsCopy = await settings.evaluate((el) => {
             const copy = el.cloneNode(true);
-            copy.querySelectorAll('[data-audio-state] small').forEach((node) => node.remove());
+            copy.querySelectorAll('[data-audio-state] .kit-row-desc').forEach((node) => node.remove());
             return copy.textContent;
         });
         assert.doesNotMatch(settingsCopy, /\b(the|this) device\b|device's/i, 'Stream settings call the controlled phone a phone');
@@ -687,9 +704,9 @@ async function namesAndLabels(browser) {
         const { page } = phone;
         await toolbar(phone, 'Actions');
         const actions = sheet(page, 'Actions');
-        assert.equal(await actions.locator('.bottom-sheet-subtitle').textContent(), 'iPhone fixture');
+        assert.equal(await actions.locator('.kit-sheet-subtitle').textContent(), 'iPhone fixture');
         // By text, not by role: Restart services sits in the closed Troubleshooting section.
-        const labels = await actions.locator('button.sheet-button').evaluateAll((buttons) => buttons.map((button) => button.textContent.trim()));
+        const labels = await actions.locator('button.kit-button').evaluateAll((buttons) => buttons.map((button) => button.textContent.trim()));
         for (const name of ['Restart video', 'Reconnect', 'Restart services']) {
             assert.equal(labels.filter((label) => label === name).length, 1, `one button named ${name}`);
         }
@@ -705,7 +722,7 @@ async function namesAndLabels(browser) {
         await page.locator(`[data-device-key="ios:${IOS_UDID}"]`).getByRole('button', { name: 'Settings for iPhone fixture', exact: true }).click();
         const dialog = sheet(page, 'Scheduled unlock');
         await dialog.waitFor();
-        assert.equal(await dialog.locator('.bottom-sheet-subtitle').textContent(), 'iPhone fixture');
+        assert.equal(await dialog.locator('.kit-sheet-subtitle').textContent(), 'iPhone fixture');
         assert.equal(await page.locator('.settings-device-context').count(), 0);
         await shot(page, 'iphone-schedule-desktop-light');
     } finally {
@@ -727,9 +744,9 @@ async function statusContrast(browser) {
             await page.locator('.device').filter({ hasText: UDID }).getByRole('button', { name: /^Settings for / }).click();
             const settings = sheet(page, 'Stream settings');
             await settings.waitFor();
-            await page.waitForFunction(() => !document.querySelector('.bottom-sheet-root.open')?.textContent.includes('Loading settings…'));
+            await page.waitForFunction(() => !document.querySelector('dialog.kit-sheet[open]')?.textContent.includes('Loading settings…'));
             await settleMotion(page);
-            const select = settings.locator('.settings-sheet-row select').first();
+            const select = settings.locator('select.kit-field').first();
             const edge = await contrastOf(select, 'borderTopColor');
             assert(edge >= 3, `${dark ? 'dark' : 'light'}: field edge contrast ${edge.toFixed(2)}`);
         } finally {
@@ -743,7 +760,7 @@ async function main() {
     const browser = await chromium.launch({ headless: true });
     try {
         const scenarios = [
-            sheetToSheetFocus, escapeCancelsPrompt, typeTextKeepsPicture, copyHereOverHttp, errorBoundary, listenControl,
+            sheetToSheetFocus, escapeCancelsPrompt, typeTextIsASheet, copyHereOverHttp, errorBoundary, listenControl,
             desktopDialogTop, statusInItsGroup, applyBarAndReadability, namesAndLabels, statusContrast,
         ];
         const selected = process.env.SCENARIO ? scenarios.filter((run) => run.name === process.env.SCENARIO) : scenarios;

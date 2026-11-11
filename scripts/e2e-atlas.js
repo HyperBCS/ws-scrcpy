@@ -191,8 +191,9 @@ async function start(browser, viewport, theme) {
 }
 
 const card = (page, key) => page.locator(`article.device[data-device-key="${key}"]`);
-const sheet = (page) => page.locator('.bottom-sheet-root.open');
-const sheetTitled = (page, title) => sheet(page).filter({ has: page.locator('.bottom-sheet-title', { hasText: title }) });
+// Either sheet container: the kit's dialog, and the older one until its last user has moved.
+const sheet = (page) => page.locator('.bottom-sheet-root.open, dialog.kit-sheet[open]');
+const sheetTitled = (page, title) => sheet(page).filter({ has: page.locator('.bottom-sheet-title, .kit-sheet-title', { hasText: title }) });
 const tab = (page, name) => page.locator('.tool-tabs').getByRole('button', { name, exact: true });
 const connected = (page) => page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
 const screenOf = (udid) => `#!action=device&udid=${udid}&view=screen`;
@@ -352,9 +353,9 @@ async function screenOverlays(test, kind) {
     await dismiss(test, sheet(page));
 
     await control(test, 'Type text');
-    await page.locator('.live-text-overlay').waitFor();
+    await sheetTitled(page, /^Type text$/).waitFor();
     await shoot(test, `${kind}-type-text`);
-    await dismiss(test, page.locator('.live-text-overlay'));
+    await dismiss(test, sheet(page));
 }
 
 /** An Android phone: Screen with its overlays, Files with a menu and a dialog, and Shell. */

@@ -174,9 +174,9 @@ async function lazyLifecycle(browser) {
         const localMessages = fixture.messages.slice(beforeMessages);
         assert.ok(localMessages.some(message => message[0] === 1 && message.subarray(5).toString() === 'hello'), 'the committed text uses injectText');
         assert.equal(localMessages.filter(message => message[0] === 0).length, 2, 'Enter uses the normal Android down/up key events');
-        await page.getByRole('button', { name: 'Done', exact: true }).click();
-        await page.locator('.live-text-overlay').waitFor({ state: 'detached' });
-        assert.equal(uhid().length, beforeLiveText, 'Done leaves the Android software keyboard available');
+        await page.getByRole('button', { name: 'Close Type text', exact: true }).click();
+        await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'detached' });
+        assert.equal(uhid().length, beforeLiveText, 'Close leaves the Android software keyboard available');
         assert.deepEqual(fixture.errors, []);
         console.log('PASS: lazy UHID, touch/blur/background/local-control detach, and Live Text without UHID');
     } finally { await fixture.context.close(); }
