@@ -1147,6 +1147,69 @@ test('audio relay: the unpatched helper\'s 503 becomes a disabled status with th
     });
 });
 
+test('a helper that is behind the repository patches is refused before anything reaches the phone', async (t) => {
+    fs.rmSync(logFile, { force: true });
+    // Stands in for python/patches/check_patches.py run by the venv interpreter.
+    const answer = (result) => ({ command: process.execPath, args: ['-e', `console.log(${JSON.stringify(JSON.stringify(result))})`] });
+    let result = { version: '11.44.0', missing: ['button completion', 'early stop'] };
+    let checks = 0;
+    t.mock.method(PyMobileDevice, 'patchCheckCommand', () => {
+        checks++;
+        return answer(result);
+    });
+    PyMobileDevice.useBin(shim);
+    await withEnv({ FAKE_LOG: logFile, IOS_AUDIO: '0' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        try {
+            await assert.rejects(runner.acquire('iphone-stale-helper'), (error) => {
+                assert.equal(error.name, 'SessionStartError');
+                assert.equal(error.serveWebStarted, false);
+                assert.match(error.message, /missing patches: button completion, early stop\. Run "npm run patch:ios"/);
+                return true;
+            });
+            assert.equal(runner.getStatus('iphone-stale-helper').state, 'error');
+            assert(!calls().some((line) => line.includes('mounter') || line.includes('serve-web')), 'nothing was run for the phone');
+            // The viewer is told why and may ask again: nothing was started on the phone.
+            const socket = new FakeSocket();
+            CoreDeviceProxy.processRequest(socket, {
+                action: 'proxy-coredevice',
+                url: new URL('ws://localhost/?action=proxy-coredevice&udid=iphone-stale-helper'),
+            });
+            for (let i = 0; i < 200 && socket.readyState !== socket.CLOSED; i++) await sleep(20);
+            assert.match(socket.texts().at(-1).message, /npm run patch:ios/);
+            assert.equal(socket.closes.at(-1).code, 4010);
+            // patch:ios has been run: the next start asks again and goes ahead, and a current
+            // helper is not asked about a second time.
+            result = { version: '11.44.0', missing: [] };
+            const before = checks;
+            runner.release('iphone-stale-helper', await runner.acquire('iphone-stale-helper'));
+            assert.equal(checks, before + 1);
+            runner.stopSession('iphone-stale-helper');
+            await CoreDeviceRunner.whenStopped('iphone-stale-helper');
+            runner.release('iphone-stale-helper', await runner.acquire('iphone-stale-helper'));
+            assert.equal(checks, before + 1);
+        } finally {
+            runner.release();
+            PyMobileDevice.useBin(shim);
+        }
+    });
+});
+
+test('the helper check is skipped where it cannot be run, and a check that fails allows the session', async (t) => {
+    // The fake CLI is not in a venv, so there is no interpreter to ask.
+    assert.equal(PyMobileDevice.patchCheckCommand(), undefined);
+    assert.equal(await PyMobileDevice.helperProblem(), undefined);
+    t.mock.method(PyMobileDevice, 'patchCheckCommand', () => ({ command: process.execPath, args: ['-e', 'process.exit(3)'] }));
+    t.mock.method(console, 'error', () => undefined);
+    PyMobileDevice.useBin(shim);
+    try {
+        assert.equal(await PyMobileDevice.helperProblem(), undefined, 'an unknown answer does not lock the phones out');
+        assert.match(console.error.mock.calls[0].arguments[0], /could not check the installed patches/);
+    } finally {
+        PyMobileDevice.useBin(shim);
+    }
+});
+
 test('a serve-web whose input queue is full ends the viewer with an error instead of piling input up', async () => {
     // /touch and /key are answered when queued, so a stuck HID worker never times a request out.
     // The patched helper refuses reports past its queue bound, and that refusal is what the proxy sees.

@@ -1733,12 +1733,21 @@ shutdown-harness.js` runs one fake session under the real `Shutdown` so the cras
 exit paths can be tested in a child process. test-coredevice.js turns the budget and the cooldown
 off for its other tests and uses port base 18300, clear of a server running on the same machine.
 
-**Still open.** A hardware check of the early-signal patch, which this machine's `python/venv`
-does not have yet. A test that the installed `screen_stream.py` carries every patch marker: on
-this machine's `python/venv` it would fail, because the file has neither the early-stop marker nor
-"ws-scrcpy button completion": `/button` is still answered when the request is queued, not when
-the phone has the edge. Running `npm run patch:ios` there would add both. The Docker image builds
-its own venv from the Dockerfile, which runs every patch, and was not checked.
+**Still open.** A hardware check of the early-signal patch.
+
+**Patch check (2026-11-11, phase 2).** `python/patches/check_patches.py` lists the marker every
+patch leaves and compares the two copied modules with their source. The server runs it with the
+venv's interpreter before a session's mount (`PyMobileDevice.helperProblem()`, called from
+`CoreDeviceRunner.bringUp`) and fails the start with "missing patches: ... Run npm run patch:ios".
+That is a failure before serve-web ran, so the viewer gets 4010 and keeps asking; a stale answer is
+not cached, so patching is noticed without a server restart. A check that cannot be run (no venv
+next to the CLI, the script missing, `IOS_PATCH_CHECK=0`, a Python error) allows the session.
+`python/patches/test_check_patches.py` fails when `python/venv` is behind `python/patches`, and
+ties the marker list to the patch scripts. A patch that changes an already patched file needs a new
+marker in both places. `npm run dev` runs `patch:ios` first when the venv exists. The same phase
+added a patch step ("ws-scrcpy input queue bound": `/touch` and `/key` answer 503 once 512 reports
+are queued), so a venv patched before it needs `npm run patch:ios` again. Dependencies of
+pymobiledevice3 are still not pinned.
 
 ### Scheduled unlock and passcode handling after the 2026-11-10 review (fixture-tested only)
 

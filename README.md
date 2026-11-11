@@ -311,6 +311,7 @@ machine the setup script says so; pick another with
 | `IOS_PYMOBILEDEVICE3` | Path to the `pymobiledevice3` executable (default: `python/venv/bin/pymobiledevice3`, then `PATH`) |
 | `IOS_TUNNEL` | How the iOS 17+ tunnel is reached: `userspace` (default, in-process, no root) or `tunneld` (use a running `sudo pymobiledevice3 remote tunneld`) |
 | `IOS_APP_SWITCHER` | How the App switcher button opens it: `gesture` (Face ID swipe-and-hold) or `home` (Home double press). Default: by product type |
+| `IOS_PATCH_CHECK` | `0` turns off the check that the installed `pymobiledevice3` has every patch from `python/patches` |
 | `IOS_STATE_PROBE` | `0` turns the screen/lock state monitor off (the badges and the sleep overlay stay silent) |
 | `IOS_LOCK_PROBE` | `0` disables lock detection (direct state on iOS 27.2+, accessibility on older versions) and keeps screen detection |
 | `IOS_STATE_NOTIFICATIONS` | `0` disables the per-device `notification observe` process; state then changes only at the poll interval |
@@ -564,8 +565,13 @@ Notifications cannot bypass those iOS settings. No private content is cached by
 the service worker.
 
 The iOS toolchain is pinned in `python/requirements.txt`. `npm run setup:ios`
-applies the raw-audio and five-contact HID patches; rerun it after recreating the
-virtual environment. `npm test` includes ANCS fragmentation, touch lifecycle,
+installs it and applies the patches in `python/patches`; `npm run patch:ios`
+applies them to an existing virtual environment, and `npm run dev` runs it first.
+Run it after pulling a change to `python/patches`. Before it starts an iPhone
+screen session the server checks that the installed helper has every patch
+(`python/patches/check_patches.py`). If one is missing, the session is refused
+with the names of the missing patches and the command to run. `npm test` fails
+for the same reason. `npm test` includes ANCS fragmentation, touch lifecycle,
 notification policy, persistence, and service-worker regression tests.
 
 

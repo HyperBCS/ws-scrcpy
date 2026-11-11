@@ -201,7 +201,7 @@ if (command === 'mounter auto-mount') {
 }
 if (command === 'developer core-device display serve-web') {
     if (args.includes('--udid')) {
-        // The real CLI (11.12.5) rejects this: the tunnel target comes from PYMOBILEDEVICE3_UDID.
+        // The real CLI (11.44.0, as 11.12.5 did) rejects this: the tunnel target comes from PYMOBILEDEVICE3_UDID.
         process.stderr.write('Usage: pymobiledevice3 developer core-device display serve-web [OPTIONS]\n╭─ Error ─╮\n│ No such option: --udid │\n╰─╯\n');
         process.exit(2);
     }
