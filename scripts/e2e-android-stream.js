@@ -64,10 +64,97 @@ async function touch(cdp, points) {
     await pause(50);
 }
 
+// Two real 32x32 red frames encoded by libx264, as whole Annex-B packets the way scrcpy sends them.
+const CONFIG = Buffer.from('000000016742c00ada25b011000003000100000300788f1226a00000000168ce0fc8', 'hex');
+const IDR = Buffer.from('000000016588843a118a000218f1c00040f63800087949d75e', 'hex');
+// Starts like a keyframe and is not one: the browser's decoder fails on it.
+const BROKEN = Buffer.concat([Buffer.from('0000000165', 'hex'), Buffer.alloc(40, 0xff)]);
+
+function redPicture() {
+    const canvas = document.querySelector('canvas.video-layer');
+    if (!canvas || !canvas.width) return false;
+    const probe = document.createElement('canvas');
+    probe.width = probe.height = 16;
+    const context = probe.getContext('2d');
+    context.drawImage(canvas, 0, 0, 16, 16);
+    const [r, g, b] = context.getImageData(8, 8, 1, 1).data;
+    return r > 200 && g < 50 && b < 50;
+}
+
+// A real WebCodecs decoder error with the socket still up: the player rebuilds its decoder from
+// the cached SPS and PPS, asks for a keyframe when none comes, and shows the picture again.
+async function decoderRecovery(browser) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const page = await context.newPage();
+    const errors = [];
+    const decoderErrors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('console', (message) => {
+        if (message.type() === 'error' && message.text().includes('[WebCodecs]')) decoderErrors.push(message.text());
+    });
+    const socketUrl = new URL('/__decoder_fixture__', BASE);
+    socketUrl.protocol = socketUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    const received = [];
+    let stream;
+    await page.routeWebSocket(socketUrl.toString(), (socket) => {
+        stream = socket;
+        socket.onMessage((data) => {
+            const message = Buffer.from(data);
+            received.push(message);
+            if (message.length === 1 && message[0] === 17) {
+                // RESET_VIDEO: scrcpy starts a new capture session. The size is announced again,
+                // then the parameter sets and a keyframe follow.
+                socket.send(initialPacket(32, 32));
+                socket.send(CONFIG);
+                socket.send(IDR);
+            }
+        });
+        setTimeout(() => {
+            socket.send(initialPacket(32, 32));
+            socket.send(CONFIG);
+            socket.send(IDR);
+        }, 100);
+    });
+    const url = new URL(BASE);
+    url.hash = `!${new URLSearchParams({ action: 'stream', udid: 'decoder-fixture', player: 'webcodecs', ws: socketUrl.toString(), captureKeyboard: '0' })}`;
+    try {
+        await page.goto(url.toString());
+        await page.getByText('Connected', { exact: true }).waitFor();
+        await page.waitForFunction(redPicture, undefined, { timeout: 5000 });
+
+        stream.send(BROKEN);
+        const started = Date.now();
+        while (!decoderErrors.length && Date.now() - started < 3000) await pause(50);
+        assert(decoderErrors.length > 0, 'the broken packet produced a real decoder error');
+        assert(await page.evaluate(redPicture), 'the last picture stays on screen while the decoder is rebuilt');
+        await page.getByText('Connected', { exact: true }).waitFor();
+
+        // The stream is silent, like a still screen. Wipe the canvas so that only a newly
+        // decoded frame can make it red again.
+        await page.evaluate(() => {
+            const canvas = document.querySelector('canvas.video-layer');
+            canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+        });
+        assert.equal(await page.evaluate(redPicture), false);
+        await page.waitForFunction(redPicture, undefined, { timeout: 6000 });
+        assert.deepEqual(
+            received.filter((message) => message.length === 1).map((message) => message[0]),
+            [17],
+            'one RESET_VIDEO was sent for the missing keyframe',
+        );
+        assert.equal(await page.locator('.stream-notice').count(), 0, 'a failure the player recovered from shows no notice');
+        assert.deepEqual(errors, [], 'no browser runtime errors');
+        console.log(`PASS decoder recovery: picture back ${Date.now() - started} ms after a real WebCodecs error`);
+    } finally {
+        await context.close();
+    }
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
     try {
+        await decoderRecovery(browser);
         for (const [label, width, height, mobile, colorScheme] of [
             ['phone-light', 390, 844, true, 'light'],
             ['phone-dark', 390, 844, true, 'dark'],
