@@ -106,6 +106,22 @@
     font-weight: bold;
 }
 
+/* The device the sheet acts on. */
+.bottom-sheet-subtitle {
+    margin: 2px 0 0;
+    color: var(--text-color-light);
+    font-size: 0.93rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+/* The panel takes focus when a sheet opens so the phone keyboard stays down. It is a container,
+   not a control: no ring round the whole dialog. */
+.bottom-sheet:focus,
+.bottom-sheet:focus-visible {
+    outline: none;
+}
+
 .bottom-sheet-close {
     display: inline-flex;
     align-items: center;
@@ -216,7 +232,7 @@
     min-height: 44px;
     padding: 0 0.9rem;
     font: inherit;
-    font-size: 0.9rem;
+    font-size: 1rem;
     color: var(--button-text-color);
     background-color: transparent;
     border: 1px solid var(--button-border-color);
@@ -243,7 +259,7 @@
     font-size: 16px;
     color: var(--text-color);
     background-color: var(--main-bg-color);
-    border: 1px solid var(--button-border-color);
+    border: 1px solid var(--control-border-color);
     border-radius: 0.5rem;
 }
 
