@@ -550,7 +550,7 @@ async function disconnectedFlow(browser) {
         lastRun: { at: Date.UTC(2026, 10, 11, 8, 0, 20), trigger: 'schedule', outcome: 'skipped-disconnected', message: 'The phone is not connected' },
     };
     const gone = { state: 'disconnected', session: 'stopped', 'screen.power': 'unknown', 'device.locked': 'unknown' };
-    for (const [width, height, mobile] of [[390, 844, true], [1280, 800, false]]) {
+    for (const [width, height, mobile] of [[320, 640, true], [390, 844, true], [1280, 800, false]]) {
         for (const colorScheme of ['light', 'dark']) {
             const test = await start(browser, { width, height, mobile, colorScheme, status, device: gone });
             const { page, commands, handlers } = test;
@@ -599,7 +599,7 @@ async function disconnectedFlow(browser) {
             }
         }
     }
-    console.log('PASS iOS settings for a disconnected phone at 390 and 1280, light and dark');
+    console.log('PASS iOS settings for a disconnected phone at 320, 390 and 1280, light and dark');
 }
 
 // C-ios-unlock-11: the reply to Run now never arrives (the tracker socket dropped during the run).
