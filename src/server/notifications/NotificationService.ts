@@ -797,6 +797,8 @@ export class NotificationService implements Service {
                 res.sendStatus(404);
                 return;
             }
+            // An app's icon rarely changes. Misses stay uncached so that they are asked for again.
+            res.setHeader('Cache-Control', 'private, max-age=86400');
             res.type('png').send(png);
         });
         route('post', '/history/read', (req, res) => {

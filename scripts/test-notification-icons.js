@@ -89,6 +89,54 @@ test('concurrent different icons limit USB requests and deletion invalidates pen
     assert.deepEqual(await f.icons.get('iphone', 'com.new'), png, 'a re-added source can fetch again');
 });
 
+test('no lookup is started for a phone that is not on USB, and nothing is held against it', async () => {
+    const f = fixture();
+    let reachable = true;
+    NotificationIcons.setPhoneCheck(udid => { assert.equal(udid, 'iphone'); return reachable; });
+    try {
+        assert.deepEqual(await f.icons.get('iphone', 'com.cached'), png);
+        reachable = false;
+        for (let i = 0; i < 30; i++) assert.equal(await f.icons.get('iphone', `com.app${i}`), null);
+        assert.equal(f.requests().filter(line => line.startsWith('start')).length, 1, 'only the first icon ran the probe');
+        assert.equal(f.icons.failures.size, 0);
+        assert.deepEqual(await f.icons.get('iphone', 'com.cached'), png, 'an icon already on disk needs no phone');
+        reachable = true;
+        assert.deepEqual(await f.icons.get('iphone', 'com.app0'), png, 'the icon loads once the phone is back');
+    } finally { NotificationIcons.setPhoneCheck(() => undefined); }
+});
+
+test('a missing icon is remembered for an hour only when the phone answered', async () => {
+    const f = fixture();
+    const remembered = async app => {
+        const before = Date.now();
+        assert.equal(await f.icons.get('iphone', app), null);
+        const [expires] = [...f.icons.failures.values()].slice(-1);
+        return Math.round((expires - before) / 60000);
+    };
+    try {
+        assert.equal(await remembered('com.first.missing'), 1, 'not known whether the phone is attached');
+        NotificationIcons.setPhoneCheck(() => true);
+        assert.equal(await remembered('com.second.missing'), 60);
+        assert.equal(await remembered('com.bad'), 60);
+        assert.equal(await remembered('com.large'), 1, 'a lookup that was cut short is tried again soon');
+        const count = f.requests().length;
+        assert.equal(await f.icons.get('iphone', 'com.second.missing'), null);
+        assert.equal(f.requests().length, count);
+    } finally { NotificationIcons.setPhoneCheck(() => undefined); }
+});
+
+test('the iPhone tracker says when it has listed the attached phones', async () => {
+    const { ControlCenter } = require('../src/server/appl-device/services/ControlCenter');
+    const tracker = new ControlCenter();
+    // Only the listing step runs; nothing here starts pymobiledevice3.
+    tracker.listUdids = async () => [];
+    tracker.initialized = true;
+    assert.equal(tracker.hasPolled(), false);
+    await tracker.poll();
+    assert.equal(tracker.hasPolled(), true);
+    assert.equal(tracker.getDescriptor('iphone'), undefined);
+});
+
 test('the cache retains at most 100 icons per source and replaces corrupt cached files', async () => {
     const f = fixture();
     const directory = path.join(f.dir, 'notification-icons', hash('iphone'));

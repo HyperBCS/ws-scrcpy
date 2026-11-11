@@ -205,6 +205,21 @@ test('a collector that exits without a message is reported, and a restart for ch
     });
 });
 
+test('an icon that loads may be cached by the browser for a day; a miss and the status may not', async () => {
+    await mounted(async ({ service, api }) => {
+        const png = Buffer.from('89504e470d0a1a0a', 'hex');
+        service.icons.get = async (_source, app) => (app === 'com.example' ? png : null);
+        const found = await api('/icons/iphone/com.example');
+        assert.equal(found.status, 200);
+        assert.equal(found.headers.get('content-type'), 'image/png');
+        assert.equal(found.headers.get('cache-control'), 'private, max-age=86400');
+        const missing = await api('/icons/iphone/com.other');
+        assert.equal(missing.status, 404);
+        assert.equal(missing.headers.get('cache-control'), 'no-store');
+        assert.equal((await api('/status')).headers.get('cache-control'), 'no-store');
+    });
+});
+
 const hidden = { ...source, preview: false };
 
 test('with previews off the history holds nothing the text can be recovered from', async () => {
