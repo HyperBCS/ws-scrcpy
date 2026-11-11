@@ -80,6 +80,39 @@ export interface SystemPushPayload {
     url: string;
 }
 
+type FingerprintFields = Pick<NotificationEvent, 'source' | 'app' | 'title' | 'subtitle' | 'body' | 'date'>;
+const digest = (value: unknown[]): string => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+// Marks a fingerprint that holds no text, so one made from text is never kept for a phone
+// whose previews are off.
+const REDUCED_FINGERPRINT = 'l:';
+
+/** Identifies an alert that the iPhone announces again after a reconnect. Made from its text. */
+export function textFingerprint(event: FingerprintFields): string | undefined {
+    return event.date
+        ? digest([event.source, event.app, event.title || '', event.subtitle || '', event.body || '', event.date])
+        : undefined;
+}
+
+/**
+ * The same for a phone with previews off. A hash of short, fixed-form text ("Your code is
+ * 123456") can be reversed by trying every candidate, so this one holds only the app, the time
+ * and the length of each text. The lengths are capped the way stored text is.
+ */
+export function reducedFingerprint(event: FingerprintFields): string | undefined {
+    const length = (value: string | undefined, limit: number) => Math.min((value || '').length, limit);
+    return event.date
+        ? REDUCED_FINGERPRINT +
+              digest([
+                  event.source,
+                  event.app,
+                  length(event.title, 1024),
+                  length(event.subtitle, 1024),
+                  length(event.body, 4096),
+                  event.date,
+              ])
+        : undefined;
+}
+
 export function shouldRelay(event: NotificationEvent, source: NotificationSource, sub: SubscriptionRecord): boolean {
     return (
         event.event === 'added' &&
@@ -196,7 +229,15 @@ export class NotificationService implements Service {
             console.error(`[NotificationService] ${this.disabled}`);
             return;
         }
+        let redacted = false;
         for (const item of this.storage.loadHistory(this.store.sources)) {
+            // History written before reduced fingerprints existed kept a hash of the text for
+            // these phones. The text is gone, so the hash cannot be replaced; drop it.
+            const preview = this.store.sources.find((source) => source.id === item.source)?.preview;
+            if (!preview && item.fingerprint && !item.fingerprint.startsWith(REDUCED_FINGERPRINT)) {
+                delete item.fingerprint;
+                redacted = true;
+            }
             this.feed.set(item.key, item);
             if (item.reconnectable && item.fingerprint)
                 this.replayCandidates.set(`${item.source}:${item.session}:${item.uid}`, {
@@ -207,6 +248,7 @@ export class NotificationService implements Service {
                 });
         }
         this.prune();
+        if (redacted) this.saveHistory();
     }
     private saveHistory(immediate = false): void {
         if (this.disabled) return;
@@ -561,27 +603,16 @@ export class NotificationService implements Service {
         if (event.app.startsWith('com.apple.WebKit.WebPush') || event.app.startsWith('com.apple.WebKit.PushBundle'))
             return;
         if (source.apps.length && !source.apps.includes(event.app)) return;
-        const fingerprint = event.date
-            ? crypto
-                  .createHash('sha256')
-                  .update(
-                      JSON.stringify([
-                          event.source,
-                          event.app,
-                          event.title || '',
-                          event.subtitle || '',
-                          event.body || '',
-                          event.date,
-                      ]),
-                  )
-                  .digest('hex')
-            : undefined;
+        // Only the kind this phone's setting allows is kept. An earlier record is compared under
+        // both, because it holds the kind that was allowed when it was stored.
+        const known = [textFingerprint(event), reducedFingerprint(event)];
+        const fingerprint = source.preview ? known[0] : known[1];
         // Match only one previous lifetime per new UID. Preserve its app read state
         // and stable history key while replacing transient Bluetooth identifiers.
         const replay =
             !current && fingerprint && event.event === 'added'
                 ? [...this.replayCandidates].find(
-                      ([, candidate]) => candidate.session !== event.session && candidate.fingerprint === fingerprint,
+                      ([, candidate]) => candidate.session !== event.session && known.includes(candidate.fingerprint),
                   )
                 : undefined;
         const previous = current || (replay?.[1].historyKey ? this.feed.get(replay[1].historyKey) : undefined);
@@ -990,8 +1021,21 @@ export class NotificationService implements Service {
                 { id, address: address.toUpperCase(), name, apps, preview },
             ];
             if (connectionChanged) this.invalidateSources();
-            for (const item of this.feed.values())
-                if (item.source === id && !preview) Object.assign(item, { title: '', subtitle: '', body: '' });
+            if (!preview) {
+                // The text goes, and so does anything it could be recovered from.
+                for (const item of this.feed.values()) {
+                    if (item.source !== id) continue;
+                    if (item.fingerprint && !item.fingerprint.startsWith(REDUCED_FINGERPRINT))
+                        item.fingerprint = reducedFingerprint(item);
+                    Object.assign(item, { title: '', subtitle: '', body: '' });
+                }
+                for (const [key, candidate] of this.replayCandidates) {
+                    const item = this.feed.get(candidate.historyKey || '');
+                    if (item?.source !== id && !key.startsWith(`${id}:`)) continue;
+                    if (item?.fingerprint) candidate.fingerprint = item.fingerprint;
+                    else this.replayCandidates.delete(key);
+                }
+            }
             this.saveHistory(true);
             this.save();
             if (connectionChanged) this.restartCollector();

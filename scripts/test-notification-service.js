@@ -204,3 +204,95 @@ test('a collector that exits without a message is reported, and a restart for ch
         assert.equal((await status()).collectorError, 'Bluetooth collector stopped');
     });
 });
+
+const hidden = { ...source, preview: false };
+
+test('with previews off the history holds nothing the text can be recovered from', async () => {
+    await mounted(async ({ service, api }) => {
+        service.save();
+        service.handleCollector({ kind: 'session', source: 'iphone', session: 'a' });
+        service.receive(event);
+        assert.equal((await api('/history/read', { all: true, read: false })).status, 200);
+        const saved = JSON.parse(savedHistory()).items;
+        assert.equal(saved.length, 1);
+        assert.equal(saved[0].body, '');
+        assert.match(saved[0].fingerprint, /^l:[a-f0-9]{64}$/);
+        assert.equal(savedHistory().includes(textFingerprint(event)), false, 'no hash of the text is stored');
+        assert.ok([...service.replayCandidates.values()].every((hint) => hint.fingerprint === saved[0].fingerprint));
+
+        // The same alert announced again after a reconnect is still one history item.
+        service.handleCollector({ kind: 'session', source: 'iphone', session: 'b' });
+        service.receive({ ...event, session: 'b', uid: 9, preExisting: true });
+        assert.equal(service.feed.size, 1);
+        // Also after a server restart, when only the file is left.
+        service.storage.flush();
+        const restarted = new NotificationService();
+        try {
+            restarted.load();
+            restarted.handleCollector({ kind: 'session', source: 'iphone', session: 'c' });
+            restarted.receive({ ...event, session: 'c', uid: 4, preExisting: true });
+            assert.equal(restarted.feed.size, 1);
+            restarted.receive({ ...event, session: 'c', uid: 5, body: 'Your code is 654321!', preExisting: true });
+            assert.equal(restarted.feed.size, 2, 'a different alert is not merged');
+        } finally {
+            restarted.release();
+        }
+    }, [hidden]);
+});
+
+test('turning previews off replaces stored fingerprints of the text', async () => {
+    await mounted(async ({ service, api }) => {
+        service.handleCollector({ kind: 'session', source: 'iphone', session: 'a' });
+        service.receive(event);
+        assert.equal((await api('/history/read', { all: true, read: false })).status, 200);
+        assert.ok(savedHistory().includes(textFingerprint(event)), 'with previews on the text is stored anyway');
+
+        assert.equal((await api('/sources', hidden)).status, 200);
+        assert.equal(savedHistory().includes(textFingerprint(event)), false);
+        assert.equal(savedHistory().includes('123456'), false);
+        assert.ok([...service.replayCandidates.values()].every((hint) => hint.fingerprint.startsWith('l:')));
+        service.handleCollector({ kind: 'session', source: 'iphone', session: 'b' });
+        service.receive({ ...event, session: 'b', uid: 9, preExisting: true });
+        assert.equal(service.feed.size, 1, 'the alert is still recognised after a reconnect');
+
+        // Previews on again: a record stored without text still matches its alert.
+        assert.equal((await api('/sources', source)).status, 200);
+        service.handleCollector({ kind: 'session', source: 'iphone', session: 'c' });
+        service.receive({ ...event, session: 'c', uid: 3, preExisting: true });
+        assert.equal(service.feed.size, 1);
+        assert.equal([...service.feed.values()][0].body, event.body);
+    });
+});
+
+test('a text fingerprint saved by an earlier version is removed when previews are off', async () => {
+    await mounted(async ({ service }) => {
+        service.store.sources = [hidden, { ...source, id: 'shown', address: 'AA:BB:CC:DD:EE:00' }];
+        service.save();
+        const record = (item, text) => ({
+            ...event,
+            ...text,
+            source: item,
+            key: `key-${item}`,
+            received: Date.now(),
+            read: false,
+            dismissed: false,
+            active: false,
+            reconnectable: true,
+            fingerprint: textFingerprint({ ...event, source: item }),
+        });
+        const items = [record('iphone', { title: '', body: '' }), record('shown', {})];
+        fs.writeFileSync(historyFile, JSON.stringify({ version: 1, items }));
+        const restarted = new NotificationService();
+        try {
+            restarted.load();
+            assert.equal(restarted.feed.get('key-iphone').fingerprint, undefined);
+            assert.equal(restarted.feed.get('key-shown').fingerprint, items[1].fingerprint);
+            assert.deepEqual([...restarted.replayCandidates.values()].map((hint) => hint.historyKey), ['key-shown']);
+            await sleep(300);
+            const saved = JSON.parse(savedHistory()).items;
+            assert.deepEqual(saved.map((item) => item.fingerprint), [undefined, items[1].fingerprint]);
+        } finally {
+            restarted.release();
+        }
+    });
+});
