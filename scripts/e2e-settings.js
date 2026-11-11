@@ -41,7 +41,7 @@ async function fixture(page, { onApply, onStreamMessage, initialPacket, onStream
                 packet.writeInt32BE(1, 86);
                 socket.send(initialPacket || packet);
                 const sendAudioError = () => socket.send(audioError());
-                if (onStreamReady) onStreamReady({ sendAudioError, close: () => socket.close() });
+                if (onStreamReady) onStreamReady({ sendAudioError, send: (data) => socket.send(data), close: () => socket.close() });
                 else sendAudioError();
             }, 100);
             return;

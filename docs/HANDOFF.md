@@ -168,6 +168,7 @@ Type numbering is **unchanged** from 3.x (new types appended at 18+). Verified f
 | 0 | INJECT_KEYCODE | type, action, keycode(4), repeat(4), meta(4) | works |
 | 1 | INJECT_TEXT | type, len(u32), utf8 | works |
 | 2 | INJECT_TOUCH | type, action, pointerId(8), x(4), y(4), w(2), h(2), pressure(2), actionButton(4), buttons(4) = 32B | works |
+| 3 | INJECT_SCROLL | type, x(4), y(4), w(2), h(2), hscroll(2), vscroll(2), buttons(4) = 21B | scroll values are notches / 16 as i16 fixed point (the server multiplies by 16); not checked on a device since that fix |
 | 5/6/7 | EXPAND/COLLAPSE PANELS | type only (1 byte) | works |
 | 8 | GET_CLIPBOARD | type, **copyKey(1)** | works |
 | 9 | SET_CLIPBOARD | type, **sequence(u64)**, paste(1), len(u32), text | works |
@@ -176,6 +177,7 @@ Type numbering is **unchanged** from 3.x (new types appended at 18+). Verified f
 | 12 | UHID_CREATE | type, id(2), vendorId(2), productId(2), nameLen(1), name, descLen(2), desc | works |
 | 13 | UHID_INPUT | type, id(2), size(2), data | works |
 | 14 | UHID_DESTROY | type, id(2) | works; scoped to the closing viewer |
+| 17 | RESET_VIDEO | type only | restarts the encoder for every viewer; sent for decoder recovery, not checked on a device |
 
 **Two fields were historically missing** and silently broke clipboard entirely: the `copyKey` byte
 on GET, and the 8-byte `sequence` on SET. A short message doesn't error — the server just waits or
@@ -326,7 +328,12 @@ Ordered by how much time they cost.
 tracker lifecycle checks in `scripts/test-client-lifecycle.js`, nine backend audio tests in
 `scripts/test-audio-protocol.js`, and browser-audio checks in `scripts/test-audio-player.js`.
 `scripts/test-video-bootstrap.js` covers complete late-join replay, config invalidation, and both
-byte/frame-count cache overflow paths without device input.
+byte/frame-count cache overflow paths without device input, and since the 2026-11-10 review also
+session packets and the release of keys a departed viewer held.
+`scripts/test-stream-clients.js` runs the browser-side stream code against mocked browser APIs:
+scroll encoding, decoder recovery, touches beside the picture, player statistics, held keys and
+buttons, and the stream settings target. `node scripts/test-browser.js android-stream` drives the
+Android stream page in Chromium with mocked sockets (rotation, an edge swipe, the wheel).
 Audio coverage includes fragmented headers, timestamp flags, late-join codec config, capture
 failure isolation and fallback, PCM conversion, unlock/mute/background/reconnect, bounded
 buffering, and stale decoder output cleanup. The player tests mock browser APIs; they do not
@@ -1859,3 +1866,46 @@ Pictures), and adbd removing a cancelled partial file.
 (Delete, Replace) is red and ignores presses for `CONFIRM_GUARD_MS`, and focus starts on the
 answer that loses nothing. The iPhone card shows one scheduled-unlock line, from
 `unlockCardLine()`; the separate "has no passcode" warning from p1-confirm was folded into it.
+
+### Android stream client after the 2026-11-10 review (unit-tested only, not checked on a device)
+
+**Rotation.** See §3: session packets are read, and `WebsocketProxy` sends a second
+`scrcpy_initial` when the size changes. `StreamClientScrcpy.onDisplayInfo` gives the new
+`ScreenInfo` to the player. The MSE player restarts its converter on it; the WebCodecs player
+also takes the size from the new SPS. Needs a check on a phone: rotate, and open a landscape
+video full screen, with both players.
+
+**Decoder errors.** `WebCodecsPlayer` keeps the last SPS and PPS. After a decoder error it builds
+a new decoder, configures it from that copy and resumes at the next keyframe; the canvas keeps
+the last picture meanwhile. Non-keyframe slices before a keyframe are dropped, not buffered. If
+no keyframe arrives within 2 s the player emits `keyframe-request` and `StreamClientScrcpy` sends
+`RESET_VIDEO`, at most three times in five minutes because it restarts the encoder for every
+viewer. More than three errors in 5 s pause decoding for 5 s with a stream notice; the player is
+no longer stopped for good. `MsePlayer` reports a media element error the same way and starts
+again at the next SPS. Both iPhone players emit `decoder-error` and the client answers with a
+`pli`. Whether `RESET_VIDEO` brings a keyframe on the owner's phones is not verified.
+
+**Scroll.** One wheel notch is one scrcpy notch. `FeaturedInteractionHandler` converts the wheel
+delta (100 px or 3 lines per notch), adds up what arrives within the 30 ms throttle and clamps to
+16 notches. How that feels on a device has not been judged by hand.
+
+**Touches beside the picture.** The touch layer is still the size of the picture. A touch that
+starts on the `.video` band next to it is now accepted on both platforms, held back until it
+moves onto the picture, then sent as a touch-down on the nearest edge followed by the move. A tap
+on the band sends nothing. Android maps points with `clientPointToVideo` like the iPhone handler,
+so a finger sliding off the picture rides the edge instead of lifting. The iPhone section above
+records that injected edge swipes were unreliable on the bench phone; a swipe made by hand
+through this path has not been tried on either platform.
+
+**Held keys and buttons.** `HeldButtons` (`toolbox/heldButtons.ts`) releases a toolbar button
+that is still down when the window loses focus or the page is hidden. On a disconnect the clients
+only forget their holds: an Android `UP` sent at that moment would be queued and replayed on the
+next connection. The servers do the release. `WebsocketProxy` tracks single-message
+`INJECT_KEYCODE` frames per viewer and writes `UP` for what is still down when the viewer goes.
+`CoreDeviceProxy` tracks `down` buttons and posts `up` in `release()` before the session hold is
+returned. The iPhone client releases its keyboard keys when a key event lands on a local control.
+
+**Removed.** The Fit screen toggle, the `fitToScreen` link parameter and the per-window-size
+video settings in localStorage: CSS always fits the picture, so none of it had an effect. Stale
+`MseDecoder:` and `WebCodecsPlayer:` keys are deleted on the first stream start. `BasePlayer`
+still has `setBounds()`, which only the iPhone client calls and nothing reads.
