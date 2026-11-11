@@ -2484,6 +2484,100 @@ test('scheduler with the real store: the settings file of 2026-11-11 loads, show
     }
 });
 
+test('scheduler with the real store: the settings file of 2026-11-11, started after 15:00, clears the hand-unlock state on the first screen reading and runs once the phone is read', async () => {
+    const directory = path.join(temporary, 'live-store-late');
+    const udid = 'iphone-live-late';
+    // The live server keeps server time; the slots of a schedule without a zone are local.
+    const failedSlot = lastUnlockSlotAt('03:00', Date.now());
+    const secondSlot = nextUnlockRunAt('03:00', failedSlot);
+    const seed = new IosSettingsStore(directory);
+    seed.setPasscode(udid, PASSCODE);
+    seed.updateSchedule(udid, { enabled: true, time: '03:00' });
+    const file = path.join(directory, IOS_SETTINGS_FILE);
+    const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+    // As the old version left it: no retry pending, the 36-hour warning not yet sent.
+    Object.assign(stored.devices[udid].unlock, {
+        lastUnlockedAt: failedSlot - 24 * HOUR + 46000,
+        lastSlotAt: failedSlot,
+        lastTimerRunAt: failedSlot + 11 * MINUTE,
+        deadlineWarnedFor: failedSlot - 24 * HOUR + 46000,
+        lastRun: {
+            at: failedSlot + 11 * MINUTE + 47000,
+            trigger: 'schedule',
+            outcome: 'failed-session',
+            message: 'Could not mount the Developer Disk Image: Device is password protected. Please unlock and retry.',
+        },
+    });
+    fs.writeFileSync(file, JSON.stringify(stored));
+
+    // The new version starts at 16:00:20, an hour after the second slot of the day.
+    const started = secondSlot + HOUR + 20000;
+    let clock = started;
+    let listed = false;
+    const runs = [];
+    const pushes = [];
+    const statuses = [];
+    const monitor = new FakeMonitor();
+    const scheduler = new UnlockScheduler({
+        store: new IosSettingsStore(directory),
+        driver: {
+            run: async (id, readPasscode) => {
+                runs.push({ at: clock, passcode: readPasscode() });
+                return { outcome: 'unlocked', verifiedAt: clock, typed: true };
+            },
+        },
+        monitor,
+        notify: (payload) => pushes.push(payload),
+        now: () => clock,
+    });
+    scheduler.on('status', (event) => statuses.push(event.status));
+    const tickAt = async (time) => {
+        clock = time;
+        scheduler.tick();
+        await scheduler.chain;
+        await tick();
+    };
+    const output = captureConsole();
+    try {
+        scheduler.start({ isConnected: () => listed });
+        assert.equal(scheduler.getStatus(udid).needsManualUnlock, true);
+        // The first tick, five seconds after start: the tracker has not listed the phone yet.
+        await tickAt(started + 5000);
+        assert.deepEqual(runs, [], 'no run before the phone is listed and read');
+        assert.equal(pushes.length, 0, 'and no "not reachable" push');
+        // Listed, and the monitor's first screen reading works: the passcode was entered by hand
+        // at 04:50, so the phone accepts connections and the hand-unlock state goes.
+        listed = true;
+        clock = started + 8000;
+        monitor.set(udid, true, 'off');
+        assert.equal(scheduler.getStatus(udid).needsManualUnlock, undefined);
+        assert.equal(statuses.at(-1).needsManualUnlock, undefined, 'the change is broadcast');
+        // The next minute: the 15:00 slot the server was down for runs now.
+        await tickAt(started + 40000);
+        assert.equal(runs.length, 1);
+        assert.equal(runs[0].passcode, PASSCODE);
+        const status = scheduler.getStatus(udid);
+        assert.equal(status.lastRun.outcome, 'unlocked');
+        assert.equal(status.nextRunAt, nextUnlockRunAt('03:00', Date.now()), 'next: the coming slot');
+        const saved = JSON.parse(fs.readFileSync(file, 'utf8')).devices[udid].unlock;
+        assert.equal(saved.lastSlotAt, secondSlot);
+        assert.equal(saved.lastTypedUnlockAt, started + 40000);
+        assert.equal(saved.deadlineWarnedFor, undefined);
+        assert.equal(saved.lastTimerRunAt, undefined);
+        // 03:00 is 10 h 59 min after that run and is skipped; 15:00 runs, 23 hours after it.
+        const night = nextUnlockRunAt('03:00', started + 40000);
+        await tickAt(night);
+        assert.equal(runs.length, 1);
+        assert.equal(scheduler.getStatus(udid).lastRun.outcome, 'skipped-recent');
+        await tickAt(nextUnlockRunAt('03:00', night));
+        assert.equal(runs.length, 2);
+        assert.equal(pushes.length, 0, 'nothing was pushed along the way');
+    } finally {
+        output.restore();
+        scheduler.release();
+    }
+});
+
 test('scheduler: a schedule that is on without a usable passcode is pushed at its slot, and store problems at the first tick', async () => {
     const slot = lastUnlockSlotAt('03:00', Date.now());
     const ctx = makeScheduler({ time: slot + MINUTE });
