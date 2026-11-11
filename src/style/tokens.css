@@ -26,8 +26,12 @@
     --svg-button-fill: hsl(199, 17%, 46%);
     --kill-button-hover-color: hsl(342, 100%, 37%);
     --url-color: hsl(0, 0%, 60%);
-    --button-text-color: hsl(214, 82%, 51%);
+    /* 4.5:1 or better on every light surface, as text on outline buttons and links. */
+    --button-text-color: hsl(214, 82%, 44%);
     --button-border-color: #cbd0d9;
+    /* The edge of a field or an off switch: 3:1 against the surface it sits on, so the control
+       can be found. `--button-border-color` is for dividers and button outlines only. */
+    --control-border-color: #828997;
     --progress-background-color: hsla(225, 100%, 50%, 0.2);
     --progress-background-error-color: hsla(0, 100%, 50%, 0.2);
     --font-size: 14px;
@@ -44,13 +48,30 @@
     --device-list-hover-color: hsl(218, 67%, 95%);
 
     /* One status vocabulary, shared by the device list and the stream view -- see
-       `state/deviceStatus.ts`. */
-    --status-streaming-color: hsl(199, 89%, 42%);
-    --status-ready-color: hsl(142, 71%, 33%);
-    --status-asleep-color: hsl(231, 48%, 56%);
-    --status-starting-color: hsl(38, 92%, 45%);
-    --status-offline-color: hsl(0, 0%, 55%);
-    --status-unauthorized-color: hsl(0, 84%, 50%);
+       `state/deviceStatus.ts`. Each status has two colours:
+       `-text` for words and icons. At least 4.5:1 on every surface and on its own 12% tint.
+       `-fill` for dots, bars and solid backgrounds, where the brighter colour reads better.
+       `-color` is the older name. Most rules use it for text, so it carries the text value. */
+    --status-streaming-fill: hsl(199, 89%, 42%);
+    --status-ready-fill: hsl(142, 71%, 33%);
+    --status-asleep-fill: hsl(231, 48%, 56%);
+    --status-starting-fill: hsl(38, 92%, 45%);
+    --status-offline-fill: hsl(0, 0%, 55%);
+    --status-unauthorized-fill: hsl(0, 84%, 50%);
+    --status-streaming-text: hsl(199, 89%, 30%);
+    --status-ready-text: hsl(142, 71%, 25%);
+    --status-asleep-text: hsl(231, 48%, 50%);
+    --status-starting-text: hsl(38, 92%, 27%);
+    --status-offline-text: hsl(0, 0%, 37%);
+    --status-unauthorized-text: hsl(0, 84%, 39%);
+    --status-streaming-color: var(--status-streaming-text);
+    --status-ready-color: var(--status-ready-text);
+    --status-asleep-color: var(--status-asleep-text);
+    --status-starting-color: var(--status-starting-text);
+    --status-offline-color: var(--status-offline-text);
+    --status-unauthorized-color: var(--status-unauthorized-text);
+    /* Background of a solid danger button. Dark enough for white text in both themes. */
+    --status-danger-solid: hsl(0, 72%, 45%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -75,6 +96,7 @@
         --url-color: hsl(0, 0%, 60%);
         --button-text-color: hsl(214, 82%, 76%);
         --button-border-color: hsl(213, 5%, 39%);
+        --control-border-color: hsl(213, 6%, 52%);
         --progress-background-color: hsla(225, 100%, 50%, 0.2);
         --progress-background-error-color: hsla(0, 100%, 50%, 0.2);
 
@@ -83,11 +105,17 @@
         --device-list-default-color: #202329;
         --device-list-hover-color: #2c3340;
 
-        --status-streaming-color: hsl(199, 89%, 62%);
-        --status-ready-color: hsl(142, 60%, 55%);
-        --status-asleep-color: hsl(231, 63%, 75%);
-        --status-starting-color: hsl(38, 92%, 60%);
-        --status-offline-color: hsl(0, 0%, 60%);
-        --status-unauthorized-color: hsl(0, 84%, 68%);
+        --status-streaming-fill: hsl(199, 89%, 62%);
+        --status-ready-fill: hsl(142, 60%, 55%);
+        --status-asleep-fill: hsl(231, 63%, 75%);
+        --status-starting-fill: hsl(38, 92%, 60%);
+        --status-offline-fill: hsl(0, 0%, 60%);
+        --status-unauthorized-fill: hsl(0, 84%, 68%);
+        --status-streaming-text: hsl(199, 89%, 62%);
+        --status-ready-text: hsl(142, 60%, 55%);
+        --status-asleep-text: hsl(231, 63%, 76%);
+        --status-starting-text: hsl(38, 92%, 60%);
+        --status-offline-text: hsl(0, 0%, 66%);
+        --status-unauthorized-text: hsl(0, 84%, 74%);
     }
 }

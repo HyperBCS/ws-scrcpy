@@ -98,12 +98,32 @@
     flex-shrink: 0;
 }
 
+.bottom-sheet-heading {
+    min-width: 0;
+}
+
 .bottom-sheet-title {
     min-width: 0;
     overflow-wrap: anywhere;
     margin: 0;
     font-size: 1.25rem;
     font-weight: bold;
+}
+
+/* The device the sheet acts on. */
+.bottom-sheet-subtitle {
+    margin: 2px 0 0;
+    color: var(--text-color-light);
+    font-size: 0.93rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+/* The panel takes focus when a sheet opens so the phone keyboard stays down. It is a container,
+   not a control: no ring round the whole dialog. */
+.bottom-sheet:focus,
+.bottom-sheet:focus-visible {
+    outline: none;
 }
 
 .bottom-sheet-close {
@@ -216,7 +236,7 @@
     min-height: 44px;
     padding: 0 0.9rem;
     font: inherit;
-    font-size: 0.9rem;
+    font-size: 1rem;
     color: var(--button-text-color);
     background-color: transparent;
     border: 1px solid var(--button-border-color);
@@ -243,7 +263,7 @@
     font-size: 16px;
     color: var(--text-color);
     background-color: var(--main-bg-color);
-    border: 1px solid var(--button-border-color);
+    border: 1px solid var(--control-border-color);
     border-radius: 0.5rem;
 }
 
@@ -271,11 +291,16 @@
 @media (min-width: 760px) and (min-height: 540px) and (hover: hover) and (pointer: fine) {
     .bottom-sheet {
         --sheet-gutter: 24px;
+        /* The top edge is fixed and the dialog grows downwards. Centring it vertically moved
+           every control each time a message appeared or a section opened. */
+        --sheet-top: clamp(32px, 12%, 108px);
         inset: 0;
+        top: var(--sheet-top);
+        bottom: auto;
         height: fit-content;
-        margin: auto;
+        margin: 0 auto;
         width: min(560px, calc(100% - 48px));
-        max-height: min(720px, calc(100% - 64px));
+        max-height: min(720px, calc(100% - var(--sheet-top) - 32px));
         border-radius: 1.4rem;
         border-bottom: 1px solid var(--device-border-color);
         transform: none;

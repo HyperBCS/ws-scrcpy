@@ -5,13 +5,23 @@ import { render } from 'preact';
 import { StreamClientScrcpy } from './googDevice/client/StreamClientScrcpy';
 import { Tool } from './client/Tool';
 import { App } from './views/App';
+import { ScreenFailed } from './ui/ErrorBoundary';
 import { shellTool, fileListingTool } from './googDevice/client/deviceTools';
 // Type-only -- erased at compile time, so importing it unconditionally does not pull `AudioPlayer`
 // (or anything else) into a `USE_AUDIO=false` build.
 import type { AudioFrame } from './client/audioPacket';
 import type { AudioMetadata } from '../common/AudioProtocol';
 
-window.onload = async function (): Promise<void> {
+// A chunk that fails to download (a network blip, an update between two requests) rejects its
+// import. Without this the page stays empty; the installed app has no reload button of its own.
+window.onload = function (): void {
+    start().catch((error) => {
+        console.error('[App] Could not start', error);
+        render(<ScreenFailed title="The app could not start" />, document.getElementById('root') as HTMLElement);
+    });
+};
+
+async function start(): Promise<void> {
     if (window.isSecureContext && 'serviceWorker' in navigator)
         void registerNotificationWorker().catch(() => undefined);
     /// #if USE_H264_CONVERTER
@@ -118,4 +128,4 @@ window.onload = async function (): Promise<void> {
     }
 
     render(<App />, document.getElementById('root') as HTMLElement);
-};
+}

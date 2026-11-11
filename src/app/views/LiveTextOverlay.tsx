@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { liveTextOpen, streamConnected } from '../state/stream';
 import '../../style/views/LiveTextOverlay.css';
 import { usePresence } from '../ui/Presence';
+import { rememberDialogFocus, returnDialogFocus } from '../ui/dialogFocus';
 
 /** Keys the overlay can press by name, besides typing text. */
 export type LiveTextKey = 'enter' | 'backspace' | 'delete' | 'left' | 'right';
@@ -66,6 +67,8 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     const [feedbackError, setFeedbackError] = useState(false);
     const [viewportStyle, setViewportStyle] = useState(typingViewport);
     const connected = streamConnected.value;
+    const openRef = useRef(open);
+    openRef.current = open;
     const close = () => {
         liveTextOpen.value = false;
     };
@@ -86,10 +89,10 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     // the gesture; the post-paint timing of `useEffect` would not be.
     useLayoutEffect(() => {
         if (!present) return;
-        const previous = document.activeElement;
         const input = inputRef.current;
         const overlay = overlayRef.current;
         const panel = panelRef.current;
+        if (panel) rememberDialogFocus(panel);
         const stream = overlay?.closest<HTMLElement>('.stream-view');
         const viewport = window.visualViewport;
         let frame = 0;
@@ -129,7 +132,18 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
         viewport?.addEventListener('scroll', schedule);
         window.addEventListener('resize', schedule);
         input?.focus({ preventScroll: true });
+        // A press on the picture goes to the phone, so the next field can be chosen without
+        // closing this bar. The Android screen takes focus when it is pressed; take it straight
+        // back, in the same press, so the keyboard stays up and typing continues.
+        const keepFocus = (event: FocusEvent) => {
+            const target = event.target;
+            if (openRef.current && target instanceof Element && target.matches('.touch-layer')) {
+                input?.focus({ preventScroll: true });
+            }
+        };
+        stream?.addEventListener('focusin', keepFocus);
         return () => {
+            stream?.removeEventListener('focusin', keepFocus);
             cancelAnimationFrame(frame);
             observer.disconnect();
             viewport?.removeEventListener('resize', schedule);
@@ -141,11 +155,7 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
             stream?.style.removeProperty('--typing-dock-height');
             if (document.activeElement === input) input?.blur();
             if (compositionTimer.current) clearTimeout(compositionTimer.current);
-            if (previous instanceof HTMLElement && previous.isConnected && previous.getClientRects().length) {
-                previous.focus({ preventScroll: true });
-            } else {
-                document.querySelector<HTMLButtonElement>('.floating-toolbar-fab')?.focus({ preventScroll: true });
-            }
+            if (panel) returnDialogFocus(panel, document.querySelector<HTMLElement>('.floating-toolbar-fab'));
         };
     }, [present]);
 
@@ -277,12 +287,11 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     if (!present) return null;
     return (
         <div data-exiting={!open || undefined} class="live-text-overlay" ref={overlayRef} style={viewportStyle}>
-            <div class="live-text-backdrop" onClick={close} />
             <div
                 class="live-text-bar"
                 ref={panelRef}
+                // Not modal: the picture behind it stays usable while typing.
                 role="dialog"
-                aria-modal="true"
                 aria-labelledby="live-text-title"
                 aria-describedby="live-text-hint"
                 onKeyDown={onKeyDown}
@@ -290,7 +299,7 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
             >
                 <div class="live-text-heading">
                     <div>
-                        <strong id="live-text-title">Type on device</strong>
+                        <strong id="live-text-title">Type text</strong>
                         <p id="live-text-hint">{target.hint}</p>
                     </div>
                     <button type="button" class="live-text-done" onClick={close}>
@@ -306,8 +315,8 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
                     autocapitalize="off"
                     autocorrect="off"
                     spellcheck={false}
-                    placeholder={connected ? 'Type or paste text…' : 'Reconnecting to device…'}
-                    aria-label="Text to send to device"
+                    placeholder={connected ? 'Type or paste text…' : 'Reconnecting to the phone…'}
+                    aria-label="Text to send to the phone"
                     disabled={!connected}
                     onBeforeInput={onBeforeInput}
                     onInput={onInput}

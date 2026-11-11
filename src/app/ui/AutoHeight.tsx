@@ -2,8 +2,15 @@ import { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { animate, finished } from './motion';
 
+interface AutoHeightProps {
+    children: ComponentChildren;
+    className?: string;
+    /** Class for the element that holds the children. Put flex or grid layout and gaps here. */
+    innerClassName?: string;
+}
+
 /** Observe natural content size without resizing it inside a ResizeObserver delivery. */
-export function AutoHeight({ children, className = '' }: { children: ComponentChildren; className?: string }) {
+export function AutoHeight({ children, className = '', innerClassName }: AutoHeightProps) {
     const outer = useRef<HTMLDivElement>(null);
     const inner = useRef<HTMLDivElement>(null);
     useLayoutEffect(() => {
@@ -68,7 +75,9 @@ export function AutoHeight({ children, className = '' }: { children: ComponentCh
     }, []);
     return (
         <div ref={outer} class={`auto-height ${className}`}>
-            <div ref={inner}>{children}</div>
+            <div ref={inner} class={innerClassName}>
+                {children}
+            </div>
         </div>
     );
 }

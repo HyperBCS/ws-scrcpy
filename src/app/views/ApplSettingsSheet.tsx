@@ -118,7 +118,7 @@ function commitsOnChange(): boolean {
 }
 
 /**
- * The "iPhone settings" sheet: the scheduled unlock and read-only phone facts. Everything shown
+ * The iPhone "Scheduled unlock" sheet: the schedule and read-only phone facts. Everything shown
  * comes from `descriptor.unlockSchedule`, which the server keeps current through the normal
  * device broadcast; a command reply is used only until the next broadcast arrives. The passcode
  * lives in this component's state until Save and goes nowhere else in the browser.
@@ -388,7 +388,7 @@ export function ApplSettingsSheet() {
 
     if (!renderTarget) {
         return (
-            <BottomSheet open={false} onClose={closeApplSettingsSheet} title="iPhone settings">
+            <BottomSheet open={false} onClose={closeApplSettingsSheet} title="Scheduled unlock">
                 {null}
             </BottomSheet>
         );
@@ -410,15 +410,14 @@ export function ApplSettingsSheet() {
     const stopKeys = (event: KeyboardEvent) => event.stopPropagation();
 
     return (
-        <BottomSheet open={!!target} onClose={closeApplSettingsSheet} title="iPhone settings">
+        <BottomSheet
+            open={!!target}
+            onClose={closeApplSettingsSheet}
+            title="Scheduled unlock"
+            subtitle={entry ? deviceName(entry) : 'iPhone'}
+        >
             <div class="appl-settings-sheet">
-                <div class="settings-device-context" title={renderTarget.udid}>
-                    <span class="settings-device-dot" aria-hidden="true" />
-                    <div>
-                        <strong>{entry ? deviceName(entry) : 'iPhone'}</strong>
-                    </div>
-                </div>
-                {!tracker && <SheetStatus tone="warning">Waiting for device…</SheetStatus>}
+                {!tracker && <SheetStatus tone="warning">Waiting for the phone…</SheetStatus>}
                 {tracker && !connected && (
                     <SheetStatus tone="warning">
                         The phone is not connected. Changes are kept on the server and apply when it is back.
@@ -426,8 +425,9 @@ export function ApplSettingsSheet() {
                 )}
 
                 <SheetGroup
-                    title="Scheduled unlock"
+                    title="Schedule"
                     hint="Unlocks the phone once a day so iOS does not restart it after 72 hours without an unlock, then locks it again. Skipped if the phone was unlocked in the last 22 hours."
+                    status={note && <SheetStatus tone={note.tone}>{note.text}</SheetStatus>}
                 >
                     <SheetRow
                         title={
@@ -606,9 +606,11 @@ export function ApplSettingsSheet() {
                         onConfirm={onClearPasscode}
                     />
                 )}
-                {note && <SheetStatus tone={note.tone}>{note.text}</SheetStatus>}
 
-                <SheetGroup title="Runs">
+                <SheetGroup
+                    title="Runs"
+                    status={runNote && <SheetStatus tone={runNote.tone}>{runNote.text}</SheetStatus>}
+                >
                     <SheetRow
                         title={
                             <>
@@ -641,7 +643,6 @@ export function ApplSettingsSheet() {
                         </button>
                     </SheetRow>
                 </SheetGroup>
-                {runNote && <SheetStatus tone={runNote.tone}>{runNote.text}</SheetStatus>}
 
                 <SheetGroup title="Phone">
                     <dl class="sheet-facts">

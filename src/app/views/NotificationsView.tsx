@@ -22,6 +22,7 @@ import type {
     NotificationSource,
     NotificationStatus as Status,
 } from '../../common/Notification';
+import { readStorage, writeStorage } from '../ui/storage';
 import '../../style/views/Notifications.css';
 
 function choicesKey(sources: string[], receiver: string): string {
@@ -173,7 +174,7 @@ export function NotificationsView() {
     }, [subscription?.endpoint]);
     const [workerLoaded, setWorkerLoaded] = useState(false);
     const [selected, setSelected] = useState<string[]>([]);
-    const [receiverChoice, setReceiver] = useState(localStorage.getItem('notification-receiver-source') || '');
+    const [receiverChoice, setReceiver] = useState(readStorage('notification-receiver-source') || '');
     const [savedChoices, setSavedChoices] = useState<string | null>(null);
     const [phone, setPhone] = useState(route.value.get('source') || '');
     const [address, setAddress] = useState('');
@@ -311,7 +312,7 @@ export function NotificationsView() {
         if (!initialized) {
             const saved = savedSources();
             setSelected(saved ? saved.filter((id) => valid.has(id)) : status.sources.map((s) => s.id));
-            if (saved) setSavedChoices(choicesKey(saved, localStorage.getItem('notification-receiver-source') || ''));
+            if (saved) setSavedChoices(choicesKey(saved, readStorage('notification-receiver-source') || ''));
             setInitialized(true);
         } else
             setSelected((current) => {
@@ -336,8 +337,8 @@ export function NotificationsView() {
     };
     const saveSubscription = async (sub: PushSubscription) => {
         await api('subscriptions', 'POST', { subscription: sub.toJSON(), sources: selected, receiverSource: receiver });
-        localStorage.setItem('notification-sources', JSON.stringify(selected));
-        localStorage.setItem('notification-receiver-source', receiver);
+        writeStorage('notification-sources', JSON.stringify(selected));
+        writeStorage('notification-receiver-source', receiver);
         setSavedChoices(choicesKey(selected, receiver));
         // The delivery details must list this device before they are shown again.
         await refresh().catch(() => undefined);

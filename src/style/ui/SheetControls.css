@@ -15,7 +15,7 @@
 }
 .sheet-group-hint {
     margin: 0 0 8px 2px;
-    font-size: 0.86rem;
+    font-size: 0.93rem;
     line-height: 1.45;
     color: var(--text-color-light);
     overflow-wrap: anywhere;
@@ -57,7 +57,7 @@
     line-height: 1.35;
 }
 .sheet-row-desc {
-    font-size: 0.86rem;
+    font-size: 0.93rem;
     line-height: 1.45;
     color: var(--text-color-light);
     overflow-wrap: anywhere;
@@ -125,7 +125,7 @@
     position: absolute;
     inset: 8px 0;
     border-radius: 999px;
-    background: var(--button-border-color);
+    background: var(--control-border-color);
     transition: background var(--motion-fast) ease;
 }
 .sheet-switch::after {
@@ -156,21 +156,34 @@
     border-radius: 999px;
 }
 
+/* An outcome line, placed under the card of the group that produced it. The words stay in the
+   normal text colour so they can be read; the icon carries the tone. */
 .sheet-status {
     margin: 8px 2px 0;
-    font-size: 0.86rem;
+    font-size: 0.93rem;
     line-height: 1.45;
-    color: var(--text-color-light);
+    color: var(--text-color);
     overflow-wrap: anywhere;
 }
-.sheet-status.error {
-    color: var(--status-unauthorized-color);
+.sheet-status.neutral {
+    color: var(--text-color-light);
 }
-.sheet-status.success {
-    color: var(--status-ready-color);
+.sheet-status-icon {
+    margin-right: 6px;
+    vertical-align: -3px;
 }
-.sheet-status.warning {
-    color: var(--status-starting-color);
+.sheet-status.error .sheet-status-icon {
+    color: var(--status-unauthorized-text);
+}
+.sheet-status.success .sheet-status-icon {
+    color: var(--status-ready-text);
+}
+.sheet-status.warning .sheet-status-icon {
+    color: var(--status-starting-text);
+}
+/* A sheet-wide notice above the first group. */
+.sheet-status + .sheet-group {
+    margin-top: 14px;
 }
 
 .sheet-volume {
@@ -225,7 +238,7 @@
     content: '−';
 }
 .sheet-details > summary > span {
-    font-size: 0.86rem;
+    font-size: 0.93rem;
     font-weight: 400;
     color: var(--text-color-light);
 }
@@ -238,7 +251,7 @@
     gap: 4px 12px;
     margin: 0;
     padding: 4px 14px 12px;
-    font-size: 0.86rem;
+    font-size: 0.93rem;
     color: var(--text-color-light);
 }
 .sheet-facts dt {

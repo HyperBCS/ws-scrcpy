@@ -690,7 +690,7 @@ export class CoreDeviceProxy extends Mw {
             case 'restart': {
                 // At most one video restart per phone every 30 s, counting the unlock driver's.
                 // The viewer is told how long to wait: a request dropped without a reply left the
-                // Actions sheet on "Restarting the picture" for good.
+                // Actions sheet on "Restarting the video" for good.
                 const wait = this.runner.videoRestartWaitMs(this.udid);
                 if (wait > 0) {
                     console.log(`${this.name} restart refused: the video was restarted a moment ago`);
@@ -700,7 +700,7 @@ export class CoreDeviceProxy extends Mw {
                             type: 'result',
                             id: message.id,
                             ok: false,
-                            error: `The picture was restarted a moment ago. Try again in ${seconds} s.`,
+                            error: `The video was restarted a moment ago. Try again in ${seconds} s.`,
                         });
                     }
                     return;

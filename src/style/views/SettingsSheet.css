@@ -21,42 +21,6 @@
     min-width: 0;
     max-width: 100%;
 }
-.settings-device-context {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
-    margin: 0;
-    background: var(--device-list-stripe-color);
-    border: 1px solid var(--device-border-color);
-    border-radius: 0.8rem;
-}
-.settings-device-dot {
-    display: block;
-    background: var(--button-text-color);
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-.settings-device-context > div {
-    min-width: 0;
-    display: grid;
-    gap: 0.25rem;
-}
-.settings-device-context strong {
-    font-size: 1rem;
-    line-height: 1.45;
-    font-weight: 600;
-    overflow-wrap: anywhere;
-}
-.settings-device-context span:last-child {
-    color: var(--text-color-light);
-    font-family: var(--font-stack-mono);
-    font-size: 0.86rem;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-}
 .settings-sheet-section {
     margin: 0;
 }
@@ -73,6 +37,15 @@
     color: var(--text-color-light);
     margin: 0 0 16px;
     overflow-wrap: anywhere;
+}
+/* A hint that follows a card or a collapsed section keeps clear of its border. */
+.settings-sheet-card + .settings-sheet-hint,
+.settings-advanced + .settings-sheet-hint {
+    margin-top: 12px;
+}
+.settings-sheet-section > .settings-sheet-hint:last-child,
+.settings-sheet-content > .settings-sheet-hint {
+    margin-bottom: 0;
 }
 .settings-quality-presets {
     display: grid;
@@ -112,12 +85,12 @@
     line-height: 1.3;
 }
 .settings-quality-preset > span:not(.settings-preset-mark) {
-    font-size: 0.86rem;
+    font-size: 0.93rem;
     line-height: 1.4;
     color: var(--text-color-light);
 }
 .settings-quality-preset small {
-    font-size: 0.8rem;
+    font-size: 0.93rem;
     color: var(--text-color-light);
     line-height: 1.4;
     white-space: nowrap;
@@ -126,7 +99,7 @@
     white-space: nowrap;
 }
 .settings-quality-summary {
-    font-size: 0.86rem;
+    font-size: 0.93rem;
     color: var(--text-color-light);
     margin: 12px 0 16px;
     line-height: 1.5;
@@ -171,7 +144,7 @@
 }
 .settings-playback summary > span {
     color: var(--text-color-light);
-    font-size: 0.8rem;
+    font-size: 0.93rem;
     font-weight: 400;
 }
 .settings-advanced-body {
@@ -199,7 +172,7 @@
 .settings-sheet-row small {
     display: block;
     color: var(--text-color-light);
-    font-size: 0.86rem;
+    font-size: 0.93rem;
     font-weight: 400;
     line-height: 1.45;
     margin-top: 4px;
@@ -233,7 +206,7 @@
     font-size: 16px;
     color: var(--text-color);
     background-color: var(--main-bg-color);
-    border: 1px solid var(--button-border-color);
+    border: 1px solid var(--control-border-color);
     border-radius: 0.55rem;
     padding: 10px 12px;
     text-overflow: ellipsis;
@@ -271,7 +244,7 @@
     position: absolute;
     inset: 8px 0;
     border-radius: 999px;
-    background: var(--button-border-color);
+    background: var(--control-border-color);
     transition: background 150ms ease;
 }
 .settings-sheet-row input[type='checkbox']::after {
@@ -300,14 +273,28 @@
     position: sticky;
     bottom: 0;
     z-index: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
     margin: 0;
     padding: 16px 0 4px;
     border-top: 1px solid var(--device-border-color);
     background: var(--device-list-default-color);
     box-shadow: 0 -8px 16px var(--device-list-default-color);
+}
+/* `AutoHeight` wraps the bar's children in one element, so the column and its gap go on that
+   element; on the bar itself the gap had a single child and did nothing. */
+.settings-sheet-apply-bar > .settings-sheet-apply-items {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+/* Nothing to apply and nothing to report: the bar takes no room. */
+.settings-sheet-apply-bar.empty {
+    margin-top: -24px;
+    padding: 0;
+    border-top: 0;
+    box-shadow: none;
+}
+.settings-sheet-apply-bar.empty::after {
+    display: none;
 }
 .settings-sheet-apply-bar::after {
     /* Continue the sticky surface through the shared scroller's bottom gutter,
@@ -322,7 +309,7 @@
 }
 .settings-apply-note {
     color: var(--text-color-light);
-    font-size: 0.86rem;
+    font-size: 0.93rem;
     line-height: 1.45;
     margin: 0;
     text-align: center;
@@ -378,20 +365,30 @@
 .settings-audio > .settings-sheet-banner {
     margin-top: 16px;
 }
+/* Banner text stays in the normal text colour. The tint and the edge carry the tone: coloured
+   words on a tint of the same colour could not be read in the light theme. */
+.settings-sheet-banner {
+    border: 1px solid transparent;
+    color: var(--text-color);
+}
 .settings-sheet-banner.warning {
-    background-color: color-mix(in srgb, var(--status-starting-color) 12%, transparent);
+    background-color: color-mix(in srgb, var(--status-starting-fill) 12%, transparent);
+    border-color: color-mix(in srgb, var(--status-starting-text) 45%, transparent);
 }
 .settings-sheet-banner.progress {
-    background-color: var(--progress-background-color);
-    color: var(--button-text-color);
+    background-color: color-mix(in srgb, var(--accent-solid) 10%, transparent);
+    border-color: color-mix(in srgb, var(--accent-solid) 45%, transparent);
 }
 .settings-sheet-banner.success {
-    background: color-mix(in srgb, var(--status-ready-color) 12%, transparent);
-    color: var(--status-ready-color);
+    background: color-mix(in srgb, var(--status-ready-fill) 12%, transparent);
+    border-color: color-mix(in srgb, var(--status-ready-text) 45%, transparent);
 }
 .settings-sheet-banner.error {
-    background: var(--progress-background-error-color);
-    color: var(--status-unauthorized-color);
+    background: color-mix(in srgb, var(--status-unauthorized-fill) 10%, transparent);
+    border-color: var(--status-unauthorized-text);
+}
+.settings-sheet-banner:focus-visible {
+    outline-offset: 1px;
 }
 
 @media (max-width: 600px) {
@@ -450,15 +447,11 @@
     }
 }
 
-/* The iPhone settings sheet (views/ApplSettingsSheet.tsx) is built from ui/SheetControls.css rows;
-   it only needs the device context line spaced from the first group and the facts grid padded
-   when it stands alone in a group card. */
+/* The iPhone sheet (views/ApplSettingsSheet.tsx) is built from ui/SheetControls.css rows; it
+   only needs the facts grid padded when it stands alone in a group card. */
 .appl-settings-sheet {
     padding-top: 4px;
     min-width: 0;
-}
-.appl-settings-sheet .settings-device-context {
-    margin-bottom: 20px;
 }
 .appl-settings-sheet .sheet-group-card > .sheet-facts {
     padding: 12px 14px;

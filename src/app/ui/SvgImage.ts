@@ -18,6 +18,7 @@ import ToggleOffSVG from '../../public/images/buttons/toggle_off.svg';
 import TuneSVG from '../../public/images/buttons/tune.svg';
 import VolumeOffSVG from '../../public/images/buttons/volume_off.svg';
 import MicSVG from '../../public/images/buttons/mic.svg';
+import HeadphonesSVG from '../../public/images/buttons/headphones.svg';
 
 export enum Icon {
     BACK,
@@ -44,6 +45,8 @@ export enum Icon {
     // Siri on the iOS toolbar. OVERVIEW is Android's Overview key; iOS has no equivalent that
     // can be driven from here, so nothing on that toolbar uses it.
     MIC,
+    // Listen (this browser's playback). The speaker icons belong to the phone's own volume keys.
+    HEADPHONES,
 }
 
 export default class SvgImage {
@@ -93,6 +96,8 @@ export default class SvgImage {
                 return VolumeOffSVG;
             case Icon.MIC:
                 return MicSVG;
+            case Icon.HEADPHONES:
+                return HeadphonesSVG;
             default:
                 return '';
         }

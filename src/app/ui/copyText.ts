@@ -34,6 +34,7 @@ function copyWithTextarea(text: string): boolean {
     document.body.appendChild(area);
     const selection = document.getSelection();
     const previous = selection && selection.rangeCount ? selection.getRangeAt(0) : undefined;
+    const focused = document.activeElement;
     try {
         area.focus({ preventScroll: true });
         area.setSelectionRange(0, text.length);
@@ -42,9 +43,26 @@ function copyWithTextarea(text: string): boolean {
         return false;
     } finally {
         area.remove();
+        // The text area took focus; hand it back to the button that was pressed.
+        if (focused instanceof HTMLElement && focused.isConnected) {
+            focused.focus({ preventScroll: true });
+        }
         if (previous && selection) {
             selection.removeAllRanges();
             selection.addRange(previous);
         }
     }
+}
+
+/**
+ * "Copy here" in both Actions sheets: copies the text read from the phone into this browser's
+ * clipboard and returns the line to show under the clipboard group.
+ */
+export async function copyPhoneClipboardHere(received: string | undefined): Promise<string> {
+    if (!received) {
+        return received === undefined ? 'Read the phone clipboard first.' : 'The phone clipboard is empty.';
+    }
+    return (await copyTextToClipboard(received))
+        ? 'Copied to this browser.'
+        : 'This browser blocked copying. Select the text above and copy it.';
 }

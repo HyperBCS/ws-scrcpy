@@ -15,15 +15,18 @@ interface SheetGroupProps {
     title?: string;
     hint?: ComponentChildren;
     class?: string;
+    /** The outcome of this group's controls (`SheetStatus`), shown directly under its card. */
+    status?: ComponentChildren;
     children: ComponentChildren;
 }
 
-export function SheetGroup({ title, hint, class: className, children }: SheetGroupProps) {
+export function SheetGroup({ title, hint, class: className, status, children }: SheetGroupProps) {
     return (
         <section class={`sheet-group ${className || ''}`}>
             {title && <h3 class="sheet-group-title">{title}</h3>}
             {hint && <p class="sheet-group-hint">{hint}</p>}
             <AutoHeight className="sheet-group-card">{children}</AutoHeight>
+            {status}
         </section>
     );
 }
@@ -83,10 +86,37 @@ interface SheetStatusProps {
     children: ComponentChildren;
 }
 
-/** A short outcome line that lives inside the group whose control produced it. */
+const STATUS_ICON_PATHS = {
+    // Triangle with an exclamation mark.
+    problem: 'M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0ZM12 9v4M12 17h.01',
+    // Check mark in a circle.
+    success: 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0ZM8 12.5l2.7 2.7L16 9.5',
+};
+
+/**
+ * A short outcome line. Pass it as a group's `status` so it sits under the card whose control
+ * produced it. The words stay in the normal text colour; the icon carries the tone.
+ */
 export function SheetStatus({ tone = 'neutral', children }: SheetStatusProps) {
+    const icon = tone === 'success' ? STATUS_ICON_PATHS.success : tone === 'neutral' ? '' : STATUS_ICON_PATHS.problem;
     return (
         <p class={`sheet-status ${tone}`} role={tone === 'error' ? 'alert' : 'status'}>
+            {icon && (
+                <svg
+                    class="sheet-status-icon"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                >
+                    <path d={icon} />
+                </svg>
+            )}
             {children}
         </p>
     );
@@ -125,8 +155,10 @@ interface SoundRowsProps {
 }
 
 /**
- * Listen/mute plus volume, as two rows. The status message doubles as the listen row's
- * description, so "blocked" or "waiting" is read next to the button that fixes it.
+ * Listen plus volume, as two rows, in the Actions sheet of both platforms. "Listen" is this
+ * browser's playback; the phone's own volume keys are separate controls on the toolbar. The
+ * status message doubles as the listen row's description, so "blocked" or "waiting" is read
+ * next to the button that fixes it.
  */
 export function SoundRows({ session }: SoundRowsProps) {
     const status = session.status.value;
@@ -145,12 +177,12 @@ export function SoundRows({ session }: SoundRowsProps) {
                     disabled={unavailable}
                     onClick={() => (muted ? session.unmute() : session.mute())}
                 >
-                    {muted ? 'Listen' : 'Mute'}
+                    {muted ? 'Listen' : 'Stop listening'}
                 </button>
             </SheetRow>
             <SheetRow
                 title="Volume"
-                description="For this browser only. The device's own volume is not changed."
+                description="For this browser only. The phone's own volume is not changed."
                 layout="stack"
             >
                 <VolumeSlider session={session} />

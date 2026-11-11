@@ -18,7 +18,7 @@ import { activeAudioSession, audioAvailability } from '../state/audio';
 import { goToDeviceList } from '../state/router';
 import { deviceName, findDeviceByUdid } from '../state/devices';
 import { ControlCenterCommand } from '../../common/ControlCenterCommand';
-import { copyTextToClipboard } from '../ui/copyText';
+import { copyPhoneClipboardHere } from '../ui/copyText';
 import { CLIPBOARD_TOO_LONG_NOTE, clipboardTextTooLong } from '../ui/clipboardLimit';
 import ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
 import '../../style/views/ActionsSheet.css';
@@ -97,7 +97,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
             setSendingClipboard(false);
             setClipboardNote(result.ok ? 'Sent. Long-press a field on the phone and choose Paste.' : failure);
         } else if (request.kind === 'restart') {
-            setScreenNote(result.ok ? 'The picture was restarted.' : failure);
+            setScreenNote(result.ok ? 'The video was restarted.' : failure);
         } else {
             setScreenNote(result.ok ? 'Done.' : failure);
         }
@@ -187,19 +187,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
         client.requestClipboard();
     };
 
-    const onCopyHere = async () => {
-        if (!received) {
-            setClipboardNote(
-                received === undefined ? 'Read the phone clipboard first.' : 'The phone clipboard is empty.',
-            );
-            return;
-        }
-        setClipboardNote(
-            (await copyTextToClipboard(received))
-                ? 'Copied to this browser.'
-                : 'This browser blocked copying. Select the text above and copy it.',
-        );
-    };
+    const onCopyHere = async () => setClipboardNote(await copyPhoneClipboardHere(received));
 
     const onSendClipboard = () => {
         if (!clipboardDraft || draftTooLong) {
@@ -214,15 +202,15 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
         trackRequest(client.rotate(direction), 'rotate');
     };
 
-    const onRestartPicture = () => {
-        setScreenNote('Restarting the picture…');
+    const onRestartVideo = () => {
+        setScreenNote('Restarting the video…');
         trackRequest(client.restartStream(), 'restart');
     };
 
     const onPower = (action: 'reboot' | 'shutdown') => {
         const entry = findDeviceByUdid(client.getDeviceUdid());
         if (!entry) {
-            setPower('This device is no longer in the device list.');
+            setPower('This phone is no longer in the device list.');
             return;
         }
         const command = action === 'reboot' ? ControlCenterCommand.REBOOT_DEVICE : ControlCenterCommand.SHUTDOWN_DEVICE;
@@ -241,7 +229,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
     const onServiceCommand = (command: string, label: string, done: string) => {
         const entry = findDeviceByUdid(client.getDeviceUdid());
         if (!entry) {
-            setDebugNote('This device is no longer in the device list.');
+            setDebugNote('This phone is no longer in the device list.');
             return;
         }
         setDebugBusy(true);
@@ -269,10 +257,15 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
     const phoneName = phoneEntry ? deviceName(phoneEntry) : descriptor?.name || descriptor?.model || 'this iPhone';
     const phoneSummary = descriptor
         ? `${descriptor.model}, iOS ${descriptor.version}${descriptor.developerMode === false ? '. Developer Mode is off.' : ''}`
-        : 'Device details unavailable.';
+        : 'Phone details unavailable.';
 
     return (
-        <BottomSheet open={toolsSheetOpen.value} onClose={() => (toolsSheetOpen.value = false)} title="Actions">
+        <BottomSheet
+            open={toolsSheetOpen.value}
+            onClose={() => (toolsSheetOpen.value = false)}
+            title="Actions"
+            subtitle={phoneEntry || descriptor ? phoneName : undefined}
+        >
             <div class="actions-sheet">
                 {!connected && (
                     <SheetStatus tone="warning">
@@ -290,7 +283,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     )}
                 </SheetGroup>
 
-                <SheetGroup title="Screen">
+                <SheetGroup title="Screen" status={screenNote && <SheetStatus>{screenNote}</SheetStatus>}>
                     <SheetRow title="Rotate" description="Apps with a fixed orientation may ignore this." layout="pair">
                         <button
                             type="button"
@@ -322,12 +315,12 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             Refresh
                         </button>
                     </SheetRow>
-                    <SheetRow title="Restart picture" description="Restart frozen or broken video.">
-                        <button type="button" class="sheet-button" onClick={onRestartPicture}>
-                            Restart
+                    <SheetRow title="Restart video" description="For frozen or broken video.">
+                        <button type="button" class="sheet-button" onClick={onRestartVideo}>
+                            Restart video
                         </button>
                     </SheetRow>
-                    <SheetRow title="Restart session" description="Reconnect video, touch and keyboard.">
+                    <SheetRow title="Reconnect" description="Reconnect video, touch and keyboard.">
                         <button
                             type="button"
                             class="sheet-button"
@@ -336,11 +329,10 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                                 client.restartSession();
                             }}
                         >
-                            Restart
+                            Reconnect
                         </button>
                     </SheetRow>
                 </SheetGroup>
-                {screenNote && <SheetStatus>{screenNote}</SheetStatus>}
 
                 <SheetGroup title="Keyboard">
                     <SheetRow title="Type text">
@@ -354,8 +346,8 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         </button>
                     </SheetRow>
                     <SheetToggleRow
-                        title="Send this computer's keystrokes"
-                        description="Send this keyboard’s keys to the phone."
+                        title="Send keystrokes"
+                        description="Keys typed in this browser go to the phone."
                         checked={keyboard}
                         onChange={onKeyboardToggle}
                     />
@@ -389,7 +381,16 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup title="Clipboard">
+                <SheetGroup
+                    title="Clipboard"
+                    status={
+                        draftTooLong ? (
+                            <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
+                        ) : (
+                            clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
+                        )
+                    }
+                >
                     <SheetRow
                         title="Read the phone's clipboard"
                         description="Copy from the phone to this browser."
@@ -416,7 +417,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         <div class="sheet-row stack">
                             <textarea
                                 class="sheet-readout actions-clipboard-readout"
-                                aria-label="Device clipboard"
+                                aria-label="Phone clipboard"
                                 value={received}
                                 placeholder="The phone clipboard is empty"
                                 readOnly
@@ -432,7 +433,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         <textarea
                             id="ios-clipboard-text"
                             class="sheet-input actions-paste-input"
-                            aria-label="Text for the device clipboard"
+                            aria-label="Text for the phone clipboard"
                             placeholder="Type or paste text…"
                             value={clipboardDraft}
                             rows={3}
@@ -448,13 +449,8 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         </button>
                     </SheetRow>
                 </SheetGroup>
-                {draftTooLong ? (
-                    <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
-                ) : (
-                    clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
-                )}
 
-                <SheetGroup title="Phone" hint={phoneSummary}>
+                <SheetGroup title="Phone" hint={phoneSummary} status={power && <SheetStatus>{power}</SheetStatus>}>
                     <SheetRow
                         title="Reboot"
                         description="Reconnects after restarting. If a passcode is set, unlock on the phone."
@@ -503,7 +499,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         onConfirm={() => onPower('shutdown')}
                     />
                 )}
-                {power && <SheetStatus>{power}</SheetStatus>}
 
                 <AnimatedDetails class="sheet-details">
                     <summary>
@@ -534,11 +529,10 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         <button
                             type="button"
                             class="sheet-button danger"
-                            aria-label="Restart services"
                             disabled={debugBusy}
                             onClick={(event) => confirm.arm('restart', event.currentTarget)}
                         >
-                            Restart
+                            Restart services
                         </button>
                     </SheetRow>
                     <SheetRow
@@ -564,7 +558,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                                 onServiceCommand(
                                     ControlCenterCommand.REFRESH_DEVICE,
                                     'Refreshing',
-                                    'Device info refreshed.',
+                                    'Phone info refreshed.',
                                 )
                             }
                         >

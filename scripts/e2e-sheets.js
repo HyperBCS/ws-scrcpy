@@ -289,7 +289,7 @@ async function main() {
             await actions.click();
             await page.locator('.bottom-sheet-root.open').waitFor();
             await settle(page);
-            const draft = page.getByLabel('Text to paste on device');
+            const draft = page.getByLabel('Text to paste on the phone');
             const paste = page.getByRole('button', { name: 'Paste', exact: true });
             const tooLong = page.getByText('This text is too long to send. The limit is 256 KB.', { exact: true });
             const clipboardPackets = () => remotePackets.filter((packet) => packet[0] === 9);
@@ -301,7 +301,7 @@ async function main() {
             await draft.fill('a'.repeat((1 << 18) - 14));
             await tooLong.waitFor({ state: 'detached' });
             await paste.click();
-            await page.getByText('Pasted into the focused field on the device.', { exact: true }).waitFor();
+            await page.getByText('Pasted into the focused field on the phone.', { exact: true }).waitFor();
             await pause(50);
             assert.equal(clipboardPackets().length, 1, 'text at the limit is sent once');
             assert.equal(clipboardPackets()[0].length, 1 << 18, 'and fits one scrcpy control message');

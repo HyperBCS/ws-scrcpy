@@ -12,6 +12,20 @@ export interface AudioPlaybackStatus {
     codec?: 'raw' | 'opus';
 }
 
+/**
+ * What the Listen control says for each playback state. "Waiting" and "playing" read differently
+ * so a silent phone is not mistaken for sound that is switched off.
+ */
+export function listenStateLabel(state: AudioPlaybackState, muted: boolean): string {
+    if (state === 'blocked') {
+        return 'Blocked';
+    }
+    if (muted || state === 'muted' || state === 'disabled' || state === 'error' || state === 'unsupported') {
+        return 'Listen';
+    }
+    return state === 'playing' ? 'Listening' : 'Waiting for audio';
+}
+
 export interface AudioPlaybackStats {
     receivedPackets: number;
     scheduledFrames: number;

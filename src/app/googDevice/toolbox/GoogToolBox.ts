@@ -166,7 +166,7 @@ export class GoogToolBox extends ToolBox {
             },
             cleanup,
         );
-        // Leave navigation and volume rows intact; Sound controls this browser's playback.
+        // Leave navigation and volume rows intact; Listen controls this browser's playback.
         elements.splice(BUTTONS.length, 0, toggle);
 
         const liveText = new ToolBoxButton('Type text', SvgImage.Icon.KEYBOARD);

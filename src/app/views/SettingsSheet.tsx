@@ -1,6 +1,6 @@
 import { AutoHeight } from '../ui/AutoHeight';
 import { AnimatedDetails } from '../ui/AnimatedDetails';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { VolumeSlider } from '../ui/SheetControls';
 import { closeSettingsSheet, settingsSheetTarget } from '../state/settingsSheet';
@@ -120,7 +120,7 @@ export function SettingsSheet() {
         pendingRequestId.current = undefined;
         if (!tracker) {
             setLoading(false);
-            setLoadError('Waiting for device…');
+            setLoadError('Waiting for the phone…');
             return;
         }
         const udid = target.udid;
@@ -128,7 +128,7 @@ export function SettingsSheet() {
         const loadTimeout = setTimeout(() => {
             loadRequestId = undefined;
             setLoading(false);
-            setLoadError('Device settings took too long to load. Check the connection and try again.');
+            setLoadError('Stream settings took too long to load. Check the connection and try again.');
         }, LOAD_TIMEOUT_MS);
         const onEncoders = (data: ListEncodersReply) => {
             if (!data || data.udid !== udid || data.requestId !== loadRequestId) {
@@ -138,7 +138,7 @@ export function SettingsSheet() {
             loadRequestId = undefined;
             setLoading(false);
             if (data.error) {
-                setLoadError(`Could not load device settings: ${data.error}`);
+                setLoadError(`Could not load stream settings: ${data.error}`);
                 return;
             }
             setLoadError(undefined);
@@ -193,6 +193,26 @@ export function SettingsSheet() {
         setUseUhid(client?.isUsingUhidKeyboard() ?? true);
     }, [client, target]);
 
+    // The pressed button often leaves the apply bar (Apply changes, Apply & restart, Discard).
+    // Focus would then fall to the page behind the sheet, so it moves to what took the button's
+    // place: the error, else the next button, else the status line, else the sheet itself.
+    const contentRef = useRef<HTMLDivElement>(null);
+    const applyBar = () => contentRef.current?.querySelector<HTMLElement>('.settings-sheet-apply-bar');
+    const applyBarHadFocus = !!applyBar()?.contains(document.activeElement);
+    useLayoutEffect(() => {
+        const bar = applyBar();
+        const active = document.activeElement;
+        if (!applyBarHadFocus || !bar || !target || (bar.contains(active) && !active?.matches(':disabled'))) {
+            return;
+        }
+        const next =
+            bar.querySelector<HTMLElement>('[role="alert"]') ??
+            bar.querySelector<HTMLElement>('button:not(:disabled)') ??
+            bar.querySelector<HTMLElement>('[role="status"]') ??
+            bar.closest<HTMLElement>('[role="dialog"]');
+        next?.focus({ preventScroll: true });
+    });
+
     if (!renderTarget) {
         return (
             <BottomSheet open={false} onClose={closeSettingsSheet} title="Stream settings">
@@ -207,7 +227,7 @@ export function SettingsSheet() {
     const audioUnavailableReason = !isAudioAvailable()
         ? audioAvailability.value.message
         : !isNaN(sdkInt) && sdkInt < 30
-          ? `This device runs Android API ${sdkInt}. Capturing sound requires Android 11 or later.`
+          ? `This phone runs Android API ${sdkInt}. Capturing sound requires Android 11 or later.`
           : undefined;
     // Missing tracker properties are not proof of an unsupported device. Let the capture
     // handshake report actual support instead of permanently greying out newer Android phones.
@@ -274,7 +294,7 @@ export function SettingsSheet() {
             pendingRequestId.current = undefined;
             setApplying(false);
             setApplyError(
-                'The device has not confirmed the change. Reopen settings to check its current values, or try again.',
+                'The phone has not confirmed the change. Reopen Stream settings to check its current values, or try again.',
             );
         }, APPLY_TIMEOUT_MS);
         pendingRequestId.current = tracker.sendCommand(ControlCenterCommand.UPDATE_STREAM_CONFIG, {
@@ -283,6 +303,8 @@ export function SettingsSheet() {
         });
     };
     const onConfirmApply = () => applyConfig(patch);
+    const savedShown = !!appliedNote && !hasChanges && !applying;
+    const applyBarEmpty = !applyError && !savedShown && !applying && !confirming && !hasChanges;
     const onPlayerChange = (event: Event) => {
         if (!session) {
             return;
@@ -312,14 +334,9 @@ export function SettingsSheet() {
                 }
             }}
             title="Stream settings"
+            subtitle={entry ? deviceName(entry) : undefined}
         >
-            <div class="settings-sheet-content">
-                <div class="settings-device-context" title={renderTarget.udid}>
-                    <span class="settings-device-dot" aria-hidden="true" />
-                    <div>
-                        <strong>{entry ? deviceName(entry) : 'Device settings'}</strong>
-                    </div>
-                </div>
+            <div class="settings-sheet-content" ref={contentRef}>
                 <section class="settings-sheet-section">
                     <h2 class="settings-sheet-section-title">Stream quality</h2>
                     {loading && (
@@ -348,7 +365,7 @@ export function SettingsSheet() {
                     )}
                     {!loading && codec !== 'h264' && (
                         <div class="settings-sheet-banner warning" role="status">
-                            This device is using {codec?.toUpperCase()}, which this app cannot play. Choose a quality
+                            This phone is using {codec?.toUpperCase()}, which this app cannot play. Choose a quality
                             preset or H.264 below, then apply the change to restore video.
                         </div>
                     )}
@@ -415,14 +432,14 @@ export function SettingsSheet() {
                             <label class="settings-sheet-row settings-encoder-row">
                                 <span>
                                     Video encoder
-                                    <small>Automatic lets the device choose. Hardware encoders are listed first.</small>
+                                    <small>Automatic lets the phone choose. Hardware encoders are listed first.</small>
                                 </span>
                                 <select
                                     value={encoder}
                                     onChange={(event) => setFields({ videoEncoder: event.currentTarget.value })}
                                     disabled={locked}
                                 >
-                                    <option value="">Automatic · device default</option>
+                                    <option value="">Automatic · phone default</option>
                                     {encoder &&
                                         !filteredEncoders.some((candidate) => candidate.encoderName === encoder) && (
                                             <option value={encoder}>{encoder}</option>
@@ -442,7 +459,7 @@ export function SettingsSheet() {
                             </label>
                             {!loading && !encoders.length && (
                                 <p class="settings-sheet-hint">
-                                    No encoders were listed. Automatic uses the device's default encoder.
+                                    No encoders were listed. Automatic uses the phone's default encoder.
                                 </p>
                             )}
                             <label class="settings-sheet-row">
@@ -524,7 +541,7 @@ export function SettingsSheet() {
                                 <small>
                                     {audioUnavailableReason ||
                                         (shown.audio
-                                            ? 'Capture is on. Tap Listen or Sound to hear it in this browser.'
+                                            ? 'Capture is on. Tap Listen to hear it in this browser.'
                                             : 'Enable capture, then apply the change to listen in this browser.')}
                                 </small>
                             </span>
@@ -549,7 +566,7 @@ export function SettingsSheet() {
                             <span>
                                 Audio source
                                 <small>
-                                    Device media is what the device plays; the phone itself goes quiet unless you choose
+                                    Device media is what the phone plays; the phone itself goes quiet unless you choose
                                     the option that keeps it playing. Call audio is the far side of a phone call.
                                 </small>
                             </span>
@@ -608,7 +625,7 @@ export function SettingsSheet() {
                                         >
                                             {audioSession.isMuted() || audioStatus.state === 'blocked'
                                                 ? 'Listen'
-                                                : 'Mute sound'}
+                                                : 'Stop listening'}
                                         </button>
                                     </div>
                                 </div>
@@ -648,9 +665,7 @@ export function SettingsSheet() {
                             </label>
                         </div>
                     </AnimatedDetails>
-                    {!client && (
-                        <p class="settings-sheet-hint">After applying, open the screen and tap Sound to listen.</p>
-                    )}
+                    {!client && <p class="settings-sheet-hint">After applying, open the screen and tap Listen.</p>}
                 </section>
                 {client ? (
                     <AnimatedDetails class="settings-playback">
@@ -688,7 +703,7 @@ export function SettingsSheet() {
                             </label>
                             <label class="settings-sheet-row settings-toggle-row">
                                 <span>
-                                    Physical keyboard<small>Send hardware keystrokes to the device</small>
+                                    Physical keyboard<small>Send hardware keystrokes to the phone</small>
                                 </span>
                                 <input
                                     type="checkbox"
@@ -701,7 +716,7 @@ export function SettingsSheet() {
                             </label>
                             <label class="settings-sheet-row settings-toggle-row">
                                 <span>
-                                    Native keyboard (UHID)<small>Use the device's keyboard layout · Android 11+</small>
+                                    Native keyboard (UHID)<small>Use the phone's keyboard layout · Android 11+</small>
                                 </span>
                                 <input
                                     type="checkbox"
@@ -720,24 +735,27 @@ export function SettingsSheet() {
                 ) : (
                     <p class="settings-sheet-hint">Open the screen for playback and keyboard settings.</p>
                 )}
-                <AutoHeight className="settings-sheet-apply-bar">
+                <AutoHeight
+                    className={`settings-sheet-apply-bar ${applyBarEmpty ? 'empty' : ''}`}
+                    innerClassName="settings-sheet-apply-items"
+                >
                     {applyError && (
-                        <div class="settings-sheet-banner error" role="alert">
+                        <div class="settings-sheet-banner error" role="alert" tabIndex={-1}>
                             {applyError}
                         </div>
                     )}
-                    {appliedNote && !hasChanges && !applying && (
-                        <div class="settings-sheet-banner success" role="status">
+                    {savedShown && (
+                        <div class="settings-sheet-banner success" role="status" tabIndex={-1}>
                             {appliedNote}
                         </div>
                     )}
                     {applying ? (
-                        <div class="settings-sheet-banner progress" role="status">
+                        <div class="settings-sheet-banner progress" role="status" tabIndex={-1}>
                             Saving and reconnecting…
                         </div>
                     ) : confirming ? (
                         <div class="settings-sheet-banner warning">
-                            <strong>Restart this device's stream?</strong>
+                            <strong>Restart this phone's stream?</strong>
                             <p>The screen will pause for a few seconds. {viewerWarning}</p>
                             <div class="settings-sheet-button-row">
                                 <button class="settings-sheet-button" onClick={() => setConfirming(false)}>
@@ -749,29 +767,32 @@ export function SettingsSheet() {
                             </div>
                         </div>
                     ) : (
-                        <>
-                            {hasChanges && <p class="settings-apply-note">Applying restarts the stream.</p>}
-                            <div class="settings-sheet-button-row">
-                                <button
-                                    class="settings-sheet-button"
-                                    onClick={() => {
-                                        setPatch({});
-                                        setConfirming(false);
-                                        setApplyError(undefined);
-                                    }}
-                                    disabled={!hasChanges || locked}
-                                >
-                                    Discard
-                                </button>
-                                <button
-                                    class="settings-sheet-button primary"
-                                    onClick={() => setConfirming(true)}
-                                    disabled={!hasChanges || locked}
-                                >
-                                    Apply changes
-                                </button>
-                            </div>
-                        </>
+                        // Nothing to apply or discard until a setting has changed.
+                        hasChanges && (
+                            <>
+                                <p class="settings-apply-note">Applying restarts the stream.</p>
+                                <div class="settings-sheet-button-row">
+                                    <button
+                                        class="settings-sheet-button"
+                                        onClick={() => {
+                                            setPatch({});
+                                            setConfirming(false);
+                                            setApplyError(undefined);
+                                        }}
+                                        disabled={locked}
+                                    >
+                                        Discard
+                                    </button>
+                                    <button
+                                        class="settings-sheet-button primary"
+                                        onClick={() => setConfirming(true)}
+                                        disabled={locked}
+                                    >
+                                        Apply changes
+                                    </button>
+                                </div>
+                            </>
+                        )
                     )}
                 </AutoHeight>
             </div>

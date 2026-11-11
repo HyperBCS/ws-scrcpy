@@ -9,17 +9,15 @@
     box-sizing: border-box;
     padding-left: env(safe-area-inset-left, 0px);
     padding-right: env(safe-area-inset-right, 0px);
-}
-
-.live-text-backdrop {
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.08);
+    /* Only the bar takes input. Presses beside it reach the phone picture, so the next text
+       field can be chosen while the bar stays open. */
+    pointer-events: none;
 }
 
 .live-text-bar {
     position: relative;
     z-index: 1;
+    pointer-events: auto;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -54,7 +52,7 @@
 
 .live-text-heading p {
     color: var(--text-color-light);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.5;
     margin: 6px 0 0;
 }
@@ -70,7 +68,7 @@
     font-size: 16px;
     color: var(--text-color);
     background: var(--header-bg-color);
-    border: 1px solid var(--button-border-color);
+    border: 1px solid var(--control-border-color);
     border-radius: 12px;
 }
 
@@ -119,7 +117,7 @@
     display: block;
     margin-top: -4px;
     color: var(--text-color-light);
-    font-size: 11px;
+    font-size: 13px;
     overflow-wrap: anywhere;
 }
 

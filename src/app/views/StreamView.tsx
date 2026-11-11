@@ -196,6 +196,7 @@ export function StreamView({ params }: StreamViewProps) {
                         key={params.udid}
                         open={unlockSheetOpen.value}
                         udid={params.udid}
+                        deviceName={entry ? name : undefined}
                         sessionKey={session.client}
                         connected={streamConnected.value}
                         locked={locked}

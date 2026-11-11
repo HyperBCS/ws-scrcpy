@@ -286,7 +286,7 @@ this, in increasing order of how much it restarts:
 | Action | Restarts | Use it when |
 | --- | --- | --- |
 | Refresh picture | asks for a new keyframe | the picture smears |
-| Restart picture | the video, inside the same session | the picture is frozen or broken |
+| Restart video | the video, inside the same session | the picture is frozen or broken |
 | Restart services | the whole phone session (a fresh helper process) | touch or the keyboard stopped responding |
 | Remount developer image | the developer image the screen/touch services live in | the screen will not start at all |
 | Reboot phone | the phone | nothing else helped |

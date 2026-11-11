@@ -176,6 +176,15 @@
     background: var(--device-list-hover-color);
 }
 
+/* Listen is this browser's playback, not a phone key: it shows when it is on. */
+.control-buttons-list.floating .control-button[data-control='audio'][aria-pressed='true'] {
+    border-color: var(--button-text-color);
+    color: var(--button-text-color);
+}
+.control-buttons-list.floating .control-button[data-control='audio'][aria-pressed='true'] > svg {
+    fill: currentColor;
+}
+
 .floating-control-label {
     font: 500 11px/1.15 var(--font-stack);
     text-align: center;

@@ -136,7 +136,7 @@ async function geometry(page, label) {
             .filter((el) => el.left < bounds.left - 1 || el.right > bounds.right + 1);
         const overflowingContent = Array.from(
             body.querySelectorAll(
-                '.settings-sheet-content, .settings-device-context, details, .settings-advanced-body, .settings-sheet-row, .settings-sheet-banner, .settings-sheet-button-row',
+                '.settings-sheet-content, details, .settings-advanced-body, .settings-sheet-row, .settings-sheet-banner, .settings-sheet-button-row',
             ),
         )
             .filter((el) => el.getClientRects().length && el.scrollWidth > el.clientWidth + 1)

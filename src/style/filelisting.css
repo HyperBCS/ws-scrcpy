@@ -138,8 +138,8 @@ body.file-listing-page {
 }
 
 .fx-button.fx-danger-solid {
-    background: var(--status-unauthorized-color);
-    border-color: var(--status-unauthorized-color);
+    background: var(--status-danger-solid);
+    border-color: var(--status-danger-solid);
     color: #fff;
 }
 

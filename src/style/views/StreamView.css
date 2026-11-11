@@ -119,11 +119,12 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--status-starting-color);
+    /* A dot, not text: the brighter fill colour. */
+    background: var(--status-starting-fill);
 }
 
 .stream-header-status.connected .stream-header-status-dot {
-    background: var(--status-ready-color);
+    background: var(--status-ready-fill);
 }
 
 .stream-header-switch {

@@ -92,10 +92,10 @@ async function main() {
         await page.locator('.bottom-sheet-root.open').waitFor({ state: 'detached' });
         await openControls(page);
         await page.getByRole('button', { name: 'Type text', exact: true }).click();
-        await page.getByRole('textbox', { name: 'Text to send to device' }).waitFor();
+        await page.getByRole('textbox', { name: 'Text to send to the phone' }).waitFor();
         assert(
             await page
-                .getByRole('textbox', { name: 'Text to send to device' })
+                .getByRole('textbox', { name: 'Text to send to the phone' })
                 .evaluate((el) => parseFloat(getComputedStyle(el).fontSize) >= 16),
             'mobile text field avoids Safari focus zoom',
         );

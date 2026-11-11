@@ -117,7 +117,7 @@ const colorOf = (locator) => locator.evaluate((el) => getComputedStyle(el).color
 
 async function openPanel(page) {
     await page.locator(`[data-device-key="ios:${UDID}"]`).getByRole('button', { name: 'Settings for iPhone fixture', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'iPhone settings', exact: true });
+    const dialog = page.getByRole('dialog', { name: 'Scheduled unlock', exact: true });
     await dialog.waitFor();
     await settleMotion(page);
     return dialog;
@@ -138,7 +138,7 @@ async function panelFlow(browser) {
         const storageBefore = await page.evaluate(() => Object.keys(localStorage).sort());
 
         const dialog = await openPanel(page);
-        for (const name of ['Scheduled unlock', 'Runs', 'Phone']) {
+        for (const name of ['Schedule', 'Runs', 'Phone']) {
             await dialog.getByRole('heading', { name, exact: true }).waitFor();
         }
         assert.equal(await dialog.getByRole('heading', { name: 'Status', exact: true }).count(), 0);
@@ -308,7 +308,7 @@ async function panelFlow(browser) {
         // The passcode left the browser exactly once.
         assert.equal(commands.filter((command) => JSON.stringify(command).includes(PASSCODE)).length, 1);
 
-        await page.getByRole('button', { name: 'Close iPhone settings', exact: true }).click();
+        await page.getByRole('button', { name: 'Close Scheduled unlock', exact: true }).click();
         await dialog.waitFor({ state: 'hidden' });
         assert.deepEqual(test.errors, []);
         console.log('PASS iOS settings panel: summary row, passcode asked twice, zone, toggle, run now and its refusal, failure tone, paused state, error alert, remove');
@@ -405,7 +405,7 @@ async function narrowFlow(browser) {
         }
         await page.screenshot({ path: path.join(OUT, 'device-list-320.png') });
         await button.click();
-        const dialog = page.getByRole('dialog', { name: 'iPhone settings', exact: true });
+        const dialog = page.getByRole('dialog', { name: 'Scheduled unlock', exact: true });
         await dialog.waitFor();
         await settleMotion(page);
         assert.equal(await dialog.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false, 'the panel does not overflow at 320px');
@@ -530,7 +530,7 @@ async function streamUnlockFlow(browser) {
             await openUnlock(page);
             assert.match(await state.textContent(), /^No passcode is stored on the server for this phone\./);
             await settings.click();
-            await page.getByRole('dialog', { name: 'iPhone settings', exact: true }).waitFor();
+            await page.getByRole('dialog', { name: 'Scheduled unlock', exact: true }).waitFor();
             await settleMotion(page);
             await page.getByLabel('Passcode for scheduled unlock').waitFor();
             assert.equal(await page.getByRole('dialog', { name: 'Unlock device', exact: true }).count(), 0, 'one sheet at a time');
@@ -645,14 +645,14 @@ async function lostRunReplyFlow(browser) {
     }
 }
 
-// U-flows-7, C-client-ui-9 and the Restart picture reply: the iPhone stream page.
+// U-flows-7, C-client-ui-9 and the Restart video reply: the iPhone stream page.
 async function streamSheetsFlow(browser) {
     const stored = { enabled: true, time: '03:00', hasPasscode: true, timeZone: ZONE, nextRunAt: Date.UTC(2026, 10, 11, 8, 0) };
     for (const [width, height, mobile] of [[390, 844, true], [1280, 800, false]]) {
         const test = await start(browser, { width, height, mobile, status: stored, device: { session: 'ready', 'screen.power': 'on', 'device.locked': false }, stream: true });
         const { page, commands, handlers, sockets } = test;
         const label = mobile ? 'phone' : 'desktop';
-        const settingsDialog = page.getByRole('dialog', { name: 'iPhone settings', exact: true });
+        const settingsDialog = page.getByRole('dialog', { name: 'Scheduled unlock', exact: true });
         const actionsDialog = page.getByRole('dialog', { name: 'Actions', exact: true });
         const control = async (title, shot) => {
             if (mobile) {
@@ -674,7 +674,7 @@ async function streamSheetsFlow(browser) {
             await settingsDialog.waitFor();
             await settingsDialog.getByRole('heading', { name: 'Scheduled unlock', exact: true }).waitFor();
             await page.screenshot({ path: path.join(OUT, `stream-settings-${width}.png`) });
-            await page.getByRole('button', { name: 'Close iPhone settings' }).click();
+            await page.getByRole('button', { name: 'Close Scheduled unlock' }).click();
             await settingsDialog.waitFor({ state: 'hidden' });
 
             // The Actions sheet leads there too, and one sheet replaces the other.
@@ -686,23 +686,23 @@ async function streamSheetsFlow(browser) {
             await scheduled.getByRole('button', { name: 'Open', exact: true }).click();
             await settingsDialog.waitFor();
             await actionsDialog.waitFor({ state: 'hidden' });
-            await page.getByRole('button', { name: 'Close iPhone settings' }).click();
+            await page.getByRole('button', { name: 'Close Scheduled unlock' }).click();
             await settingsDialog.waitFor({ state: 'hidden' });
 
-            // Restart picture: the server answers, also when it refuses a second restart.
+            // Restart video: the server answers, also when it refuses a second restart.
             await control('Actions');
             await actionsDialog.waitFor();
-            const restart = actionsDialog.locator('.sheet-row', { hasText: 'Restart picture' }).getByRole('button', { name: 'Restart', exact: true });
+            const restart = actionsDialog.locator('.sheet-row', { hasText: 'Restart video' }).getByRole('button', { name: 'Restart video', exact: true });
             handlers.onStream = (message) => (message.type === 'restart' ? { type: 'result', id: message.id, ok: true } : undefined);
             await restart.click();
-            await actionsDialog.getByText('The picture was restarted.', { exact: true }).waitFor();
+            await actionsDialog.getByText('The video was restarted.', { exact: true }).waitFor();
             handlers.onStream = (message) =>
                 message.type === 'restart'
-                    ? { type: 'result', id: message.id, ok: false, error: 'The picture was restarted a moment ago. Try again in 27 s.' }
+                    ? { type: 'result', id: message.id, ok: false, error: 'The video was restarted a moment ago. Try again in 27 s.' }
                     : undefined;
             await restart.click();
-            await actionsDialog.getByText('The picture was restarted a moment ago. Try again in 27 s.', { exact: true }).waitFor();
-            assert.equal(await actionsDialog.getByText('Restarting the picture…').count(), 0, `${label}: the sheet does not stay on Restarting`);
+            await actionsDialog.getByText('The video was restarted a moment ago. Try again in 27 s.', { exact: true }).waitFor();
+            assert.equal(await actionsDialog.getByText('Restarting the video…').count(), 0, `${label}: the sheet does not stay on Restarting`);
             const restarts = test.streamMessages.filter((message) => message.type === 'restart');
             assert.equal(restarts.length, 2);
             assert.ok(restarts.every((message) => Number.isInteger(message.id)), 'each restart carries an id to answer');

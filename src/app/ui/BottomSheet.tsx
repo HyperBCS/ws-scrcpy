@@ -1,4 +1,5 @@
-import { trapDialogTab, restoreDialogFocus } from './dialogFocus';
+import { trapDialogTab, rememberDialogFocus, returnDialogFocus } from './dialogFocus';
+import { cancelConfirmPrompt } from './ConfirmAction';
 import { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import '../../style/ui/BottomSheet.css';
@@ -11,16 +12,28 @@ interface BottomSheetProps {
     dismissible?: boolean;
     bodyClassName?: string;
     title: string;
+    /** The device the sheet acts on, shown under the title. */
+    subtitle?: string;
     children: ComponentChildren;
 }
 
-export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, title, children }: BottomSheetProps) {
+export function BottomSheet({
+    open,
+    onClose,
+    dismissible = true,
+    bodyClassName,
+    title,
+    subtitle,
+    children,
+}: BottomSheetProps) {
     const rootRef = useRef<HTMLDivElement>(null);
     const { ref: panelRef, present } = usePresence<HTMLDivElement>(open, 'sheet');
     const closeRef = useRef(onClose);
     closeRef.current = onClose;
     const dismissibleRef = useRef(dismissible);
     dismissibleRef.current = dismissible;
+    const openRef = useRef(open);
+    openRef.current = open;
     const requestClose = () => {
         if (dismissibleRef.current) {
             closeRef.current();
@@ -44,7 +57,7 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
         if (!present || !root || !panel) {
             return;
         }
-        const previousFocus = document.activeElement;
+        rememberDialogFocus(panel);
         // Keep the device list at its exact position while the sheet itself remains scrollable.
         // Lock the actual list scroller, not only body (the PWA shell never scrolls).
         const list = document.getElementById('devices');
@@ -82,14 +95,32 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
         const focusFrame = requestAnimationFrame(() => panel.focus({ preventScroll: true }));
 
         const onKeyDown = (event: KeyboardEvent) => {
+            // A sheet that is animating out leaves the keyboard to the one that replaced it.
+            if (!openRef.current) {
+                return;
+            }
             if (event.key === 'Escape' && !event.isComposing) {
                 event.preventDefault();
                 event.stopPropagation();
-                requestClose();
+                // The first Escape cancels a confirm prompt; the sheet stays open.
+                if (!cancelConfirmPrompt(panel)) {
+                    requestClose();
+                }
             } else trapDialogTab(event, panel);
         };
         window.addEventListener('keydown', onKeyDown, true);
+        // A control that is removed or disabled while it has focus (a button replaced by its
+        // result) would leave focus on the page behind the sheet. Keep it in the sheet.
+        const keepFocus = new MutationObserver(() => {
+            const active = document.activeElement;
+            const lost = !active || active === document.body || (panel.contains(active) && active.matches(':disabled'));
+            if (openRef.current && lost) {
+                panel.focus({ preventScroll: true });
+            }
+        });
+        keepFocus.observe(panel, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
         return () => {
+            keepFocus.disconnect();
             interactionEvents.forEach((name) => root.removeEventListener(name, stopRemoteInteraction));
             backdrop?.removeEventListener('touchmove', preventBackdropScroll);
             backdrop?.removeEventListener('wheel', preventBackdropScroll);
@@ -102,7 +133,7 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
             viewport?.removeEventListener('scroll', updateViewport);
             window.removeEventListener('resize', updateViewport);
             window.removeEventListener('keydown', onKeyDown, true);
-            restoreDialogFocus(previousFocus, document.querySelector<HTMLElement>('.floating-toolbar-fab'));
+            returnDialogFocus(panel, document.querySelector<HTMLElement>('.floating-toolbar-fab'));
         };
     }, [present]);
 
@@ -122,12 +153,16 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
                 role="dialog"
                 aria-modal={open ? true : undefined}
                 aria-label={title}
+                aria-description={subtitle}
                 tabIndex={-1}
             >
                 <div class="bottom-sheet-drag-region">
                     <div class="bottom-sheet-handle" aria-hidden="true" />
                     <div class="bottom-sheet-header">
-                        <h2 class="bottom-sheet-title">{title}</h2>
+                        <div class="bottom-sheet-heading">
+                            <h2 class="bottom-sheet-title">{title}</h2>
+                            {subtitle && <p class="bottom-sheet-subtitle">{subtitle}</p>}
+                        </div>
                         <button
                             type="button"
                             class="bottom-sheet-close"

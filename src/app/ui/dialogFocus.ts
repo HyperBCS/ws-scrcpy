@@ -41,3 +41,50 @@ export function restoreDialogFocus(previous: Element | null, fallback?: HTMLElem
             : fallback;
     target?.focus({ preventScroll: true });
 }
+
+const isShown = (element: Element | null | undefined): element is HTMLElement =>
+    element instanceof HTMLElement && element.isConnected && element.getClientRects().length > 0;
+
+// Sheets that are on screen, oldest first, including one that is still animating out.
+const shownDialogs: HTMLElement[] = [];
+// Where focus goes back to when each of them closes, nearest opener first.
+const returnTargets = new WeakMap<HTMLElement, HTMLElement[]>();
+
+/**
+ * Call when a sheet appears, before it takes focus. A sheet opened from inside another one
+ * (Actions > Stream settings) inherits that sheet's return targets, because the control that
+ * opened it is hidden by the time it closes.
+ */
+export function rememberDialogFocus(panel: HTMLElement): void {
+    const active = document.activeElement;
+    const focused = active instanceof HTMLElement && active !== document.body ? active : undefined;
+    // The outgoing sheet turns inert as it closes, which can drop focus to the body first.
+    const opener = focused
+        ? shownDialogs.find((dialog) => dialog.contains(focused))
+        : shownDialogs[shownDialogs.length - 1];
+    const inherited = (opener && opener !== panel && returnTargets.get(opener)) || [];
+    returnTargets.set(panel, focused ? [focused, ...inherited] : inherited);
+    shownDialogs.push(panel);
+}
+
+/**
+ * Call when a sheet has gone. Only the last sheet to go hands focus back to the page: one that
+ * finishes closing after the next one opened must not pull focus out of it.
+ */
+export function returnDialogFocus(panel: HTMLElement, fallback?: HTMLElement | null): void {
+    const targets = returnTargets.get(panel) || [];
+    returnTargets.delete(panel);
+    const index = shownDialogs.indexOf(panel);
+    if (index >= 0) {
+        shownDialogs.splice(index, 1);
+    }
+    const target = targets.find(isShown);
+    if (shownDialogs.some(isShown)) {
+        // Closed on top of a sheet that stays open: go back into that sheet, nowhere else.
+        if (target && shownDialogs.some((dialog) => dialog.contains(target))) {
+            target.focus({ preventScroll: true });
+        }
+        return;
+    }
+    (target ?? fallback)?.focus({ preventScroll: true });
+}
