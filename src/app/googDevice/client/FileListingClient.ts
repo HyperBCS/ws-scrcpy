@@ -185,6 +185,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private longPressedAt = 0;
     /** Rebuilds the open menu after a setting inside it changes, keeping any Back item. */
     private menuBuilder?: () => string[];
+    /** Where the open menu was asked for, in viewport coordinates. */
+    private menuAnchor = { x: 0, y: 0 };
     private typeAhead = { text: '', at: 0 };
     private path: string;
     private pendingPath?: string;
@@ -1164,15 +1166,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     private openMenu(build: () => string[], clientX: number, clientY: number): void {
         this.menuBuilder = build;
+        this.menuAnchor = { x: clientX, y: clientY };
         this.menu.innerHTML = build().join('');
         this.menu.hidden = false;
-        const bounds = this.wrapper.getBoundingClientRect();
-        const size = this.menu.getBoundingClientRect();
-        const left = Math.max(4, Math.min(clientX - bounds.left, bounds.width - size.width - 4));
-        const top = Math.max(4, Math.min(clientY - bounds.top, bounds.height - size.height - 4));
-        this.menu.style.left = `${left}px`;
-        this.menu.style.top = `${top}px`;
-        this.menu.style.transformOrigin = `${clientX - bounds.left - left}px ${clientY - bounds.top - top}px`;
+        this.menu.scrollTop = 0;
+        this.placeMenu();
         transitionVisibility(this.menu, true);
         this.menu.querySelector<HTMLElement>('button:not([disabled])')?.focus();
         if (!this.closeMenuListener) {
@@ -1187,6 +1185,20 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
     }
 
+    /** Keeps the whole menu inside the explorer, whatever it holds now. */
+    private placeMenu(): void {
+        const { x, y } = this.menuAnchor;
+        const bounds = this.wrapper.getBoundingClientRect();
+        // Layout size, not the painted one: the menu scales while it opens.
+        const width = this.menu.offsetWidth;
+        const height = this.menu.offsetHeight;
+        const left = Math.max(4, Math.min(x - bounds.left, bounds.width - width - 4));
+        const top = Math.max(4, Math.min(y - bounds.top, bounds.height - height - 4));
+        this.menu.style.left = `${left}px`;
+        this.menu.style.top = `${top}px`;
+        this.menu.style.transformOrigin = `${x - bounds.left - left}px ${y - bounds.top - top}px`;
+    }
+
     private openRowMenu(button: HTMLElement): void {
         const rect = button.getBoundingClientRect();
         this.openMenu(() => this.itemMenuItems(), rect.left, rect.bottom);
@@ -1197,6 +1209,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         this.menu.innerHTML = this.menuBuilder().join('');
+        // The new contents may be taller (View options inside Actions).
+        this.placeMenu();
         const target = focus ? this.menu.querySelector<HTMLElement>(focus) : null;
         (target || this.menu.querySelector<HTMLElement>('button:not([disabled])'))?.focus();
     }

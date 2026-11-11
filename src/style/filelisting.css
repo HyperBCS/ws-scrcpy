@@ -668,11 +668,17 @@ body.file-listing-page {
 
 /* ------------------------------------------------------------------ menu */
 
+/* The tool frame clips whatever leaves it, so a menu taller than the explorer scrolls inside
+   itself. `openMenu` and `refreshMenu` keep it within the same 4px margin. */
 .fx-menu {
     position: absolute;
     z-index: 20;
+    box-sizing: border-box;
     min-width: 156px;
     max-width: min(240px, 90%);
+    max-height: calc(100% - 8px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 4px;
     border: 1px solid var(--button-border-color);
     border-radius: 9px;

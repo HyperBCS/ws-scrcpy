@@ -112,6 +112,72 @@ async function history(browser, layout) {
     await finish();
 }
 
+/** The element can be brought fully inside the tool frame, which clips everything else. */
+async function reachable(page, locator, what) {
+    await locator.scrollIntoViewIfNeeded();
+    await settleMotion(page);
+    const frame = await page.locator('.tool-mount').boundingBox();
+    const box = await locator.boundingBox();
+    assert(
+        box.y >= frame.y - 0.5 && box.y + box.height <= frame.y + frame.height + 0.5,
+        `${what} is inside the tool frame (${Math.round(box.y)}..${Math.round(box.y + box.height)} of ${Math.round(frame.y)}..${Math.round(frame.y + frame.height)})`,
+    );
+    const viewport = page.viewportSize();
+    assert(box.y + box.height <= viewport.height, `${what} is on screen`);
+}
+
+async function menuFits(page, what) {
+    await settleMotion(page);
+    const frame = await page.locator('.tool-mount').boundingBox();
+    const menu = await page.locator('.fx-menu').boundingBox();
+    assert(
+        menu.y >= frame.y && menu.y + menu.height <= frame.y + frame.height + 0.5,
+        `${what} stays inside the tool frame (${Math.round(menu.y)}..${Math.round(menu.y + menu.height)} of ${Math.round(frame.y + frame.height)})`,
+    );
+}
+
+// Menus on short screens: every item can be reached, because the menu scrolls inside the frame.
+async function menus(browser) {
+    // A phone in portrait with little height, and the longest Actions menu.
+    let session = await start(browser, { width: 390, height: 664, touch: true }, ROOT);
+    let page = session.page;
+    await page.getByRole('button', { name: 'Actions', exact: true }).click();
+    await page.locator('.fx-menu').waitFor();
+    await menuFits(page, 'the Actions menu');
+    await reachable(page, page.getByRole('menuitem', { name: 'View options…', exact: true }), 'View options');
+    await page.getByRole('menuitem', { name: 'View options…', exact: true }).click();
+    await page.locator('.fx-menu [data-menu="view"]').first().waitFor();
+    await menuFits(page, 'the View options inside Actions');
+    await reachable(page, page.getByRole('menuitemcheckbox', { name: 'Hidden items' }), 'Hidden items');
+    await page.screenshot({ path: path.join(OUT, 'flows-menu-phone-664.png') });
+    await page.keyboard.press('Escape');
+    await session.finish();
+
+    // A phone in landscape: the row menu and the View menu are both taller than the frame.
+    session = await start(browser, { width: 926, height: 428, touch: true }, ROOT);
+    page = session.page;
+    await row(page, 'notes.txt').locator('.fx-row-menu').click();
+    await page.locator('.fx-menu').waitFor();
+    await menuFits(page, 'the row menu');
+    await reachable(page, page.getByRole('menuitem', { name: 'Properties', exact: true }), 'Properties');
+    await reachable(page, page.getByRole('menuitem', { name: 'Delete', exact: true }), 'Delete');
+    await page.screenshot({ path: path.join(OUT, 'flows-menu-landscape-row.png') });
+    await page.keyboard.press('Escape');
+    await page.locator('.fx-menu').waitFor({ state: 'hidden' });
+    await page.locator('.fx-commands').getByRole('button', { name: 'View', exact: true }).click();
+    await page.locator('.fx-menu').waitFor();
+    await menuFits(page, 'the View menu');
+    assert(
+        await page.locator('.fx-menu').evaluate((menu) => menu.scrollHeight > menu.clientHeight),
+        'the View menu scrolls when it is taller than the frame',
+    );
+    await reachable(page, page.getByRole('menuitemcheckbox', { name: 'Hidden items' }), 'Hidden items');
+    await reachable(page, page.getByRole('menuitemradio', { name: 'Descending', exact: true }), 'Descending');
+    await page.screenshot({ path: path.join(OUT, 'flows-menu-landscape-view.png') });
+    await page.keyboard.press('Escape');
+    await session.finish();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -119,6 +185,7 @@ async function main() {
     const scenarios = [
         ['history desktop', () => history(browser, DESKTOP)],
         ['history phone', () => history(browser, PHONE)],
+        ['menus on short screens', () => menus(browser)],
     ];
     try {
         for (const [name, run] of scenarios) {
