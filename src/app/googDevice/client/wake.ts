@@ -1,38 +1,52 @@
-import { StreamReceiverScrcpy } from './StreamReceiverScrcpy';
-import { KeyCodeControlMessage } from '../../controlMessage/KeyCodeControlMessage';
-import KeyEvent from '../android/KeyEvent';
-import { ACTION } from '../../../common/Action';
+import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
 
-// How long to keep the ephemeral control connection open after sending the key: `sendEvent`
-// queues until the socket is OPEN and flushes immediately after, but the flush itself is
-// asynchronous (a WebSocket send), so closing on the same tick could drop it.
-const WAKE_CONNECTION_LIFETIME_MS = 1500;
+// The server answers as soon as adb has delivered the key. Longer than this, something is stuck.
+const WAKE_TIMEOUT_MS = 8000;
+
+interface WakeReply {
+    udid?: string;
+    requestId?: number;
+    error?: string;
+}
+
+/** The part of a device tracker this needs: its command channel and the replies on it. */
+export interface WakeTracker {
+    sendCommand(type: string, data?: Record<string, unknown>): number;
+    on(event: string, listener: (reply: WakeReply) => void): void;
+    off(event: string, listener: (reply: WakeReply) => void): void;
+}
 
 /**
- * Sends `KEYCODE_WAKEUP` to a device that has no active stream open in this tab, by opening a
- * throwaway control-only connection instead of a full `StreamClientScrcpy` (no player, no video
- * rendering, nothing appended to the DOM).
+ * Wakes an Android device's screen from its card. The request goes over the device list's own
+ * connection and the server sends the wake key through adb, so no stream is opened and it works
+ * while the stream service is stopped.
  *
- * This only works when the device's scrcpy server is already running (there is a `ws` endpoint to
- * connect to at all -- see `DeviceCard`, which only renders the Wake action when `hasPid` is
- * true). It is deliberately NOT wired up to auto-start the server first: starting a server is a
- * heavier action (spins up an encoder) than this button should trigger silently, and doing so
- * would race the tracker's own pid update. When the server isn't running the card asks the user to
- * start it explicitly instead of pretending Wake can help.
- *
- * Unverified against a real device (none attached in this environment) -- reasoning: the control
- * channel a `KeyCodeControlMessage` travels over is independent of the video channel (see
- * `StreamReceiver`'s `sendEvent`/`onSocketMessage` split), so it should not require a player or an
- * initial-info handshake to accept input.
+ * Resolves when the server reports that the device took the key. Rejects with a message for the
+ * card when the device refuses it or nothing answers.
  */
-export function sendWakeKey(udid: string, wsUrl: string): void {
-    const receiver = new StreamReceiverScrcpy({
-        action: ACTION.STREAM_SCRCPY,
-        udid,
-        ws: wsUrl,
-        player: 'wake-helper',
+export function wakeDevice(tracker: WakeTracker, udid: string, timeoutMs = WAKE_TIMEOUT_MS): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const cleanup = () => {
+            clearTimeout(timeout);
+            tracker.off(ControlCenterCommand.WAKE_DEVICE, onReply);
+        };
+        const onReply = (reply: WakeReply) => {
+            if (reply?.udid !== udid || reply.requestId !== requestId) {
+                return;
+            }
+            cleanup();
+            if (reply.error) {
+                reject(new Error(reply.error));
+            } else {
+                resolve();
+            }
+        };
+        const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error('The server did not answer. Check the connection and try again.'));
+        }, timeoutMs);
+        // Listen first: the reply is matched to this request by the id that sending returns.
+        tracker.on(ControlCenterCommand.WAKE_DEVICE, onReply);
+        const requestId = tracker.sendCommand(ControlCenterCommand.WAKE_DEVICE, { udid });
     });
-    receiver.sendEvent(new KeyCodeControlMessage(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_WAKEUP, 0, 0));
-    receiver.sendEvent(new KeyCodeControlMessage(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_WAKEUP, 0, 0));
-    setTimeout(() => receiver.stop(), WAKE_CONNECTION_LIFETIME_MS);
 }

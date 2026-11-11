@@ -20,6 +20,8 @@ export class ControlCenterCommand {
     public static LIST_ENCODERS = 'list_encoders';
     public static UPDATE_STREAM_CONFIG = 'update_stream_config';
     public static GET_LOCK_STATE = 'get_lock_state';
+    // Android: sends the wake key through adb. Replies with `{ udid }`, or with an `error`.
+    public static WAKE_DEVICE = 'wake_device';
     // Scheduled iPhone unlock (src/common/IosUnlockSchedule.ts). The first three reply with the
     // `UnlockScheduleStatus` JSON; RUN_UNLOCK_NOW replies with the `UnlockRunResult` once the run
     // has ended. The passcode is validated here and never echoed in an error.
@@ -80,6 +82,11 @@ export class ControlCenterCommand {
             case this.GET_LOCK_STATE:
                 if (!command.udid) {
                     throw new Error('Missing device id in lock-state request');
+                }
+                return command;
+            case this.WAKE_DEVICE:
+                if (!command.udid) {
+                    throw new Error('Missing device id');
                 }
                 return command;
             case this.UPDATE_STREAM_CONFIG:

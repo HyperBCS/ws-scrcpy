@@ -32,6 +32,8 @@ const { ScrcpyInstance } = require('../src/server/goog-device/ScrcpyInstance');
 const { WebsocketProxyOverAdb } = require('../src/server/goog-device/mw/WebsocketProxyOverAdb');
 const { broadcastManager } = require('../src/common/BroadcastManager');
 const { STREAM_SERVICE_STOPPED } = require('../src/common/StreamCloseCode');
+const { ControlCenterCommand } = require('../src/common/ControlCenterCommand');
+const { wakeDevice } = require('../src/app/googDevice/client/wake');
 const { streamConfig } = require('../src/server/goog-device/StreamConfig');
 const { StreamReceiver } = require('../src/app/client/StreamReceiver');
 
@@ -907,4 +909,70 @@ test('Node exits soon after shutdown even when something was left open', { timeo
     assert.match(stdout, /Stopping fixture service/);
     assert.match(stderr, /Still running after shutdown; exiting/);
     assert.ok(Date.now() - signalled < 6000, 'it did not wait for a second signal');
+});
+
+const wakeCommand = (data) => ControlCenterCommand.fromJSON(JSON.stringify({ id: 7, type: 'wake_device', data }));
+
+test('Wake from the card sends the wake key through adb and starts no stream', async (t) => {
+    const { device, phone, children } = deviceFixture(t, 'sleeping-phone');
+    withTimings(t, { WAKE_SETTLE_MS: 1 });
+    t.mock.method(ScrcpyServer, 'run', () => assert.fail('Wake must not start the stream service'));
+    t.mock.method(broadcastManager, 'startBroadcast', () => assert.fail('Wake must not open a stream'));
+    const sent = [];
+    let result = { code: 0, output: '' };
+    t.mock.method(AdbUtils, 'shellExec', async (serial, command) => {
+        sent.push(`${serial}: ${command}`);
+        return result;
+    });
+    let refreshed = 0;
+    device.fetchRuntimeState = () => refreshed++;
+    const center = new AndroidControlCenter();
+    center.deviceMap.set('sleeping-phone', device);
+
+    const reply = await center.runCommand(wakeCommand({ udid: 'sleeping-phone' }));
+    assert.deepEqual(JSON.parse(reply), { udid: 'sleeping-phone' });
+    assert.deepEqual(sent, ['sleeping-phone: input keyevent 224'], 'KEYCODE_WAKEUP');
+    assert.equal(children.length, 0);
+    assert.deepEqual(phone.killed, []);
+    await wait(20);
+    assert.equal(refreshed, 1, 'the screen state is read again, so the card shows the result');
+
+    result = { code: 255, output: 'java.lang.SecurityException: Injecting input events requires permission' };
+    await assert.rejects(center.runCommand(wakeCommand({ udid: 'sleeping-phone' })), /SecurityException/);
+    device.connected = false;
+    await assert.rejects(center.runCommand(wakeCommand({ udid: 'sleeping-phone' })), /not connected/);
+    assert.equal(sent.length, 2, 'a disconnected phone is not sent anything');
+    assert.throws(() => wakeCommand({}), /Missing device id/);
+});
+
+test('the card’s Wake request resolves on its own reply and reports a refusal or silence', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const tracker = new EventEmitter();
+    const commands = [];
+    tracker.sendCommand = (type, data) => {
+        commands.push({ type, data });
+        return 40 + commands.length;
+    };
+    const outcome = (promise) =>
+        promise.then(
+            () => 'woken',
+            (error) => error.message,
+        );
+
+    const first = outcome(wakeDevice(tracker, 'phone'));
+    assert.deepEqual(commands, [{ type: 'wake_device', data: { udid: 'phone' } }]);
+    tracker.emit('wake_device', { udid: 'other-phone', requestId: 41 });
+    tracker.emit('wake_device', { udid: 'phone', requestId: 12 });
+    tracker.emit('wake_device', { udid: 'phone', requestId: 41 });
+    assert.equal(await first, 'woken');
+    assert.equal(tracker.listenerCount('wake_device'), 0);
+
+    const refused = outcome(wakeDevice(tracker, 'phone'));
+    tracker.emit('wake_device', { udid: 'phone', requestId: 42, error: 'The device is not connected.' });
+    assert.equal(await refused, 'The device is not connected.');
+
+    const silent = outcome(wakeDevice(tracker, 'phone'));
+    t.mock.timers.tick(8000);
+    assert.match(await silent, /did not answer/);
+    assert.equal(tracker.listenerCount('wake_device'), 0);
 });

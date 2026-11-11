@@ -25,6 +25,7 @@ export interface GoogDeviceTrackerEvents {
     };
     update_stream_config: { udid: string; requestId: number; config?: ScrcpyServerConfig; error?: string };
     get_lock_state: Partial<AndroidLockStateReply> & { udid: string; requestId: number; error?: string };
+    wake_device: { udid: string; requestId: number; error?: string };
     // Sent by the server, not a reply: whether it can reach adb.
     [TRACKER_STATUS]: TrackerStatus;
 }

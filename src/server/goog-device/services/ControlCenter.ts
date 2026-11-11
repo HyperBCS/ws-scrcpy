@@ -279,6 +279,9 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
                 return;
             case ControlCenterCommand.GET_LOCK_STATE:
                 return JSON.stringify({ udid, ...(await device.refreshLockState()) });
+            case ControlCenterCommand.WAKE_DEVICE:
+                await device.wake();
+                return JSON.stringify({ udid });
             case ControlCenterCommand.LIST_ENCODERS: {
                 const encoders = await device.listEncoders(true);
                 return JSON.stringify({ udid, encoders, config: streamConfig.get(udid) });

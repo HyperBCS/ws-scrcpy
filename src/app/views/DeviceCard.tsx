@@ -21,7 +21,7 @@ import Util from '../Util';
 import { buildLinkHref, isLocalLink } from '../state/links';
 import { NavigateParams } from '../state/router';
 import { DeviceStatusInfo, getDeviceStatusInfo, isDeviceStarting, markStarting } from '../state/deviceStatus';
-import { sendWakeKey } from '../googDevice/client/wake';
+import { AsleepBanner } from '../ui/AsleepBanner';
 import { openApplSettingsSheet, openSettingsSheet } from '../state/settingsSheet';
 import { unlockCardLine } from '../state/unlockSchedule';
 import { isToolAction } from './ToolView';
@@ -190,17 +190,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                 )}
             </DeviceHeader>
             <StreamServiceStatus descriptor={descriptor} deviceKey={entry.key} />
-            {isAsleep && (
-                <div class="device-asleep-banner">
-                    <span aria-hidden="true">☾</span>
-                    <span>Screen is asleep.</span>
-                    {hasPid && selected && (
-                        <button class="wake-button" onClick={() => sendWakeKey(descriptor.udid, selected.url)}>
-                            Wake
-                        </button>
-                    )}
-                </div>
-            )}
+            {isAsleep && <AsleepBanner tracker={tracker} udid={descriptor.udid} />}
             {!isActive && <UnavailableHint info={statusInfo} />}
             <div class="services device-primary-actions">
                 {isActive && selected && primaryPlayer ? (
@@ -290,7 +280,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                                         ? 'Running. Stopping it ends the stream for every viewer.'
                                         : isStarting
                                           ? 'Starting.'
-                                          : 'Stopped. Start it to open the screen.'
+                                          : 'Stopped. It starts when the screen is opened.'
                                 }
                             >
                                 <button

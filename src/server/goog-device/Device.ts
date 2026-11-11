@@ -65,6 +65,8 @@ export class Device extends TypedEmitter<DeviceEvents> {
     // scrcpy prints its first line shortly before it starts to listen for the stream sockets.
     private static readonly STREAM_CONNECT_DELAY_MS = 1000;
     private static readonly STREAM_RETRY_DELAY_MS = 500;
+    // How long the screen is given to come on before its state is read again after a wake.
+    private static readonly WAKE_SETTLE_MS = 500;
     // Verified against a real device (Xiaomi, Android 16). Notes on each part:
     //  - `Display Power: state=` is NOT emitted by `dumpsys power` on Android 16, so
     //    `dumpsys display`'s `mScreenState=` is the primary screen-state source; the older
@@ -227,6 +229,28 @@ export class Device extends TypedEmitter<DeviceEvents> {
             default:
                 return this.listProc(processName, strict);
         }
+    }
+
+    /**
+     * Wakes the screen with the wake key, sent through adb. It needs no scrcpy server, so the
+     * device card can offer it while nobody has the screen open.
+     */
+    public async wake(): Promise<void> {
+        if (!this.connected) {
+            throw new Error('The device is not connected.');
+        }
+        // 224 is KEYCODE_WAKEUP: it turns the screen on and does nothing when it is on already.
+        const { code, output } = await AdbUtils.shellExec(this.udid, 'input keyevent 224', 6500);
+        if (code !== 0) {
+            throw new Error(output || 'The device did not accept the wake key.');
+        }
+        // Show the result on the card without waiting for the next poll.
+        void sleep(Device.WAKE_SETTLE_MS).then(() => {
+            if (this.connected) {
+                this.stopRuntimeStateUpdates();
+                this.fetchRuntimeState();
+            }
+        });
     }
 
     public killProcess(pid: number): Promise<string> {
