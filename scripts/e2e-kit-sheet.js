@@ -10,7 +10,8 @@
 //   Escape, Back and the browser's close request cancel a confirm prompt first; a sheet that
 //   may not close stays open on every one of them;
 //   focus moves into the sheet, Tab stays inside, and focus returns to the button that opened it;
-//   a sheet opened from a sheet stacks and closes in order;
+//   a sheet opened from a sheet stacks and closes in order; one that takes the place of another
+//   keeps its history entry;
 //   a toast raised while a sheet is open shows above it and can be pressed;
 //   touch, mouse and wheel events in a sheet or a menu do not reach document.body;
 //   the sheet follows the visual viewport when an on-screen keyboard resizes it;
@@ -185,6 +186,8 @@ async function layout(test) {
 
     // A long sheet stops short of the top edge and scrolls inside; the header stays.
     const long = await open(test, 'Long sheet', 'Long sheet');
+    assert.equal(await long.dialog.locator('.kit-sheet-subtitle').count(), 0, 'the subtitle is optional');
+    assert.equal(await long.dialog.getAttribute('aria-describedby'), null);
     const longBox = await box(long.panel);
     assert.ok(longBox.height <= viewport.height * 0.88 + 1, `a long sheet leaves room above it (${longBox.height})`);
     assert.ok(longBox.top >= 32, 'a long sheet does not reach the top edge');
@@ -436,14 +439,41 @@ async function stack(test) {
     await pressAt(test, 8, 8);
     await onlyFirst('the backdrop');
     assert.equal(await page.evaluate(() => document.body.classList.contains('sheet-open')), true, 'the page stays locked under the first sheet');
+    await page.keyboard.press('Escape');
+    await closed(test, first.dialog, first.home, 'Escape');
+
+    // One sheet in the place of another: the entry is handed over, and focus goes back to the
+    // button on the page, because the button that was pressed has gone with its sheet.
+    const short = await open(test, 'Short sheet', 'Short sheet');
+    const entries = await page.evaluate(() => window.history.length);
+    await press(test, short.dialog.getByRole('button', { name: 'Go to the long sheet' }));
+    const long = sheet(page, 'Long sheet');
+    await long.waitFor();
+    await short.dialog.waitFor({ state: 'hidden' });
+    await settleMotion(page);
+    assert.equal(await openSheets(page), 1, 'the long sheet took the place of the short one');
+    assert.deepEqual(await at(page), { ...short.home, index: short.home.index + 1, overlay: short.home.overlay + 1 }, 'the sheets share one entry');
+    assert.equal(await page.evaluate(() => window.history.length), entries, 'no entry was added');
+    assert.ok(await long.evaluate((node) => node.contains(document.activeElement)), 'focus is in the sheet that opened');
+    assert.ok(await onTop(long.locator(':scope > .kit-sheet-panel')));
+    assert.equal(await page.evaluate(() => document.body.classList.contains('sheet-open')), true);
+    await page.keyboard.press('Escape');
+    await closed(test, long, short.home, 'Escape');
+    assert.equal(await focused(page), 'button.kit-sheets-button:Short sheet', 'focus returns to the button on the page');
+    assert.equal(await page.evaluate(() => document.body.classList.contains('sheet-open')), false);
+
     // Back from both, one at a time, ends on the page.
+    await press(test, opener(page, 'Sheet opened from a sheet'));
+    await first.dialog.waitFor();
+    await settleMotion(page);
+    await untilAt(page, first.home.index + 1, first.home.overlay + 1);
     await openSecond();
     await page.goBack();
     await onlyFirst('Back');
     await page.goBack();
     await closed(test, first.dialog, first.home, 'the second Back');
     assert.equal(await openSheets(page), 0);
-    console.log(`PASS ${test.label}: a sheet opened from a sheet stacks, and Escape, Back, the close request and the backdrop close the top one first`);
+    console.log(`PASS ${test.label}: a sheet opened from a sheet stacks, and Escape, Back, the close request and the backdrop close the top one first; a sheet that takes the place of another keeps its entry`);
 }
 
 async function toastAbove(test) {

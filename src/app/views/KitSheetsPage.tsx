@@ -38,7 +38,7 @@ export function KitSheetsPage() {
     const pageMenuButton = useRef<HTMLButtonElement>(null);
     const sheetMenuButton = useRef<HTMLButtonElement>(null);
     const close = () => setExample(undefined);
-    const props = (id: Example) => ({ open: example === id, onClose: close, subtitle: PHONE });
+    const props = (id: Example) => ({ open: example === id, onClose: close });
 
     const menuFor = (where: 'page' | 'sheet') => (
         <Menu
@@ -97,13 +97,20 @@ export function KitSheetsPage() {
                 </p>
             </div>
 
-            <Sheet {...props('short')} title="Short sheet">
+            <Sheet {...props('short')} title="Short sheet" subtitle={PHONE}>
                 <p class="kit-sheets-text">A sheet is as tall as what it holds.</p>
-                <button type="button" class="kit-sheets-button primary" onClick={close}>
-                    Done
-                </button>
+                <div class="kit-sheets-list">
+                    <button type="button" class="kit-sheets-button primary" onClick={close}>
+                        Done
+                    </button>
+                    {/* One sheet takes the place of another, as Stream settings does from Actions. */}
+                    <button type="button" class="kit-sheets-button" onClick={() => setExample('long')}>
+                        Go to the long sheet
+                    </button>
+                </div>
             </Sheet>
 
+            {/* No subtitle: the sheet is not about one phone. */}
             <Sheet {...props('long')} title="Long sheet">
                 <ul class="kit-sheets-rows">
                     {ROWS.map((row) => (
@@ -112,7 +119,7 @@ export function KitSheetsPage() {
                 </ul>
             </Sheet>
 
-            <Sheet {...props('field')} title="Text field">
+            <Sheet {...props('field')} subtitle={PHONE} title="Text field">
                 <label class="kit-sheets-label" for="kit-sheets-name">
                     Name
                 </label>
@@ -126,6 +133,7 @@ export function KitSheetsPage() {
             <Sheet
                 {...props('footer')}
                 title="Footer"
+                subtitle={PHONE}
                 footer={
                     <>
                         <button type="button" class="kit-sheets-button" onClick={close}>
@@ -142,7 +150,7 @@ export function KitSheetsPage() {
                 {menuFor('sheet')}
             </Sheet>
 
-            <Sheet {...props('busy')} dismissible={!busy} title="Busy sheet">
+            <Sheet {...props('busy')} subtitle={PHONE} dismissible={!busy} title="Busy sheet">
                 <p class="kit-sheets-text" role="status">
                     {busy ? 'Working. The sheet stays open until this ends.' : 'Nothing is running.'}
                 </p>
@@ -158,7 +166,7 @@ export function KitSheetsPage() {
                 </button>
             </Sheet>
 
-            <Sheet {...props('stack')} title="First sheet">
+            <Sheet {...props('stack')} subtitle={PHONE} title="First sheet">
                 <p class="kit-sheets-text">
                     The second sheet opens on top of this one. Each closes by itself, the top one first.
                 </p>
@@ -173,7 +181,7 @@ export function KitSheetsPage() {
                 </Sheet>
             </Sheet>
 
-            <Sheet {...props('confirm')} title="Confirm prompt">
+            <Sheet {...props('confirm')} subtitle={PHONE} title="Confirm prompt">
                 <p class="kit-sheets-text" role="status">
                     {erased ? 'The example was erased.' : 'The example is still here.'}
                 </p>
@@ -197,7 +205,7 @@ export function KitSheetsPage() {
                 )}
             </Sheet>
 
-            <Sheet {...props('toast')} title="Toast">
+            <Sheet {...props('toast')} subtitle={PHONE} title="Toast">
                 <p class="kit-sheets-text">
                     A message raised while a sheet is open shows above it and can be closed there.
                 </p>
