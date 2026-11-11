@@ -2,10 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { canOpenScreen, devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/devices';
 import { activeStream, deviceSwitcherOpen, activeCoreDeviceStream, openSheet } from '../state/stream';
-import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
-import { streamSocketUrl } from '../googDevice/client/deviceInterfaces';
-import { ACTION } from '../../common/Action';
-import { buildLinkHref, isLocalLink } from '../state/links';
+import { deviceHref, followLink } from '../state/links';
 import { getDeviceStatusInfo } from '../state/deviceStatus';
 import { isSwitcherShortcut, nextHighlight } from '../state/switcherKeys';
 import { DeviceIcon } from '../ui/DeviceIcon';
@@ -86,39 +83,10 @@ export function DeviceSwitcherSheet({
             onSelectDevice(entry);
             return;
         }
-        if (entry.params.type === 'ios') {
-            const href = buildLinkHref({ action: ACTION.STREAM_COREDEVICE, udid: entry.descriptor.udid }, entry.params);
-            deviceSwitcherOpen.value = false;
-            if (isLocalLink(entry.params)) {
-                location.hash = new URL(href).hash;
-            } else {
-                location.assign(href);
-            }
-            return;
-        }
-        const players = StreamClientScrcpy.getPlayers();
-        const player =
-            players.find((candidate) => candidate.playerCodeName === session?.params.player) ??
-            players.find((candidate) => candidate.playerCodeName === 'webcodecs') ??
-            players[0];
-        if (!player) {
-            return;
-        }
-        const href = buildLinkHref(
-            {
-                action: ACTION.STREAM_SCRCPY,
-                udid: entry.descriptor.udid,
-                player: player.playerCodeName,
-                ws: streamSocketUrl(entry.descriptor.udid, entry.params),
-            },
-            entry.params,
-        );
+        // Another phone in the same history entry: Back from it leads to the list, not to the
+        // phone before. The link names the phone only; its page picks the player and the socket.
         deviceSwitcherOpen.value = false;
-        if (isLocalLink(entry.params)) {
-            location.hash = new URL(href).hash;
-        } else {
-            location.assign(href);
-        }
+        followLink(deviceHref(entry.descriptor.udid, 'screen', entry.params), 'switch');
     };
 
     const rows = visible.map((entry) => {

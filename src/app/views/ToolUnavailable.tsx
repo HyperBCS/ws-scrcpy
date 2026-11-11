@@ -1,7 +1,6 @@
 import { useLayoutEffect } from 'preact/hooks';
-import { ACTION } from '../../common/Action';
 import { canOpenScreen, DeviceEntry, deviceName } from '../state/devices';
-import { buildLinkHref } from '../state/links';
+import { deviceHref, followLink } from '../state/links';
 import { goUp } from '../state/router';
 import { LIST_PAGE_NAME } from '../state/routes';
 import { AppBar } from '../ui/AppBar';
@@ -18,6 +17,7 @@ export function ToolUnavailable({ entry, tool }: { entry: DeviceEntry; tool: str
         document.body.className = '';
     }, []);
     const name = deviceName(entry);
+    const screen = deviceHref(entry.descriptor.udid, 'screen', entry.params);
     return (
         <main class="tool-unavailable">
             <AppBar title={name} />
@@ -28,10 +28,14 @@ export function ToolUnavailable({ entry, tool }: { entry: DeviceEntry; tool: str
                     {canOpenScreen(entry) && (
                         <a
                             class="ui-button ui-button-primary"
-                            href={buildLinkHref(
-                                { action: ACTION.STREAM_COREDEVICE, udid: entry.descriptor.udid },
-                                entry.params,
-                            )}
+                            href={screen}
+                            onClick={(event) => {
+                                if (event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+                                    return;
+                                }
+                                event.preventDefault();
+                                followLink(screen, 'open');
+                            }}
                         >
                             Open screen
                         </a>

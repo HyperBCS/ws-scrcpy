@@ -1,6 +1,6 @@
 import { ComponentChildren } from 'preact';
 import { AnimatedDetails } from '../ui/AnimatedDetails';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { canOpenScreen, DeviceEntry, deviceName } from '../state/devices';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
@@ -12,9 +12,8 @@ import { Tool, ToolEntry } from '../client/Tool';
 import { DeviceTracker as GoogDeviceTracker } from '../googDevice/client/DeviceTracker';
 import { DeviceTracker as ApplDeviceTracker } from '../applDevice/client/DeviceTracker';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
-import { streamSocketUrl } from '../googDevice/client/deviceInterfaces';
-import { buildLinkHref, isLocalLink } from '../state/links';
-import { NavigateParams } from '../state/router';
+import { buildLinkHref, deviceHref, followLink, isLocalLink } from '../state/links';
+import { parseRoute } from '../state/routes';
 import {
     DeviceStatusInfo,
     getDeviceProblems,
@@ -26,7 +25,7 @@ import { AsleepBanner } from '../ui/AsleepBanner';
 import { openApplSettingsSheet, openSettingsSheet } from '../state/settingsSheet';
 import { unlockCardLine } from '../state/unlockSchedule';
 import { replyText, sendServiceCommand, TrackerCommandAborted } from '../client/trackerCommand';
-import { deviceTools, isToolAction } from './ToolView';
+import { deviceTools } from './ToolView';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { hasRunningStreamService } from '../state/streamService';
 import { notificationSummary } from '../state/notifications';
@@ -55,20 +54,22 @@ interface NavLinkProps {
 }
 
 function NavLink({ entry, params, className }: NavLinkProps) {
-    const query: NavigateParams = { action: entry.action, ...entry.params };
-    const href = buildLinkHref(query, params);
-    const local =
-        isLocalLink(params) &&
-        (entry.action === ACTION.STREAM_SCRCPY ||
-            entry.action === ACTION.STREAM_COREDEVICE ||
-            isToolAction(entry.action));
+    const query = { action: entry.action, ...entry.params };
+    // A link to a phone names the phone and the view. What else the entry carries stays: the
+    // folder Files opens in, or the player of an "Open with" link.
+    const page = parseRoute(new URLSearchParams(query));
+    const extra = { ...entry.params };
+    delete extra.udid;
+    const href =
+        page.page === 'device' ? deviceHref(page.udid, page.view, params, extra) : buildLinkHref(query, params);
+    const local = isLocalLink(params) && page.page === 'device';
     const onClick = (event: MouseEvent) => {
         if (!local || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
             return;
         }
         event.preventDefault();
-        // Use the complete link so proxied remote-host details survive SPA navigation too.
-        location.hash = new URL(href).hash;
+        // From the list to a phone: a new history entry, so Back returns to the list.
+        followLink(href, 'open');
     };
     return (
         <a
@@ -159,7 +160,7 @@ function SettingsButton({ title, name, onClick }: { title: string; name: string;
     );
 }
 
-/** The card's disclosure. It reopens on return to Devices if it was open when the page was left. */
+/** The card's disclosure. It reopens on return to the list if it was open when the page was left. */
 function CardDetails({ deviceKey, children }: { deviceKey: string; children: ComponentChildren }) {
     const [initiallyOpen] = useState(() => wasCardOpen(deviceKey));
     return (
@@ -202,17 +203,17 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const isStarting = !hasPid && isDeviceStarting(entry.key);
     const statusInfo = getDeviceStatusInfo(entry);
     const isAsleep = statusInfo.status === 'asleep';
-    // Every Android stream goes through the server, which reaches the phone over adb.
-    const socketUrl = useMemo(() => streamSocketUrl(descriptor.udid, params), [descriptor.udid, params]);
     const players = StreamClientScrcpy.getPlayers();
     const primaryPlayer = players.find((player) => player.playerCodeName === 'webcodecs') ?? players[0];
     // Files, then Shell: the order of the tabs on the tool page.
     const toolOrder = (tool: ToolEntry) => deviceTools.findIndex((item) => item.action === tool.action);
     const tools = collectTools(GoogDeviceTracker.tools, descriptor).sort((a, b) => toolOrder(a) - toolOrder(b));
-    const streamEntry = (player: typeof primaryPlayer, title: string): ToolEntry => ({
+    // The screen link names the phone only: the page picks the player and the socket when it
+    // opens. An "Open with" link names its player, which the page then uses instead.
+    const streamEntry = (title: string, player?: typeof primaryPlayer): ToolEntry => ({
         title,
         action: ACTION.STREAM_SCRCPY,
-        params: { udid: descriptor.udid, player: player.playerCodeName, ws: socketUrl },
+        params: { udid: descriptor.udid, ...(player ? { player: player.playerCodeName } : {}) },
     });
     const confirm = useArmedAction<'stop'>();
     const onAction = () => {
@@ -245,11 +246,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             {!isActive && <UnavailableHint info={statusInfo} />}
             <div class="services device-primary-actions">
                 {isActive && primaryPlayer ? (
-                    <NavLink
-                        className="desc-block stream primary"
-                        params={params}
-                        entry={streamEntry(primaryPlayer, 'Open screen')}
-                    />
+                    <NavLink className="desc-block stream primary" params={params} entry={streamEntry('Open screen')} />
                 ) : (
                     <button class="desc-block stream unavailable" disabled>
                         {isActive ? 'Browser cannot play this stream' : 'Device unavailable'}
@@ -288,7 +285,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                                         key={player.playerCodeName}
                                         className="desc-block stream alternative"
                                         params={params}
-                                        entry={streamEntry(player, `Open with ${player.playerFullName}`)}
+                                        entry={streamEntry(`Open with ${player.playerFullName}`, player)}
                                     />
                                 ))}
                         </div>

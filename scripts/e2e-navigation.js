@@ -177,7 +177,7 @@ async function backFromEveryPage(browser, viewport) {
     console.log(`PASS ${viewport.name} the back control of the screen, Files and Shell goes back to the list; Back from the list never shows a stream`);
 }
 
-/** Several phones and views in a row. The views still push an entry for each; the back control still ends on the list. */
+/** Several phones and views in a row. Switch replaces the entry, the tool tabs still push; the back control ends on the list. */
 async function backAfterSwitching(browser, viewport) {
     const test = await start(browser, { viewport });
     const { page } = test;
@@ -185,6 +185,7 @@ async function backAfterSwitching(browser, viewport) {
     try {
         await card(page, `android:${PIXEL}`).getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.getByText('Connected', { exact: true }).first().waitFor();
+        const opened = await page.evaluate(() => history.length);
         const pick = async (name) => {
             await page.getByRole('button', { name: 'Switch', exact: true }).click();
             const sheet = page.locator('.bottom-sheet-root.open');
@@ -201,6 +202,7 @@ async function backAfterSwitching(browser, viewport) {
         await page.waitForFunction(() => document.title === 'Google Pixel 8 · Screen · ws-scrcpy');
         await quiet(page);
         assert.deepEqual(test.streams.map((stream) => stream.udid), [PIXEL, IPHONE, PIXEL_2], `${label}: one stream socket per phone opened`);
+        assert.equal(await page.evaluate(() => history.length), opened, `${label}: Switch adds no entry`);
         await backControl(page).click();
         await page.locator('#devices').waitFor();
         assert.equal(await page.evaluate(() => history.state.nav.index), 0, `${label}: the back control goes to the list entry, past the phones between`);
