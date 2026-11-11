@@ -4,10 +4,12 @@ import crypto from 'crypto';
 import { resolveDataDir } from '../../dataDir';
 import {
     DEFAULT_UNLOCK_TIME,
+    isPasscodeLockout,
     isValidUnlockTime,
     isValidUnlockTimeZone,
     localTimeZone,
     nextUnlockRunAt,
+    UNLOCK_BY_HAND_ACTION,
     UNLOCK_NOT_TYPED_MESSAGE,
     UnlockRunResult,
     UnlockSchedulePatch,
@@ -67,31 +69,41 @@ export interface StoredUnlockSettings {
     // IANA zone of `time`. Absent on a record written before zones were stored: server local time.
     timeZone?: string;
     passcode?: EncryptedPasscode;
+    // Last time the phone was seen going from locked to unlocked, by any means.
     lastUnlockedAt?: number;
+    // Last time the server typed the passcode and saw the phone unlock. Only this counts for the
+    // skip rule: an unlock that was only observed may have been Face ID.
+    lastTypedUnlockAt?: number;
     lastRun?: UnlockRunResult;
-    // A failed scheduled run is retried once, this long after it. Cleared when the retry ran.
-    retryAt?: number;
-    // Start of the last daily slot that was used, set before the run starts so a crash cannot loop.
+    // Start of the last slot that was taken up, written before its run starts.
     lastSlotAt?: number;
+    // Set while that slot still owes a run: the earliest time of the next attempt. In the past
+    // while the run waits for a phone in use to be locked. Moved an hour on before each run
+    // starts, so a server that keeps restarting does not open a session each time.
+    retryAt?: number;
+    // Failed attempts for that slot: the first is retried after ten minutes, later ones hourly.
+    slotAttempts?: number;
     // When a run typed this passcode and the phone stayed locked. Cleared by `setPasscode`.
     passcodeRejectedAt?: number;
     // Runs in a row that typed the passcode without a confirmed unlock.
     unconfirmedAttempts?: number;
-    // The `lastUnlockedAt` value the 72-hour warning was pushed for.
-    deadlineWarnedFor?: number;
-    // When the timer last started a run. Spaces the runs outside the slot window, and is set
-    // before the run starts so a server that keeps restarting does not open a session each time.
-    lastTimerRunAt?: number;
+    // When the phone refused a connection until its passcode is entered on the phone. Removed
+    // when a run or the state monitor reaches the phone again.
+    lockedOutAt?: number;
+    // The passcode-entry time the 20-hour warning was pushed for.
+    warnedFor?: number;
 }
 
 const RUN_STATE_FIELDS = [
     'lastUnlockedAt',
-    'retryAt',
+    'lastTypedUnlockAt',
     'lastSlotAt',
+    'retryAt',
+    'slotAttempts',
     'passcodeRejectedAt',
     'unconfirmedAttempts',
-    'deadlineWarnedFor',
-    'lastTimerRunAt',
+    'lockedOutAt',
+    'warnedFor',
 ] as const;
 
 export interface IosSettingsFile {
@@ -100,15 +112,7 @@ export interface IosSettingsFile {
 }
 
 /** The scheduler's bookkeeping, read back by `UnlockScheduler.tick()`. */
-export interface UnlockRunState {
-    lastUnlockedAt?: number;
-    retryAt?: number;
-    lastSlotAt?: number;
-    passcodeRejectedAt?: number;
-    unconfirmedAttempts?: number;
-    deadlineWarnedFor?: number;
-    lastTimerRunAt?: number;
-}
+export type UnlockRunState = Pick<StoredUnlockSettings, (typeof RUN_STATE_FIELDS)[number]>;
 
 /**
  * What `UnlockScheduler` (W2) needs from the store. `IosSettingsStore` (W1) implements it against
@@ -133,8 +137,9 @@ export interface UnlockSettingsStore {
      * Public status of one device, defaults for an unknown udid (`enabled: false`,
      * `time: DEFAULT_UNLOCK_TIME`, `hasPasscode: false`). `nextRunAt` is
      * `nextUnlockRunAt(time, Date.now(), timeZone)` while `enabled && hasPasscode` and the
-     * passcode has not been rejected, else absent. `running` is never set here; the scheduler
-     * adds it and may bring `nextRunAt` forward to `retryAt`.
+     * passcode has not been rejected, else absent. `needsManualUnlock` is set while `lockedOutAt`
+     * is. `running` and `waitingForLock` are never set here; the scheduler adds them and may
+     * bring `nextRunAt` forward to `retryAt`.
      * `hasPasscode` is false when ciphertext exists but cannot be decrypted (key file missing);
      * then `lastRun.message` reads "Stored passcode unreadable: key file missing".
      */
@@ -211,6 +216,16 @@ function sanitizeUnlock(value: unknown): StoredUnlockSettings | undefined {
         last.outcome = 'failed-rejected';
         if (unlock.passcode && unlock.passcodeRejectedAt === undefined) {
             unlock.passcodeRejectedAt = optionalNumber(last.at) ?? Date.now();
+        }
+    }
+    // Before 2026-11-11 a phone that refused the connection until its passcode was entered ended
+    // the run as `failed-session` with pymobiledevice3's message. A record left that way is read
+    // as `needs-manual-unlock`, and the phone as still refusing until something reaches it.
+    if (last?.outcome === 'failed-session' && isPasscodeLockout(last.message)) {
+        last.outcome = 'needs-manual-unlock';
+        last.message = UNLOCK_BY_HAND_ACTION;
+        if (unlock.lockedOutAt === undefined) {
+            unlock.lockedOutAt = optionalNumber(last.at) ?? Date.now();
         }
     }
     return unlock;
@@ -363,6 +378,9 @@ export class IosSettingsStore implements UnlockSettingsStore {
         }
         if (status.hasPasscode && record.passcodeRejectedAt !== undefined) {
             status.passcodeRejected = true;
+        }
+        if (record.lockedOutAt !== undefined) {
+            status.needsManualUnlock = true;
         }
         if (status.enabled && status.hasPasscode && !status.passcodeRejected) {
             status.nextRunAt = nextUnlockRunAt(status.time, Date.now(), record.timeZone);

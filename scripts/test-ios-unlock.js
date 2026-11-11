@@ -8,7 +8,7 @@
 // NotificationService.notifySystem.
 process.env.IOS_UNLOCK_FAST = '1';
 const assert = require('node:assert/strict');
-const { test, after } = require('node:test');
+const { test, after, mock } = require('node:test');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -59,11 +59,16 @@ const { NotificationService } = require('../src/server/notifications/Notificatio
 const { TypedEmitter } = require('../src/common/TypedEmitter');
 const {
     DEFAULT_UNLOCK_TIME,
+    UNLOCK_BY_HAND_ACTION,
+    UNLOCK_BY_HAND_MESSAGE,
+    UNLOCK_HOURLY_RETRY_MS,
     UNLOCK_RETRY_MS,
-    UNLOCK_URGENT_INTERVAL_MS,
+    UNLOCK_SKIP_WINDOW_MS,
+    isPasscodeLockout,
     isValidUnlockSchedulePatch,
     lastUnlockSlotAt,
     nextUnlockRunAt,
+    secondUnlockTime,
     unlockOutcomeText,
 } = require('../src/common/IosUnlockSchedule');
 
@@ -544,6 +549,57 @@ test('driver: a session that fails to start is failed-session with the CLI reaso
     });
 });
 
+test('driver: a phone that refuses the mount or the tunnel until its passcode is entered is needs-manual-unlock', async () => {
+    // pymobiledevice3's wordings, and the plain sentence the runner turns them into.
+    for (const text of [
+        'Device is password protected. Please unlock and retry.',
+        'Could not mount the Developer Disk Image: Device is password protected. Please unlock and retry.',
+        'The device is protected with a passcode. Unlock it and try again.',
+        'pymobiledevice3.exceptions.PasswordRequiredError',
+        '{"Error": "PasswordProtected"}',
+        `${UNLOCK_BY_HAND_MESSAGE} The next start is allowed in 25 s.`,
+    ]) {
+        assert.equal(isPasscodeLockout(text), true, text);
+    }
+    for (const text of ['Developer Mode is off on the phone', 'displayservice unavailable (9021)', '', undefined]) {
+        assert.equal(isPasscodeLockout(text), false, String(text));
+    }
+    assert.equal(`${unlockOutcomeText('needs-manual-unlock')}. ${UNLOCK_BY_HAND_ACTION}`, UNLOCK_BY_HAND_MESSAGE);
+    assert.equal(UNLOCK_BY_HAND_MESSAGE, 'The iPhone stopped accepting connections. Enter the passcode on the phone.');
+
+    await withEnv({ FAKE_LOG: logFile, FAKE_PASSCODE_LOCKOUT: 'mount' }, async () => {
+        const { result, lines, runner } = await runDriver('iphone-lockout-mount');
+        assert.equal(result.outcome, 'needs-manual-unlock', result.message);
+        assert.equal(result.message, UNLOCK_BY_HAND_ACTION);
+        assert.equal(result.openedSession, false, 'a refused mount opens no display session');
+        assert(!result.typed, 'nothing was typed');
+        assert(!lines.some((line) => line.includes('"serve-web"')), 'serve-web is not started');
+        assert(!lines.some((line) => line.startsWith('post ')), 'nothing is posted');
+        // What a viewer who opens the phone in this state is shown.
+        assert.deepEqual(runner.getStatus('iphone-lockout-mount'), {
+            state: 'error',
+            message: UNLOCK_BY_HAND_MESSAGE,
+            port: runner.getStatus('iphone-lockout-mount').port,
+        });
+        await assert.rejects(runner.acquire('iphone-lockout-mount'), (error) => {
+            assert.equal(error.message, UNLOCK_BY_HAND_MESSAGE);
+            assert.equal(error.serveWebStarted, false, 'so the start budget is not used');
+            return true;
+        });
+    });
+    await withEnv({ FAKE_LOG: logFile, FAKE_PASSCODE_LOCKOUT: 'serve-web' }, async () => {
+        const { result, lines, runner } = await runDriver('iphone-lockout-serve');
+        assert.equal(result.outcome, 'needs-manual-unlock', result.message);
+        assert.equal(result.message, UNLOCK_BY_HAND_ACTION);
+        assert.equal(result.openedSession, true, 'serve-web was spawned, so one start is counted');
+        assert(!result.typed);
+        assert.equal(lines.filter((line) => line.includes('"serve-web"')).length, 1);
+        assert(!lines.some((line) => line.startsWith('post ')), 'nothing is posted');
+        assert.equal(runner.getStatus('iphone-lockout-serve').state, 'error');
+        assert.equal(runner.getStatus('iphone-lockout-serve').message, UNLOCK_BY_HAND_MESSAGE);
+    });
+});
+
 test('driver: a start the runner refuses is failed-session with its reason and opens nothing', async () => {
     // A phone the tracker does not list as attached.
     await withEnv({ FAKE_LOG: logFile }, async () => {
@@ -823,6 +879,7 @@ class MemoryStore {
         const status = { enabled: record.enabled, time: record.time, hasPasscode: !!record.passcode };
         if (record.timeZone) status.timeZone = record.timeZone;
         if (status.hasPasscode && record.passcodeRejectedAt !== undefined) status.passcodeRejected = true;
+        if (record.lockedOutAt !== undefined) status.needsManualUnlock = true;
         if (record.lastUnlockedAt !== undefined) status.lastUnlockedAt = record.lastUnlockedAt;
         if (record.lastRun) status.lastRun = { ...record.lastRun };
         if (status.enabled && status.hasPasscode && !status.passcodeRejected) {
@@ -834,12 +891,14 @@ class MemoryStore {
         const record = this.devices.get(udid) || {};
         return {
             lastUnlockedAt: record.lastUnlockedAt,
-            retryAt: record.retryAt,
+            lastTypedUnlockAt: record.lastTypedUnlockAt,
             lastSlotAt: record.lastSlotAt,
+            retryAt: record.retryAt,
+            slotAttempts: record.slotAttempts,
             passcodeRejectedAt: record.passcodeRejectedAt,
             unconfirmedAttempts: record.unconfirmedAttempts,
-            deadlineWarnedFor: record.deadlineWarnedFor,
-            lastTimerRunAt: record.lastTimerRunAt,
+            lockedOutAt: record.lockedOutAt,
+            warnedFor: record.warnedFor,
         };
     }
     updateSchedule(udid, patch) {
@@ -899,8 +958,8 @@ class FakeMonitor extends TypedEmitter {
     getState(udid) {
         return this.states.get(udid) || { 'screen.power': 'unknown', 'device.locked': 'unknown' };
     }
-    set(udid, locked) {
-        const state = { 'screen.power': 'on', 'device.locked': locked };
+    set(udid, locked, screen = 'on') {
+        const state = { 'screen.power': screen, 'device.locked': locked };
         this.states.set(udid, state);
         this.emit('state', { udid, ...state });
     }
@@ -963,15 +1022,22 @@ const makeScheduler = ({ time = Date.now(), connected = () => true } = {}) => {
     };
 };
 
-const armed = (ctx, udid, time = '03:00') => {
-    ctx.store.updateSchedule(udid, { enabled: true, time });
+// The scheduler tests run in UTC, where the two slots of 03:00 are always 12 hours apart.
+const ZONE = 'UTC';
+const HALF_DAY = 12 * HOUR;
+/** The slot at or before the real time: 03:00 or 15:00 UTC. */
+const currentSlot = () => lastUnlockSlotAt('03:00', Date.now(), ZONE);
+
+const armed = (ctx, udid, time = '03:00', timeZone = ZONE) => {
+    ctx.store.updateSchedule(udid, { enabled: true, time, timeZone });
     ctx.store.setPasscode(udid, PASSCODE);
     ctx.monitor.set(udid, true);
 };
 
-test('scheduler: a due slot runs once, the same slot never twice, a slot older than two hours not at all', async () => {
-    const slot = lastUnlockSlotAt('03:00', Date.now());
-    const ctx = makeScheduler({ time: slot + 10 * MINUTE });
+test('scheduler: both daily slots run once each, and a slot the server was down for runs when it is back', async () => {
+    const slotA = Date.UTC(2026, 10, 12, 3, 0);
+    const slotB = slotA + HALF_DAY;
+    const ctx = makeScheduler({ time: slotA });
     const udid = 'iphone-slot';
     try {
         armed(ctx, udid);
@@ -980,36 +1046,201 @@ test('scheduler: a due slot runs once, the same slot never twice, a slot older t
         await ctx.settle();
         assert.deepEqual(ctx.driver.calls, [udid]);
         const record = ctx.store.devices.get(udid);
-        assert.equal(record.lastSlotAt, slot, 'the slot is marked used');
+        assert.equal(record.lastSlotAt, slotA, 'the slot is marked used');
         assert.equal(record.lastRun.outcome, 'unlocked');
         assert.equal(record.lastRun.trigger, 'schedule');
-        assert.equal(record.lastUnlockedAt, slot + 10 * MINUTE, 'lastUnlockedAt comes from verifiedAt');
-        assert.equal(record.retryAt, undefined);
+        assert.equal(record.lastUnlockedAt, slotA, 'lastUnlockedAt comes from verifiedAt');
+        assert.equal(record.lastTypedUnlockAt, slotA, 'and the server typed the passcode for it');
+        assert.equal(record.retryAt, undefined, 'the slot owes nothing more');
+        assert.equal(ctx.scheduler.getStatus(udid).nextRunAt, slotB, 'next: 12 hours later');
 
-        ctx.setClock(slot + 11 * MINUTE);
+        ctx.setClock(slotA + MINUTE);
         ctx.tick();
         await ctx.settle();
         assert.equal(ctx.driver.calls.length, 1, 'the same slot does not run twice');
 
-        // The next day, three hours late: the slot is skipped, not run at 06:00.
-        ctx.setClock(slot + 24 * HOUR + 3 * HOUR);
+        // 15:00. The unlock at 03:00 is 12 hours old, outside the 11-hour skip window.
+        ctx.setClock(slotB);
         ctx.tick();
         await ctx.settle();
-        assert.equal(ctx.driver.calls.length, 1);
-        assert.equal(ctx.store.devices.get(udid).lastSlotAt, slot, 'a missed slot is not marked');
+        assert.equal(ctx.driver.calls.length, 2, 'the second slot of the day runs');
+        assert.equal(record.lastSlotAt, slotB);
+        assert.equal(ctx.scheduler.getStatus(udid).nextRunAt, slotA + 24 * HOUR, 'next: 03:00 tomorrow');
 
-        // The day after, on time: yesterday's own unlock does not count as recent.
-        ctx.setClock(slot + 48 * HOUR + 30 * 1000);
+        // The server is down over the next 03:00 and back at 09:00. The slot runs then: waiting
+        // for 15:00 would be 24 hours after the last passcode entry.
+        ctx.setClock(slotA + 30 * HOUR);
+        ctx.tick();
+        await ctx.settle();
+        assert.equal(ctx.driver.calls.length, 3, 'a missed slot runs when the server is back');
+        assert.equal(record.lastSlotAt, slotA + 24 * HOUR);
+
+        // 15:00 that day is six hours after that run and is skipped; 03:00 after it runs.
+        ctx.setClock(slotB + 24 * HOUR);
+        ctx.tick();
+        await ctx.settle();
+        assert.equal(ctx.driver.calls.length, 3);
+        assert.equal(record.lastRun.outcome, 'skipped-recent');
+        assert.equal(record.retryAt, undefined, 'a skipped slot is not retried');
+        ctx.setClock(slotA + 48 * HOUR);
+        ctx.tick();
+        await ctx.settle();
+        assert.equal(ctx.driver.calls.length, 4);
+        assert.equal(ctx.pushes.length, 0, 'nothing to report');
+    } finally {
+        ctx.scheduler.release();
+    }
+});
+
+test('scheduler: a run starts on the minute of its slot, whatever second the server started at', async () => {
+    const slot = Date.UTC(2026, 10, 12, 15, 0);
+    const udid = 'iphone-clock';
+    // Started 47.3 s, 12 s and 2 min 0.4 s before the slot, and once after a restart seconds before it.
+    for (const lead of [47300, 12000, 120400, 900]) {
+        mock.timers.enable({ apis: ['setTimeout', 'Date'], now: slot - lead });
+        const started = [];
+        const store = new MemoryStore(() => Date.now());
+        const monitor = new FakeMonitor();
+        const scheduler = new UnlockScheduler({
+            store,
+            monitor,
+            notify: () => undefined,
+            driver: {
+                run: async () => {
+                    started.push(Date.now());
+                    return { outcome: 'unlocked', verifiedAt: Date.now(), typed: true };
+                },
+            },
+        });
+        try {
+            scheduler.start({ isConnected: () => true });
+            store.updateSchedule(udid, { enabled: true, time: '03:00', timeZone: ZONE });
+            store.setPasscode(udid, PASSCODE);
+            store.setRunState(udid, { lastSlotAt: slot - HALF_DAY });
+            monitor.set(udid, true);
+            // In steps of 100 ms, so the moment the run starts is seen to that precision.
+            for (let elapsed = 0; elapsed < lead + 1500 && !started.length; elapsed += 100) {
+                mock.timers.tick(100);
+                await scheduler.chain;
+            }
+            assert.equal(started.length, 1, `one run (started ${lead} ms before the slot)`);
+            assert(started[0] >= slot && started[0] - slot < 1000, `within a second of the slot: ${started[0] - slot} ms`);
+            mock.timers.tick(5 * MINUTE);
+            await scheduler.chain;
+            assert.equal(started.length, 1, 'and only once');
+        } finally {
+            scheduler.release();
+            mock.timers.reset();
+        }
+    }
+});
+
+test('scheduler: a slot is skipped only when the server typed the passcode less than 11 hours before it', async () => {
+    const slot = Date.UTC(2026, 10, 12, 15, 0);
+    const ctx = makeScheduler({ time: slot });
+    const udid = 'iphone-skip-rule';
+    try {
+        assert.equal(UNLOCK_SKIP_WINDOW_MS, 11 * HOUR, '24 hours, less the 12 to the next slot, less 1 of margin');
+        armed(ctx, udid);
+        const record = ctx.store.devices.get(udid);
+        const at = async (clock, state) => {
+            delete record.lastUnlockedAt;
+            delete record.lastTypedUnlockAt;
+            Object.assign(record, state, { lastSlotAt: slot - HALF_DAY });
+            ctx.setClock(clock);
+            ctx.tick();
+            await ctx.settle();
+            return record.lastRun.outcome;
+        };
+        // The owner unlocked the phone an hour ago, perhaps with Face ID: that does not count.
+        assert.equal(await at(slot, { lastUnlockedAt: slot - HOUR }), 'unlocked');
+        assert.equal(ctx.driver.calls.length, 1, 'an unlock the server only saw does not skip the slot');
+        // The server typed it 10 h 59 min before the slot: skipped, and the next slot is 22 h 59 min after it.
+        assert.equal(await at(slot, { lastTypedUnlockAt: slot - 11 * HOUR + MINUTE }), 'skipped-recent');
+        assert.equal(ctx.driver.calls.length, 1);
+        assert.equal(record.retryAt, undefined, 'the skipped slot is done');
+        assert.equal(ctx.pushes.length, 0, 'and not pushed');
+        // Exactly 11 hours before: the next slot would be 23 hours after it. Not skipped.
+        assert.equal(await at(slot, { lastTypedUnlockAt: slot - 11 * HOUR }), 'unlocked');
+        assert.equal(ctx.driver.calls.length, 2);
+        // The window is measured from the slot. A run that starts three hours late, after a run
+        // typed the passcode 12 hours before the slot, is still a run.
+        assert.equal(await at(slot + 3 * HOUR, { lastTypedUnlockAt: slot - HALF_DAY }), 'unlocked');
+        assert.equal(ctx.driver.calls.length, 3);
+        // Run now two hours after the slot, then the slot's late run: skipped.
+        assert.equal(await at(slot + 3 * HOUR, { lastTypedUnlockAt: slot + 2 * HOUR }), 'skipped-recent');
+        assert.equal(
+            unlockOutcomeText('skipped-recent'),
+            'Skipped: the server entered the passcode less than 11 hours earlier',
+        );
+    } finally {
+        ctx.scheduler.release();
+    }
+});
+
+test('scheduler: a phone in use at the slot is left alone, and the run happens when it is locked', async () => {
+    const slot = Date.UTC(2026, 10, 12, 15, 0);
+    const ctx = makeScheduler({ time: slot });
+    const udid = 'iphone-in-use';
+    try {
+        armed(ctx, udid);
+        const record = ctx.store.devices.get(udid);
+        record.lastSlotAt = slot - HALF_DAY;
+        ctx.monitor.set(udid, false);
+        delete record.lastUnlockedAt;
+        ctx.statuses.length = 0;
+        for (const offset of [0, MINUTE, 2 * MINUTE, 3 * HOUR]) {
+            ctx.setClock(slot + offset);
+            ctx.tick();
+            await ctx.settle();
+        }
+        assert.equal(ctx.driver.calls.length, 0, 'no session, no passcode and no Lock press');
+        assert.equal(ctx.store.reads, 0, 'the passcode is not read');
+        assert.equal(record.lastRun, undefined, 'nothing is recorded as a run');
+        assert.equal(record.lastUnlockedAt, undefined);
+        assert.equal(record.lastSlotAt, slot, 'the slot is taken up');
+        assert.equal(record.retryAt, slot, 'and still owes its run');
+        assert.equal(ctx.statuses.length, 1, 'the wait is broadcast once, not every minute');
+        assert.equal(ctx.statuses[0].status.waitingForLock, true);
+        assert.equal(ctx.scheduler.getStatus(udid).nextRunAt, slot + HALF_DAY, 'the next slot is still shown');
+        assert.equal(ctx.pushes.length, 0);
+
+        // The owner locks the phone four hours after the slot: the run starts at the next tick.
+        ctx.setClock(slot + 4 * HOUR);
+        ctx.monitor.set(udid, true);
+        assert.equal(ctx.scheduler.getStatus(udid).waitingForLock, undefined);
+        ctx.tick();
+        await ctx.settle();
+        assert.equal(ctx.driver.calls.length, 1, 'the run happens when the phone reads locked');
+        assert.equal(record.lastRun.outcome, 'unlocked');
+        assert.equal(record.lastRun.at, slot + 4 * HOUR);
+        assert.equal(record.retryAt, undefined);
+
+        // In use from the next slot until the one after: that slot's run is dropped, the new slot's is owed.
+        ctx.monitor.set(udid, false);
+        for (const offset of [HALF_DAY, HALF_DAY + HOUR, 2 * HALF_DAY]) {
+            ctx.setClock(slot + offset);
+            ctx.tick();
+            await ctx.settle();
+        }
+        assert.equal(ctx.driver.calls.length, 1);
+        assert.equal(record.retryAt, slot + 2 * HALF_DAY);
+
+        // The driver's own fresh reading found the phone unlocked after it opened a session: the
+        // slot stays owed, and the next look is not before the usual retry time.
+        ctx.monitor.set(udid, true);
+        ctx.driver.results.push({ outcome: 'already-unlocked', verifiedAt: ctx.now() });
         ctx.tick();
         await ctx.settle();
         assert.equal(ctx.driver.calls.length, 2);
-
-        // The following night the previous unlock was 23 h 59 m ago: still a run, not skipped-recent.
-        ctx.setClock(slot + 72 * HOUR + 5 * 1000);
+        assert.equal(record.retryAt, ctx.now() + UNLOCK_RETRY_MS);
+        assert.equal(record.lastTypedUnlockAt, slot + 4 * HOUR, 'an unlock that was only seen is not a typed one');
+        ctx.setClock(ctx.now() + UNLOCK_RETRY_MS);
         ctx.tick();
         await ctx.settle();
-        assert.equal(ctx.driver.calls.length, 3, 'a daily schedule runs every night');
-        assert.equal(ctx.pushes.length, 0, 'nothing to report');
+        assert.equal(ctx.driver.calls.length, 3);
+        assert.equal(record.lastRun.outcome, 'unlocked');
+        assert.equal(ctx.pushes.length, 0);
     } finally {
         ctx.scheduler.release();
     }
@@ -1037,14 +1268,14 @@ test('scheduler: a scheduled run is skipped for disabled, no passcode, disconnec
         assert.equal(disconnected.outcome, 'skipped-disconnected');
         assert.match(disconnected.message, /unlock it once on the phone/);
         assert.equal(pushes.length, 1, 'a scheduled run on an unreachable phone is pushed');
-        assert.equal(store.devices.get(udid).retryAt, ctx2.now() + UNLOCK_RETRY_MS, 'and retried once');
+        assert.equal(store.devices.get(udid).retryAt, ctx2.now() + UNLOCK_RETRY_MS, 'and retried');
         store.setRetryAt(udid, undefined);
         assert.equal((await scheduler.runNow(udid, 'manual')).outcome, 'skipped-disconnected');
         assert.equal(pushes.length, 1, 'a manual run is not pushed');
         assert.equal(store.devices.get(udid).retryAt, undefined, 'or retried');
         connected = true;
 
-        store.recordUnlockedAt(udid, ctx2.now() - HOUR);
+        store.setRunState(udid, { lastTypedUnlockAt: ctx2.now() - HOUR });
         assert.equal((await scheduler.runNow(udid, 'schedule')).outcome, 'skipped-recent');
         assert.equal(driver.calls.length, 0, 'no session so far');
         assert.equal(pushes.length, 1, 'skipped-recent is not pushed');
@@ -1073,59 +1304,103 @@ test('scheduler: an unlocked phone is already-unlocked without a session and rec
     }
 });
 
-test('scheduler: a failed scheduled run is pushed and retried once ten minutes later, never a third time', async () => {
-    const slot = lastUnlockSlotAt('03:00', Date.now());
-    const start = slot + 2 * MINUTE;
-    const ctx = makeScheduler({ time: start });
+test('scheduler: a failed scheduled run is retried after ten minutes, then once an hour, until a run works or the next slot arrives', async () => {
+    const slot = Date.UTC(2026, 10, 12, 3, 0);
+    const ctx = makeScheduler({ time: slot });
     const udid = 'iphone-retry';
+    const runAt = async (clock) => {
+        ctx.setClock(clock);
+        ctx.tick();
+        await ctx.settle();
+        return ctx.driver.calls.length;
+    };
     try {
         armed(ctx, udid);
-        ctx.driver.results.push({ outcome: 'failed-session', message: 'home: timed out' }, { outcome: 'failed-wake' });
-        ctx.tick();
-        await ctx.settle();
-        assert.equal(ctx.driver.calls.length, 1);
         const record = ctx.store.devices.get(udid);
+        // `retryAt` as the driver finds it: what a server that crashed during the run would read.
+        const guards = [];
+        const drive = ctx.driver.run.bind(ctx.driver);
+        ctx.driver.run = (...args) => {
+            guards.push(record.retryAt - ctx.now());
+            return drive(...args);
+        };
+
+        ctx.driver.results.push(
+            { outcome: 'failed-session', message: 'home: timed out' },
+            { outcome: 'failed-wake' },
+            { outcome: 'failed-wake' },
+        );
+        assert.equal(await runAt(slot), 1);
         assert.equal(record.lastRun.outcome, 'failed-session');
-        assert.equal(record.retryAt, start + UNLOCK_RETRY_MS, 'one retry, ten minutes later');
+        assert.equal(record.retryAt, slot + UNLOCK_RETRY_MS, 'the first retry is ten minutes later');
         assert.equal(record.lastUnlockedAt, undefined);
-        const status = ctx.scheduler.getStatus(udid);
-        assert.equal(status.nextRunAt, start + UNLOCK_RETRY_MS, 'the retry shows as the next run');
-        assert.equal(ctx.pushes.length, 1);
-        assert.deepEqual(ctx.pushes[0], {
-            title: 'iPhone unlock',
-            body: `${unlockOutcomeText('failed-session')}. home: timed out`,
-            tag: `ios-unlock-${udid}`,
-            url: '#!action=',
-        });
+        assert.equal(ctx.scheduler.getStatus(udid).nextRunAt, slot + UNLOCK_RETRY_MS, 'the retry shows as the next run');
+        assert.deepEqual(ctx.pushes, [
+            {
+                title: 'iPhone unlock',
+                body: `${unlockOutcomeText('failed-session')}. home: timed out`,
+                tag: `ios-unlock-${udid}`,
+                url: '#!action=',
+            },
+        ]);
 
-        ctx.setClock(start + 5 * MINUTE);
-        ctx.tick();
-        await ctx.settle();
-        assert.equal(ctx.driver.calls.length, 1, 'not before the retry is due');
-
-        ctx.setClock(start + UNLOCK_RETRY_MS);
-        ctx.tick();
-        await ctx.settle();
-        assert.equal(ctx.driver.calls.length, 2, 'the retry runs');
-        assert.equal(record.retryAt, undefined, 'a failed retry is not retried again');
+        assert.equal(await runAt(slot + 5 * MINUTE), 1, 'not before the retry is due');
+        assert.equal(await runAt(slot + UNLOCK_RETRY_MS), 2, 'the retry runs');
         assert.equal(record.lastRun.outcome, 'failed-wake');
+        assert.equal(record.retryAt, slot + UNLOCK_RETRY_MS + UNLOCK_HOURLY_RETRY_MS, 'the next one is an hour later');
         assert.equal(ctx.pushes.length, 2);
         assert.equal(ctx.pushes[1].body, unlockOutcomeText('failed-wake'));
-        assert.equal(ctx.scheduler.getStatus(udid).nextRunAt, nextUnlockRunAt('03:00', ctx.now()), 'next: tomorrow');
 
-        for (const offset of [UNLOCK_RETRY_MS * 2, UNLOCK_RETRY_MS * 3, HOUR]) {
-            ctx.setClock(start + offset);
-            ctx.tick();
-            await ctx.settle();
+        assert.equal(await runAt(slot + 40 * MINUTE), 2);
+        assert.equal(await runAt(slot + 70 * MINUTE), 3, 'the first hourly retry');
+        assert.equal(record.retryAt, slot + 130 * MINUTE);
+        assert.equal(ctx.pushes.length, 2, 'a retry that fails the same way is not pushed again');
+
+        // The fourth attempt works: the slot owes nothing more.
+        assert.equal(await runAt(slot + 130 * MINUTE), 4);
+        assert.equal(record.lastRun.outcome, 'unlocked');
+        assert.equal(record.retryAt, undefined);
+        assert.equal(record.slotAttempts, undefined);
+        for (let hour = 3; hour < 12; hour++) {
+            assert.equal(await runAt(slot + hour * HOUR + 10 * MINUTE), 4, 'no retry after a run that worked');
         }
-        assert.equal(ctx.driver.calls.length, 2, 'no third attempt that night');
+        assert.deepEqual(guards, [HOUR, HOUR, HOUR, HOUR], 'before a run starts, the next attempt is put an hour away');
+        assert.equal(await runAt(slot + HALF_DAY), 4, '15:00 is skipped: the passcode was typed 9 h 50 min before it');
+        assert.equal(record.lastRun.outcome, 'skipped-recent');
 
-        // A retry left over from before a long outage is dropped, like a missed slot.
-        ctx.store.setRetryAt(udid, start - 3 * HOUR);
-        ctx.tick();
-        await ctx.settle();
-        assert.equal(ctx.driver.calls.length, 2);
-        assert.equal(record.retryAt, undefined, 'the stale retry is cleared');
+        // The next day every attempt fails the same way: 03:00, 03:10, then hourly until 15:00.
+        const day = slot + 24 * HOUR;
+        for (let n = 0; n < 13; n++) ctx.driver.results.push({ outcome: 'failed-wake' });
+        ctx.pushes.length = 0;
+        const minutes = [];
+        for (let minute = 0; minute < 12 * 60; minute++) {
+            const before = ctx.driver.calls.length;
+            if ((await runAt(day + minute * MINUTE)) > before) minutes.push(minute);
+        }
+        assert.deepEqual(minutes, [0, 10, 70, 130, 190, 250, 310, 370, 430, 490, 550, 610, 670]);
+        assert.deepEqual(
+            ctx.pushes.map((push) => push.tag),
+            [`ios-unlock-${udid}`, `ios-unlock-deadline-${udid}`],
+            'one push for the slot, not one per retry, and the 20-hour warning once',
+        );
+        assert.match(ctx.pushes[1].body, /^The passcode was last entered 21 hours ago\. .* in about 3 hours /);
+        assert.equal(record.retryAt, day + 730 * MINUTE, 'the next retry would be ten minutes into the next slot');
+
+        // 15:00: the new slot replaces what the old one still owed.
+        const before = ctx.driver.calls.length;
+        assert.equal(await runAt(day + HALF_DAY), before + 1);
+        assert.equal(record.lastRun.outcome, 'unlocked');
+        assert.equal(record.retryAt, undefined);
+        assert.equal(await runAt(day + 730 * MINUTE), before + 1, "the old slot's retry does not run");
+
+        // A server that was down when a retry came due runs it when it is back, while the slot is current.
+        const later = day + 24 * HOUR;
+        ctx.driver.results.push({ outcome: 'failed-wake' });
+        await runAt(later);
+        assert.equal(record.retryAt, later + UNLOCK_RETRY_MS);
+        const calls = ctx.driver.calls.length;
+        assert.equal(await runAt(later + 5 * HOUR), calls + 1, 'five hours late, still before the next slot');
+        assert.equal(record.lastRun.outcome, 'unlocked');
     } finally {
         ctx.scheduler.release();
     }
@@ -1281,13 +1556,13 @@ test('scheduler: start throws when the store cannot load, and the singleton drop
 test('scheduler: a failed start leaves no listener behind, and a store that cannot write never sticks or throws', async () => {
     const monitor = new FakeMonitor();
     const broken = new UnlockScheduler({ store: { load() {} }, monitor });
-    // The interval is created after the state listener; a timer without `unref` fails the start there.
-    const realSetInterval = global.setInterval;
-    global.setInterval = () => 1;
+    // The timer is created after the state listener; a timer without `unref` fails the start there.
+    const realSetTimeout = global.setTimeout;
+    global.setTimeout = () => 1;
     try {
         assert.throws(() => broken.start({ isConnected: () => true }), /unref/);
     } finally {
-        global.setInterval = realSetInterval;
+        global.setTimeout = realSetTimeout;
     }
     assert.equal(monitor.emitter.listenerCount('state'), 0, 'the state listener is removed again');
 
@@ -1301,12 +1576,12 @@ test('scheduler: a failed start leaves no listener behind, and a store that cann
         };
         ctx.store.recordRun = fail;
         ctx.store.recordUnlockedAt = fail;
-        ctx.store.setLastSlotAt = fail;
+        ctx.store.setRunState = fail;
         const result = await ctx.scheduler.runNow(udid, 'manual');
         assert.equal(result.outcome, 'unlocked', 'the run result is still returned');
         assert.equal(ctx.scheduler.getStatus(udid).running, undefined, 'the panel does not stay on running');
         assert.doesNotThrow(() => ctx.monitor.set(udid, false), 'a lock transition does not throw into the monitor');
-        ctx.setClock(lastUnlockSlotAt('03:00', Date.now()) + MINUTE);
+        ctx.setClock(currentSlot() + MINUTE);
         assert.doesNotThrow(() => ctx.tick(), 'the timer callback does not throw');
         assert.match(output.text(), /could not record the run: EROFS/);
         assert.match(output.text(), /could not record the unlock: EROFS/);
@@ -1318,7 +1593,7 @@ test('scheduler: a failed start leaves no listener behind, and a store that cann
 });
 
 test('scheduler: a rejected passcode is typed once, never retried, and every later run is skipped until it is saved again', async () => {
-    const slot = lastUnlockSlotAt('03:00', Date.now());
+    const slot = currentSlot();
     const ctx = makeScheduler({ time: slot + 2 * MINUTE });
     const udid = 'iphone-rejected';
     try {
@@ -1340,15 +1615,15 @@ test('scheduler: a rejected passcode is typed once, never retried, and every lat
         assert.equal(status.passcodeRejected, true, 'the panel is told');
         assert.equal(status.nextRunAt, undefined, 'no next run while paused');
 
-        // Five more nights, with the ten-minute mark in between: the passcode is never typed again.
-        for (let night = 1; night <= 5; night++) {
+        // Five more slots, with the ten-minute mark in between: the passcode is never typed again.
+        for (let n = 1; n <= 5; n++) {
             for (const offset of [MINUTE, MINUTE + UNLOCK_RETRY_MS]) {
-                ctx.setClock(slot + night * 24 * HOUR + offset);
+                ctx.setClock(slot + n * HALF_DAY + offset);
                 ctx.tick();
                 await ctx.settle();
             }
             assert.equal(record.lastRun.outcome, 'skipped-rejected');
-            assert.equal(ctx.pushes.length, 1 + night, 'one reminder a night');
+            assert.equal(ctx.pushes.length, 1 + n, 'one reminder a slot');
         }
         assert.equal(ctx.driver.calls.length, 1, 'one attempt per stored passcode');
         assert.equal(ctx.store.reads, 1);
@@ -1358,14 +1633,14 @@ test('scheduler: a rejected passcode is typed once, never retried, and every lat
         // Saving the passcode again lifts it; the slot that already passed is not run.
         status = ctx.scheduler.setPasscode(udid, PASSCODE);
         assert.equal(status.passcodeRejected, undefined);
-        assert.equal(status.nextRunAt, nextUnlockRunAt('03:00', ctx.now()));
+        assert.equal(status.nextRunAt, slot + 6 * HALF_DAY);
         ctx.tick();
         await ctx.settle();
         assert.equal(ctx.driver.calls.length, 1);
-        ctx.setClock(slot + 6 * 24 * HOUR + MINUTE);
+        ctx.setClock(slot + 6 * HALF_DAY);
         ctx.tick();
         await ctx.settle();
-        assert.equal(ctx.driver.calls.length, 2, 'the next night runs with the new passcode');
+        assert.equal(ctx.driver.calls.length, 2, 'the next slot runs with the new passcode');
         assert.equal(record.lastRun.outcome, 'unlocked');
     } finally {
         ctx.scheduler.release();
@@ -1373,7 +1648,7 @@ test('scheduler: a rejected passcode is typed once, never retried, and every lat
 });
 
 test('scheduler: a typed run that cannot confirm the unlock is not retried, and the second in a row pauses the schedule', async () => {
-    const slot = lastUnlockSlotAt('03:00', Date.now());
+    const slot = currentSlot();
     const ctx = makeScheduler({ time: slot + MINUTE });
     const udid = 'iphone-unconfirmed';
     try {
@@ -1438,10 +1713,10 @@ test('scheduler: Run now joins a run in progress, cools down after a session-ope
         assert.equal(ctx.store.devices.get(udid).lastRun.at, start, 'and is not recorded as a run');
 
         // Scheduled runs are not refused, but they count toward three per five minutes.
-        ctx.store.recordUnlockedAt(udid, start - 30 * HOUR);
+        ctx.store.setRunState(udid, { lastTypedUnlockAt: start - 30 * HOUR });
         await ctx.scheduler.runNow(udid, 'schedule');
         ctx.setClock(start + 2 * MINUTE);
-        ctx.store.recordUnlockedAt(udid, start - 30 * HOUR);
+        ctx.store.setRunState(udid, { lastTypedUnlockAt: start - 30 * HOUR });
         await ctx.scheduler.runNow(udid, 'schedule');
         assert.equal(ctx.driver.calls.length, 3);
         ctx.setClock(start + 4.5 * MINUTE);
@@ -1466,7 +1741,7 @@ test('scheduler: Run now joins a run in progress, cools down after a session-ope
 
         // The stream page's Unlock does not join a run that locks the phone again afterwards: its
         // "unlocked" would be shown to a viewer looking at a locked phone. The reverse joins.
-        ctx.store.recordUnlockedAt(other, ctx.now() - 30 * HOUR);
+        ctx.store.setRunState(other, { lastTypedUnlockAt: ctx.now() - 30 * HOUR });
         ctx.driver.results.push({ outcome: 'unlocked', verifiedAt: ctx.now(), openedSession: false });
         const relocking = ctx.scheduler.runNow(other, 'schedule');
         await assert.rejects(
@@ -1506,9 +1781,11 @@ test('scheduler: a phone left unlocked is pushed for manual runs too, counts as 
         );
         const record = ctx.store.devices.get(udid);
         assert.equal(record.lastUnlockedAt, ctx.now(), 'the unlock itself happened');
+        assert.equal(record.lastTypedUnlockAt, ctx.now(), 'and the server typed the passcode for it');
         assert.equal(record.passcodeRejectedAt, undefined);
 
         delete record.lastUnlockedAt;
+        delete record.lastTypedUnlockAt;
         ctx.driver.results.push({ ...left, verifiedAt: ctx.now() });
         assert.equal((await ctx.scheduler.runNow(udid, 'schedule')).outcome, 'left-unlocked');
         assert.equal(ctx.pushes.length, 2);
@@ -1518,7 +1795,7 @@ test('scheduler: a phone left unlocked is pushed for manual runs too, counts as 
     }
 });
 
-test('scheduler: a viewer in the way is retried once without a push; an unlocked phone found by the driver counts as unlocked', async () => {
+test('scheduler: a viewer in the way is retried without a push; an unlocked phone found by the driver counts as unlocked', async () => {
     const ctx = makeScheduler();
     const udid = 'iphone-viewer-busy';
     try {
@@ -1530,6 +1807,7 @@ test('scheduler: a viewer in the way is retried once without a push; an unlocked
         ctx.driver.results.push({ outcome: 'already-unlocked', verifiedAt: ctx.now() - 5 });
         assert.equal((await ctx.scheduler.runNow(udid, 'manual')).outcome, 'already-unlocked');
         assert.equal(ctx.store.devices.get(udid).lastUnlockedAt, ctx.now() - 5);
+        assert.equal(ctx.store.devices.get(udid).lastTypedUnlockAt, undefined, 'but not as typed by the server');
     } finally {
         ctx.scheduler.release();
     }
@@ -1583,38 +1861,74 @@ test('scheduler: turning the schedule on, or changing its time, after the slot d
     }
 });
 
-test('schedule: slots are computed in the stored time zone, across daylight-saving changes', () => {
+test('schedule: two slots a day in the stored time zone, across both daylight-saving changes', () => {
     const utc = (...fields) => Date.UTC(...fields);
     const noon = utc(2026, 10, 10, 12, 0);
-    // New York is UTC-5 in November: 03:00 there is 08:00 UTC.
-    assert.equal(nextUnlockRunAt('03:00', noon, 'America/New_York'), utc(2026, 10, 11, 8, 0));
+    // New York is UTC-5 in November: 03:00 there is 08:00 UTC and 15:00 is 20:00 UTC.
+    assert.equal(nextUnlockRunAt('03:00', noon, 'America/New_York'), utc(2026, 10, 10, 20, 0));
     assert.equal(lastUnlockSlotAt('03:00', noon, 'America/New_York'), utc(2026, 10, 10, 8, 0));
-    // Kolkata is UTC+5:30: 03:00 there is 21:30 UTC the day before.
+    assert.equal(nextUnlockRunAt('03:00', utc(2026, 10, 10, 20, 0), 'America/New_York'), utc(2026, 10, 11, 8, 0));
+    // Kolkata is UTC+5:30: 03:00 there is 21:30 UTC the day before, 15:00 is 09:30 UTC.
     assert.equal(nextUnlockRunAt('03:00', noon, 'Asia/Kolkata'), utc(2026, 10, 10, 21, 30));
-    assert.equal(lastUnlockSlotAt('03:00', noon, 'Asia/Kolkata'), utc(2026, 10, 9, 21, 30));
-    assert.equal(nextUnlockRunAt('12:00', noon, 'UTC'), noon + 24 * HOUR, 'strictly after now');
+    assert.equal(lastUnlockSlotAt('03:00', noon, 'Asia/Kolkata'), utc(2026, 10, 10, 9, 30));
+    assert.equal(nextUnlockRunAt('12:00', noon, 'UTC'), noon + 12 * HOUR, 'strictly after now');
     assert.equal(lastUnlockSlotAt('12:00', noon, 'UTC'), noon, 'at or before now');
+    assert.equal(lastUnlockSlotAt('12:00', noon - 1, 'UTC'), noon - 12 * HOUR);
+    // The second slot is named by its clock time.
+    assert.equal(secondUnlockTime('03:00'), '15:00');
+    assert.equal(secondUnlockTime('14:30'), '02:30');
+    assert.equal(secondUnlockTime('23:59'), '11:59');
 
-    // Clocks go forward in New York on 2026-03-08: that night is 23 hours long.
+    // Clocks go forward in New York on 2026-03-08: that night is 23 hours long, and the slot
+    // between the two 03:00s is halfway, 11 h 30 min from each.
     const beforeSpring = utc(2026, 2, 7, 8, 0);
-    assert.equal(nextUnlockRunAt('03:00', beforeSpring, 'America/New_York'), beforeSpring + 23 * HOUR);
+    assert.equal(nextUnlockRunAt('03:00', beforeSpring, 'America/New_York'), beforeSpring + 11.5 * HOUR);
+    assert.equal(nextUnlockRunAt('03:00', beforeSpring + 11.5 * HOUR, 'America/New_York'), beforeSpring + 23 * HOUR);
     assert.equal(
         lastUnlockSlotAt('03:00', beforeSpring + 23 * HOUR + MINUTE, 'America/New_York'),
         beforeSpring + 23 * HOUR,
     );
-    // And back on 2026-11-01: 25 hours.
+    // And back on 2026-11-01: 25 hours, so 12 h 30 min each. A second slot fixed at 15:00 would
+    // be 13 hours before the next 03:00.
     const beforeAutumn = utc(2026, 9, 31, 7, 0);
-    assert.equal(nextUnlockRunAt('03:00', beforeAutumn, 'America/New_York'), beforeAutumn + 25 * HOUR);
-    // 02:30 does not exist on 2026-03-08. The slot still happens once that night, and the
-    // following night is back on the clock (02:30 EDT is 06:30 UTC).
-    const skipped = nextUnlockRunAt('02:30', utc(2026, 2, 7, 12, 0), 'America/New_York');
+    assert.equal(nextUnlockRunAt('03:00', beforeAutumn, 'America/New_York'), beforeAutumn + 12.5 * HOUR);
+    assert.equal(nextUnlockRunAt('03:00', beforeAutumn + 12.5 * HOUR, 'America/New_York'), beforeAutumn + 25 * HOUR);
+
+    // A whole year, for a time on either side of the change, inside the hour that is skipped in
+    // spring (02:30) and the one that occurs twice in autumn (01:30): two slots every calendar
+    // day, none doubled, and no gap over 12 h 59 min.
+    for (const zone of ['America/New_York', 'Europe/Berlin', 'Australia/Lord_Howe']) {
+        for (const time of ['03:00', '02:30', '01:30', '15:00', '00:10']) {
+            let at = nextUnlockRunAt(time, utc(2026, 0, 1, 0, 0), zone);
+            const end = utc(2027, 0, 1, 0, 0);
+            let count = 0;
+            let longest = 0;
+            let shortest = Infinity;
+            while (at < end) {
+                const next = nextUnlockRunAt(time, at, zone);
+                assert.equal(lastUnlockSlotAt(time, next - 1, zone), at, `${zone} ${time}: no slot between two slots`);
+                assert.equal(lastUnlockSlotAt(time, next, zone), next);
+                longest = Math.max(longest, next - at);
+                shortest = Math.min(shortest, next - at);
+                at = next;
+                count++;
+            }
+            assert(longest <= 12 * HOUR + 59 * MINUTE, `${zone} ${time}: longest gap ${longest / HOUR} h`);
+            assert(shortest >= 11 * HOUR, `${zone} ${time}: shortest gap ${shortest / HOUR} h`);
+            assert(Math.abs(count - 730) <= 1, `${zone} ${time}: ${count} slots in 365 days`);
+        }
+    }
+    // 02:30 does not exist in New York on 2026-03-08. That day still has its two slots, and the
+    // day after is back on the clock (02:30 EDT is 06:30 UTC).
+    const skipped = nextUnlockRunAt('02:30', utc(2026, 2, 8, 0, 0), 'America/New_York');
     assert(skipped > utc(2026, 2, 8, 6, 0) && skipped < utc(2026, 2, 8, 8, 0), new Date(skipped).toISOString());
-    assert.equal(nextUnlockRunAt('02:30', skipped, 'America/New_York'), utc(2026, 2, 9, 6, 30));
     assert.equal(lastUnlockSlotAt('02:30', skipped, 'America/New_York'), skipped);
+    assert.equal(nextUnlockRunAt('02:30', utc(2026, 2, 9, 0, 0), 'America/New_York'), utc(2026, 2, 9, 6, 30));
 
     // Without a zone the arithmetic is server local time, as before zones were stored.
     const local = new Date(nextUnlockRunAt('04:05', noon));
-    assert.deepEqual([local.getHours(), local.getMinutes()], [4, 5]);
+    assert.equal(local.getMinutes(), 5);
+    assert.equal(local.getHours() % 12, 4, 'either 04:05 or 16:05');
 
     assert.equal(isValidUnlockSchedulePatch({ time: '03:00', timeZone: 'Europe/Berlin' }), true);
     assert.equal(isValidUnlockSchedulePatch({ enabled: true, timeZone: 'UTC' }), true);
@@ -1655,107 +1969,291 @@ test("scheduler: a schedule with a zone runs at that zone's time, and changing t
     }
 });
 
-test('scheduler: the 72-hour deadline is pushed once at 36 hours and runs outside the slot window past 48', async () => {
-    // Three hours after the slot: outside the window, so only the deadline can start a run.
-    const base = lastUnlockSlotAt('03:00', Date.now()) + 3 * HOUR;
-    let connected = true;
-    const ctx = makeScheduler({ time: base, connected: () => connected });
-    const udid = 'iphone-deadline';
+test('scheduler: one push when the passcode was last entered 20 hours ago, with the hours left', async () => {
+    const slot = Date.UTC(2026, 10, 12, 15, 0);
+    // The server last typed the passcode at 02:00; both slots since then have been taken up.
+    const typedAt = slot - 13 * HOUR;
+    const ctx = makeScheduler({ time: typedAt + 20 * HOUR - MINUTE });
+    const udid = 'iphone-warning';
+    const pushesFor = (id) => ctx.pushes.filter((push) => push.tag === `ios-unlock-deadline-${id}`);
+    const tickAt = async (clock) => {
+        ctx.setClock(clock);
+        ctx.tick();
+        await ctx.settle();
+    };
+    const add = (id, state) => {
+        armed(ctx, id);
+        Object.assign(ctx.store.devices.get(id), { lastSlotAt: slot }, state);
+        return ctx.store.devices.get(id);
+    };
+    try {
+        const record = add(udid, { lastTypedUnlockAt: typedAt, lastUnlockedAt: typedAt + 19 * HOUR });
+        await tickAt(ctx.now());
+        assert.equal(ctx.pushes.length, 0, 'nothing at 19 h 59 min, whatever unlock was seen since');
+        await tickAt(typedAt + 20 * HOUR + MINUTE);
+        assert.deepEqual(ctx.pushes, [
+            {
+                title: 'iPhone unlock',
+                body: 'The passcode was last entered 20 hours ago. The iPhone stops accepting connections in about 4 hours unless it is entered again.',
+                tag: `ios-unlock-deadline-${udid}`,
+                url: '#!action=',
+            },
+        ]);
+        for (const offset of [2 * MINUTE, HOUR, 3 * HOUR]) {
+            await tickAt(typedAt + 20 * HOUR + offset);
+        }
+        assert.equal(ctx.pushes.length, 1, 'pushed once for that passcode entry');
+        assert.equal(record.warnedFor, typedAt);
+        assert.equal(ctx.driver.calls.length, 0, 'the warning starts no run of its own');
+
+        // A run that works replaces the time; 20 hours after it the warning can fire again.
+        record.lastTypedUnlockAt = ctx.now() - 20 * HOUR;
+        await tickAt(ctx.now());
+        assert.equal(pushesFor(udid).length, 2);
+
+        // A record from before typed unlocks were stored has only the last unlock that was seen.
+        // Past 24 hours the push does not promise access the phone has already withdrawn.
+        add('iphone-warning-old', { lastUnlockedAt: ctx.now() - 25 * HOUR });
+        // A paused schedule cannot help: the warning says so.
+        add('iphone-warning-paused', {
+            lastTypedUnlockAt: ctx.now() - 21 * HOUR,
+            passcodeRejectedAt: ctx.now() - 20 * HOUR,
+        });
+        // A phone that is in use, and one that already refuses connections, get no warning.
+        add('iphone-warning-open', { lastTypedUnlockAt: ctx.now() - 21 * HOUR });
+        ctx.monitor.states.set('iphone-warning-open', { 'screen.power': 'on', 'device.locked': false });
+        const refused = add('iphone-warning-refused', { lastTypedUnlockAt: ctx.now() - 25 * HOUR, lockedOutAt: ctx.now() });
+        await tickAt(ctx.now());
+        assert.equal(
+            pushesFor('iphone-warning-old')[0].body,
+            'The passcode was last entered 25 hours ago. The iPhone has probably stopped accepting connections. Enter the passcode on the phone.',
+        );
+        assert.equal(
+            pushesFor('iphone-warning-paused')[0].body,
+            'The passcode was last entered 21 hours ago. The iPhone stops accepting connections in about 3 hours unless it is entered again. Scheduled unlock is paused until the passcode is saved again.',
+        );
+        assert.equal(pushesFor('iphone-warning-open').length, 0);
+        assert.equal(pushesFor('iphone-warning-refused').length, 0);
+        // The owner enters the passcode on the phone: the warning for the old entry stays unsent.
+        ctx.monitor.set('iphone-warning-refused', false);
+        assert.equal(refused.lockedOutAt, undefined);
+        ctx.monitor.set('iphone-warning-refused', true);
+        await tickAt(ctx.now() + MINUTE);
+        assert.equal(pushesFor('iphone-warning-refused').length, 0);
+        assert.equal(ctx.pushes.length, 4);
+        assert.equal(ctx.driver.calls.length, 0);
+    } finally {
+        ctx.scheduler.release();
+    }
+});
+
+test('scheduler: a phone that refuses connections is needs-manual-unlock: one push, no retry, no pause, and the next slot tries again', async () => {
+    const slot = Date.UTC(2026, 10, 12, 3, 0);
+    const isMount = (line) => line.includes('"mounter","auto-mount"');
+    for (const [step, udid] of [
+        ['mount', 'iphone-refused-mount'],
+        ['serve-web', 'iphone-refused-serve'],
+    ]) {
+        fs.rmSync(logFile, { force: true });
+        const output = captureConsole();
+        let clock = slot;
+        const now = () => clock;
+        const store = new MemoryStore(now);
+        const monitor = Object.assign(new FakeMonitor(), scriptedMonitor());
+        const pushes = [];
+        const runner = CoreDeviceRunner.getInstance();
+        const driver = new UnlockDriver({ runner, monitor, hasInputOwner: () => false });
+        const scheduler = new UnlockScheduler({ store, driver, monitor, notify: (push) => pushes.push(push), now });
+        const tickAt = async (time) => {
+            clock = time;
+            scheduler.tick();
+            await scheduler.chain;
+            await tick();
+        };
+        try {
+            scheduler.start({ isConnected: () => true });
+            store.updateSchedule(udid, { enabled: true, time: '03:00', timeZone: ZONE });
+            store.setPasscode(udid, PASSCODE);
+            const record = store.devices.get(udid);
+            // The fault of 2026-11-11: the last typed unlock was 24 hours and a moment before this run.
+            record.lastTypedUnlockAt = slot - 24 * HOUR - 140;
+            await withEnv({ FAKE_LOG: logFile, FAKE_PASSCODE_LOCKOUT: step, IOS_SESSION_COOLDOWN_MS: '0' }, async () => {
+                await tickAt(slot);
+                assert.deepEqual(
+                    record.lastRun,
+                    { at: slot, trigger: 'schedule', outcome: 'needs-manual-unlock', message: UNLOCK_BY_HAND_ACTION },
+                    step,
+                );
+                assert.deepEqual(
+                    pushes,
+                    [{ title: 'iPhone unlock', body: UNLOCK_BY_HAND_MESSAGE, tag: `ios-unlock-${udid}`, url: '#!action=' }],
+                    'one push, at once',
+                );
+                assert.equal(record.retryAt, undefined, 'the ten-minute retry is not spent on it');
+                assert.equal(record.passcodeRejectedAt, undefined, 'the passcode is not marked rejected');
+                assert.equal(record.unconfirmedAttempts, undefined, 'and nothing counts toward a pause');
+                assert.equal(store.reads, 0, 'the passcode was not read');
+                assert.equal(record.lockedOutAt, slot);
+                const status = scheduler.getStatus(udid);
+                assert.equal(status.needsManualUnlock, true);
+                assert.equal(status.passcodeRejected, undefined);
+                assert.equal(status.nextRunAt, slot + HALF_DAY, 'the next slot is the next try');
+                for (const offset of [UNLOCK_RETRY_MS, HOUR, 2 * HOUR]) {
+                    await tickAt(slot + offset);
+                }
+                assert.equal(calls().filter(isMount).length, 1, 'nothing is tried before the next slot');
+                assert.equal(pushes.length, 1, 'and the 20-hour warning has nothing to add');
+
+                // 15:00: still refused. It is tried, and reported, again.
+                await tickAt(slot + HALF_DAY);
+                assert.equal(calls().filter(isMount).length, 2);
+                assert.equal(record.lastRun.outcome, 'needs-manual-unlock');
+                assert.equal(record.lastRun.at, slot + HALF_DAY);
+                assert.equal(pushes.length, 2);
+                assert(!calls().some((line) => line.startsWith('post ')), 'no input was ever sent');
+            });
+            // The owner has entered the passcode on the phone. 03:00 the next day works as normal.
+            await withEnv({ FAKE_LOG: logFile }, async () => {
+                await tickAt(slot + 2 * HALF_DAY);
+                assert.equal(record.lastRun.outcome, 'unlocked', record.lastRun.message);
+                assert.equal(record.lockedOutAt, undefined, 'a run that works clears the state');
+                assert.equal(scheduler.getStatus(udid).needsManualUnlock, undefined);
+                assert.equal(record.lastTypedUnlockAt, record.lastUnlockedAt);
+                assert.equal(pushes.length, 2);
+            });
+            runner.stopSession(udid);
+        } finally {
+            output.restore();
+            scheduler.release();
+        }
+    }
+});
+
+test('scheduler: the hand-unlock state clears when the monitor reaches the phone again; Run now reports it without a push', async () => {
+    const slot = Date.UTC(2026, 10, 12, 3, 0);
+    const ctx = makeScheduler({ time: slot });
+    const udid = 'iphone-refused-clears';
+    const refusal = { outcome: 'needs-manual-unlock', message: UNLOCK_BY_HAND_ACTION, openedSession: false };
     try {
         armed(ctx, udid);
         const record = ctx.store.devices.get(udid);
-        record.lastSlotAt = base;
-        const unlockedAt = base - 37 * HOUR - MINUTE;
-        ctx.store.recordUnlockedAt(udid, unlockedAt);
+        ctx.driver.results.push(refusal);
         ctx.tick();
         await ctx.settle();
+        assert.equal(record.lockedOutAt, slot);
         assert.equal(ctx.pushes.length, 1);
-        assert.deepEqual(ctx.pushes[0], {
-            title: 'iPhone unlock',
-            body: 'Not unlocked for 37 hours. iOS restarts the phone in about 35 hours unless it is unlocked.',
-            tag: `ios-unlock-deadline-${udid}`,
-            url: '#!action=',
-        });
-        assert.equal(ctx.driver.calls.length, 0, 'under 48 hours the slot window still applies');
-        ctx.setClock(base + MINUTE);
-        ctx.tick();
-        await ctx.settle();
-        assert.equal(ctx.pushes.length, 1, 'pushed once for that unlock');
 
-        // 49 hours: a run outside the window. It fails; no ten-minute retry, the next try is two hours on.
-        const urgent = unlockedAt + 49 * HOUR;
-        ctx.setClock(urgent);
-        record.lastSlotAt = urgent;
-        ctx.driver.results.push({ outcome: 'failed-wake' });
-        ctx.tick();
-        await ctx.settle();
-        assert.equal(ctx.driver.calls.length, 1, 'a run outside the slot window');
-        assert.equal(record.lastRun.outcome, 'failed-wake');
-        assert.equal(record.retryAt, undefined);
-        assert.equal(ctx.pushes.length, 2, 'its failure is pushed');
-        for (const offset of [MINUTE, UNLOCK_RETRY_MS, UNLOCK_URGENT_INTERVAL_MS - MINUTE]) {
-            ctx.setClock(urgent + offset);
-            ctx.tick();
-            await ctx.settle();
-        }
-        assert.equal(ctx.driver.calls.length, 1, 'not again within two hours');
-        assert.equal(record.lastTimerRunAt, urgent, 'stored before the run started');
+        // The screen cannot be read any more. The observer's connection from before still
+        // reports the lock, but that is not a new connection: the state stays.
+        ctx.monitor.set(udid, 'unknown', 'unknown');
+        ctx.monitor.set(udid, true, 'unknown');
+        assert.equal(ctx.scheduler.getStatus(udid).needsManualUnlock, true);
+        // A screen read works again: the phone accepts connections.
+        ctx.statuses.length = 0;
+        ctx.monitor.set(udid, true, 'off');
+        assert.equal(record.lockedOutAt, undefined);
+        assert.equal(ctx.statuses.length, 1, 'the change is broadcast');
+        assert.equal(ctx.statuses[0].status.needsManualUnlock, undefined);
+        assert.equal(ctx.statuses[0].status.lastRun.outcome, 'needs-manual-unlock', 'the last run is still what it was');
 
-        // A server that restarts, for example after a crash during the run, does not start
-        // another session at its first tick: the spacing is read from the store.
-        const restarted = new UnlockScheduler({
-            store: ctx.store,
-            driver: ctx.driver,
-            monitor: ctx.monitor,
-            notify: (payload) => ctx.pushes.push(payload),
-            now: ctx.now,
-        });
-        restarted.start({ isConnected: () => true });
-        try {
-            ctx.setClock(urgent + 30 * MINUTE);
-            restarted.tick();
-            await restarted.chain;
-            await tick();
-            assert.equal(ctx.driver.calls.length, 1, 'no run at the first tick after a restart');
-        } finally {
-            restarted.stop();
-        }
-
-        // An unplugged phone is not tried, and neither is one that reads unlocked.
-        ctx.setClock(urgent + UNLOCK_URGENT_INTERVAL_MS);
-        connected = false;
-        ctx.tick();
-        await ctx.settle();
-        connected = true;
-        ctx.monitor.states.set(udid, { 'screen.power': 'on', 'device.locked': false });
-        ctx.tick();
-        await ctx.settle();
-        assert.equal(ctx.driver.calls.length, 1);
-        ctx.monitor.states.set(udid, { 'screen.power': 'off', 'device.locked': true });
-        ctx.tick();
-        await ctx.settle();
-        assert.equal(ctx.driver.calls.length, 2, 'two hours later, connected and locked');
-        assert.equal(record.lastRun.outcome, 'unlocked');
-        assert.equal(record.lastUnlockedAt, ctx.now());
-        assert.equal(ctx.pushes.length, 2);
-
-        // A paused schedule cannot run: the warning says so, and nothing is typed.
-        const paused = 'iphone-deadline-paused';
-        armed(ctx, paused);
-        Object.assign(ctx.store.devices.get(paused), {
-            lastSlotAt: ctx.now(),
-            lastUnlockedAt: ctx.now() - 73 * HOUR,
-            passcodeRejectedAt: ctx.now() - 60 * HOUR,
-        });
-        ctx.tick();
-        await ctx.settle();
-        assert.equal(
-            ctx.pushes.at(-1).body,
-            'Not unlocked for 73 hours. iOS has probably restarted it; unlock it once on the phone. Scheduled unlock is paused until the passcode is saved again.',
-        );
-        assert.equal(ctx.driver.calls.length, 2);
+        // Run now on a phone that refuses: the panel shows the result, no push, no rejected mark.
+        ctx.driver.results.push(refusal);
+        const manual = await ctx.scheduler.runNow(udid, 'manual');
+        assert.deepEqual(manual, { at: slot, trigger: 'manual', outcome: 'needs-manual-unlock', message: UNLOCK_BY_HAND_ACTION });
+        assert.equal(ctx.scheduler.getStatus(udid).needsManualUnlock, true);
+        assert.equal(record.passcodeRejectedAt, undefined);
+        assert.equal(ctx.pushes.length, 1);
+        // The owner unlocks the phone by hand.
+        ctx.monitor.set(udid, 'unknown', 'unknown');
+        ctx.monitor.set(udid, false, 'unknown');
+        assert.equal(ctx.scheduler.getStatus(udid).needsManualUnlock, undefined);
     } finally {
         ctx.scheduler.release();
+    }
+});
+
+test('scheduler with the real store: the settings file of 2026-11-11 loads, shows the hand-unlock state and runs at the next slot', async () => {
+    const directory = path.join(temporary, 'live-store');
+    const udid = 'iphone-live';
+    // 10:00 server time on the day of the fault; the schedule has no zone, as on the live server.
+    const failedSlot = lastUnlockSlotAt('03:00', Date.now());
+    let clock = failedSlot + 7 * HOUR;
+    const seed = new IosSettingsStore(directory);
+    seed.setPasscode(udid, PASSCODE);
+    seed.updateSchedule(udid, { enabled: true, time: '03:00' });
+    const file = path.join(directory, IOS_SETTINGS_FILE);
+    const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+    Object.assign(stored.devices[udid].unlock, {
+        lastUnlockedAt: failedSlot - 24 * HOUR + 46000,
+        lastSlotAt: failedSlot,
+        lastTimerRunAt: failedSlot + 11 * MINUTE,
+        lastRun: {
+            at: failedSlot + 11 * MINUTE + 47000,
+            trigger: 'schedule',
+            outcome: 'failed-session',
+            message: 'Could not mount the Developer Disk Image: Device is password protected. Please unlock and retry.',
+        },
+    });
+    assert.equal(stored.devices[udid].unlock.timeZone, undefined);
+    fs.writeFileSync(file, JSON.stringify(stored));
+
+    const runs = [];
+    const pushes = [];
+    const monitor = new FakeMonitor();
+    const scheduler = new UnlockScheduler({
+        store: new IosSettingsStore(directory),
+        driver: {
+            run: async (id, readPasscode) => {
+                runs.push(readPasscode());
+                return { outcome: 'unlocked', verifiedAt: clock, typed: true };
+            },
+        },
+        monitor,
+        notify: (payload) => pushes.push(payload),
+        now: () => clock,
+    });
+    const tickNow = async () => {
+        scheduler.tick();
+        await scheduler.chain;
+        await tick();
+    };
+    const output = captureConsole();
+    try {
+        scheduler.start({ isConnected: () => true });
+        let status = scheduler.getStatus(udid);
+        assert.equal(status.enabled, true);
+        assert.equal(status.time, '03:00');
+        assert.equal(status.timeZone, undefined);
+        assert.equal(status.hasPasscode, true);
+        assert.equal(status.needsManualUnlock, true, 'the old message is recognised');
+        assert.deepEqual(status.lastRun, {
+            at: failedSlot + 11 * MINUTE + 47000,
+            trigger: 'schedule',
+            outcome: 'needs-manual-unlock',
+            message: UNLOCK_BY_HAND_ACTION,
+        });
+        assert.equal(status.passcodeRejected, undefined);
+        assert.equal(typeof status.nextRunAt, 'number');
+
+        await tickNow();
+        assert.deepEqual(runs, [], 'nothing runs before the next slot');
+        assert.equal(pushes.length, 0, 'and nothing is pushed for a run that was already reported');
+
+        // The next slot, 12 hours after the one that failed, with nothing saved in between.
+        clock = nextUnlockRunAt('03:00', failedSlot);
+        await tickNow();
+        assert.deepEqual(runs, [PASSCODE], 'the stored passcode is still readable and the slot runs');
+        status = scheduler.getStatus(udid);
+        assert.equal(status.lastRun.outcome, 'unlocked');
+        assert.equal(status.needsManualUnlock, undefined, 'a run that works clears the state');
+        const saved = JSON.parse(fs.readFileSync(file, 'utf8')).devices[udid].unlock;
+        assert.equal(saved.lastTypedUnlockAt, clock);
+        assert.equal(saved.lockedOutAt, undefined);
+        assert.equal(saved.lastTimerRunAt, undefined, 'the field of the removed 48-hour runs is dropped');
+        assert(!output.text().includes(PASSCODE));
+    } finally {
+        output.restore();
+        scheduler.release();
     }
 });
 

@@ -9,6 +9,9 @@
 //   FAKE_DEVMODE        "false" makes `amfi developer-mode-status` report false
 //   FAKE_VERSION        iOS ProductVersion (default: 27.0)
 //   FAKE_MOUNT_FAIL     "devmode" | "other": make `mounter auto-mount` fail that way
+//   FAKE_PASSCODE_LOCKOUT  "mount" | "serve-web": that step is refused with pymobiledevice3's
+//                       PasswordRequiredError text, as a phone does 24 hours after its passcode
+//                       was last entered. With "serve-web" the mount passes and serve-web exits 1
 //   FAKE_SERVE_EXIT     exit code for serve-web to die with immediately
 //   FAKE_SERVE_DELAY_MS how long /codec answers 503 before the stream is "ready"
 //   FAKE_PREFLIGHT_MS   how long serve-web takes before it binds HTTP and installs its SIGTERM
@@ -186,7 +189,14 @@ if (command === 'amfi enable-developer-mode') {
     process.stdout.write('\n');
     process.exit(0);
 }
+// What `logger.error(str(error))` prints for a PasswordRequiredError raised without arguments.
+const PASSCODE_LOCKOUT =
+    '2026-11-11 03:11:47 host pymobiledevice3.__main__[4711] ERROR Device is password protected. Please unlock and retry.\n';
 if (command === 'mounter auto-mount') {
+    if (process.env.FAKE_PASSCODE_LOCKOUT === 'mount') {
+        process.stderr.write(PASSCODE_LOCKOUT);
+        process.exit(1);
+    }
     if (process.env.FAKE_MOUNT_FAIL === 'devmode') {
         process.stderr.write('pymobiledevice3.exceptions.DeveloperModeIsNotEnabledError\n');
         process.exit(1);
@@ -203,6 +213,11 @@ if (command === 'developer core-device display serve-web') {
         // The real CLI (11.44.0, as 11.12.5 did) rejects this: the tunnel target comes from PYMOBILEDEVICE3_UDID.
         process.stderr.write('Usage: pymobiledevice3 developer core-device display serve-web [OPTIONS]\n╭─ Error ─╮\n│ No such option: --udid │\n╰─╯\n');
         process.exit(2);
+    }
+    if (process.env.FAKE_PASSCODE_LOCKOUT === 'serve-web') {
+        // The tunnel serve-web brings up is refused; it exits before it binds.
+        process.stderr.write('INFO Starting the userspace tunnel\n' + PASSCODE_LOCKOUT);
+        process.exit(1);
     }
     if (process.env.FAKE_SERVE_EXIT) {
         process.stderr.write('ERROR CoreDeviceError: displayservice unavailable (9021)\n');
