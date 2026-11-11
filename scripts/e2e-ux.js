@@ -63,7 +63,7 @@ async function main() {
         );
         await card.locator('a.desc-block.stream').first().click();
         await page.waitForFunction(
-            () => document.querySelector('.stream-header-status')?.textContent.includes('Connected'),
+            () => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'),
             undefined,
             { timeout: 45000 },
         );
@@ -135,7 +135,7 @@ async function main() {
         desktop.on('pageerror', (error) => errors.push(error.message));
         await desktop.goto(streamUrl);
         await desktop.waitForFunction(
-            () => document.querySelector('.stream-header-status')?.textContent.includes('Connected'),
+            () => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'),
             undefined,
             { timeout: 45000 },
         );
@@ -147,15 +147,13 @@ async function main() {
             sidebar.width >= 80 && video.x + video.width <= sidebar.x + 1,
             'desktop sidebar reserves space beside the video',
         );
-        const centeredBack = await desktop.locator('.stream-header-back').evaluate((button) => {
+        const centeredBack = await desktop.locator('.kit-bar-back').evaluate((button) => {
             const outer = button.getBoundingClientRect();
             const icon = button.querySelector('svg').getBoundingClientRect();
-            return (
-                Math.abs(outer.x + outer.width / 2 - icon.x - icon.width / 2) < 1 &&
-                Math.abs(outer.y + outer.height / 2 - icon.y - icon.height / 2) < 1
-            );
+            // From 1024px the kit's back control shows the name of the list beside its icon.
+            return outer.height >= 44 && Math.abs(outer.y + outer.height / 2 - icon.y - icon.height / 2) < 1;
         });
-        assert(centeredBack, 'back icon is centered in its touch target');
+        assert(centeredBack, 'back icon is centered in the height of its 44px target');
         await screenshot(desktop, 'desktop-controls');
         await desktop.setViewportSize({ width: 480, height: 720 });
         await noOverflow(desktop, 'narrow desktop');

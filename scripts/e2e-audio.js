@@ -34,7 +34,7 @@ async function controls(page) {
 }
 async function connected(page) {
     await page.waitForFunction(
-        () => document.querySelector('.stream-header-status')?.textContent.includes('Connected'),
+        () => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'),
         undefined,
         { timeout: 45000 },
     );

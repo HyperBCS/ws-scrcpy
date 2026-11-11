@@ -28,36 +28,20 @@
     -webkit-tap-highlight-color: transparent;
 }
 
+/* The controls button is the kit's icon button. Only what its place over the picture needs is
+   set here: the size `FloatingToolbar` clamps and drags by, a shadow, and the drag itself. */
 .floating-toolbar-fab {
-    position: relative;
     pointer-events: auto;
     width: 56px;
     height: 56px;
-    border: 1px solid rgba(255, 255, 255, 0.22);
-    border-radius: 20px;
-    background: #2563eb;
-    color: #fff;
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--shadow-raised);
     cursor: grab;
     touch-action: none;
-    -webkit-tap-highlight-color: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition:
-        background 0.15s ease,
-        box-shadow 0.15s ease;
-}
-
-.floating-toolbar-fab:hover,
-.floating-toolbar.open .floating-toolbar-fab {
-    background: #1d4ed8;
 }
 
 .floating-toolbar-fab:active,
 .floating-toolbar.dragging .floating-toolbar-fab {
     cursor: grabbing;
-    box-shadow: 0 8px 30px rgba(37, 99, 235, 0.45);
 }
 
 .floating-toolbar-panel {
@@ -67,12 +51,12 @@
     box-sizing: border-box;
     overflow-y: auto;
     overscroll-behavior: contain;
-    background: var(--main-bg-color);
-    color: var(--text-color);
-    border: 1px solid var(--device-border-color);
-    border-radius: 20px;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.32);
-    padding: 8px;
+    background: var(--surface-raised);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-raised);
+    padding: var(--space-8);
 }
 
 .floating-toolbar-panel[hidden] {
@@ -95,128 +79,35 @@
     width: 100%;
     height: 100%;
     max-height: none;
-    padding: 6px;
+    /* No room at the sides: a caption of two words stays on one line in the 88px rail. */
+    padding: var(--space-4) 0;
     border: 0;
     border-radius: 0;
     box-shadow: none;
     scrollbar-width: thin;
 }
 
+/* One column without gaps: the twelve controls of an Android phone fit a window 800px high,
+   and Listen, the eighth, stays in view in one of 600px. */
 .floating-toolbar.desktop .control-buttons-list.floating {
     grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
-}
-
-.floating-toolbar.desktop .control-buttons-list.floating .control-button {
-    height: 56px;
-    gap: 4px;
-    border-radius: 10px;
-}
-
-.floating-toolbar.desktop .floating-control-label {
-    font-size: 10px;
+    gap: 0;
 }
 
 .floating-toolbar-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 2px 2px 8px 8px;
-    margin-bottom: 6px;
-    border-bottom: 1px solid var(--device-border-color);
+    padding: var(--space-4) var(--space-8) var(--space-8);
+    margin-bottom: var(--space-8);
+    border-bottom: 1px solid var(--border);
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.25;
 }
 
-.floating-toolbar-heading strong {
-    display: block;
-    font-size: 15px;
-}
-
-.floating-toolbar-heading span {
-    display: block;
-    font-size: 11px;
-    margin-top: 4px;
-    color: var(--text-color-light);
-}
-
-
+/* The controls are the kit's icon buttons with a caption. This is only their grid. */
 .control-buttons-list.floating {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
+    gap: var(--space-4);
     width: 100%;
-    height: auto;
-    padding: 0;
-    background: transparent;
-}
-
-.control-buttons-list.floating .control-button {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    width: 100%;
-    min-width: 44px;
-    height: 66px;
-    box-sizing: border-box;
-    margin: 0;
-    padding: 6px 2px;
-    border: 1px solid transparent;
-    border-radius: 12px;
-    background: var(--header-bg-color);
-    color: var(--text-color);
-    opacity: 1;
-    cursor: pointer;
-    touch-action: manipulation;
-}
-
-.control-buttons-list.floating .control-button > svg {
-    width: 24px;
-    height: 24px;
-    flex: 0 0 24px;
-}
-
-.control-buttons-list.floating .control-button:hover,
-.control-buttons-list.floating .control-button:active {
-    border-color: var(--button-text-color);
-    background: var(--device-list-hover-color);
-}
-
-/* Listen is this browser's playback, not a phone key: it shows when it is on. */
-.control-buttons-list.floating .control-button[data-control='audio'][aria-pressed='true'] {
-    border-color: var(--button-text-color);
-    color: var(--button-text-color);
-}
-.control-buttons-list.floating .control-button[data-control='audio'][aria-pressed='true'] > svg {
-    fill: currentColor;
-}
-
-.floating-control-label {
-    font: 500 11px/1.15 var(--font-stack);
-    text-align: center;
-    white-space: normal;
-}
-
-.control-buttons-list.floating .control-button:disabled {
-    opacity: 0.45;
-    cursor: default;
-}
-
-.floating-toolbar button:focus-visible,
-.floating-toolbar .control-button:focus-visible {
-    outline: 3px solid var(--button-text-color);
-    outline-offset: 2px;
-}
-
-.floating-toolbar ~ * {
-    --control-bar-bottom: 0px;
-    --control-bar-side: 0px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .floating-toolbar-fab {
-        transition: none;
-    }
 }
 }

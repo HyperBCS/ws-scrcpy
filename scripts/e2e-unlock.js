@@ -101,7 +101,7 @@ async function start(browser, { mobile = true, flags = LOCKED, holdQuery = 0, st
     url.hash = `!${new URLSearchParams({ action: 'stream', udid: UDID, player: 'mse', ws: socket.toString() })}`;
     await page.goto(url.toString());
     await page.waitForFunction(() =>
-        document.querySelector('.stream-header-status')?.textContent.includes('Connected'),
+        document.querySelector('.kit-bar-status')?.textContent.includes('Connected'),
     );
     return {
         context,

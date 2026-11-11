@@ -436,9 +436,9 @@ async function main() {
             assert.equal(await page.evaluate(() => location.hash), address(ROOT), 'Files keeps the address of the phone page');
             await page.locator('.tool-connection.connected').waitFor({ state: 'attached' });
             assert.equal(await page.locator('.file-listing-client').count(), 1, 'one embedded client');
-            assert.equal(await page.locator('.stream-header').count(), 1, 'shared tool header remains visible');
+            assert.equal(await page.locator('.kit-bar').count(), 1, 'shared tool header remains visible');
             assert.equal(
-                await page.locator('.tool-navigation button').allInnerTexts().then((list) => list.join(',')),
+                await page.locator('.kit-tabs .kit-tab').allInnerTexts().then((list) => list.join(',')),
                 'Screen,Files,Shell',
                 'the tabs of the phone\'s page: the screen, then the tools',
             );
@@ -524,7 +524,7 @@ async function main() {
                     JSON.stringify(
                         await page.evaluate(() => {
                             const out = { viewport: innerHeight };
-                            for (const sel of ['.stream-header','.tool-navigation','.tool-mount','.fx-chrome','.fx-bar-address','.fx-bar-commands','.fx-places','.fx-items','.fx-statusbar','thead','.fx-row']) {
+                            for (const sel of ['.kit-bar','.kit-tabs','.tool-mount','.fx-chrome','.fx-bar-address','.fx-bar-commands','.fx-places','.fx-items','.fx-statusbar','thead','.fx-row']) {
                                 const el = document.querySelector(sel);
                                 out[sel] = el ? Math.round(el.getBoundingClientRect().height) : null;
                             }

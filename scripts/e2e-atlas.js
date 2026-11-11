@@ -193,8 +193,8 @@ async function start(browser, viewport, theme) {
 const card = (page, key) => page.locator(`article.device[data-device-key="${key}"]`);
 const sheet = (page) => page.locator('.bottom-sheet-root.open');
 const sheetTitled = (page, title) => sheet(page).filter({ has: page.locator('.bottom-sheet-title', { hasText: title }) });
-const tab = (page, name) => page.locator('.tool-tabs').getByRole('button', { name, exact: true });
-const connected = (page) => page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
+const tab = (page, name) => page.locator('.kit-tabs-list').getByRole('button', { name, exact: true });
+const connected = (page) => page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
 const screenOf = (udid) => `#!action=device&udid=${udid}&view=screen`;
 
 async function press(test, locator) {
@@ -346,7 +346,7 @@ async function screenOverlays(test, kind) {
     await shoot(test, `${kind}-settings`);
     await dismiss(test, sheet(page));
 
-    await press(test, page.locator('.stream-header-switch'));
+    await press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }));
     await sheetTitled(page, /Switch/).waitFor();
     await shoot(test, `${kind}-switcher`);
     await dismiss(test, sheet(page));
@@ -432,7 +432,7 @@ async function otherStates(test) {
 
     await page.goto(BASE + screenOf(PIXEL_3));
     await connected(page);
-    await page.locator('.sleep-overlay .sleep-overlay-button').waitFor();
+    await page.locator('.sleep-overlay .kit-button').waitFor();
     await shoot(test, 'android-asleep');
 }
 

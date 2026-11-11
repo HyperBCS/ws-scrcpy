@@ -1068,10 +1068,10 @@ async function openScreenFromInbox(browser) {
         await f.page.keyboard.press('Enter');
         await f.page.waitForFunction(hash => location.hash === hash, screenHash);
         // The iPhone's screen links back to its notifications, with the unread count.
-        const back = f.page.locator('.stream-header .notifications-link');
+        const back = f.page.locator('.kit-bar .notifications-link');
         await back.waitFor();
         assert.equal(await back.getAttribute('href'), '#!action=notifications&source=phone-a');
-        await f.page.waitForFunction(() => document.querySelector('.stream-header .notifications-link')?.getAttribute('aria-label') === 'Notifications, 2 unread');
+        await f.page.waitForFunction(() => document.querySelector('.kit-bar .notifications-link')?.getAttribute('aria-label') === 'Notifications, 2 unread');
         assert.equal(await back.locator('.notification-unread-count').textContent(), '2');
         await back.click();
         await f.page.locator('#notification-history-heading').waitFor();
@@ -2032,7 +2032,7 @@ async function sharedHeader(browser) {
             await sleep(350);
             assert.deepEqual(f.streams, ['phone-a'], 'one stream socket for the open');
             // From the phone's screen: the bell, then the back control of Notifications.
-            await page.locator('.stream-header .notifications-link').click();
+            await page.locator('.kit-bar .notifications-link').click();
             await article(page, 'Message 1').waitFor();
             const entries = await page.evaluate(() => history.length);
             await backControl(page).click();

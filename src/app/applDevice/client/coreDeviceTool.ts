@@ -9,6 +9,6 @@ export const coreDeviceStreamTool: Tool = {
         if (descriptor.state !== DeviceState.CONNECTED) {
             return;
         }
-        return { title: 'Open screen →', action: ACTION.STREAM_COREDEVICE, params: { udid: descriptor.udid } };
+        return { title: 'Open screen', action: ACTION.STREAM_COREDEVICE, params: { udid: descriptor.udid } };
     },
 };

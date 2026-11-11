@@ -3,6 +3,8 @@ import { streamConnected } from '../state/stream';
 import { goUp } from '../state/router';
 import { LIST_PAGE_NAME } from '../state/routes';
 import '../../style/views/SleepOverlay.css';
+import { Button } from '../ui/Button';
+import { Icon } from '../ui/Icon';
 import { Presence } from '../ui/Presence';
 
 // How long to stay optimistically hidden after the user taps Wake. The Android device-state poll
@@ -91,20 +93,16 @@ export function SleepOverlay({ sessionKey, screenOff, onWake }: SleepOverlayProp
                     <div class="sleep-overlay-spinner" aria-hidden="true" />
                     <div class="sleep-overlay-label">{hasConnected ? 'Reconnecting…' : 'Connecting to device…'}</div>
                     {waiting && <div class="sleep-overlay-hint">Check that the device is online and unlocked.</div>}
-                    {waiting && (
-                        <button type="button" class="sleep-overlay-return" onClick={goUp}>
-                            {LIST_PAGE_NAME}
-                        </button>
-                    )}
+                    {waiting && <Button onClick={goUp}>{LIST_PAGE_NAME}</Button>}
                 </div>
             ) : (
-                <button type="button" class="sleep-overlay-card sleep-overlay-button" onClick={wake}>
-                    <div class="sleep-overlay-icon" aria-hidden="true">
-                        ☾
-                    </div>
+                <div class="sleep-overlay-card">
+                    <Icon name="moon" />
                     <div class="sleep-overlay-label">Screen is off</div>
-                    <div class="sleep-overlay-hint">Tap to wake the device</div>
-                </button>
+                    <Button variant="primary" onClick={wake}>
+                        Wake
+                    </Button>
+                </div>
             )}
         </Presence>
     );

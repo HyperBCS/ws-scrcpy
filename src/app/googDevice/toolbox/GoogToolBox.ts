@@ -1,6 +1,6 @@
 import { ToolBox } from '../../toolbox/ToolBox';
 import KeyEvent from '../android/KeyEvent';
-import SvgImage from '../../ui/SvgImage';
+import type { IconName } from '../../ui/icons';
 import { KeyCodeControlMessage } from '../../controlMessage/KeyCodeControlMessage';
 import { ToolBoxButton } from '../../toolbox/ToolBoxButton';
 import { ToolBoxElement } from '../../toolbox/ToolBoxElement';
@@ -12,42 +12,42 @@ import { AudioSession } from '../../state/audio';
 import { createSoundButton } from '../../toolbox/soundButton';
 import { HeldButtons } from '../../toolbox/heldButtons';
 
-const BUTTONS = [
+const BUTTONS: { title: string; code: number; icon: IconName }[] = [
     // Keep each group together in the mobile panel's three-column grid.
     {
         title: 'Back',
         code: KeyEvent.KEYCODE_BACK,
-        icon: SvgImage.Icon.BACK,
+        icon: 'navBack',
     },
     {
         title: 'Home',
         code: KeyEvent.KEYCODE_HOME,
-        icon: SvgImage.Icon.HOME,
+        icon: 'home',
     },
     {
         title: 'Overview',
         code: KeyEvent.KEYCODE_APP_SWITCH,
-        icon: SvgImage.Icon.OVERVIEW,
+        icon: 'square',
     },
     {
         title: 'Volume down',
         code: KeyEvent.KEYCODE_VOLUME_DOWN,
-        icon: SvgImage.Icon.VOLUME_DOWN,
+        icon: 'volDown',
     },
     {
         title: 'Mute device',
         code: KeyEvent.KEYCODE_VOLUME_MUTE,
-        icon: SvgImage.Icon.VOLUME_OFF,
+        icon: 'volMute',
     },
     {
         title: 'Volume up',
         code: KeyEvent.KEYCODE_VOLUME_UP,
-        icon: SvgImage.Icon.VOLUME_UP,
+        icon: 'volUp',
     },
     {
         title: 'Power',
         code: KeyEvent.KEYCODE_POWER,
-        icon: SvgImage.Icon.POWER,
+        icon: 'power',
     },
 ];
 
@@ -126,7 +126,7 @@ export class GoogToolBox extends ToolBox {
             return button;
         });
         if (player.supportsScreenshot) {
-            const screenshot = new ToolBoxButton('Take screenshot', SvgImage.Icon.CAMERA);
+            const screenshot = new ToolBoxButton('Take screenshot', 'camera');
             screenshot.addEventListener('click', () => {
                 player.createScreenshot(client.getDeviceName());
             });
@@ -139,7 +139,7 @@ export class GoogToolBox extends ToolBox {
             client.setHandleKeyboardEvents(true);
         }
 
-        const tools = new ToolBoxButton('Actions', SvgImage.Icon.MORE);
+        const tools = new ToolBoxButton('Actions', 'bolt');
         tools.addEventListener('click', () => {
             openSheet('tools');
         });
@@ -149,7 +149,7 @@ export class GoogToolBox extends ToolBox {
         // quality" group (applied with Apply, which restarts the scrcpy server). The tracker
         // connection it needs for LIST_ENCODERS and UPDATE_STREAM_CONFIG is not this client's own;
         // it is looked up by udid, as `DeviceSwitcherSheet` does.
-        const settings = new ToolBoxButton('Settings', SvgImage.Icon.TUNE);
+        const settings = new ToolBoxButton('Settings', 'sliders');
         settings.addEventListener('click', () => {
             closeAllSheets();
             openSettingsSheet(udid);
@@ -167,7 +167,7 @@ export class GoogToolBox extends ToolBox {
         // Leave navigation and volume rows intact; Listen controls this browser's playback.
         elements.splice(BUTTONS.length, 0, toggle);
 
-        const liveText = new ToolBoxButton('Type text', SvgImage.Icon.KEYBOARD);
+        const liveText = new ToolBoxButton('Type text', 'text');
         liveText.addEventListener('click', () => {
             // Used to be a blocking `window.prompt()` -- dead on a phone, which has no such
             // dialog worth using. `LiveTextOverlay` (rendered by `StreamView`) hosts a real input

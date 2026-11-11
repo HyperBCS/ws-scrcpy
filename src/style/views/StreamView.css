@@ -51,8 +51,8 @@
     flex: 0 0 88px;
     min-width: 0;
     min-height: 0;
-    background: var(--main-bg-color);
-    border-left: 1px solid var(--device-border-color);
+    background: var(--surface-raised);
+    border-left: 1px solid var(--border);
 }
 
 /* Input capability keeps a wide touch tablet on the FAB and a narrow desktop on its rail.
@@ -63,109 +63,103 @@
     }
 }
 
+/* A long press on the header of a phone's page brings up no selection handles and no iOS
+   callout, as before the kit: `app.css` says this for the older header by its class. */
+@media (hover: none) and (pointer: coarse) {
+    .stream-view > .kit-bar,
+    .tool-view > .kit-bar,
+    .tool-unavailable > .kit-bar {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+    }
+}
+
+/* The tabs of an Android phone's page slide in when the page is entered, as the list's header
+   does (`surface-enter` in `app.css`). `TabStrip` leaves the entrance out on a tab change. */
+.stream-view > .kit-tabs,
+.tool-view > .kit-tabs {
+    animation: surface-enter var(--motion-settle) var(--ease-out);
+}
+
+/* The sleep overlay covers the window one step under the header (`SleepOverlay.css`). The tabs
+   are drawn over it as the header is. */
+.stream-view > .kit-tabs {
+    position: relative;
+    z-index: var(--z-header);
+}
+
+/* A message over the top of the picture, in the kit's banner. Its place between the header and
+   the stage has no height, so a message never resizes the stage, and the banner hangs from it:
+   under the header, the tabs and the lock notice, whatever their height. */
+.stream-notice-anchor {
+    position: relative;
+    z-index: var(--z-overlay);
+    flex: none;
+    height: 0;
+}
+
 .stream-notice {
-    position: fixed;
-    z-index: 9;
-    top: calc(56px + env(safe-area-inset-top, 0px));
+    position: absolute;
+    top: var(--space-8);
     left: 0;
     right: 0;
+    width: min(440px, calc(100% - var(--space-24)));
     margin-inline: auto;
-    width: min(440px, calc(100% - 24px));
-    min-width: 0;
-    max-width: 100%;
-    box-sizing: border-box;
-    display: flex;
-    align-items: center;
-    padding: 8px 8px 8px 16px;
-    gap: 12px;
-    border-radius: 14px;
-    border: 1px solid var(--button-border-color);
-    color: var(--text-color);
-    background: var(--main-bg-color);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+    box-shadow: var(--shadow-raised);
 }
 
-/* An Android phone's page has its tabs under the header. What is laid over the picture starts
-   below them: 55px further down, the height of the tab strip. */
-.stream-view > .tool-navigation ~ .stream-notice {
-    top: calc(111px + env(safe-area-inset-top, 0px));
-}
-
-.stream-view > .tool-navigation ~ .sleep-overlay {
-    top: calc(112px + env(safe-area-inset-top, 0px));
-}
-
-.stream-notice > span {
-    flex: 1;
-    min-width: 0;
-    overflow-wrap: anywhere;
-}
-
-.stream-notice button {
-    flex: 0 0 44px;
-    height: 44px;
-    border: 0;
-    border-radius: 8px;
-    color: inherit;
-    background: var(--header-bg-color);
-    cursor: pointer;
-}
-
+/* The card for a stream that did not start, stopped or failed: the reason and what can be done.
+   Above the black stage (3), under the controls shield, the controls button and the sheets. */
 .stream-start-error {
     position: absolute;
     top: 50%;
     left: 50%;
+    z-index: 3;
     transform: translate(-50%, -50%);
     box-sizing: border-box;
-    width: min(400px, calc(100% - 32px));
-    padding: 24px;
-    border: 1px solid var(--device-border-color);
-    border-radius: 20px;
-    background: var(--main-bg-color);
-    color: var(--text-color);
+    width: min(400px, calc(100% - var(--space-32)));
+    padding: var(--space-24);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-raised);
+    color: var(--text);
     text-align: center;
 }
 
 .stream-start-error h2 {
-    font-size: 18px;
+    margin: 0 0 var(--space-8);
+    font-size: var(--font-size-17);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.3;
 }
+
 .stream-start-error p {
-    overflow-wrap: anywhere;
+    margin: 0;
+    font-size: var(--font-size-15);
     line-height: 1.5;
+    overflow-wrap: anywhere;
 }
+
 /* Above the sleep overlay: a stopped service is the reason nothing can be done there. Two
-   classes, so the general .stream-start-error layer below does not override it. */
+   classes, so the general layer above does not override it. */
 .stream-start-error.stream-service-stopped {
     z-index: 6;
 }
-.stream-stopped-actions {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 8px;
-}
 
-/* Above the black stage and the sleep overlay, below sheets and the controls button. */
-.stream-start-error {
-    z-index: 3;
-}
-
-.stream-start-error-note {
-    margin: 0;
-    color: var(--text-color-light);
-    font-size: 14px;
+.stream-start-error .stream-start-error-note {
+    margin-top: var(--space-8);
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
 }
 
 .stream-start-error-actions {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 8px;
-    margin-top: 16px;
-}
-
-.stream-start-error-actions .sheet-button {
-    min-height: 44px;
+    gap: var(--space-8);
+    margin-top: var(--space-16);
 }
 
 .device-view {
@@ -235,105 +229,11 @@
     object-fit: contain;
 }
 
-.control-buttons-list {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    background-color: var(--control-buttons-bg-color);
-    flex-shrink: 0;
-    width: 52.01px;
-}
-
-.control-button {
-    margin: 4.998px 11.004px;
-    padding: 0;
-    width: 30.002px;
-    height: 30.002px;
-    border: none;
-    opacity: 0.75;
-    background-color: var(--control-buttons-bg-color);
-}
-
-.control-button:hover {
-    opacity: 1;
-}
-
-.control-wrapper > input[type='checkbox'] {
-    display: none;
-}
-
-.control-wrapper > label {
-    display: inline-block;
-}
-
-.control-button > svg {
-    fill: var(--svg-button-fill);
-}
-
-.control-wrapper > input[type='checkbox'].two-images:checked + label > svg.image-on {
-    display: block;
-}
-
-.control-wrapper > input[type='checkbox'].two-images:not(:checked) + label > svg.image-on {
-    display: none;
-}
-
-.control-wrapper > input[type='checkbox'].two-images:checked + label > svg.image-off {
-    display: none;
-}
-
-.control-wrapper > input[type='checkbox'].two-images:not(:checked) + label > svg.image-off {
-    display: block;
-}
-
-.control-wrapper > input[type='checkbox']:checked + label > svg {
-    fill: var(--svg-checkbox-bg-color);
-}
-
-/* Phone portrait: a fixed ~60px side rail eats a third of a phone's width and doesn't reserve
-   the home-indicator safe area. Below it becomes a bottom bar instead, with the video stacked
-   above -- `ControlBarLayout.computeMaxSize()` detects this from the bar's own footprint
-   (wide-and-short vs. tall-and-thin) rather than duplicating this breakpoint in JS. Landscape
-   keeps the side rail: a phone rotated sideways has the width to spare, and a bottom bar would
-   eat into the vertical space video needs most. */
+/* Phone portrait: the picture's wrapper is laid out as a column. It holds the picture only;
+   the controls are in `FloatingToolbar`. */
 @media screen and (max-width: 600px) and (orientation: portrait) {
     .device-view {
         flex-direction: column;
     }
-
-    .control-buttons-list {
-        flex-direction: row;
-        flex-wrap: wrap;
-        width: 100%;
-        height: auto;
-        justify-content: space-evenly;
-        align-items: center;
-        /* Keeps the bar clear of the home indicator on notched phones. */
-        padding-bottom: env(safe-area-inset-bottom, 0px);
-    }
-
-    /* The 30px button of the side rail is under the 44px minimum touch target on the surface
-       people will actually use this on. */
-    .control-button {
-        width: 44px;
-        height: 44px;
-        margin: 3.5px 5.6px;
-    }
-}
-
-/* A session error notice carries a Retry action instead of a dismiss button. */
-.stream-notice.error {
-    border-color: var(--status-unauthorized-color);
-}
-.stream-notice.error > button {
-    min-height: 40px;
-    padding: 0 12px;
-    border: 1px solid var(--button-border-color);
-    border-radius: 10px;
-    background: var(--header-bg-color);
-    color: var(--text-color);
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
 }
 }

@@ -11,6 +11,9 @@ import { deviceHref, followLink } from '../state/links';
 import type { DeviceView } from '../state/routes';
 import { closeAllSheets, openSheet } from '../state/stream';
 import { AppBar } from '../ui/AppBar';
+import { Banner } from '../ui/Banner';
+import { Button } from '../ui/Button';
+import { IconButton } from '../ui/IconButton';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { NotificationsLink } from '../ui/NotificationsLink';
@@ -316,6 +319,9 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                 : { text: 'Connection lost.', button: 'Reconnect' };
     }
 
+    /** A key of the row under the terminal, sent as the terminal would send it. */
+    const sendKey = (input: string) => clientRef.current?.sendInput?.(input);
+
     const switchPhone = (next: DeviceEntry) => {
         if (tool) {
             const extra = tool.view === 'files' ? { path: DEFAULT_FILES_PATH } : {};
@@ -338,13 +344,14 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
         >
             {active && (
                 <AppBar
+                    kit
                     title={entry ? deviceName(entry) : udid}
                     status={<StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />}
                 >
                     <NotificationsLink compact />
-                    <button type="button" class="stream-header-switch" onClick={() => openSheet('devices')}>
+                    <Button size="compact" onClick={() => openSheet('devices')}>
                         Switch
-                    </button>
+                    </Button>
                 </AppBar>
             )}
             {active &&
@@ -366,40 +373,31 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                     </span>,
                 )}
             <section ref={workspaceRef} class="tool-workspace" aria-label={tool?.title}>
-                <Presence show={showBanner} kind="collapse" class="tool-error" role="status">
-                    <span>{bannerRef.current.text}</span>
-                    <button type="button" onClick={codeMissing ? () => location.reload() : reconnect}>
-                        {bannerRef.current.button}
-                    </button>
+                <Presence show={showBanner} kind="collapse" class="tool-error">
+                    <Banner
+                        action={{
+                            label: bannerRef.current.button,
+                            run: codeMissing ? () => location.reload() : reconnect,
+                        }}
+                    >
+                        {bannerRef.current.text}
+                    </Banner>
                 </Presence>
                 <div key="tool-mount" ref={mountRef} class="tool-mount" />
                 {action === ACTION.SHELL && (
-                    <div class="shell-shortcuts" aria-label="Terminal keys">
-                        <button
-                            type="button"
+                    <div class="shell-shortcuts" role="group" aria-label="Terminal keys">
+                        <IconButton
+                            icon="keyboard"
+                            label="Show keyboard"
+                            size="compact"
                             disabled={!connected}
                             onClick={() => clientRef.current?.focus?.()}
-                            aria-label="Show keyboard"
-                            title="Show keyboard"
-                        >
-                            <svg
-                                width="24"
-                                height="24"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="1.6"
-                                aria-hidden="true"
-                            >
-                                <rect x="2" y="5" width="20" height="14" rx="2" />
-                                <path d="M5 9h2m2 0h2m2 0h2m2 0h2M5 12h2m2 0h2m2 0h2m2 0h2M7 15h10" />
-                            </svg>
-                        </button>
-                        <button
-                            type="button"
+                        />
+                        <Button
+                            size="compact"
                             disabled={!connected}
-                            aria-pressed={control}
-                            title="Ctrl for the next key"
+                            pressed={control}
+                            attributes={{ title: 'Ctrl for the next key' }}
                             onClick={() => {
                                 const next = !control;
                                 setControl(next);
@@ -408,25 +406,27 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                             }}
                         >
                             Ctrl
-                        </button>
-                        {(
-                            [
-                                ['Esc', '\x1b'],
-                                ['Tab', '\t'],
-                                ['↑', '\x1b[A'],
-                                ['↓', '\x1b[B'],
-                            ] as const
-                        ).map(([label, input]) => (
-                            <button
-                                key={label}
-                                type="button"
-                                disabled={!connected}
-                                aria-label={label === '↑' ? 'Previous command' : label === '↓' ? 'Next command' : label}
-                                onClick={() => clientRef.current?.sendInput?.(input)}
-                            >
-                                {label}
-                            </button>
-                        ))}
+                        </Button>
+                        <Button size="compact" disabled={!connected} onClick={() => sendKey('\x1b')}>
+                            Esc
+                        </Button>
+                        <Button size="compact" disabled={!connected} onClick={() => sendKey('\t')}>
+                            Tab
+                        </Button>
+                        <IconButton
+                            icon="arrowUp"
+                            label="Previous command"
+                            size="compact"
+                            disabled={!connected}
+                            onClick={() => sendKey('\x1b[A')}
+                        />
+                        <IconButton
+                            icon="arrowDown"
+                            label="Next command"
+                            size="compact"
+                            disabled={!connected}
+                            onClick={() => sendKey('\x1b[B')}
+                        />
                     </div>
                 )}
             </section>

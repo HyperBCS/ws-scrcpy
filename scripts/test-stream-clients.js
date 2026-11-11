@@ -838,8 +838,6 @@ function buttonByTitle(title, since) {
 }
 
 test('Android toolbar: a held button is released when the window loses focus or the page is hidden', (t) => {
-    const SvgImage = require('../src/app/ui/SvgImage').default;
-    t.mock.method(SvgImage, 'create', () => element());
     const { GoogToolBox } = require('../src/app/googDevice/toolbox/GoogToolBox');
     const sent = [];
     const client = { sendMessage: (message) => sent.push([message.action, message.keycode]), getDeviceName: () => 'Pixel' };
@@ -889,8 +887,6 @@ test('Android toolbar: a held button is released when the window loses focus or 
 
 test('iPhone toolbar: a held button is released on blur, and a press cut short is not sent', (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
-    const SvgImage = require('../src/app/ui/SvgImage').default;
-    t.mock.method(SvgImage, 'create', () => element());
     const { ApplToolBox } = require('../src/app/applDevice/toolbox/ApplToolBox');
     const sent = [];
     const client = { pressButton: (name, state) => sent.push([name, state]), getPlayer: () => undefined, getDeviceName: () => 'iPhone' };
@@ -926,6 +922,37 @@ test('iPhone toolbar: a held button is released on blur, and a press cut short i
     t.mock.timers.tick(100);
     siri('pointerup');
     assert.deepEqual(sent, [['siri', 'press']], 'an ordinary tap is unchanged');
+});
+
+test('toolbar buttons are the kit icon button, each with a name and an icon of the one set', (t) => {
+    const { iconSvg } = require('../src/app/ui/icons');
+    const { GoogToolBox } = require('../src/app/googDevice/toolbox/GoogToolBox');
+    const { ApplToolBox } = require('../src/app/applDevice/toolbox/ApplToolBox');
+    const named = [];
+    const buttonsOf = (make) => {
+        const since = created.length;
+        const toolbox = make();
+        t.after(() => toolbox.release());
+        const buttons = created.slice(since).filter((item) => item.title);
+        // The fake element records what is set on it.
+        named.push(...buttons.filter((button) => typeof button.className === 'string' && button.className.split(' ').includes('kit-icon-button')));
+        return buttons.map((button) => [button.title, button.innerHTML]);
+    };
+    const android = buttonsOf(() => GoogToolBox.createToolBox('android-icons', { supportsScreenshot: true }, { sendMessage() {}, getDeviceName: () => 'Pixel' }, { captureKeyboard: false }));
+    assert.deepEqual(android, [
+        ['Back', iconSvg('navBack')], ['Home', iconSvg('home')], ['Overview', iconSvg('square')], ['Volume down', iconSvg('volDown')],
+        ['Mute device', iconSvg('volMute')], ['Volume up', iconSvg('volUp')], ['Power', iconSvg('power')], ['Take screenshot', iconSvg('camera')],
+        ['Actions', iconSvg('bolt')], ['Settings', iconSvg('sliders')], ['Listen', iconSvg('headphones')], ['Type text', iconSvg('text')],
+    ]);
+    const iphone = buttonsOf(() => ApplToolBox.createToolBox({ pressButton() {}, getPlayer: () => undefined, getDeviceName: () => 'iPhone', getDeviceUdid: () => 'IPHONE' }));
+    assert.deepEqual(iphone, [
+        ['Home', iconSvg('home')], ['Lock', iconSvg('power')], ['Volume down', iconSvg('volDown')], ['Mute device', iconSvg('volMute')],
+        ['Volume up', iconSvg('volUp')], ['Siri', iconSvg('mic')], ['Listen', iconSvg('headphones')], ['Take screenshot', iconSvg('camera')],
+        ['Actions', iconSvg('bolt')], ['Settings', iconSvg('sliders')], ['Type text', iconSvg('text')],
+    ]);
+    assert.equal(named.length, android.length + iphone.length, 'every button carries the kit class');
+    assert.ok(named.every((button) => button.className === 'kit-icon-button kit-icon-button-bare control-button'));
+    assert.notEqual(iconSvg('headphones'), iconSvg('volMute'), 'Listen is not drawn like the mute key of the phone');
 });
 
 test('both stream clients drop their toolbar holds when the stream disconnects', (t) => {

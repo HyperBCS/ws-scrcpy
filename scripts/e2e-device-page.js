@@ -11,6 +11,9 @@ const path = require('node:path');
 const { chromium } = require('playwright');
 const { initialStreamPacket } = require('./e2e-sheets');
 const { settleMotion } = require('./ui-motion');
+// The one icon set, to tell which icon a control shows.
+require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
+const { ICONS } = require('../src/app/ui/icons');
 
 // Only through test-browser.js, which serves the build on a port of its own. Without it this
 // would open streams on the live server.
@@ -172,7 +175,7 @@ const place = (page) => page.evaluate(() => history.state?.nav?.index);
 const quiet = (page, ms = 350) => page.waitForTimeout(ms);
 const streamsOf = (test, udid) => test.streams.filter((stream) => stream.udid === udid).length;
 const count = (list, value) => list.filter((item) => item === value).length;
-const tab = (page, name) => page.locator('.tool-tabs').getByRole('button', { name, exact: true });
+const tab = (page, name) => page.locator('.kit-tabs-list').getByRole('button', { name, exact: true });
 const crumb = (page, name) => page.locator('.file-explorer[data-listing="ready"] .fx-crumb[aria-current="page"]').filter({ hasText: name });
 const terminalText = (page) => page.locator('.terminal-container .xterm-rows').innerText();
 const terminalRows = (page) => page.locator('.terminal-container .xterm-rows > div').count();
@@ -219,31 +222,134 @@ async function checkLinks(page, label, { allowPlayer = false } = {}) {
 async function checkChrome(page, label, current, viewport, { entered = false } = {}) {
     // The strip slides in when the page is entered. A tab change draws it in place, at rest.
     assert.equal(
-        await page.locator('.tool-navigation').evaluate((strip) => getComputedStyle(strip).animationName),
+        await page.locator('nav.kit-tabs').evaluate((strip) => getComputedStyle(strip).animationName),
         entered ? 'surface-enter' : 'none',
         `${label}: the strip ${entered ? 'enters with the page' : 'does not enter again on a tab change'}`,
     );
     await settleMotion(page);
-    assert.equal(await page.locator('.stream-header').count(), 1, `${label}: one header`);
-    assert.equal(await page.locator('.tool-navigation').count(), 1, `${label}: one tab strip`);
-    assert.deepEqual(await page.locator('.tool-tabs button').allInnerTexts(), TABS, `${label}: the tabs`);
-    assert.deepEqual(await page.locator('.tool-tabs button[aria-current="page"]').allInnerTexts(), [current], `${label}: ${current} is the current tab`);
-    assert.equal(await page.locator('.stream-header-back').getAttribute('aria-label'), 'Phones', `${label}: the back control is named after the list`);
-    assert.equal(await page.locator('.stream-header .notifications-link').count(), 1, `${label}: the bell`);
-    assert.equal(await page.locator('.stream-header-switch').innerText(), 'Switch');
+    // The header and the tabs are the kit's: one bar whose title is the page's one h1, and
+    // none of the header or the tab row from before the kit.
+    assert.equal(await page.locator('header.kit-bar').count(), 1, `${label}: one header`);
+    assert.equal(await page.locator('nav.kit-tabs').count(), 1, `${label}: one tab strip`);
+    assert.equal(await page.locator('.stream-header, .tool-navigation').count(), 0, `${label}: no header or tabs of the older look`);
+    assert.deepEqual(await page.locator('h1').evaluateAll((list) => list.map((h1) => h1.className)), ['kit-bar-name'], `${label}: one h1, the name in the bar`);
+    assert.deepEqual(await page.locator('.kit-tabs-list .kit-tab').allInnerTexts(), TABS, `${label}: the tabs`);
+    assert.deepEqual(await page.locator('.kit-tabs-list .kit-tab[aria-current="page"]').allInnerTexts(), [current], `${label}: ${current} is the current tab`);
+    assert.equal(await page.locator('.kit-bar-back').getAttribute('aria-label'), 'Phones', `${label}: the back control is named after the list`);
+    assert.equal(await page.locator('.kit-bar .notifications-link').count(), 1, `${label}: the bell`);
+    assert.equal(await page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }).innerText(), 'Switch');
     const boxes = await page.evaluate(() => {
         const rect = (selector) => document.querySelector(selector).getBoundingClientRect().toJSON();
         return {
-            header: rect('.stream-header'), strip: rect('.tool-navigation'),
-            tabs: [...document.querySelectorAll('.tool-tabs button')].map((button) => button.getBoundingClientRect().toJSON()),
+            header: rect('.kit-bar'), strip: rect('nav.kit-tabs'),
+            tabs: [...document.querySelectorAll('.kit-tabs-list .kit-tab')].map((button) => button.getBoundingClientRect().toJSON()),
             overflow: document.documentElement.scrollWidth > innerWidth + 1,
         };
     });
     assert.ok(Math.abs(boxes.strip.top - boxes.header.bottom) <= 1, `${label}: the strip sits under the header (${boxes.header.bottom}, ${boxes.strip.top})`);
-    assert.ok(boxes.strip.height >= 54 && boxes.strip.height <= 56, `${label}: the strip is as tall as on the tool page (${boxes.strip.height})`);
+    assert.ok(boxes.strip.height >= 44 && boxes.strip.height <= 46, `${label}: the strip is the kit's row, 44px tabs over a line (${boxes.strip.height})`);
     assert.ok(boxes.tabs.every((box) => box.height >= 44 && box.width >= 44 && box.left >= 0 && box.right <= viewport.width + 1), `${label}: every tab is a 44px target on screen`);
     assert.equal(boxes.overflow, false, `${label}: nothing overflows sideways`);
     return boxes;
+}
+
+/** The icon of the one set each control of the screen shows, by the control's title. */
+const CONTROL_ICONS = {
+    Back: 'navBack', Home: 'home', Overview: 'square', 'Volume down': 'volDown', 'Mute device': 'volMute', 'Volume up': 'volUp',
+    Power: 'power', Lock: 'power', Siri: 'mic', Listen: 'headphones', 'Take screenshot': 'camera', Actions: 'bolt', Settings: 'sliders', 'Type text': 'text',
+};
+
+/**
+ * The controls of a phone's screen, in the panel on a phone and in the rail on a desktop: each
+ * is the kit's icon button with a name, one icon of the one set and a caption, and nothing is
+ * drawn with a character. Listen says whether it is on. The controls button is one too.
+ */
+async function checkControls(page, label, viewport, titles) {
+    const fab = page.locator('.floating-toolbar-fab');
+    if (viewport.mobile) {
+        assert.equal(await fab.evaluate((button) => button.matches('button.kit-icon-button')), true, `${label}: the controls button is the kit's icon button`);
+        assert.equal(await fab.getAttribute('aria-label'), 'Show controls');
+        assert.equal(await fab.locator('svg.kit-icon > path').getAttribute('d'), ICONS.grid, `${label}: the controls button shows the grid`);
+        await fab.click();
+        await page.locator('.floating-toolbar.open').waitFor();
+        await settleMotion(page);
+        assert.equal(await fab.locator('svg.kit-icon > path').getAttribute('d'), ICONS.close, `${label}: and the cross while the panel is open`);
+    } else {
+        assert.equal(await fab.count(), 0, `${label}: the rail has no controls button`);
+    }
+    const controls = await page.locator('.control-buttons-list > *').evaluateAll((list) =>
+        list.map((control) => {
+            const caption = control.querySelector('.kit-icon-button-caption');
+            const box = control.getBoundingClientRect();
+            return {
+                title: control.title, name: control.getAttribute('aria-label'), kit: control.matches('button.kit-icon-button.kit-icon-button-captioned'),
+                svgs: control.querySelectorAll('svg').length, images: control.querySelectorAll('img').length,
+                path: control.querySelector(':scope > svg.kit-icon > path')?.getAttribute('d'),
+                caption: caption?.textContent, captionHidden: caption?.getAttribute('aria-hidden'), text: control.textContent,
+                size: parseFloat(getComputedStyle(caption || control).fontSize), pressed: control.getAttribute('aria-pressed'),
+                width: box.width, height: box.height,
+            };
+        }),
+    );
+    assert.deepEqual(controls.map((control) => control.title), titles, `${label}: the controls, in their order`);
+    for (const control of controls) {
+        const name = `${label} ${control.title}`;
+        assert.equal(control.kit, true, `${name}: the kit's icon button with a caption`);
+        assert.equal(control.name, control.title, `${name}: named`);
+        assert.equal(control.svgs, 1, `${name}: one icon`);
+        assert.equal(control.images, 0, `${name}: no picture file`);
+        assert.equal(control.path, ICONS[CONTROL_ICONS[control.title]], `${name}: the ${CONTROL_ICONS[control.title]} icon of the set`);
+        assert.equal(control.text, control.caption, `${name}: no text beside the caption`);
+        assert.match(control.caption, /^[A-Za-z ]+$/, `${name}: the caption is words (${control.caption})`);
+        assert.equal(control.captionHidden, 'true', `${name}: the caption is not read out after the name`);
+        assert.equal(control.size, 12, `${name}: a 12px caption`);
+        assert.ok(control.width >= 44 && control.height >= 44, `${name}: a 44px target (${control.width} by ${control.height})`);
+        assert.equal(control.pressed, control.title === 'Listen' ? 'false' : null, `${name}: only Listen is a control that stays on`);
+    }
+    assert.notEqual(ICONS.headphones, ICONS.volMute, 'Listen and the mute key of the phone are different icons');
+    if (!viewport.mobile) {
+        // The rail scrolls and its controls take its full width: the focus ring of each one is
+        // drawn where the rail does not cut it. A disabled key takes no focus.
+        const rings = await page.locator('.control-buttons-list > :not(:disabled)').evaluateAll((list) =>
+            list.map((control) => {
+                control.focus();
+                const style = getComputedStyle(control);
+                const reach = Math.max(0, parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth));
+                const box = control.getBoundingClientRect();
+                const panel = control.closest('.floating-toolbar-panel');
+                const left = panel.getBoundingClientRect().left + panel.clientLeft;
+                const inside = box.left - reach >= left - 0.5 && box.right + reach <= left + panel.clientWidth + 0.5;
+                return { title: control.title, ring: control.matches(':focus-visible') && style.outlineStyle === 'solid', inside };
+            }),
+        );
+        await page.evaluate(() => document.activeElement?.blur());
+        assert.deepEqual(rings.filter((ring) => !ring.ring || !ring.inside).map((ring) => ring.title), [], `${label}: every control of the rail shows its whole focus ring`);
+    }
+    if (viewport.mobile) {
+        await fab.click();
+        await page.locator('.floating-toolbar.open').waitFor({ state: 'detached' });
+        await settleMotion(page);
+    }
+}
+
+/** The controls of both kinds of phone, in a page of their own: opening the panel adds a history entry. */
+async function screenControls(browser, viewport) {
+    for (const [udid, titles] of [
+        [PIXEL, ['Back', 'Home', 'Overview', 'Volume down', 'Mute device', 'Volume up', 'Power', 'Listen', 'Take screenshot', 'Actions', 'Settings', 'Type text']],
+        [IPHONE, ['Home', 'Lock', 'Volume down', 'Mute device', 'Volume up', 'Siri', 'Listen', 'Take screenshot', 'Actions', 'Settings', 'Type text']],
+    ]) {
+        const test = await start(browser, { viewport, hash: `action=device&udid=${udid}&view=screen` });
+        try {
+            await test.page.locator('.control-buttons-list').waitFor({ state: 'attached' });
+            await checkControls(test.page, `${viewport.name} ${udid}`, viewport, titles);
+            await quiet(test.page);
+            assert.equal(test.streams.length, 1, `${viewport.name} ${udid}: one stream socket for the open`);
+            assert.deepEqual(test.errors, []);
+        } finally {
+            await test.context.close();
+        }
+    }
+    console.log(`PASS ${viewport.name} every control of the screen is a kit icon button with a name, an icon of the set and a caption`);
 }
 
 /** Screen, Files, Shell and back on one Android phone, with one history entry for all of it. */
@@ -274,16 +380,21 @@ async function androidTabs(browser, viewport, colorScheme) {
         assert.equal(await page.locator('.tool-view, .file-explorer, .terminal-container').count(), 0, 'and not mounted');
         assert.equal(await page.evaluate(() => document.body.className), 'stream');
         await checkLinks(page, `${label} Screen`);
-        // What is laid over the picture starts below the tabs, not over them.
+        // What is laid over the picture starts below the tabs, not over them, and takes no
+        // room from the picture: a notice hangs from a place without height above the stage.
         const notice = await page.evaluate(() => {
+            const stage = document.querySelector('.stream-stage');
+            const before = stage.getBoundingClientRect().top;
             const probe = document.createElement('div');
-            probe.className = 'stream-notice';
-            document.querySelector('.stream-view').append(probe);
-            const top = probe.getBoundingClientRect().top;
+            probe.className = 'stream-notice-anchor';
+            probe.innerHTML = '<div class="kit-banner stream-notice">A notice</div>';
+            stage.before(probe);
+            const result = { top: probe.firstChild.getBoundingClientRect().top, moved: stage.getBoundingClientRect().top - before };
             probe.remove();
-            return top;
+            return result;
         });
-        assert.ok(notice >= screen.strip.bottom, `${label}: a notice shows below the tabs (${notice})`);
+        assert.ok(notice.top >= screen.strip.bottom, `${label}: a notice shows below the tabs (${notice.top})`);
+        assert.equal(notice.moved, 0, `${label}: a notice does not move the picture`);
         await shot('screen');
 
         // Files: the stream stops at once. The entry is replaced.
@@ -411,7 +522,7 @@ async function oneBackFromAnyTab(browser, viewport) {
             // Through the other tabs first, so the entry has been replaced more than once.
             for (const step of TABS.filter((other) => other !== name).concat(name)) {
                 await tab(page, step).click();
-                await page.locator(`.tool-tabs button[aria-current="page"]`, { hasText: step }).waitFor();
+                await page.locator(`.kit-tabs-list .kit-tab[aria-current="page"]`, { hasText: step }).waitFor();
             }
             if (name === 'Screen') await page.getByText('Connected', { exact: true }).first().waitFor();
             await quiet(page);
@@ -492,7 +603,7 @@ async function switchReplaces(browser, viewport) {
         await page.waitForFunction((udid) => location.hash === `#!action=device&udid=${udid}&view=screen`, IPHONE);
         await page.locator('.stream-view').waitFor();
         await until(() => count(test.closed, 'FSLS') === 2, 'the tools of the Android phone stop when an iPhone is shown');
-        assert.equal(await page.locator('.tool-navigation, .tool-view').count(), 0, `${label}: an iPhone has no tabs`);
+        assert.equal(await page.locator('nav.kit-tabs, .tool-view').count(), 0, `${label}: an iPhone has no tabs`);
         assert.equal(await place(page), inFolder);
         await quiet(page);
         assert.deepEqual(test.streams.map((stream) => stream.udid), [PIXEL, PIXEL_2, PIXEL, IPHONE]);
@@ -512,17 +623,18 @@ async function iphonePage(browser, viewport, colorScheme) {
         await card(page, `ios:${IPHONE}`).getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.locator('.stream-view').waitFor();
         assert.equal(await hash(page), `#!action=device&udid=${IPHONE}&view=screen`);
-        assert.equal(await page.locator('.tool-navigation').count(), 0, `${label}: no tab strip`);
-        const header = page.locator('header.stream-header');
+        assert.equal(await page.locator('nav.kit-tabs').count(), 0, `${label}: no tab strip`);
+        const header = page.locator('header.kit-bar');
         assert.equal(await header.count(), 1);
-        assert.equal(await header.locator('.stream-header-device > strong').textContent(), 'Bench iPhone');
-        assert.equal(await header.locator('.stream-header-back').getAttribute('aria-label'), 'Phones');
+        assert.equal(await header.locator('h1.kit-bar-name').textContent(), 'Bench iPhone');
+        assert.equal(await page.locator('h1').count(), 1, `${label}: the name in the bar is the page's one h1`);
+        assert.equal(await header.locator('.kit-bar-back').getAttribute('aria-label'), 'Phones');
         // The fixture's socket opens and says nothing more, so the session never starts.
-        assert.match(await header.locator('.stream-header-status').innerText(), /^(Connecting…|Starting the phone stream…)$/);
+        assert.match(await header.locator('.kit-bar-status').innerText(), /^(Connecting…|Starting the phone stream…)$/);
         const bell = header.locator('.notifications-link');
         assert.equal(await bell.getAttribute('href'), `#!action=notifications&source=${IPHONE}`, `${label}: the bell opens this iPhone's inbox`);
         assert.equal(await bell.getAttribute('aria-label'), 'Notifications, 2 unread');
-        assert.equal(await header.locator('.stream-header-switch').innerText(), 'Switch');
+        assert.equal(await header.getByRole('button', { name: 'Switch', exact: true }).innerText(), 'Switch');
         const stage = await page.locator('.stream-stage').boundingBox();
         const bar = await header.boundingBox();
         assert.ok(Math.abs(stage.y - (bar.y + bar.height)) <= 1, `${label}: the picture starts under the header`);
@@ -543,7 +655,7 @@ async function iphonePage(browser, viewport, colorScheme) {
         await sheet.getByRole('button', { name: /^Close/ }).click();
         await sheet.waitFor({ state: 'hidden' });
 
-        await header.locator('.stream-header-back').click();
+        await header.locator('.kit-bar-back').click();
         await page.locator('#devices').waitFor();
         await page.goBack().catch(() => undefined);
         assert.ok(!page.url().startsWith(BASE), `${label}: Back from the list leaves the app`);
@@ -622,7 +734,7 @@ async function focusFollowsTheTabs(browser) {
     const { page } = test;
     const focused = () => page.evaluate(() => ({
         text: document.activeElement?.textContent, current: document.activeElement?.getAttribute('aria-current'),
-        inStrip: !!document.activeElement?.closest('.tool-tabs'), inHiddenTool: !!document.activeElement?.closest('.tool-view[hidden]'),
+        inStrip: !!document.activeElement?.closest('.kit-tabs-list'), inHiddenTool: !!document.activeElement?.closest('.tool-view[hidden]'),
     }));
     try {
         await card(page, `android:${PIXEL}`).getByRole('link', { name: 'Open screen', exact: true }).click();
@@ -636,7 +748,7 @@ async function focusFollowsTheTabs(browser) {
         await page.locator('.terminal-container .xterm').click();
         assert.equal(await page.evaluate(() => !!document.activeElement?.closest('.terminal-container')), true);
         // A tab change that does not move the focus itself: the terminal must give it up.
-        await page.evaluate(() => [...document.querySelectorAll('.tool-tabs button')].find((button) => button.textContent === 'Files').click());
+        await page.evaluate(() => [...document.querySelectorAll('.kit-tabs-list .kit-tab')].find((button) => button.textContent === 'Files').click());
         await page.locator('.tool-view-list-files').waitFor();
         assert.equal((await focused()).inHiddenTool, false, 'a hidden shell does not keep the focus');
         await page.keyboard.type('lost');
@@ -694,8 +806,15 @@ async function toolAddressForIphone(browser) {
     const { page } = test;
     try {
         await page.getByRole('heading', { name: 'Shell is not available for this device', exact: true }).waitFor();
-        assert.equal(await page.locator('.stream-header-back').getAttribute('aria-label'), 'Phones');
-        assert.equal(await page.locator('.tool-navigation').count(), 0);
+        assert.equal(await page.locator('.kit-bar-back').getAttribute('aria-label'), 'Phones');
+        assert.equal(await page.locator('nav.kit-tabs').count(), 0);
+        assert.deepEqual(await page.locator('h1').evaluateAll((list) => list.map((h1) => h1.className)), ['kit-bar-name'], 'refused tool: one h1, the name in the bar');
+        // Both actions of the page are the kit's buttons: Open screen, a link, is the primary one.
+        assert.deepEqual(
+            await page.locator('.tool-unavailable-actions > *').evaluateAll((list) => list.map((item) => `${item.tagName.toLowerCase()}.${item.className}`)),
+            ['a.kit-button kit-button-primary', 'button.kit-button'],
+            'refused tool: the kit buttons',
+        );
         const links = await checkLinks(page, 'refused tool');
         assert.deepEqual(links.map((link) => [link.text, link.hash]), [['Open screen', `#!action=device&udid=${IPHONE}&view=screen`]]);
         const before = await entries(page);
@@ -726,6 +845,7 @@ async function main() {
                 await androidTabs(browser, viewport, colorScheme);
                 await iphonePage(browser, viewport, colorScheme);
             }
+            await screenControls(browser, viewport);
             await oneBackFromAnyTab(browser, viewport);
             await switchReplaces(browser, viewport);
         }

@@ -28,6 +28,7 @@ import {
 import { Switch } from '../ui/Switch';
 import { TabStrip } from '../ui/TabStrip';
 import { Toast } from '../ui/Toast';
+import '../../style/kit/IconButtonCaption.css';
 import '../../style/views/KitPage.css';
 
 /**
@@ -179,6 +180,32 @@ function IconButtons() {
                 />
                 <IconButton icon="headphones" label="Sound, playing" variant="bare" pressed />
                 <IconButton icon="volMute" label="Mute the phone" variant="bare" />
+            </Demo>
+            <Demo name="with a caption (phone controls)">
+                <div class="kit-demo-controls">
+                    {(
+                        [
+                            ['home', 'Home', undefined, false],
+                            ['headphones', 'Listen', true, false],
+                            ['power', 'Power', undefined, true],
+                        ] as const
+                    ).map(([icon, title, pressed, disabled]) => (
+                        <button
+                            key={title}
+                            type="button"
+                            class={`${iconButtonClass({ variant: 'bare' })} kit-icon-button-captioned`}
+                            aria-label={title}
+                            title={title}
+                            aria-pressed={pressed}
+                            disabled={disabled}
+                        >
+                            <Icon name={icon} />
+                            <span class="kit-icon-button-caption" aria-hidden="true">
+                                {pressed ? 'Listening' : title}
+                            </span>
+                        </button>
+                    ))}
+                </div>
             </Demo>
             <Demo name="without a label">
                 <Refusal>

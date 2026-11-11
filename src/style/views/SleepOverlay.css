@@ -4,11 +4,13 @@
 .sleep-overlay {
     /* `fixed`, not `absolute`: this is rendered by Preact as a sibling of the imperative
        vanilla-DOM tree `StreamClientScrcpy` builds (`.device-view`, `.video`, the control bar),
-       so it has no positioned ancestor to be `absolute` relative to. */
+       so it has no positioned ancestor to be `absolute` relative to. It covers the window one
+       step under the header and the tabs (`--z-header`), which are drawn over it, so it needs
+       no knowledge of their height. It stays above the controls shield (4, earlier in the
+       page) and under the stopped card (6). */
     position: fixed;
     inset: 0;
-    top: calc(57px + env(safe-area-inset-top, 0px));
-    z-index: 5;
+    z-index: 4;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -17,9 +19,8 @@
        bar. Only `.sleep-overlay-card` re-enables pointer events, which bounds the damage of a
        wrong visibility decision to "a dimmed screen" instead of "the UI is frozen". */
     pointer-events: none;
-    background-color: rgba(0, 0, 0, 0.55);
-    color: hsl(0, 0%, 95%);
-    padding: env(safe-area-inset-top, 0px) 14px env(safe-area-inset-bottom, 0px);
+    background-color: var(--scrim);
+    padding: env(safe-area-inset-top, 0px) var(--space-16) env(safe-area-inset-bottom, 0px);
     box-sizing: border-box;
 }
 
@@ -29,41 +30,27 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 4.9px;
-    /* Comfortably past the 44px minimum on the surface this is actually used on. */
-    min-width: 154px;
+    gap: var(--space-8);
+    min-width: 160px;
     max-width: min(320px, calc(100vw - 48px));
     box-sizing: border-box;
-    min-height: 44px;
-    padding: 17.5px 24.5px;
-    border-radius: 20px;
-    background-color: rgba(14, 20, 32, 0.92);
-    border: 1px solid hsla(0, 0%, 100%, 0.18);
-    color: inherit;
-    font: inherit;
+    padding: var(--space-20) var(--space-24);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-raised);
+    box-shadow: var(--shadow-raised);
+    color: var(--text);
     text-align: center;
 }
 
 .sleep-overlay-spinner {
     width: 28px;
     height: 28px;
-    margin-bottom: 10px;
-    border: 3px solid rgba(255, 255, 255, 0.2);
-    border-top-color: #60a5fa;
-    border-radius: 50%;
+    margin-bottom: var(--space-4);
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: var(--radius-full);
     animation: stream-connecting 1s linear infinite;
-}
-
-.sleep-overlay-return {
-    min-height: 44px;
-    margin-top: 10px;
-    padding: 0 16px;
-    border: 1px solid rgba(255, 255, 255, 0.24);
-    border-radius: 10px;
-    color: inherit;
-    background: rgba(255, 255, 255, 0.08);
-    font: inherit;
-    cursor: pointer;
 }
 
 @keyframes stream-connecting {
@@ -78,28 +65,20 @@
     }
 }
 
-.sleep-overlay-button {
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-}
-
-.sleep-overlay-button:active {
-    background-color: hsla(0, 0%, 100%, 0.12);
-}
-
-.sleep-overlay-icon {
-    font-size: 35px;
-    line-height: 1;
-}
-
 .sleep-overlay-label {
-    font-size: 14.7px;
-    font-weight: bold;
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.4;
 }
 
 .sleep-overlay-hint {
-    font-size: 11.9px;
-    opacity: 0.8;
-    line-height: 1.5;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    line-height: 1.4;
+}
+
+/* The one action of the card, under its words. */
+.sleep-overlay-card > .kit-button {
+    margin-top: var(--space-8);
 }
 }

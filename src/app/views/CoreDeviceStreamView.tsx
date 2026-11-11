@@ -20,6 +20,9 @@ import { NotificationsLink } from '../ui/NotificationsLink';
 import { goUp } from '../state/router';
 import { LIST_PAGE_NAME } from '../state/routes';
 import { AppBar, AppBarStatus } from '../ui/AppBar';
+import { Button } from '../ui/Button';
+import { Icon } from '../ui/Icon';
+import { IconButton } from '../ui/IconButton';
 import { FloatingToolbar } from './FloatingToolbar';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { ApplActionsSheet } from './ApplActionsSheet';
@@ -28,6 +31,7 @@ import { LiveTextOverlay } from './LiveTextOverlay';
 import { LockScreenNotice } from './LockScreenNotice';
 import { SleepOverlay } from './SleepOverlay';
 import { coreDeviceLiveTextTarget } from '../applDevice/liveTextTarget';
+import '../../style/kit/Banner.css';
 import '../../style/views/StreamView.css';
 
 interface CoreDeviceStreamViewProps {
@@ -161,16 +165,11 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
 
     return (
         <div class="stream-view">
-            <AppBar title={String(name)} status={<AppBarStatus connected={connected}>{statusText}</AppBarStatus>}>
+            <AppBar kit title={String(name)} status={<AppBarStatus kit>{statusText}</AppBarStatus>}>
                 <NotificationsLink compact udid={params.udid} />
-                <button
-                    type="button"
-                    class="stream-header-switch"
-                    onClick={() => openSheet('devices')}
-                    disabled={!active}
-                >
+                <Button size="compact" onClick={() => openSheet('devices')} disabled={!active}>
                     Switch
-                </button>
+                </Button>
             </AppBar>
             <LockScreenNotice
                 key="lock-notice"
@@ -183,18 +182,26 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
             {/* Progress of a first start ("Preparing the device"). A failure has the card below. */}
             <Presence
                 show={session.state === 'starting' && !!session.message && !problem}
-                kind="collapse"
                 key="session-notice"
-                class="stream-notice"
-                role="status"
+                class="stream-notice-anchor"
             >
-                <span>{session.message}</span>
+                <div class="kit-banner kit-banner-info stream-notice" role="status">
+                    <Icon name="info" size={16} />
+                    <span class="kit-banner-text">{session.message}</span>
+                </div>
             </Presence>
-            <Presence show={!!streamNotice.value} kind="collapse" key="notice" class="stream-notice" role="status">
-                <span>{streamNotice.value}</span>
-                <button type="button" onClick={() => (streamNotice.value = '')} aria-label="Dismiss message">
-                    ✕
-                </button>
+            <Presence show={!!streamNotice.value} key="notice" class="stream-notice-anchor">
+                <div class="kit-banner stream-notice" role="status">
+                    <Icon name="warning" size={16} />
+                    <span class="kit-banner-text">{streamNotice.value}</span>
+                    <IconButton
+                        icon="close"
+                        label="Dismiss message"
+                        variant="bare"
+                        size="compact"
+                        onClick={() => (streamNotice.value = '')}
+                    />
+                </div>
             </Presence>
             <div key="stage" class="stream-stage">
                 <div class="stream-mount" ref={containerRef} />
@@ -214,13 +221,11 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                     )}
                     <div class="stream-start-error-actions">
                         {problem.retry && active && (
-                            <button type="button" class="sheet-button primary" onClick={() => active.client.retry()}>
+                            <Button variant="primary" onClick={() => active.client.retry()}>
                                 Retry
-                            </button>
+                            </Button>
                         )}
-                        <button type="button" class="sheet-button" onClick={goUp}>
-                            {LIST_PAGE_NAME}
-                        </button>
+                        <Button onClick={goUp}>{LIST_PAGE_NAME}</Button>
                     </div>
                 </div>
             )}

@@ -5,7 +5,7 @@ export class ToolBox {
 
     constructor(list: ToolBoxElement<any>[]) {
         this.holder = document.createElement('div');
-        this.holder.classList.add('control-buttons-list', 'control-wrapper');
+        this.holder.classList.add('control-buttons-list');
         list.forEach((item) => {
             item.getAllElements().forEach((el) => {
                 this.holder.appendChild(el);

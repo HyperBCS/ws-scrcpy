@@ -80,7 +80,7 @@ async function main() {
         const sibling = await page.context().newPage();
         await sibling.goto(page.url());
         await sibling.waitForFunction(() =>
-            document.querySelector('.stream-header-status')?.textContent.includes('Connected'),
+            document.querySelector('.kit-bar-status')?.textContent.includes('Connected'),
         );
         await sibling.close();
         await focusField(page);
