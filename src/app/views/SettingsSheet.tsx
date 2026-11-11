@@ -1,19 +1,23 @@
-import { AutoHeight } from '../ui/AutoHeight';
-import { AnimatedDetails } from '../ui/AnimatedDetails';
+import { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { BottomSheet } from '../ui/BottomSheet';
-import { VolumeSlider } from '../ui/SheetControls';
+import { Disclosure } from '../ui/AnimatedDetails';
+import { Button } from '../ui/Button';
+import { SelectField, SelectOption } from '../ui/Field';
+import { InlineStatus, StatusTone } from '../ui/InlineStatus';
+import { SegmentedControl } from '../ui/SegmentedControl';
+import { Sheet } from '../ui/Sheet';
+import { SheetGroup, SheetMessageRow, SheetRow, SheetStatus, SheetToggleRow, VolumeSlider } from '../ui/SheetControls';
 import { closeSettingsSheet, settingsSheetTarget } from '../state/settingsSheet';
 import { activeStream } from '../state/stream';
 import { deviceName } from '../state/devices';
 import { findDeviceForSettings } from '../state/streamDevice';
-import { activeAudioSession, audioAvailability, isAudioAvailable } from '../state/audio';
+import { activeAudioSession, audioAvailability, AudioSession, isAudioAvailable } from '../state/audio';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
-import { ControlCenterCommand } from '../../common/ControlCenterCommand';
-import { DEFAULT_SCRCPY_SERVER_CONFIG, ScrcpyServerConfig } from '../../common/Constants';
+import { ScrcpyServerConfig } from '../../common/Constants';
 import { EncoderInfo } from '../../types/EncoderInfo';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { route, switchRoute } from '../state/router';
+import { normalized, StreamConfig, StreamConfigPatch, useStreamConfig } from '../state/streamConfig';
 import '../../style/views/SettingsSheet.css';
 
 // Both browser players currently parse AVC/H.264. The server supports other codecs, but
@@ -28,23 +32,6 @@ const QUALITY_PRESETS = [
     { name: 'Balanced', bitrate: 3_500_000, maxFps: 60, maxSize: 1280 },
     { name: 'Sharper', bitrate: 8_000_000, maxFps: 60, maxSize: 1920 },
 ];
-const APPLY_TIMEOUT_MS = 20000;
-const LOAD_TIMEOUT_MS = 15000;
-
-interface ListEncodersReply {
-    udid: string;
-    requestId: number;
-    encoders?: EncoderInfo[];
-    config?: ScrcpyServerConfig;
-    error?: string;
-}
-interface UpdateStreamConfigReply {
-    udid: string;
-    requestId: number;
-    config?: ScrcpyServerConfig;
-    error?: string;
-}
-
 function formatBitrate(value: number): string {
     return `${value / 1_000_000} Mbps`;
 }
@@ -54,188 +41,61 @@ function formatMaxSize(value: number): string {
 function formatMaxFps(value: number): string {
     return value === 0 ? 'Unlimited' : `${value} fps`;
 }
-function normalized<K extends keyof ScrcpyServerConfig>(
-    config: Partial<ScrcpyServerConfig>,
-    key: K,
-): ScrcpyServerConfig[K] {
-    return (config[key] ??
-        (key === 'videoCodec'
-            ? 'h264'
-            : key === 'videoEncoder'
-              ? ''
-              : DEFAULT_SCRCPY_SERVER_CONFIG[key])) as ScrcpyServerConfig[K];
-}
-function numberOptions(options: number[], current: number): number[] {
-    return options.includes(current) ? options : [...options, current].sort((a, b) => a - b);
+/** The fixed choices of a number setting, plus the phone's own value when it is not one of them. */
+function numberOptions(options: number[], current: number, label: (value: number) => string): SelectOption[] {
+    const values = options.includes(current) ? options : [...options, current].sort((a, b) => a - b);
+    return values.map((value) => ({ value: String(value), label: label(value) }));
 }
 
-export function SettingsSheet() {
-    const target = settingsSheetTarget.value;
-    const session = activeStream.value;
-    const previousTarget = useRef(target);
-    if (target) {
-        previousTarget.current = target;
-    }
-    // Retain content through the closing animation. Each opening gets a fresh request below.
-    const renderTarget = target ?? previousTarget.current;
-    // The stream opens this sheet with a serial alone, and two hosts can each have that serial.
-    const entry = renderTarget ? findDeviceForSettings(renderTarget, session?.params) : undefined;
-    const tracker = target ? entry?.tracker : undefined;
-    const client: StreamClientScrcpy | undefined =
-        renderTarget && session?.params.udid === renderTarget.udid ? session.client : undefined;
-    const [baseline, setBaseline] = useState<ScrcpyServerConfig>(DEFAULT_SCRCPY_SERVER_CONFIG);
-    const [configKnown, setConfigKnown] = useState(false);
-    const [patch, setPatch] = useState<Partial<ScrcpyServerConfig>>({});
-    const [encoders, setEncoders] = useState<EncoderInfo[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [loadError, setLoadError] = useState<string>();
-    const [applying, setApplying] = useState(false);
-    const [confirming, setConfirming] = useState(false);
-    const [applyError, setApplyError] = useState<string>();
-    const [appliedNote, setAppliedNote] = useState<string>();
-    const [captureKeyboard, setCaptureKeyboard] = useState(true);
-    const [useUhid, setUseUhid] = useState(true);
-    const [showStats, setShowStats] = useState(false);
-    const [reload, setReload] = useState(0);
-    const applyTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
-    const pendingPatch = useRef<Partial<ScrcpyServerConfig>>();
-    const pendingRequestId = useRef<number>();
+interface SelectRowProps {
+    /** Names the row for tests and for the stylesheet (`data-setting`). */
+    name: string;
+    title: string;
+    description: string;
+    value: string;
+    options: ReadonlyArray<SelectOption>;
+    disabled?: boolean;
+    /** `stack` keeps the select under the text at every width, for long option names. */
+    layout?: 'pair' | 'stack';
+    onChange: (value: string) => void;
+}
 
-    useEffect(() => {
-        if (!target) {
-            return;
-        }
-        setPatch({});
-        setBaseline(DEFAULT_SCRCPY_SERVER_CONFIG);
-        setConfigKnown(false);
-        setEncoders([]);
-        setApplying(false);
-        setConfirming(false);
-        setApplyError(undefined);
-        setAppliedNote(undefined);
-        setLoadError(undefined);
-        setLoading(true);
-        pendingPatch.current = undefined;
-        pendingRequestId.current = undefined;
-        if (!tracker) {
-            setLoading(false);
-            setLoadError('Waiting for the phone…');
-            return;
-        }
-        const udid = target.udid;
-        let loadRequestId: number | undefined;
-        const loadTimeout = setTimeout(() => {
-            loadRequestId = undefined;
-            setLoading(false);
-            setLoadError('Stream settings took too long to load. Check the connection and try again.');
-        }, LOAD_TIMEOUT_MS);
-        const onEncoders = (data: ListEncodersReply) => {
-            if (!data || data.udid !== udid || data.requestId !== loadRequestId) {
-                return;
-            }
-            clearTimeout(loadTimeout);
-            loadRequestId = undefined;
-            setLoading(false);
-            if (data.error) {
-                setLoadError(`Could not load stream settings: ${data.error}`);
-                return;
-            }
-            setLoadError(undefined);
-            setEncoders(Array.isArray(data.encoders) ? data.encoders : []);
-            if (data.config) {
-                setBaseline(data.config);
-                setConfigKnown(true);
-            }
-        };
-        const onUpdated = (data: UpdateStreamConfigReply) => {
-            // A delayed or unsolicited reply must not clear a new edit or claim we applied it.
-            if (!data || data.udid !== udid || !pendingPatch.current || data.requestId !== pendingRequestId.current) {
-                return;
-            }
-            if (applyTimeoutRef.current !== undefined) {
-                clearTimeout(applyTimeoutRef.current);
-                applyTimeoutRef.current = undefined;
-            }
-            const submitted = pendingPatch.current;
-            pendingPatch.current = undefined;
-            pendingRequestId.current = undefined;
-            setApplying(false);
-            if (data.error) {
-                setApplyError(`Could not apply changes: ${data.error}`);
-                return;
-            }
-            setBaseline((current) => data.config ?? { ...current, ...submitted });
-            setConfigKnown(true);
-            setApplyError(undefined);
-            setPatch({});
-            setAppliedNote('Settings saved.');
-        };
-        tracker.on('list_encoders', onEncoders);
-        tracker.on('update_stream_config', onUpdated);
-        loadRequestId = tracker.sendCommand(ControlCenterCommand.LIST_ENCODERS, { udid });
-        return () => {
-            clearTimeout(loadTimeout);
-            tracker.off('list_encoders', onEncoders);
-            tracker.off('update_stream_config', onUpdated);
-            if (applyTimeoutRef.current !== undefined) {
-                clearTimeout(applyTimeoutRef.current);
-                applyTimeoutRef.current = undefined;
-            }
-            pendingPatch.current = undefined;
-            pendingRequestId.current = undefined;
-        };
-    }, [target, tracker, reload]);
+/** A setting chosen from a list: the select beside its text, and under it on a phone. */
+function SelectRow({ name, title, description, value, options, disabled, layout = 'pair', onChange }: SelectRowProps) {
+    return (
+        <SheetRow kit title={title} description={description} layout={layout} attributes={{ 'data-setting': name }}>
+            <SelectField
+                label={title}
+                labelHidden
+                value={value}
+                options={options}
+                disabled={disabled}
+                onChange={(event) => onChange(event.currentTarget.value)}
+            />
+        </SheetRow>
+    );
+}
 
-    useEffect(() => {
-        setShowStats(client?.getPlayer()?.getShowQualityStats() ?? false);
-        setCaptureKeyboard(client?.isKeyboardCaptured() ?? true);
-        setUseUhid(client?.isUsingUhidKeyboard() ?? true);
-    }, [client, target]);
+interface SectionProps {
+    /** The phone's settings with the unapplied changes over them. */
+    shown: ScrcpyServerConfig;
+    /** No setting can be changed now: loading, applying, or the phone is not there. */
+    locked: boolean;
+    setFields: (fields: StreamConfigPatch) => void;
+}
 
-    // The pressed button often leaves the apply bar (Apply changes, Apply & restart, Discard).
-    // Focus would then fall to the page behind the sheet, so it moves to what took the button's
-    // place: the error, else the next button, else the status line, else the sheet itself.
-    const contentRef = useRef<HTMLDivElement>(null);
-    const applyBar = () => contentRef.current?.querySelector<HTMLElement>('.settings-sheet-apply-bar');
-    const applyBarHadFocus = !!applyBar()?.contains(document.activeElement);
-    useLayoutEffect(() => {
-        const bar = applyBar();
-        const active = document.activeElement;
-        if (!applyBarHadFocus || !bar || !target || (bar.contains(active) && !active?.matches(':disabled'))) {
-            return;
-        }
-        const next =
-            bar.querySelector<HTMLElement>('[role="alert"]') ??
-            bar.querySelector<HTMLElement>('button:not(:disabled)') ??
-            bar.querySelector<HTMLElement>('[role="status"]') ??
-            bar.closest<HTMLElement>('[role="dialog"]');
-        next?.focus({ preventScroll: true });
-    });
+interface QualitySectionProps extends SectionProps {
+    config: StreamConfig;
+    hasTracker: boolean;
+    onReload: () => void;
+}
 
-    if (!renderTarget) {
-        return (
-            <BottomSheet open={false} onClose={closeSettingsSheet} title="Stream settings">
-                {null}
-            </BottomSheet>
-        );
-    }
-    const descriptor = entry?.params.type === 'android' ? (entry.descriptor as GoogDeviceDescriptor) : undefined;
-    const sdkInt = descriptor ? parseInt(descriptor['ro.build.version.sdk'], 10) : NaN;
-    const audioSession = client ? activeAudioSession.value : undefined;
-    const audioStatus = audioSession?.status.value;
-    const audioUnavailableReason = !isAudioAvailable()
-        ? audioAvailability.value.message
-        : !isNaN(sdkInt) && sdkInt < 30
-          ? `This phone runs Android API ${sdkInt}. Capturing sound requires Android 11 or later.`
-          : undefined;
-    // Missing tracker properties are not proof of an unsupported device. Let the capture
-    // handshake report actual support instead of permanently greying out newer Android phones.
-    const audioCapable = !audioUnavailableReason;
-    const shown = { ...baseline, ...patch };
+/** Quality presets, with the single settings behind them in a disclosure. */
+function QualitySection({ config, shown, locked, hasTracker, setFields, onReload }: QualitySectionProps) {
+    const { configKnown, encoders, loading, loadError, applying } = config;
     const codec = normalized(shown, 'videoCodec');
     const encoder = normalized(shown, 'videoEncoder');
-    const locked = applying || loading || !tracker;
-    const hasChanges = Object.keys(patch).length > 0;
+    const hasChanges = Object.keys(config.patch).length > 0;
     const filteredEncoders = encoders
         .filter((candidate) => candidate.videoCodec === codec)
         .slice()
@@ -255,70 +115,504 @@ export function SettingsSheet() {
                       !encoder,
               )?.name
             : undefined;
+    const choosePreset = (name: string) => {
+        const preset = QUALITY_PRESETS.find((candidate) => candidate.name === name);
+        if (preset) {
+            setFields({
+                bitrate: preset.bitrate,
+                maxFps: preset.maxFps,
+                maxSize: preset.maxSize,
+                videoCodec: 'h264',
+                videoEncoder: '',
+            });
+        }
+    };
+    const encoderOptions: SelectOption[] = [
+        { value: '', label: 'Automatic · phone default' },
+        ...(encoder && !filteredEncoders.some((candidate) => candidate.encoderName === encoder)
+            ? [{ value: encoder, label: encoder }]
+            : []),
+        ...filteredEncoders.map((candidate) => ({
+            value: candidate.encoderName,
+            label: `${candidate.encoderName}${
+                candidate.hardware === 'hw' ? ' · hardware' : candidate.hardware === 'sw' ? ' · software' : ''
+            }${candidate.aliasFor ? ' (alias)' : ''}`,
+        })),
+    ];
+    return (
+        <>
+            <SheetGroup
+                kit
+                title="Stream quality"
+                status={
+                    !loading &&
+                    !configKnown &&
+                    hasTracker && (
+                        <SheetStatus kit>
+                            Current settings unavailable. Only values you change will be applied.
+                        </SheetStatus>
+                    )
+                }
+            >
+                {loading && <SheetMessageRow tone="info">Loading settings…</SheetMessageRow>}
+                {loadError && (
+                    <SheetMessageRow
+                        action={hasTracker ? { label: 'Try again', run: onReload, disabled: applying } : undefined}
+                    >
+                        {loadError}
+                    </SheetMessageRow>
+                )}
+                {!loading && codec !== 'h264' && (
+                    <SheetMessageRow>
+                        This phone is using {codec?.toUpperCase()}, which this app cannot play. Choose a quality preset
+                        or H.264 below, then apply the change to restore video.
+                    </SheetMessageRow>
+                )}
+                <SheetRow
+                    kit
+                    title="Quality"
+                    description={
+                        !loading &&
+                        `${selectedPreset || 'Custom quality'} · ${formatBitrate(shown.bitrate)} · ${formatMaxFps(shown.maxFps)}`
+                    }
+                    layout="stack"
+                    attributes={{ 'data-setting': 'quality' }}
+                >
+                    <SegmentedControl
+                        label="Quality presets"
+                        full
+                        value={selectedPreset ?? ''}
+                        options={QUALITY_PRESETS.map((preset) => ({ value: preset.name, label: preset.name }))}
+                        disabled={locked}
+                        onChange={choosePreset}
+                    />
+                </SheetRow>
+            </SheetGroup>
+            <Disclosure class="settings-advanced" title="Advanced quality settings">
+                <SelectRow
+                    name="codec"
+                    title="Video codec"
+                    description="H.264 is the format this app can play"
+                    value={codec ?? ''}
+                    options={[
+                        ...(codec !== 'h264'
+                            ? [
+                                  {
+                                      value: codec ?? '',
+                                      label: `${codec?.toUpperCase()} · unsupported here`,
+                                      disabled: true,
+                                  },
+                              ]
+                            : []),
+                        ...CODEC_OPTIONS,
+                    ]}
+                    disabled={locked}
+                    onChange={(value) => setFields({ videoCodec: value, videoEncoder: '' })}
+                />
+                <SelectRow
+                    name="encoder"
+                    title="Video encoder"
+                    description={
+                        loading || encoders.length
+                            ? 'Automatic lets the phone choose. Hardware encoders are listed first.'
+                            : "No encoders were listed. Automatic uses the phone's default encoder."
+                    }
+                    layout="stack"
+                    value={encoder ?? ''}
+                    options={encoderOptions}
+                    disabled={locked}
+                    onChange={(value) => setFields({ videoEncoder: value })}
+                />
+                <SelectRow
+                    name="bitrate"
+                    title="Bitrate"
+                    description="Higher uses more data"
+                    value={String(shown.bitrate)}
+                    options={numberOptions(BITRATE_OPTIONS, shown.bitrate, formatBitrate)}
+                    disabled={locked}
+                    onChange={(value) => setFields({ bitrate: Number(value) })}
+                />
+                <SelectRow
+                    name="fps"
+                    title="Frame rate"
+                    description="Higher feels smoother"
+                    value={String(shown.maxFps)}
+                    options={numberOptions(MAX_FPS_OPTIONS, shown.maxFps, formatMaxFps)}
+                    disabled={locked}
+                    onChange={(value) => setFields({ maxFps: Number(value) })}
+                />
+                <SelectRow
+                    name="size"
+                    title="Resolution"
+                    description="Maximum long edge"
+                    value={String(shown.maxSize)}
+                    options={numberOptions(MAX_SIZE_OPTIONS, shown.maxSize, formatMaxSize)}
+                    disabled={locked}
+                    onChange={(value) => setFields({ maxSize: Number(value) })}
+                />
+                <SelectRow
+                    name="keyframes"
+                    title="Keyframe interval"
+                    description="Shorter recovers faster after a glitch. Longer saves data."
+                    value={String(shown.iFrameInterval)}
+                    options={numberOptions(IFRAME_INTERVAL_OPTIONS, shown.iFrameInterval, (value) => `${value}s`)}
+                    disabled={locked}
+                    onChange={(value) => setFields({ iFrameInterval: Number(value) })}
+                />
+            </Disclosure>
+        </>
+    );
+}
+
+interface SoundSectionProps extends SectionProps {
+    /** What the phone runs with: Listen plays only what is already captured. */
+    baseline: ScrcpyServerConfig;
+    hasChanges: boolean;
+    /** The phone's Android API level, or NaN when it is not known. */
+    sdkInt: number;
+    /** Playback in this browser, while this phone's screen is open. */
+    audioSession?: AudioSession;
+    screenOpen: boolean;
+    onRetry: () => void;
+}
+
+/** Sound capture on the phone, and playback in this browser while the screen is open. */
+function SoundSection({
+    shown,
+    baseline,
+    locked,
+    hasChanges,
+    sdkInt,
+    audioSession,
+    screenOpen,
+    setFields,
+    onRetry,
+}: SoundSectionProps) {
+    const audioStatus = audioSession?.status.value;
+    const audioUnavailableReason = !isAudioAvailable()
+        ? audioAvailability.value.message
+        : !isNaN(sdkInt) && sdkInt < 30
+          ? `This phone runs Android API ${sdkInt}. Capturing sound requires Android 11 or later.`
+          : undefined;
+    // Missing tracker properties are not proof of an unsupported device. Let the capture
+    // handshake report actual support instead of permanently greying out newer Android phones.
+    const audioCapable = !audioUnavailableReason;
+    const muted = !!audioSession && (audioSession.isMuted() || audioStatus?.state === 'blocked');
+    return (
+        <>
+            <SheetGroup kit title="Sound" class="settings-audio">
+                <SheetToggleRow
+                    kit
+                    title="Capture audio"
+                    description={
+                        audioUnavailableReason ||
+                        (shown.audio
+                            ? 'Capture is on. Tap Listen to hear it in this browser.'
+                            : 'Enable capture, then apply the change to listen in this browser.')
+                    }
+                    checked={!!shown.audio}
+                    disabled={locked || (!audioCapable && !shown.audio)}
+                    onChange={(checked) => setFields({ audio: checked })}
+                />
+                {!isAudioAvailable() && (
+                    <div class="kit-row kit-row-stack" data-audio-availability={audioAvailability.value.state}>
+                        <Button onClick={() => location.reload()}>Reload page</Button>
+                    </div>
+                )}
+                <SelectRow
+                    name="audio-source"
+                    title="Audio source"
+                    description="Device media is what the phone plays; the phone itself goes quiet unless you choose the option that keeps it playing. Call audio is the far side of a phone call."
+                    value={shown.audioSource || 'output'}
+                    options={[
+                        { value: 'output', label: 'Device media' },
+                        // Needs Android 13. An unknown version is offered it; the server falls
+                        // back to plain device media where it cannot be used.
+                        ...(isNaN(sdkInt) || sdkInt >= 33 || shown.audioSource === 'playback'
+                            ? [{ value: 'playback', label: 'Device media, phone keeps playing' }]
+                            : []),
+                        { value: 'voice-call-downlink', label: 'Call audio' },
+                    ]}
+                    disabled={locked || !shown.audio || !audioCapable}
+                    onChange={(value) => setFields({ audioSource: value as ScrcpyServerConfig['audioSource'] })}
+                />
+                {audioSession && audioStatus && (
+                    <>
+                        <SheetRow
+                            kit
+                            title="Listen in this browser"
+                            description={<span role="status">{audioStatus.message}</span>}
+                            layout="pair"
+                            attributes={{ 'data-audio-state': audioStatus.state }}
+                        >
+                            {(audioStatus.state === 'error' || audioStatus.state === 'disabled') &&
+                                baseline.audio &&
+                                !hasChanges && (
+                                    <Button size="compact" disabled={locked} onClick={onRetry}>
+                                        Retry audio &amp; restart
+                                    </Button>
+                                )}
+                            <Button
+                                size="compact"
+                                variant={muted ? 'primary' : 'secondary'}
+                                disabled={
+                                    !baseline.audio ||
+                                    audioStatus.state === 'disabled' ||
+                                    audioStatus.state === 'unsupported' ||
+                                    audioStatus.state === 'error'
+                                }
+                                onClick={() => (muted ? audioSession.unmute() : audioSession.mute())}
+                            >
+                                {muted ? 'Listen' : 'Stop listening'}
+                            </Button>
+                        </SheetRow>
+                        <SheetRow kit title="Volume" description="Browser volume only." layout="stack">
+                            <VolumeSlider kit session={audioSession} />
+                        </SheetRow>
+                    </>
+                )}
+            </SheetGroup>
+            <Disclosure class="settings-advanced" title="Audio format">
+                <SelectRow
+                    name="audio-codec"
+                    title="Format"
+                    description="PCM plays in every browser and uses about 1.5 Mbps. Opus uses less data and needs HTTPS."
+                    value={shown.audioCodec || 'raw'}
+                    options={[
+                        { value: 'raw', label: 'Compatible · PCM' },
+                        { value: 'opus', label: 'Lower data use · Opus' },
+                    ]}
+                    disabled={locked || !shown.audio || !audioCapable}
+                    onChange={(value) => setFields({ audioCodec: value as ScrcpyServerConfig['audioCodec'] })}
+                />
+            </Disclosure>
+            {!screenOpen && <p class="settings-note">After applying, open the screen and tap Listen.</p>}
+        </>
+    );
+}
+
+interface PlaybackSectionProps {
+    client: StreamClientScrcpy;
+    /** One opening of the sheet. Each reads the switches from the screen again. */
+    opening?: object;
+    /** The player of the open screen. */
+    player?: string;
+    disabled: boolean;
+    /** Opens the same page with another player. `captureKeyboard` is carried into its address. */
+    onPlayerChange: (player: string, captureKeyboard: boolean) => void;
+}
+
+/** What this browser does with the stream. These apply at once and are not sent to the phone. */
+function PlaybackSection({ client, opening, player, disabled, onPlayerChange }: PlaybackSectionProps) {
+    const [captureKeyboard, setCaptureKeyboard] = useState(true);
+    const [useUhid, setUseUhid] = useState(true);
+    const [showStats, setShowStats] = useState(false);
+
+    useEffect(() => {
+        setShowStats(client.getPlayer()?.getShowQualityStats() ?? false);
+        setCaptureKeyboard(client.isKeyboardCaptured());
+        setUseUhid(client.isUsingUhidKeyboard());
+    }, [client, opening]);
+
+    return (
+        <Disclosure class="settings-playback" title="Playback & keyboard" note="This browser only">
+            <p class="settings-note">Applies immediately.</p>
+            <SelectRow
+                name="player"
+                title="Video player"
+                description="The decoder this browser uses. Changing it reloads the stream."
+                value={player ?? ''}
+                options={StreamClientScrcpy.getPlayers().map((candidate) => ({
+                    value: candidate.playerCodeName,
+                    label: candidate.playerFullName,
+                }))}
+                disabled={disabled}
+                onChange={(value) => onPlayerChange(value, captureKeyboard)}
+            />
+            <SheetToggleRow
+                kit
+                title="Show quality stats"
+                description="Overlays bitrate, frame rate and decode timing on the video"
+                checked={showStats}
+                onChange={(checked) => {
+                    setShowStats(checked);
+                    client.getPlayer()?.setShowQualityStats(checked);
+                }}
+            />
+            <SheetToggleRow
+                kit
+                title="Physical keyboard"
+                description="Send hardware keystrokes to the phone"
+                checked={captureKeyboard}
+                onChange={(checked) => {
+                    setCaptureKeyboard(checked);
+                    client.setHandleKeyboardEvents(checked, useUhid);
+                }}
+            />
+            <SheetToggleRow
+                kit
+                title="Native keyboard (UHID)"
+                description="Use the phone's keyboard layout · Android 11+"
+                checked={useUhid}
+                disabled={!captureKeyboard}
+                onChange={(checked) => {
+                    setUseUhid(checked);
+                    if (captureKeyboard) {
+                        client.setHandleKeyboardEvents(true, checked);
+                    }
+                }}
+            />
+        </Disclosure>
+    );
+}
+
+/** One line of the apply footer. It can take focus, so focus follows what replaced a pressed button. */
+function ApplyMessage({ tone, children }: { tone?: StatusTone; children: ComponentChildren }) {
+    return (
+        <div class="settings-apply-message" tabIndex={-1}>
+            <InlineStatus tone={tone}>{children}</InlineStatus>
+        </div>
+    );
+}
+
+/**
+ * Stream settings of an Android phone. The settings and the requests that load and apply them
+ * are in `state/streamConfig.ts`; this draws them as three sections, and the footer holds the
+ * step that applies a change: Apply changes, then the question, then the outcome.
+ */
+export function SettingsSheet() {
+    const target = settingsSheetTarget.value;
+    const session = activeStream.value;
+    const previousTarget = useRef(target);
+    if (target) {
+        previousTarget.current = target;
+    }
+    // Retain content through the closing animation. Each opening gets a fresh request.
+    const renderTarget = target ?? previousTarget.current;
+    // The stream opens this sheet with a serial alone, and two hosts can each have that serial.
+    const entry = renderTarget ? findDeviceForSettings(renderTarget, session?.params) : undefined;
+    const tracker = target ? entry?.tracker : undefined;
+    const client: StreamClientScrcpy | undefined =
+        renderTarget && session?.params.udid === renderTarget.udid ? session.client : undefined;
+    const config = useStreamConfig(target, tracker, target?.udid);
+    const { baseline, patch, loading, applying, applyError, appliedNote } = config;
+    const [confirming, setConfirming] = useState(false);
+
+    // Each opening starts without a question waiting.
+    useEffect(() => {
+        if (target) {
+            setConfirming(false);
+        }
+    }, [target, tracker]);
+
+    // The pressed button often leaves the footer (Apply changes, Apply & restart, Discard).
+    // Focus would then fall to the page behind the sheet, so it moves to what took the button's
+    // place: the error, else the next button, else the status line, else the sheet itself.
+    const applyRef = useRef<HTMLDivElement>(null);
+    const applyHadFocus = !!applyRef.current?.contains(document.activeElement);
+    useLayoutEffect(() => {
+        const bar = applyRef.current;
+        const active = document.activeElement;
+        if (!applyHadFocus || !bar || !target || (bar.contains(active) && !active?.matches(':disabled'))) {
+            return;
+        }
+        const next =
+            bar.querySelector<HTMLElement>('[role="alert"]')?.parentElement ??
+            bar.querySelector<HTMLElement>('button:not(:disabled)') ??
+            bar.querySelector<HTMLElement>('.settings-apply-message') ??
+            bar.closest<HTMLElement>('[role="dialog"]');
+        next?.focus({ preventScroll: true });
+    });
+
+    if (!renderTarget) {
+        return (
+            <Sheet open={false} onClose={closeSettingsSheet} title="Stream settings">
+                {null}
+            </Sheet>
+        );
+    }
+    const descriptor = entry?.params.type === 'android' ? (entry.descriptor as GoogDeviceDescriptor) : undefined;
+    const sdkInt = descriptor ? parseInt(descriptor['ro.build.version.sdk'], 10) : NaN;
+    const shown = { ...baseline, ...patch };
+    const locked = applying || loading || !tracker;
+    const hasChanges = Object.keys(patch).length > 0;
     const otherViewers = client?.getClientsCount() ?? 0;
     const viewerWarning =
         otherViewers > 0
             ? `${otherViewers} other open screen${otherViewers === 1 ? '' : 's'} will also reconnect.`
             : '';
 
-    function setFields(fields: Partial<ScrcpyServerConfig>): void {
-        setPatch((previous) => {
-            const next = { ...previous, ...fields };
-            if (configKnown) {
-                (Object.keys(next) as (keyof ScrcpyServerConfig)[]).forEach((key) => {
-                    if (normalized(next, key) === normalized(baseline, key)) {
-                        delete next[key];
-                    }
-                });
-            }
-            return next;
-        });
+    const setFields = (fields: StreamConfigPatch) => {
+        config.setFields(fields);
         setConfirming(false);
-        setAppliedNote(undefined);
-        setApplyError(undefined);
-    }
-    const applyConfig = (config: Partial<ScrcpyServerConfig>) => {
-        if (!tracker || !Object.keys(config).length || pendingPatch.current) {
-            return;
-        }
-        setConfirming(false);
-        setApplying(true);
-        setApplyError(undefined);
-        setAppliedNote(undefined);
-        pendingPatch.current = { ...config };
-        // Set the timeout before sending: a synchronous reply must be able to clear it.
-        applyTimeoutRef.current = setTimeout(() => {
-            applyTimeoutRef.current = undefined;
-            pendingPatch.current = undefined;
-            pendingRequestId.current = undefined;
-            setApplying(false);
-            setApplyError(
-                'The phone has not confirmed the change. Reopen Stream settings to check its current values, or try again.',
-            );
-        }, APPLY_TIMEOUT_MS);
-        pendingRequestId.current = tracker.sendCommand(ControlCenterCommand.UPDATE_STREAM_CONFIG, {
-            udid: renderTarget.udid,
-            config,
-        });
     };
-    const onConfirmApply = () => applyConfig(patch);
+    const applyConfig = (changes: StreamConfigPatch) => {
+        if (config.apply(changes)) {
+            setConfirming(false);
+        }
+    };
     const savedShown = !!appliedNote && !hasChanges && !applying;
-    const applyBarEmpty = !applyError && !savedShown && !applying && !confirming && !hasChanges;
-    const onPlayerChange = (event: Event) => {
+    const nothingToApply = !applyError && !savedShown && !applying && !confirming && !hasChanges;
+    const onPlayerChange = (player: string, captureKeyboard: boolean) => {
         if (!session) {
             return;
         }
         // The same page with another player: the entry is replaced, so Back does not lead to
         // the stream under the player before.
         const next = new URLSearchParams(route.value);
-        next.set('player', (event.currentTarget as HTMLSelectElement).value);
+        next.set('player', player);
         next.set('captureKeyboard', String(captureKeyboard));
         closeSettingsSheet();
         switchRoute(next);
     };
 
+    // Nothing to apply and nothing to report: the sheet has no footer.
+    const footer = nothingToApply ? undefined : (
+        <div class="settings-apply" ref={applyRef}>
+            {applyError && <ApplyMessage tone="error">{applyError}</ApplyMessage>}
+            {savedShown && <ApplyMessage tone="success">{appliedNote}</ApplyMessage>}
+            {applying ? (
+                <ApplyMessage>Saving and reconnecting…</ApplyMessage>
+            ) : confirming ? (
+                <>
+                    <p class="settings-apply-question">Restart this phone's stream?</p>
+                    <p class="settings-apply-note">The screen will pause for a few seconds. {viewerWarning}</p>
+                    {/* Keyed apart from the two buttons of the step before. Without the keys
+                        the pressed Apply changes button would become Apply & restart and keep
+                        focus, and a second press of Enter would restart the stream. */}
+                    <div class="settings-apply-buttons" key="confirm">
+                        <Button onClick={() => setConfirming(false)}>Keep editing</Button>
+                        <Button variant="primary" onClick={() => applyConfig(patch)}>
+                            Apply &amp; restart
+                        </Button>
+                    </div>
+                </>
+            ) : (
+                hasChanges && (
+                    <>
+                        <p class="settings-apply-note">Applying restarts the stream.</p>
+                        <div class="settings-apply-buttons" key="edit">
+                            <Button
+                                disabled={locked}
+                                onClick={() => {
+                                    config.discard();
+                                    setConfirming(false);
+                                }}
+                            >
+                                Discard
+                            </Button>
+                            <Button variant="primary" disabled={locked} onClick={() => setConfirming(true)}>
+                                Apply changes
+                            </Button>
+                        </div>
+                    </>
+                )
+            )}
+        </div>
+    );
+
     return (
-        <BottomSheet
+        <Sheet
             open={!!target}
             dismissible={!applying}
             onClose={() => {
@@ -328,467 +622,43 @@ export function SettingsSheet() {
             }}
             title="Stream settings"
             subtitle={entry ? deviceName(entry) : undefined}
+            footer={footer}
         >
-            <div class="settings-sheet-content" ref={contentRef}>
-                <section class="settings-sheet-section">
-                    <h2 class="settings-sheet-section-title">Stream quality</h2>
-                    {loading && (
-                        <p class="settings-sheet-banner progress" role="status">
-                            Loading settings…
-                        </p>
-                    )}
-                    {loadError && (
-                        <div class="settings-sheet-banner warning" role="status">
-                            <span>{loadError}</span>
-                            {tracker && (
-                                <button
-                                    class="settings-sheet-button"
-                                    disabled={applying}
-                                    onClick={() => setReload((value) => value + 1)}
-                                >
-                                    Try again
-                                </button>
-                            )}
-                        </div>
-                    )}
-                    {!loading && !configKnown && tracker && (
-                        <p class="settings-sheet-hint">
-                            Current settings unavailable. Only values you change will be applied.
-                        </p>
-                    )}
-                    {!loading && codec !== 'h264' && (
-                        <div class="settings-sheet-banner warning" role="status">
-                            This phone is using {codec?.toUpperCase()}, which this app cannot play. Choose a quality
-                            preset or H.264 below, then apply the change to restore video.
-                        </div>
-                    )}
-                    <div class="settings-quality-presets" aria-label="Quality presets">
-                        {QUALITY_PRESETS.map((preset) => (
-                            <button
-                                key={preset.name}
-                                class="settings-quality-preset"
-                                aria-pressed={selectedPreset === preset.name}
-                                disabled={locked}
-                                onClick={() =>
-                                    setFields({
-                                        bitrate: preset.bitrate,
-                                        maxFps: preset.maxFps,
-                                        maxSize: preset.maxSize,
-                                        videoCodec: 'h264',
-                                        videoEncoder: '',
-                                    })
-                                }
-                            >
-                                <span class="settings-preset-mark" aria-hidden="true">
-                                    {selectedPreset === preset.name ? '●' : '○'}
-                                </span>
-                                <strong>{preset.name}</strong>
-                                <span>{formatBitrate(preset.bitrate)}</span>
-                                <small>
-                                    {preset.maxSize}px · {preset.maxFps} fps
-                                </small>
-                            </button>
-                        ))}
-                    </div>
-                    {!loading && (
-                        <div class="settings-quality-summary">
-                            {selectedPreset || 'Custom quality'} · {formatBitrate(shown.bitrate)} ·{' '}
-                            <span>{formatMaxFps(shown.maxFps)}</span>
-                        </div>
-                    )}
-                    <AnimatedDetails class="settings-advanced">
-                        <summary>Advanced quality settings</summary>
-                        <div class="settings-advanced-body">
-                            <label class="settings-sheet-row">
-                                <span>
-                                    Video codec<small>H.264 is the format this app can play</small>
-                                </span>
-                                <select
-                                    value={codec}
-                                    onChange={(event) =>
-                                        setFields({ videoCodec: event.currentTarget.value, videoEncoder: '' })
-                                    }
-                                    disabled={locked}
-                                >
-                                    {codec !== 'h264' && (
-                                        <option value={codec} disabled>
-                                            {codec?.toUpperCase()} · unsupported here
-                                        </option>
-                                    )}
-                                    {CODEC_OPTIONS.map((option) => (
-                                        <option key={option.value} value={option.value}>
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                            <label class="settings-sheet-row settings-encoder-row">
-                                <span>
-                                    Video encoder
-                                    <small>Automatic lets the phone choose. Hardware encoders are listed first.</small>
-                                </span>
-                                <select
-                                    value={encoder}
-                                    onChange={(event) => setFields({ videoEncoder: event.currentTarget.value })}
-                                    disabled={locked}
-                                >
-                                    <option value="">Automatic · phone default</option>
-                                    {encoder &&
-                                        !filteredEncoders.some((candidate) => candidate.encoderName === encoder) && (
-                                            <option value={encoder}>{encoder}</option>
-                                        )}
-                                    {filteredEncoders.map((candidate) => (
-                                        <option key={candidate.encoderName} value={candidate.encoderName}>
-                                            {candidate.encoderName}
-                                            {candidate.hardware === 'hw'
-                                                ? ' · hardware'
-                                                : candidate.hardware === 'sw'
-                                                  ? ' · software'
-                                                  : ''}
-                                            {candidate.aliasFor ? ' (alias)' : ''}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                            {!loading && !encoders.length && (
-                                <p class="settings-sheet-hint">
-                                    No encoders were listed. Automatic uses the phone's default encoder.
-                                </p>
-                            )}
-                            <label class="settings-sheet-row">
-                                <span>
-                                    Bitrate<small>Higher uses more data</small>
-                                </span>
-                                <select
-                                    value={shown.bitrate}
-                                    onChange={(event) => setFields({ bitrate: Number(event.currentTarget.value) })}
-                                    disabled={locked}
-                                >
-                                    {numberOptions(BITRATE_OPTIONS, shown.bitrate).map((value) => (
-                                        <option key={value} value={value}>
-                                            {formatBitrate(value)}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                            <label class="settings-sheet-row">
-                                <span>
-                                    Frame rate<small>Higher feels smoother</small>
-                                </span>
-                                <select
-                                    value={shown.maxFps}
-                                    onChange={(event) => setFields({ maxFps: Number(event.currentTarget.value) })}
-                                    disabled={locked}
-                                >
-                                    {numberOptions(MAX_FPS_OPTIONS, shown.maxFps).map((value) => (
-                                        <option key={value} value={value}>
-                                            {formatMaxFps(value)}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                            <label class="settings-sheet-row">
-                                <span>
-                                    Resolution<small>Maximum long edge</small>
-                                </span>
-                                <select
-                                    value={shown.maxSize}
-                                    onChange={(event) => setFields({ maxSize: Number(event.currentTarget.value) })}
-                                    disabled={locked}
-                                >
-                                    {numberOptions(MAX_SIZE_OPTIONS, shown.maxSize).map((value) => (
-                                        <option key={value} value={value}>
-                                            {formatMaxSize(value)}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                            <label class="settings-sheet-row">
-                                <span>
-                                    Keyframe interval
-                                    <small>Shorter recovers faster after a glitch. Longer saves data.</small>
-                                </span>
-                                <select
-                                    value={shown.iFrameInterval}
-                                    onChange={(event) =>
-                                        setFields({ iFrameInterval: Number(event.currentTarget.value) })
-                                    }
-                                    disabled={locked}
-                                >
-                                    {numberOptions(IFRAME_INTERVAL_OPTIONS, shown.iFrameInterval).map((value) => (
-                                        <option key={value} value={value}>
-                                            {value}s
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                        </div>
-                    </AnimatedDetails>
-                </section>
-                <section class="settings-sheet-section settings-audio">
-                    <h2 class="settings-sheet-section-title">Sound</h2>
-                    <div class="settings-sheet-card">
-                        <label class="settings-sheet-row settings-toggle-row">
-                            <span>
-                                Capture audio
-                                <small>
-                                    {audioUnavailableReason ||
-                                        (shown.audio
-                                            ? 'Capture is on. Tap Listen to hear it in this browser.'
-                                            : 'Enable capture, then apply the change to listen in this browser.')}
-                                </small>
-                            </span>
-                            <input
-                                type="checkbox"
-                                checked={!!shown.audio}
-                                onChange={(event) => setFields({ audio: event.currentTarget.checked })}
-                                disabled={locked || (!audioCapable && !shown.audio)}
-                            />
-                        </label>
-                        {!isAudioAvailable() && (
-                            <div
-                                class="settings-sheet-button-row"
-                                data-audio-availability={audioAvailability.value.state}
-                            >
-                                <button class="settings-sheet-button" onClick={() => location.reload()}>
-                                    Reload page
-                                </button>
-                            </div>
-                        )}
-                        <label class="settings-sheet-row">
-                            <span>
-                                Audio source
-                                <small>
-                                    Device media is what the phone plays; the phone itself goes quiet unless you choose
-                                    the option that keeps it playing. Call audio is the far side of a phone call.
-                                </small>
-                            </span>
-                            <select
-                                value={shown.audioSource || 'output'}
-                                disabled={locked || !shown.audio || !audioCapable}
-                                onChange={(event) =>
-                                    setFields({
-                                        audioSource: event.currentTarget.value as ScrcpyServerConfig['audioSource'],
-                                    })
-                                }
-                            >
-                                <option value="output">Device media</option>
-                                {/* Needs Android 13. An unknown version is offered it; the server
-                                    falls back to plain device media where it cannot be used. */}
-                                {(isNaN(sdkInt) || sdkInt >= 33 || shown.audioSource === 'playback') && (
-                                    <option value="playback">Device media, phone keeps playing</option>
-                                )}
-                                <option value="voice-call-downlink">Call audio</option>
-                            </select>
-                        </label>
-                        {audioSession && audioStatus && (
-                            <>
-                                <div
-                                    class="settings-sheet-row settings-listen-row"
-                                    data-audio-state={audioStatus.state}
-                                >
-                                    <span>
-                                        Listen in this browser<small role="status">{audioStatus.message}</small>
-                                    </span>
-                                    <div class="settings-sheet-button-row">
-                                        {(audioStatus.state === 'error' || audioStatus.state === 'disabled') &&
-                                            baseline.audio &&
-                                            !hasChanges && (
-                                                <button
-                                                    class="settings-sheet-button"
-                                                    disabled={locked}
-                                                    onClick={() => applyConfig({ audio: true })}
-                                                >
-                                                    Retry audio &amp; restart
-                                                </button>
-                                            )}
-                                        <button
-                                            class={`settings-sheet-button ${audioSession.isMuted() || audioStatus.state === 'blocked' ? 'primary' : ''}`}
-                                            disabled={
-                                                !baseline.audio ||
-                                                audioStatus.state === 'disabled' ||
-                                                audioStatus.state === 'unsupported' ||
-                                                audioStatus.state === 'error'
-                                            }
-                                            onClick={() =>
-                                                audioSession.isMuted() || audioStatus.state === 'blocked'
-                                                    ? audioSession.unmute()
-                                                    : audioSession.mute()
-                                            }
-                                        >
-                                            {audioSession.isMuted() || audioStatus.state === 'blocked'
-                                                ? 'Listen'
-                                                : 'Stop listening'}
-                                        </button>
-                                    </div>
-                                </div>
-                                <label class="settings-sheet-row settings-volume-row">
-                                    <span>
-                                        Volume
-                                        <small>Browser volume only.</small>
-                                    </span>
-                                    <VolumeSlider session={audioSession} />
-                                </label>
-                            </>
-                        )}
-                    </div>
-                    <AnimatedDetails class="settings-advanced">
-                        <summary>Audio format</summary>
-                        <div class="settings-advanced-body">
-                            <label class="settings-sheet-row">
-                                <span>
-                                    Format
-                                    <small>
-                                        PCM plays in every browser and uses about 1.5 Mbps. Opus uses less data and
-                                        needs HTTPS.
-                                    </small>
-                                </span>
-                                <select
-                                    value={shown.audioCodec || 'raw'}
-                                    disabled={locked || !shown.audio || !audioCapable}
-                                    onChange={(event) =>
-                                        setFields({
-                                            audioCodec: event.currentTarget.value as ScrcpyServerConfig['audioCodec'],
-                                        })
-                                    }
-                                >
-                                    <option value="raw">Compatible · PCM</option>
-                                    <option value="opus">Lower data use · Opus</option>
-                                </select>
-                            </label>
-                        </div>
-                    </AnimatedDetails>
-                    {!client && <p class="settings-sheet-hint">After applying, open the screen and tap Listen.</p>}
-                </section>
+            <div class="stream-settings">
+                <QualitySection
+                    config={config}
+                    shown={shown}
+                    locked={locked}
+                    hasTracker={!!tracker}
+                    setFields={setFields}
+                    onReload={() => {
+                        setConfirming(false);
+                        config.reload();
+                    }}
+                />
+                <SoundSection
+                    shown={shown}
+                    baseline={baseline}
+                    locked={locked}
+                    hasChanges={hasChanges}
+                    sdkInt={sdkInt}
+                    audioSession={client ? activeAudioSession.value : undefined}
+                    screenOpen={!!client}
+                    setFields={setFields}
+                    onRetry={() => applyConfig({ audio: true })}
+                />
                 {client ? (
-                    <AnimatedDetails class="settings-playback">
-                        <summary>
-                            Playback &amp; keyboard<span>This browser only</span>
-                        </summary>
-                        <div class="settings-advanced-body">
-                            <p class="settings-sheet-section-hint">Applies immediately.</p>
-                            <label class="settings-sheet-row">
-                                <span>
-                                    Video player
-                                    <small>The decoder this browser uses. Changing it reloads the stream.</small>
-                                </span>
-                                <select value={session?.params.player} onChange={onPlayerChange} disabled={applying}>
-                                    {StreamClientScrcpy.getPlayers().map((player) => (
-                                        <option key={player.playerCodeName} value={player.playerCodeName}>
-                                            {player.playerFullName}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                            <label class="settings-sheet-row settings-toggle-row">
-                                <span>
-                                    Show quality stats
-                                    <small>Overlays bitrate, frame rate and decode timing on the video</small>
-                                </span>
-                                <input
-                                    type="checkbox"
-                                    checked={showStats}
-                                    onChange={(event) => {
-                                        setShowStats(event.currentTarget.checked);
-                                        client.getPlayer()?.setShowQualityStats(event.currentTarget.checked);
-                                    }}
-                                />
-                            </label>
-                            <label class="settings-sheet-row settings-toggle-row">
-                                <span>
-                                    Physical keyboard<small>Send hardware keystrokes to the phone</small>
-                                </span>
-                                <input
-                                    type="checkbox"
-                                    checked={captureKeyboard}
-                                    onChange={(event) => {
-                                        setCaptureKeyboard(event.currentTarget.checked);
-                                        client.setHandleKeyboardEvents(event.currentTarget.checked, useUhid);
-                                    }}
-                                />
-                            </label>
-                            <label class="settings-sheet-row settings-toggle-row">
-                                <span>
-                                    Native keyboard (UHID)<small>Use the phone's keyboard layout · Android 11+</small>
-                                </span>
-                                <input
-                                    type="checkbox"
-                                    checked={useUhid}
-                                    disabled={!captureKeyboard}
-                                    onChange={(event) => {
-                                        setUseUhid(event.currentTarget.checked);
-                                        if (captureKeyboard) {
-                                            client.setHandleKeyboardEvents(true, event.currentTarget.checked);
-                                        }
-                                    }}
-                                />
-                            </label>
-                        </div>
-                    </AnimatedDetails>
+                    <PlaybackSection
+                        client={client}
+                        opening={target}
+                        player={session?.params.player}
+                        disabled={applying}
+                        onPlayerChange={onPlayerChange}
+                    />
                 ) : (
-                    <p class="settings-sheet-hint">Open the screen for playback and keyboard settings.</p>
+                    <p class="settings-note">Open the screen for playback and keyboard settings.</p>
                 )}
-                <AutoHeight
-                    className={`settings-sheet-apply-bar ${applyBarEmpty ? 'empty' : ''}`}
-                    innerClassName="settings-sheet-apply-items"
-                >
-                    {applyError && (
-                        <div class="settings-sheet-banner error" role="alert" tabIndex={-1}>
-                            {applyError}
-                        </div>
-                    )}
-                    {savedShown && (
-                        <div class="settings-sheet-banner success" role="status" tabIndex={-1}>
-                            {appliedNote}
-                        </div>
-                    )}
-                    {applying ? (
-                        <div class="settings-sheet-banner progress" role="status" tabIndex={-1}>
-                            Saving and reconnecting…
-                        </div>
-                    ) : confirming ? (
-                        <div class="settings-sheet-banner warning">
-                            <strong>Restart this phone's stream?</strong>
-                            <p>The screen will pause for a few seconds. {viewerWarning}</p>
-                            <div class="settings-sheet-button-row">
-                                <button class="settings-sheet-button" onClick={() => setConfirming(false)}>
-                                    Keep editing
-                                </button>
-                                <button class="settings-sheet-button primary" onClick={onConfirmApply}>
-                                    Apply &amp; restart
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                        // Nothing to apply or discard until a setting has changed.
-                        hasChanges && (
-                            <>
-                                <p class="settings-apply-note">Applying restarts the stream.</p>
-                                <div class="settings-sheet-button-row">
-                                    <button
-                                        class="settings-sheet-button"
-                                        onClick={() => {
-                                            setPatch({});
-                                            setConfirming(false);
-                                            setApplyError(undefined);
-                                        }}
-                                        disabled={locked}
-                                    >
-                                        Discard
-                                    </button>
-                                    <button
-                                        class="settings-sheet-button primary"
-                                        onClick={() => setConfirming(true)}
-                                        disabled={locked}
-                                    >
-                                        Apply changes
-                                    </button>
-                                </div>
-                            </>
-                        )
-                    )}
-                </AutoHeight>
             </div>
-        </BottomSheet>
+        </Sheet>
     );
 }

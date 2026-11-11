@@ -148,25 +148,26 @@ async function main() {
         const savedTop = await list.evaluate((el) => el.scrollTop);
         assert(savedTop > 500, 'settings opens from a genuinely scrolled actual device card');
         await settings.click();
-        const dialog = page.locator('.bottom-sheet-root.open [role="dialog"]');
+        const dialog = page.locator('dialog.kit-sheet[open]');
         await dialog.waitFor();
-        await dialog.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+        await dialog.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((animation) => animation.finished)));
         assert.equal(await list.evaluate((el) => el.scrollTop), savedTop, 'opening settings preserves list position');
         assert(
             await page.locator('body').evaluate((el) => el.classList.contains('sheet-open')),
             'opening sheet locks the list scroller',
         );
         await dialog.getByText('Advanced quality settings', { exact: true }).click();
-        const body = page.locator('.bottom-sheet-root.open .bottom-sheet-body');
+        const body = page.locator('dialog.kit-sheet[open] .kit-sheet-body');
         assert(
             await body.evaluate((el) => el.scrollHeight > el.clientHeight),
             'settings body is independently scrollable',
         );
-        const dialogBox = await dialog.boundingBox();
+        // The dialog element covers the window; its panel is what is seen.
+        const dialogBox = await dialog.locator('.kit-sheet-panel').boundingBox();
         const backdropPoint = { x: 4, y: Math.max(2, Math.min(40, dialogBox.y / 2)) };
         assert(
             await page.evaluate(
-                ({ x, y }) => document.elementFromPoint(x, y)?.classList.contains('bottom-sheet-backdrop'),
+                ({ x, y }) => document.elementFromPoint(x, y)?.classList.contains('kit-sheet-backdrop'),
                 backdropPoint,
             ),
             'backdrop gesture starts outside the sheet',
@@ -197,7 +198,7 @@ async function main() {
             'sheet body scroll leaves the list untouched',
         );
         await dialog.getByRole('button', { name: /^Close / }).click();
-        await page.locator('.bottom-sheet-root.open').waitFor({ state: 'detached' });
+        await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'detached' });
         assert.equal(
             await list.evaluate((el) => el.scrollTop),
             savedTop,

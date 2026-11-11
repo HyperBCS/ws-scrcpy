@@ -1,21 +1,22 @@
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { liveTextOpen, streamConnected } from '../state/stream';
+import { IconButton } from '../ui/IconButton';
+import type { IconName } from '../ui/icons';
+import { InlineStatus } from '../ui/InlineStatus';
+import { Sheet } from '../ui/Sheet';
 import '../../style/views/LiveTextOverlay.css';
-import { useOverlayHistory } from '../ui/overlayHistory';
-import { usePresence } from '../ui/Presence';
-import { rememberDialogFocus, returnDialogFocus } from '../ui/dialogFocus';
 
-/** Keys the overlay can press by name, besides typing text. */
+/** Keys the sheet can press by name, besides typing text. */
 export type LiveTextKey = 'enter' | 'backspace' | 'delete' | 'left' | 'right';
 
 /**
- * What the overlay needs from a stream client. Android injects whole strings; iOS types every
+ * What the sheet needs from a stream client. Android injects whole strings; iOS types every
  * character through a virtual HID keyboard and may have no key for some of them. Both hide
  * behind this so the phone-side experience (live typing, keyboard-aware layout, focus handling,
  * paste and IME commits) is written once.
  */
 export interface LiveTextTarget {
-    /** One line under the title: what to do on the device before typing. */
+    /** One line above the field: what to do on the device before typing. */
     hint: string;
     /** Sends committed text. Resolves with the characters the device could not receive, if any. */
     sendText(text: string): Promise<string[]> | void;
@@ -30,11 +31,11 @@ interface LiveTextOverlayProps {
     target: LiveTextTarget;
 }
 
-const KEY_BUTTONS: { key: LiveTextKey; label: string; name: string; sent: string }[] = [
-    { key: 'left', label: '←', name: 'Move cursor left', sent: 'Cursor moved' },
-    { key: 'right', label: '→', name: 'Move cursor right', sent: 'Cursor moved' },
-    { key: 'backspace', label: '⌫ Delete', name: 'Delete previous character', sent: 'Delete sent' },
-    { key: 'enter', label: 'Enter ↵', name: 'Send Enter', sent: 'Enter sent' },
+const KEY_BUTTONS: { key: LiveTextKey; icon: IconName; name: string; sent: string }[] = [
+    { key: 'left', icon: 'arrowLeft', name: 'Move cursor left', sent: 'Cursor moved' },
+    { key: 'right', icon: 'arrowRight', name: 'Move cursor right', sent: 'Cursor moved' },
+    { key: 'backspace', icon: 'backspace', name: 'Delete previous character', sent: 'Delete sent' },
+    { key: 'enter', icon: 'enter', name: 'Send Enter', sent: 'Enter sent' },
 ];
 
 const KEY_FOR_KEYDOWN: Record<string, LiveTextKey> = {
@@ -55,10 +56,14 @@ function typingViewport() {
     };
 }
 
+/**
+ * Type text: a sheet with one field. What is typed, pasted or committed by an IME goes to the
+ * phone at once and the field stays empty. It is the one sheet that takes focus in a field when
+ * it opens, so the on-screen keyboard comes up with it.
+ */
 export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     const inputRef = useRef<HTMLInputElement>(null);
-    const overlayRef = useRef<HTMLDivElement>(null);
-    const { ref: panelRef, present } = usePresence<HTMLDivElement>(open, 'sheet');
+    const contentRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
     const compositionCommit = useRef<string>();
     const compositionTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -66,15 +71,10 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     const sendSequence = useRef(0);
     const [feedback, setFeedback] = useState('');
     const [feedbackError, setFeedbackError] = useState(false);
-    const [viewportStyle, setViewportStyle] = useState(typingViewport);
     const connected = streamConnected.value;
-    const openRef = useRef(open);
-    openRef.current = open;
     const close = () => {
         liveTextOpen.value = false;
     };
-    // The browser's Back closes the bar and leaves the stream open.
-    useOverlayHistory(open, close);
 
     useLayoutEffect(() => {
         if (!open) return;
@@ -89,39 +89,33 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     // Focus during the commit, not after paint: iPhone Safari only raises its keyboard for a
     // programmatic focus() while the tap that opened the sheet still counts as a user gesture.
     // Preact re-renders from a signal change on a microtask, which WebKit still attributes to
-    // the gesture; the post-paint timing of `useEffect` would not be.
+    // the gesture; the post-paint timing of `useEffect` would not be. This runs after the
+    // sheet's own effect, which shows the dialog and puts focus on it.
     useLayoutEffect(() => {
-        if (!present) return;
+        if (!open) return;
         const input = inputRef.current;
-        const overlay = overlayRef.current;
-        const panel = panelRef.current;
-        if (panel) rememberDialogFocus(panel);
-        const stream = overlay?.closest<HTMLElement>('.stream-view');
+        const content = contentRef.current;
+        const panel = content?.closest<HTMLElement>('.kit-sheet-panel');
+        const stream = content?.closest<HTMLElement>('.stream-view');
         const viewport = window.visualViewport;
         let frame = 0;
+        // While typing, the picture and the sheet share what the on-screen keyboard leaves in
+        // view: the keyboard can pan as well as shrink Safari's visual viewport without a window
+        // resize. The sheet stands at the bottom of that area at every width (as a dialog from
+        // 600px, a little above the edge), and the whole picture is fitted above it, so the
+        // field being typed into on the phone stays in sight.
         const update = () => {
+            if (!stream || !panel) return;
             const bounds = typingViewport();
-            setViewportStyle(bounds);
-            if (overlay) {
-                // Apply synchronously before focus and before measuring the dock. The keyboard
-                // can pan as well as shrink Safari's visual viewport without a window resize.
-                Object.assign(overlay.style, bounds);
-                overlay.classList.toggle(
-                    'keyboard-raised',
-                    window.innerHeight - (viewport?.height ?? window.innerHeight) > 120,
-                );
-            }
-            if (stream && panel) {
-                stream.style.setProperty('--typing-viewport-top', bounds.top);
-                stream.style.setProperty('--typing-viewport-left', bounds.left);
-                stream.style.setProperty('--typing-viewport-width', bounds.width);
-                stream.style.setProperty('--typing-viewport-height', bounds.height);
-                const gap = parseFloat(getComputedStyle(panel).marginBottom) || 0;
-                stream.style.setProperty(
-                    '--typing-dock-height',
-                    `${Math.ceil(panel.getBoundingClientRect().height + gap)}px`,
-                );
-            }
+            stream.style.setProperty('--typing-viewport-top', bounds.top);
+            stream.style.setProperty('--typing-viewport-left', bounds.left);
+            stream.style.setProperty('--typing-viewport-width', bounds.width);
+            stream.style.setProperty('--typing-viewport-height', bounds.height);
+            // From the top of the sheet to the bottom of the dialog, which covers that same area.
+            // Layout offsets, not drawn ones: the sheet may still be moving in.
+            const dialog = panel.offsetParent;
+            const dock = dialog ? dialog.clientHeight - panel.offsetTop : panel.offsetHeight;
+            stream.style.setProperty('--typing-dock-height', `${Math.max(0, Math.ceil(dock))}px`);
         };
         const schedule = () => {
             cancelAnimationFrame(frame);
@@ -135,18 +129,7 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
         viewport?.addEventListener('scroll', schedule);
         window.addEventListener('resize', schedule);
         input?.focus({ preventScroll: true });
-        // A press on the picture goes to the phone, so the next field can be chosen without
-        // closing this bar. The Android screen takes focus when it is pressed; take it straight
-        // back, in the same press, so the keyboard stays up and typing continues.
-        const keepFocus = (event: FocusEvent) => {
-            const target = event.target;
-            if (openRef.current && target instanceof Element && target.matches('.touch-layer')) {
-                input?.focus({ preventScroll: true });
-            }
-        };
-        stream?.addEventListener('focusin', keepFocus);
         return () => {
-            stream?.removeEventListener('focusin', keepFocus);
             cancelAnimationFrame(frame);
             observer.disconnect();
             viewport?.removeEventListener('resize', schedule);
@@ -156,11 +139,11 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
             for (const property of ['top', 'left', 'width', 'height'])
                 stream?.style.removeProperty(`--typing-viewport-${property}`);
             stream?.style.removeProperty('--typing-dock-height');
+            // The on-screen keyboard goes down as the sheet starts to close.
             if (document.activeElement === input) input?.blur();
             if (compositionTimer.current) clearTimeout(compositionTimer.current);
-            if (panel) returnDialogFocus(panel, document.querySelector<HTMLElement>('.floating-toolbar-fab'));
         };
-    }, [present]);
+    }, [open]);
 
     const sendText = (text: string) => {
         if (!open || !text || !streamConnected.value) {
@@ -258,24 +241,12 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
+        // Escape and Tab belong to the sheet: it closes, and it keeps focus inside.
+        if (event.key === 'Escape' || event.key === 'Tab') {
+            return;
+        }
         event.stopPropagation();
-        if (event.key === 'Escape' && !event.isComposing) {
-            event.preventDefault();
-            close();
-        } else if (event.key === 'Tab') {
-            const controls = Array.from(
-                panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)') || [],
-            );
-            const first = controls[0];
-            const last = controls[controls.length - 1];
-            if (event.shiftKey && event.target === first) {
-                event.preventDefault();
-                last?.focus();
-            } else if (!event.shiftKey && event.target === last) {
-                event.preventDefault();
-                first?.focus();
-            }
-        } else if (event.target === inputRef.current && !event.isComposing && !composingRef.current) {
+        if (event.target === inputRef.current && !event.isComposing && !composingRef.current) {
             const which = KEY_FOR_KEYDOWN[event.key];
             // The input stays empty between commits, so desktop Backspace, Delete and the arrows
             // have no native edit to report; forward them to the device instead. Handling keydown
@@ -287,31 +258,16 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
         }
     };
 
-    if (!present) return null;
     return (
-        <div data-exiting={!open || undefined} class="live-text-overlay" ref={overlayRef} style={viewportStyle}>
-            <div
-                class="live-text-bar"
-                ref={panelRef}
-                // Not modal: the picture behind it stays usable while typing.
-                role="dialog"
-                aria-labelledby="live-text-title"
-                aria-describedby="live-text-hint"
-                onKeyDown={onKeyDown}
-                onKeyUp={(event) => event.stopPropagation()}
-            >
-                <div class="live-text-heading">
-                    <div>
-                        <strong id="live-text-title">Type text</strong>
-                        <p id="live-text-hint">{target.hint}</p>
-                    </div>
-                    <button type="button" class="live-text-done" onClick={close}>
-                        Done
-                    </button>
-                </div>
+        <Sheet open={open} onClose={close} title="Type text">
+            <div class="live-text" ref={contentRef} onKeyDown={onKeyDown} onKeyUp={(event) => event.stopPropagation()}>
+                <p id="live-text-hint" class="live-text-hint">
+                    {target.hint}
+                </p>
+                {/* Written with the kit's class: the field is focused and emptied through its ref. */}
                 <input
                     ref={inputRef}
-                    class="live-text-input"
+                    class="kit-field live-text-input"
                     type="text"
                     inputMode="text"
                     autocomplete="off"
@@ -320,6 +276,7 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
                     spellcheck={false}
                     placeholder={connected ? 'Type or paste text…' : 'Reconnecting to the phone…'}
                     aria-label="Text to send to the phone"
+                    aria-describedby="live-text-hint"
                     disabled={!connected}
                     onBeforeInput={onBeforeInput}
                     onInput={onInput}
@@ -331,33 +288,31 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
                         }
                     }}
                 />
-                <span
-                    class={`live-text-feedback ${feedbackError || !connected ? 'live-text-feedback-error' : ''}`}
-                    role="status"
+                <div class={`live-text-feedback ${feedbackError || !connected ? 'live-text-feedback-error' : ''}`}>
+                    <InlineStatus tone={!connected ? 'warning' : feedbackError ? 'error' : 'neutral'}>
+                        {connected ? feedback || 'Keyboard ready' : 'Waiting for connection'}
+                    </InlineStatus>
+                </div>
+                <div
+                    class="live-text-keys"
+                    // Keep focus (and the phone keyboard) on the field: a focus change here would
+                    // close the keyboard the user is typing with. Cancel only the focus-taking
+                    // mouse action. Cancelling pointerdown suppresses the later touch click
+                    // entirely in mobile WebKit.
+                    onMouseDown={(event) => event.preventDefault()}
                 >
-                    {connected ? feedback || 'Keyboard ready' : 'Waiting for connection'}
-                </span>
-                <div class="live-text-actions">
                     {KEY_BUTTONS.map((button) => (
-                        <button
+                        <IconButton
                             key={button.key}
-                            type="button"
+                            icon={button.icon}
+                            label={button.name}
                             class={`live-text-key live-text-key-${button.key}`}
                             disabled={!connected}
-                            // Keep focus (and the phone keyboard) on the field: a focus change
-                            // here would close the keyboard the user is typing with.
-                            // Cancel only the focus-taking mouse action. Cancelling pointerdown
-                            // suppresses the later touch click entirely in mobile WebKit.
-                            onMouseDown={(event) => event.preventDefault()}
                             onClick={() => key(button.key)}
-                            aria-label={button.name}
-                            title={button.name}
-                        >
-                            {button.label}
-                        </button>
+                        />
                     ))}
                 </div>
             </div>
-        </div>
+        </Sheet>
     );
 }

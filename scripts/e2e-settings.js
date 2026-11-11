@@ -116,11 +116,13 @@ async function fixture(page, { onApply, onStreamMessage, initialPacket, onStream
     return commands;
 }
 async function geometry(page, label) {
-    const result = await page.locator('.bottom-sheet-root.open .bottom-sheet-body').evaluate((body) => {
+    const result = await page.locator('dialog.kit-sheet[open] .kit-sheet-body').evaluate((body) => {
         const bounds = body.getBoundingClientRect();
         const style = getComputedStyle(body);
+        // The body and the footer under it: the apply step is in the footer of the sheet.
+        const panel = body.closest('.kit-sheet-panel');
         const offenders = Array.from(
-            body.querySelectorAll('select, input, button, .settings-sheet-row, .settings-sheet-banner'),
+            panel.querySelectorAll('select, input, button, .kit-row, .kit-banner, .kit-status'),
         )
             .filter((el) => el.getClientRects().length)
             .map((el) => {
@@ -135,8 +137,8 @@ async function geometry(page, label) {
             })
             .filter((el) => el.left < bounds.left - 1 || el.right > bounds.right + 1);
         const overflowingContent = Array.from(
-            body.querySelectorAll(
-                '.settings-sheet-content, details, .settings-advanced-body, .settings-sheet-row, .settings-sheet-banner, .settings-sheet-button-row',
+            panel.querySelectorAll(
+                '.stream-settings, details, .details-content, .kit-row, .kit-banner, .kit-sheet-footer, .settings-apply, .settings-apply-buttons',
             ),
         )
             .filter((el) => el.getClientRects().length && el.scrollWidth > el.clientWidth + 1)
@@ -188,10 +190,10 @@ async function main() {
             await page.getByText('Connected', { exact: true }).waitFor();
             if (mobile) await page.getByRole('button', { name: 'Show controls', exact: true }).click();
             await page.getByRole('button', { name: 'Settings', exact: true }).click();
-            const dialog = page.locator('.bottom-sheet-root.open [role="dialog"]');
+            const dialog = page.locator('dialog.kit-sheet[open]');
             await dialog.waitFor();
             await page.waitForFunction(
-                (encoder) => document.querySelector('.settings-encoder-row select')?.value === encoder,
+                (encoder) => document.querySelector('[data-setting="encoder"] select')?.value === encoder,
                 ENCODER,
             );
             await page.locator('.settings-audio [data-audio-state="error"]').waitFor();
@@ -203,27 +205,27 @@ async function main() {
                     option.textContent += ' — a player with a deliberately long descriptive name';
                 });
             });
-            await dialog.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+            await dialog.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((animation) => animation.finished)));
             const playback = await dialog.locator('.settings-playback').textContent();
             assert(/Show quality stats/.test(playback), label + ': playback settings are listed');
             assert(!/Fit screen/i.test(playback), label + ': no Fit screen toggle, the picture always fits');
             await geometry(page, label + ' all sections');
             await page.screenshot({ path: path.join(OUT, label + '-quality.png') });
             await page.locator('.settings-audio').evaluate((el) => {
-                const body = el.closest('.bottom-sheet-body');
+                const body = el.closest('.kit-sheet-body');
                 body.scrollTop += el.getBoundingClientRect().top - body.getBoundingClientRect().top - 16;
             });
-            const scroller = page.locator('.bottom-sheet-root.open .bottom-sheet-body');
+            const scroller = page.locator('dialog.kit-sheet[open] .kit-sheet-body');
             assert((await scroller.evaluate((body) => body.scrollTop)) > 0, 'settings content can scroll vertically');
             await scroller.hover();
             await page.mouse.wheel(500, 0);
             await geometry(page, label + ' horizontal gesture');
             await page.screenshot({ path: path.join(OUT, label + '-sound.png') });
-            await page.getByRole('button', { name: /Data saver/ }).click();
+            await page.getByRole('radio', { name: 'Data saver', exact: true }).click();
             await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
             await geometry(page, label + ' confirmation');
             await page.getByRole('button', { name: 'Apply & restart', exact: true }).click();
-            await page.locator('.settings-sheet-apply-bar [role="alert"]').waitFor();
+            await page.locator('.kit-sheet-footer [role="alert"]').waitFor();
             await geometry(page, label + ' error');
             await page.screenshot({ path: path.join(OUT, label + '-error.png') });
             assert(

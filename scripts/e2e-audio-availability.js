@@ -73,11 +73,11 @@ async function main() {
                 ),
             );
             await sound.click();
-            await page.locator('.bottom-sheet-root.open').waitFor();
+            await page.locator('dialog.kit-sheet[open]').waitFor();
             await page.waitForFunction(
                 () =>
                     !document
-                        .querySelector('.bottom-sheet-root.open')
+                        .querySelector('dialog.kit-sheet[open]')
                         ?.textContent.includes('Loading settings…'),
             );
             const section = page.locator('.settings-audio');

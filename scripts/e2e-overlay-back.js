@@ -67,7 +67,7 @@ async function start(browser, viewport) {
         colorScheme: viewport.colorScheme, serviceWorkers: 'block',
     });
     const page = await context.newPage();
-    const test = { context, page, viewport, mobile: viewport.mobile, errors: [], streams: [], closed: 0, posted: [] };
+    const test = { context, page, viewport, mobile: viewport.mobile, errors: [], streams: [], closed: 0, posted: [], commands: [] };
     page.on('pageerror', (error) => test.errors.push(error.message));
     await page.route('**/api/notifications/**', (route) => {
         const pathname = new URL(route.request().url()).pathname;
@@ -94,6 +94,8 @@ async function start(browser, viewport) {
         }
         socket.onMessage((data) => {
             const packet = Buffer.from(data);
+            // What a sheet asks the server to do with a phone.
+            if (packet.length >= 5 && packet[0] === 32) test.commands.push(JSON.parse(packet.subarray(5).toString()));
             if (packet.length < 5 || packet[0] !== 4) return;
             const id = packet.readUInt32LE(1), body = packet.subarray(5).toString();
             const send = (message) => socket.send(frame(32, id, JSON.stringify(message)));
@@ -108,7 +110,12 @@ async function start(browser, viewport) {
 }
 
 const card = (page, key) => page.locator(`article.device[data-device-key="${key}"]`);
-const sheet = (page) => page.locator('.bottom-sheet-root.open');
+// Either sheet container: the kit's dialog, and the older one until its last user has moved.
+// A kit sheet that is closing is still shown for its exit; it is not counted as open.
+const sheet = (page) => page.locator('.bottom-sheet-root.open, dialog.kit-sheet[open]:not([data-exiting])');
+const titled = (page, title) => page.locator('.bottom-sheet-title, .kit-sheet-title', { hasText: title });
+/** A sheet on the kit's dialog, by its title. */
+const kitSheet = (page, title) => page.locator('dialog.kit-sheet[open]:not([data-exiting])').filter({ has: page.locator('.kit-sheet-title', { hasText: title }) });
 const at = (page) => page.evaluate(() => ({ index: history.state?.nav?.index, overlay: history.state?.nav?.overlay || 0, hash: location.hash }));
 /** Waits until the tab is on the history entry `index`, with `overlay` overlay entries on the page. */
 const untilAt = (page, index, overlay) =>
@@ -131,31 +138,27 @@ async function control(test, title) {
     await press(test, page.locator(`.control-buttons-list [title="${title}"]`));
 }
 
-// Ways a sheet built on BottomSheet closes by itself.
+// Ways a sheet closes by itself.
 const sheetWays = {
-    'the close button': (test) => press(test, sheet(test.page).locator('.bottom-sheet-close')),
+    'the close button': (test) => press(test, sheet(test.page).locator('.bottom-sheet-close, .kit-sheet-close')),
     Escape: (test) => test.page.keyboard.press('Escape'),
     // The sheet stops at the bottom edge on a phone and is centred on a desktop: the corner is backdrop.
     'the backdrop': (test) => (test.mobile ? test.page.touchscreen.tap(8, 8) : test.page.mouse.click(8, 8)),
 };
-const bottomSheet = (name, title, open) => ({ name, open, shown: (page) => sheet(page).filter({ has: page.locator('.bottom-sheet-title', { hasText: title }) }), ways: sheetWays });
+const bottomSheet = (name, title, open) => ({ name, open, shown: (page) => sheet(page).filter({ has: titled(page, title) }), ways: sheetWays });
+// The sheets that are on the kit: Settings, Unlock, Actions and Type text of both kinds of phone.
+const kitSheetOverlay = (name, title, open) => ({ ...bottomSheet(name, title, open), shown: (page) => kitSheet(page, title), kit: true });
 
 function streamOverlays(test, platform) {
     const { page } = test;
     const overlays = [
-        bottomSheet('Actions', /^Actions$/, () => control(test, 'Actions')),
-        bottomSheet('Settings', platform === 'android' ? /^Stream settings$/ : /^Scheduled unlock$/, () => control(test, 'Settings')),
+        kitSheetOverlay('Actions', /^Actions$/, () => control(test, 'Actions')),
+        kitSheetOverlay('Settings', platform === 'android' ? /^Stream settings$/ : /^Scheduled unlock$/, () => control(test, 'Settings')),
         bottomSheet('Switch', /Switch/, () => press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }))),
-        {
-            name: 'Type text', open: () => control(test, 'Type text'), shown: () => page.locator('.live-text-overlay'),
-            ways: {
-                Done: () => press(test, page.locator('.live-text-done')),
-                Escape: () => page.keyboard.press('Escape'),
-            },
-        },
+        kitSheetOverlay('Type text', /^Type text$/, () => control(test, 'Type text')),
         platform === 'android'
-            ? bottomSheet('Unlock', /^Unlock/, () => press(test, page.locator('.lock-screen-notice').getByRole('button', { name: 'Unlock', exact: true })))
-            : bottomSheet('Unlock', /^Unlock/, async () => {
+            ? kitSheetOverlay('Unlock', /^Unlock/, () => press(test, page.locator('.lock-screen-notice').getByRole('button', { name: 'Unlock', exact: true })))
+            : kitSheetOverlay('Unlock', /^Unlock/, async () => {
                 // From the Actions sheet: one sheet takes the place of another.
                 await control(test, 'Actions');
                 await sheet(page).waitFor();
@@ -196,6 +199,18 @@ async function backClosesEach(test, label, overlays, pageShown) {
         };
         await opened();
         entries ??= await page.evaluate(() => history.length);
+        if (overlay.kit) {
+            // One modal dialog with one header that names it, and nothing of the older markup.
+            const facts = await shown.evaluate((dialog) => ({
+                modal: dialog.matches('dialog.kit-sheet:modal'),
+                headers: dialog.querySelectorAll('.kit-sheet-header').length,
+                titles: dialog.querySelectorAll('h2').length,
+                named: document.getElementById(dialog.getAttribute('aria-labelledby')) === dialog.querySelector('.kit-sheet-title'),
+                olderRows: document.querySelectorAll('[class*="settings-sheet-"], [class*="unlock-sheet-"]').length,
+                olderSheets: document.querySelectorAll('.bottom-sheet-root.open, .live-text-overlay').length,
+            }));
+            assert.deepEqual(facts, { modal: true, headers: 1, titles: 1, named: true, olderRows: 0, olderSheets: 0 }, `${label} ${overlay.name}: it is the kit sheet`);
+        }
         await page.goBack();
         await shown.waitFor({ state: 'hidden' });
         await settleMotion(page);
@@ -233,7 +248,7 @@ async function streamPage(browser, viewport, platform) {
         assert.deepEqual(test.streams, [udid], `${label}: one stream socket for the whole visit`);
 
         // One sheet takes the place of another: the sheet that is open has the one entry.
-        const title = (text) => sheet(page).locator('.bottom-sheet-title', { hasText: text });
+        const title = (text) => sheet(page).locator('.bottom-sheet-title, .kit-sheet-title', { hasText: text });
         const swaps = [
             ['Actions to Settings', async () => {
                 await control(test, 'Actions');
@@ -254,23 +269,59 @@ async function streamPage(browser, viewport, platform) {
                 await title(/^Actions$/).waitFor();
                 await settleMotion(page);
                 await press(test, sheet(page).getByRole('button', { name: 'Open', exact: true }));
-            }, page.locator('.live-text-overlay')]);
+            }, title(/^Type text$/)]);
         }
         for (const [name, swap, shown] of swaps) {
             await swap();
             await shown.waitFor();
             await settleMotion(page);
             await untilAt(page, home.index + 1, 1);
-            assert.equal(await page.locator('.bottom-sheet-root.open, .live-text-overlay, .floating-toolbar.mobile.open').count(), 1, `${label} ${name}: one overlay is open`);
+            assert.equal(await sheet(page).count() + await page.locator('.floating-toolbar.mobile.open').count(), 1, `${label} ${name}: one overlay is open`);
             await page.goBack();
             await shown.waitFor({ state: 'hidden' });
             await settleMotion(page);
             assert.deepEqual(await at(page), home, `${label} ${name}: Back closes the sheet that took its place, not the page`);
-            assert.equal(await page.locator('.bottom-sheet-root.open, .live-text-overlay').count(), 0, `${label} ${name}: nothing is open after Back`);
+            assert.equal(await sheet(page).count(), 0, `${label} ${name}: nothing is open after Back`);
             assert.equal(await stream.count(), 1);
         }
         assert.deepEqual(test.streams, [udid]);
         assert.equal(test.closed, 0);
+
+        // A confirm prompt in a sheet: the first Back cancels it, as Escape does, and the next
+        // one closes the sheet. Chrome on Android sends Back to an open modal dialog as a close
+        // request (a cancel event); the prompt goes first there too. Nothing is sent.
+        if (platform === 'ios') {
+            const actions = kitSheet(page, /^Actions$/);
+            const arm = async () => {
+                await control(test, 'Actions');
+                await actions.waitFor();
+                await settleMotion(page);
+                await untilAt(page, home.index + 1, 1);
+                await press(test, actions.getByRole('button', { name: 'Reboot', exact: true }));
+                await actions.locator('.kit-confirm').waitFor();
+            };
+            await arm();
+            await page.goBack();
+            await actions.locator('.kit-confirm').waitFor({ state: 'detached' });
+            await untilAt(page, home.index + 1, 1);
+            await page.waitForTimeout(150);
+            assert.equal(await actions.count(), 1, `${label}: Back with a prompt open leaves the sheet open`);
+            await page.goBack();
+            await actions.waitFor({ state: 'hidden' });
+            assert.deepEqual(await at(page), home, `${label}: the next Back closes the sheet`);
+            const closeRequest = () => actions.dispatchEvent('cancel', { cancelable: true });
+            await arm();
+            await closeRequest();
+            await actions.locator('.kit-confirm').waitFor({ state: 'detached' });
+            await page.waitForTimeout(150);
+            assert.equal(await actions.count(), 1, `${label}: a close request with a prompt open leaves the sheet open`);
+            assert.deepEqual(await at(page), { ...home, index: home.index + 1, overlay: 1 }, `${label}: and its entry`);
+            await closeRequest();
+            await actions.waitFor({ state: 'hidden' });
+            await untilAt(page, home.index, 0);
+            assert.deepEqual(test.commands.filter((command) => command.type === 'reboot_device'), [], `${label}: nothing was sent to the phone`);
+            assert.equal(await stream.count(), 1);
+        }
 
         // Back with nothing open leaves the page in one step. Forward shows the page again
         // (the one new stream of that visit) and no sheet, also from the entry a sheet had.
@@ -290,7 +341,7 @@ async function streamPage(browser, viewport, platform) {
         await untilAt(page, home.index, 0);
         await page.waitForTimeout(300);
         assert.deepEqual(await at(page), home, `${label}: Forward onto the entry of a sheet that is gone is stepped back to the page`);
-        assert.equal(await page.locator('.bottom-sheet-root.open, .live-text-overlay').count(), 0, `${label}: Forward does not open a sheet again`);
+        assert.equal(await sheet(page).count(), 0, `${label}: Forward does not open a sheet again`);
         assert.deepEqual(test.streams, [udid, udid], `${label}: Forward opened the page once`);
 
         // An address from outside the app (a push alert that is opened) while a sheet is open.
@@ -301,14 +352,14 @@ async function streamPage(browser, viewport, platform) {
         await page.evaluate(() => { location.hash = '#!action=notifications'; });
         await page.locator('.notifications-page').waitFor();
         await sheet(page).waitFor({ state: 'hidden' });
-        assert.equal(await page.locator('.bottom-sheet-root.open, .live-text-overlay').count(), 0, `${label}: the sheet does not show over Notifications`);
+        assert.equal(await sheet(page).count(), 0, `${label}: the sheet does not show over Notifications`);
         assert.deepEqual(test.streams, [udid, udid], `${label}: leaving for another page started no stream`);
         await page.goBack();
         await stream.waitFor();
         await connected(page);
         await untilAt(page, home.index, 0);
         await page.waitForTimeout(300);
-        assert.equal(await page.locator('.bottom-sheet-root.open, .live-text-overlay').count(), 0, `${label}: Back to the page does not open the sheet again`);
+        assert.equal(await sheet(page).count(), 0, `${label}: Back to the page does not open the sheet again`);
         assert.deepEqual(test.streams, [udid, udid, udid], `${label}: Back to the page opened it once`);
 
         // A reload with a sheet open: the page without the sheet, and Back leaves it in one step.
@@ -337,10 +388,11 @@ async function streamPage(browser, viewport, platform) {
 }
 
 /**
- * Type text leaves the controls button in reach when the owner has moved it above the bar. The
- * panel opened from it while typing is on top: Back closes the panel first, then Type text.
+ * Type text is a sheet, so nothing behind it can be pressed: with the controls button moved to
+ * where the sheet leaves it in sight, a press there lands on the backdrop and closes the sheet.
+ * The controls panel does not open over it, and the sheet's one history entry is stepped back.
  */
-async function panelOverTyping(browser, platform) {
+async function nothingOpensOverTyping(browser, platform) {
     const test = await start(browser, VIEWPORTS[0]);
     const { page } = test;
     const label = `phone ${platform} stream`;
@@ -353,30 +405,25 @@ async function panelOverTyping(browser, platform) {
         await page.locator('.stream-view').waitFor();
         await connected(page);
         const home = await at(page);
-        const typing = page.locator('.live-text-overlay');
-        const panel = page.locator('.floating-toolbar-panel');
+        const typing = kitSheet(page, /^Type text$/);
         await control(test, 'Type text');
         await typing.waitFor();
         await settleMotion(page);
         await untilAt(page, home.index + 1, 1);
-        await press(test, page.locator('.floating-toolbar-fab'));
-        await page.locator('.floating-toolbar.open').waitFor();
-        await settleMotion(page);
-        await untilAt(page, home.index + 2, 2);
-        await page.goBack();
-        await panel.waitFor({ state: 'hidden' });
-        await settleMotion(page);
-        assert.deepEqual(await at(page), { ...home, index: home.index + 1, overlay: 1 }, `${label}: Back closes the panel opened over Type text first`);
-        assert.equal(await typing.count(), 1, `${label}: Type text is still open`);
-        await page.goBack();
+        const fab = await page.locator('.floating-toolbar-fab').boundingBox();
+        const panel = await typing.locator('.kit-sheet-panel').boundingBox();
+        assert.ok(fab.y + fab.height < panel.y, `${label}: the controls button is above the sheet`);
+        await page.touchscreen.tap(fab.x + fab.width / 2, fab.y + fab.height / 2);
         await typing.waitFor({ state: 'hidden' });
+        await untilAt(page, home.index, 0);
         await settleMotion(page);
-        assert.deepEqual(await at(page), home, `${label}: the next Back closes Type text`);
+        assert.equal(await page.locator('.floating-toolbar.open').count(), 0, `${label}: the controls panel did not open over Type text`);
+        assert.deepEqual(await at(page), home, `${label}: the press closed Type text and left the page`);
         assert.equal(await page.locator('.stream-view').count(), 1);
         assert.deepEqual(test.streams, [udid]);
         assert.equal(test.closed, 0);
         assert.deepEqual(test.errors, []);
-        console.log(`PASS ${label}: the controls panel opened over Type text closes first on Back`);
+        console.log(`PASS ${label}: a press on the controls button behind Type text closes the sheet and opens nothing over it`);
     } finally {
         await test.context.close();
     }
@@ -388,8 +435,8 @@ async function listPage(browser, viewport) {
     const label = `${viewport.name} list`;
     try {
         const overlays = [
-            bottomSheet('Settings of an Android phone', /^Stream settings$/, () => press(test, card(page, `android:${PIXEL_2}`).locator('button.stream-settings-button'))),
-            bottomSheet('Settings of an iPhone', /^Scheduled unlock$/, () => press(test, card(page, `ios:${IPHONE}`).locator('button[title="Scheduled unlock"]'))),
+            kitSheetOverlay('Settings of an Android phone', /^Stream settings$/, () => press(test, card(page, `android:${PIXEL_2}`).locator('button.stream-settings-button'))),
+            kitSheetOverlay('Settings of an iPhone', /^Scheduled unlock$/, () => press(test, card(page, `ios:${IPHONE}`).locator('button[title="Scheduled unlock"]'))),
         ];
         const home = await backClosesEach(test, label, overlays, page.locator('#devices'));
         assert.equal(home.index, 0);
@@ -564,8 +611,8 @@ async function main() {
                     await notificationsPage(browser, viewport);
                 }
                 await stepNeverReported(browser);
-                await panelOverTyping(browser, 'android');
-                await panelOverTyping(browser, 'ios');
+                await nothingOpensOverTyping(browser, 'android');
+                await nothingOpensOverTyping(browser, 'ios');
             })(),
         ]);
     } finally {

@@ -1,46 +1,25 @@
 @layer tokens, base, components, views;
 
 @layer views {
-/* Both Actions sheets are built from the shared rows in ui/SheetControls.css; only the two
-   clipboard text areas need anything of their own. */
+/* Both Actions sheets (views/ActionsSheet.tsx, views/ApplActionsSheet.tsx) are built from the
+   kit's groups, rows and disclosure. These rules only place those parts in the sheet. */
 .actions-sheet {
-    padding-top: 4px;
     min-width: 0;
 }
 
-.actions-clipboard-readout,
-.actions-paste-input {
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    min-height: 78px;
-    resize: vertical;
-    font-size: 16px;
-    line-height: 1.5;
-    padding: 10px 12px;
-    color: var(--text-color);
-    border: 1px solid var(--button-border-color);
-    border-radius: 12px;
+/* A condition that covers the whole sheet stands above its first group. */
+.actions-sheet > .kit-banner {
+    margin-bottom: var(--space-16);
 }
 
-.actions-clipboard-readout {
-    background: var(--device-list-stripe-color);
-    user-select: text;
+/* A text area takes the width of its row; the button that sends it goes under it. */
+.actions-sheet .kit-row-stack > .kit-row-control > .kit-field-group {
+    flex-basis: 100%;
 }
 
-/* The device card's debug group (DeviceList.css) shares this facts grid. */
-.device-debug-facts {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 2px 10px;
-    margin: 0;
-    color: var(--muted-text-color, var(--text-color-light));
-    font-size: 12px;
-}
-.device-debug-facts dt {
-    font-weight: 600;
-}
-.device-debug-facts dd {
-    margin: 0;
+/* A prompt and an outcome inside the disclosure keep clear of its edge, as its rows do. */
+.actions-sheet .kit-disclosure .kit-confirm,
+.actions-sheet .kit-disclosure .kit-status {
+    margin: var(--space-8) var(--space-16) var(--space-12);
 }
 }

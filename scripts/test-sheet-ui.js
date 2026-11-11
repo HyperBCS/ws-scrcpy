@@ -32,6 +32,15 @@ class FakeElement {
     remove() {
         this.isConnected = false;
     }
+    /** The nearest element, this one included, that a test marked with the selector. */
+    closest(selector) {
+        for (let node = this; node; node = node.parent) if (node.matches === selector) return node;
+        return null;
+    }
+    appendChild(child) {
+        child.parent = this;
+        this.appended = child;
+    }
 }
 global.HTMLElement = FakeElement;
 global.document = {
@@ -48,6 +57,7 @@ global.document = {
 document.body.appendChild = () => {};
 
 const { rememberDialogFocus, returnDialogFocus } = require('../src/app/ui/dialogFocus');
+const { isLocalKeyboardTarget } = require('../src/app/googDevice/localKeyboardTarget');
 const { listenStateLabel } = require('../src/app/state/audio');
 const { copyPhoneClipboardHere } = require('../src/app/ui/copyText');
 
@@ -132,6 +142,52 @@ test('Copy here works on plain HTTP, where navigator.clipboard does not exist', 
     } finally {
         if (original) Object.defineProperty(globalThis, 'navigator', original);
         else delete globalThis.navigator;
+    }
+});
+
+test('Copy here inside a sheet copies from inside its dialog, where focus can go', async () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
+    try {
+        // A sheet is a modal dialog: the page outside it is inert and cannot take focus.
+        const dialog = new FakeElement('Actions sheet', document.body);
+        dialog.matches = 'dialog[open]';
+        const button = new FakeElement('Copy here', dialog);
+        document.activeElement = button;
+        document.copied.length = 0;
+        assert.equal(await copyPhoneClipboardHere('from the phone'), 'Copied to this browser.');
+        assert.equal(dialog.appended?.name, 'textarea', 'the text area that holds the selection is put in the dialog');
+        assert.equal(dialog.appended.isConnected, false, 'and removed again');
+        assert.deepEqual(document.copied, [['copy', 'from the phone']]);
+        assert.equal(document.activeElement, button);
+    } finally {
+        if (original) Object.defineProperty(globalThis, 'navigator', original);
+        else delete globalThis.navigator;
+    }
+});
+
+test('no key goes to the phone while a sheet of either kind is open', () => {
+    const selectors = [];
+    const query = document.querySelector;
+    const Element = global.Element;
+    global.Element = FakeElement;
+    try {
+        // The picture has focus; it is not a control.
+        const picture = new FakeElement('touch layer', document.body);
+        let open;
+        document.querySelector = (selector) => {
+            selectors.push(selector);
+            return selector.split(',').map((part) => part.trim()).includes(open) ? new FakeElement('sheet', document.body) : null;
+        };
+        assert.equal(isLocalKeyboardTarget(picture), false, 'with no sheet open the key is the phone\'s');
+        open = 'dialog.kit-sheet[open]';
+        assert.equal(isLocalKeyboardTarget(picture), true, 'the kit sheet, a native dialog, keeps the key');
+        open = '.bottom-sheet-root.open';
+        assert.equal(isLocalKeyboardTarget(picture), true, 'the older sheet keeps the key until it is removed');
+        assert.ok(selectors.length >= 3);
+    } finally {
+        document.querySelector = query;
+        global.Element = Element;
     }
 });
 

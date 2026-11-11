@@ -273,7 +273,7 @@ async function main() {
             // Settings: playback options without the Fit screen toggle.
             if (mobile) await page.getByRole('button', { name: 'Show controls', exact: true }).click();
             await page.getByRole('button', { name: 'Settings', exact: true }).click();
-            const dialog = page.locator('.bottom-sheet-root.open [role="dialog"]');
+            const dialog = page.locator('dialog.kit-sheet[open]');
             await dialog.waitFor();
             await dialog.locator('.settings-playback summary').click();
             await dialog.getByText('Show quality stats').waitFor();

@@ -31,10 +31,13 @@ function copyWithTextarea(text: string): boolean {
     area.style.top = '0';
     area.style.left = '-9999px';
     area.style.opacity = '0';
-    document.body.appendChild(area);
+    const focused = document.activeElement;
+    // A sheet is a modal dialog, and everything outside an open one is inert: a text area in the
+    // body could not take focus. It goes into the dialog that holds the pressed button.
+    const host = (focused instanceof HTMLElement && focused.closest<HTMLElement>('dialog[open]')) || document.body;
+    host.appendChild(area);
     const selection = document.getSelection();
     const previous = selection && selection.rangeCount ? selection.getRangeAt(0) : undefined;
-    const focused = document.activeElement;
     try {
         area.focus({ preventScroll: true });
         area.setSelectionRange(0, text.length);

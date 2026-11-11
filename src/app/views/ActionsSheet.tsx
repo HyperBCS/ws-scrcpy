@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'preact/hooks';
-import { BottomSheet } from '../ui/BottomSheet';
+import { Banner } from '../ui/Banner';
+import { Button } from '../ui/Button';
+import { TextAreaField } from '../ui/Field';
+import { Sheet } from '../ui/Sheet';
 import { SheetGroup, SheetRow, SheetStatus, SoundRows } from '../ui/SheetControls';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import {
@@ -84,59 +87,54 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
     };
 
     return (
-        <BottomSheet
+        <Sheet
             open={toolsSheetOpen.value}
             onClose={() => (toolsSheetOpen.value = false)}
             title="Actions"
             subtitle={entry ? deviceName(entry) : undefined}
         >
             <div class="actions-sheet">
-                {!connected && (
-                    <SheetStatus tone="warning">
-                        Reconnecting. Actions that need the stream are paused until it is back.
-                    </SheetStatus>
-                )}
+                {!connected && <Banner>Reconnecting. Actions that need the stream are paused until it is back.</Banner>}
 
-                <SheetGroup title="Sound">
+                <SheetGroup kit title="Sound">
                     {audioSession ? (
-                        <SoundRows session={audioSession} />
+                        <SoundRows kit session={audioSession} />
                     ) : (
-                        <SheetRow title="Listen in this browser" description={audioAvailability.value.message} />
+                        <SheetRow kit title="Listen in this browser" description={audioAvailability.value.message} />
                     )}
                 </SheetGroup>
 
                 <SheetGroup
+                    kit
                     title="Clipboard"
                     status={
                         draftTooLong ? (
-                            <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
+                            <SheetStatus kit tone="error">
+                                {CLIPBOARD_TOO_LONG_NOTE}
+                            </SheetStatus>
                         ) : (
-                            clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
+                            clipboardNote && <SheetStatus kit>{clipboardNote}</SheetStatus>
                         )
                     }
                 >
                     <SheetRow
+                        kit
                         title="Read the phone's clipboard"
                         description="Copy from the phone to this browser."
                         layout="pair"
                     >
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            onClick={onReadClipboard}
-                            disabled={!connected || reading}
-                        >
+                        <Button size="compact" onClick={onReadClipboard} disabled={!connected || reading}>
                             {reading ? 'Reading…' : 'Read'}
-                        </button>
-                        <button type="button" class="sheet-button" onClick={onCopy} disabled={received === undefined}>
+                        </Button>
+                        <Button size="compact" onClick={onCopy} disabled={received === undefined}>
                             Copy here
-                        </button>
+                        </Button>
                     </SheetRow>
                     {received !== undefined && (
-                        <div class="sheet-row stack">
-                            <textarea
-                                class="sheet-readout actions-clipboard-readout"
-                                aria-label="Phone clipboard"
+                        <div class="kit-row kit-row-stack">
+                            <TextAreaField
+                                label="Phone clipboard"
+                                labelHidden
                                 value={received}
                                 placeholder="The phone clipboard is empty"
                                 readOnly
@@ -145,69 +143,60 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                         </div>
                     )}
                     <SheetRow
+                        kit
                         title="Paste text on the phone"
                         description="Tap a field on the phone, then paste."
                         layout="stack"
                     >
-                        <textarea
-                            id="device-paste-text"
-                            class="sheet-input actions-paste-input"
-                            aria-label="Text to paste on the phone"
+                        <TextAreaField
+                            label="Text to paste on the phone"
+                            labelHidden
                             placeholder="Type or paste text…"
                             value={clipboardDraft}
                             rows={3}
                             onInput={(event) => setClipboardDraft(event.currentTarget.value)}
                         />
-                        <button
-                            type="button"
-                            class="sheet-button primary"
-                            onClick={onPaste}
-                            disabled={!clipboardDraft || draftTooLong || !connected}
-                        >
+                        <Button onClick={onPaste} disabled={!clipboardDraft || draftTooLong || !connected}>
                             Paste
-                        </button>
+                        </Button>
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup title="Phone panels">
-                    <SheetRow title="Notifications">
-                        <button
-                            type="button"
-                            class="sheet-button"
+                <SheetGroup kit title="Phone panels">
+                    <SheetRow kit title="Notifications">
+                        <Button
+                            size="compact"
                             disabled={!connected}
                             onClick={() => send(ControlMessage.TYPE_EXPAND_NOTIFICATION_PANEL)}
                         >
                             Open
-                        </button>
+                        </Button>
                     </SheetRow>
-                    <SheetRow title="Quick settings">
-                        <button
-                            type="button"
-                            class="sheet-button"
+                    <SheetRow kit title="Quick settings">
+                        <Button
+                            size="compact"
                             disabled={!connected}
                             onClick={() => send(ControlMessage.TYPE_EXPAND_SETTINGS_PANEL)}
                         >
                             Open
-                        </button>
+                        </Button>
                     </SheetRow>
-                    <SheetRow title="Collapse panels">
-                        <button
-                            type="button"
-                            class="sheet-button"
+                    <SheetRow kit title="Collapse panels">
+                        <Button
+                            size="compact"
                             disabled={!connected}
                             onClick={() => send(ControlMessage.TYPE_COLLAPSE_PANELS)}
                         >
                             Collapse
-                        </button>
+                        </Button>
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup title="Session">
-                    <SheetRow title="Stream settings" description="Stream quality and sound capture.">
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            aria-label="Open Stream settings"
+                <SheetGroup kit title="Session">
+                    <SheetRow kit title="Stream settings" description="Stream quality and sound capture.">
+                        <Button
+                            size="compact"
+                            attributes={{ 'aria-label': 'Open Stream settings' }}
                             disabled={!session}
                             onClick={() => {
                                 if (session) {
@@ -217,22 +206,17 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                             }}
                         >
                             Open
-                        </button>
+                        </Button>
                     </SheetRow>
                     {lockActive && (
-                        <SheetRow title="Unlock device" description="Enter the phone's PIN or password.">
-                            <button
-                                type="button"
-                                class="sheet-button"
-                                disabled={!connected}
-                                onClick={() => openSheet('unlock')}
-                            >
+                        <SheetRow kit title="Unlock device" description="Enter the phone's PIN or password.">
+                            <Button size="compact" disabled={!connected} onClick={() => openSheet('unlock')}>
                                 Unlock
-                            </button>
+                            </Button>
                         </SheetRow>
                     )}
                 </SheetGroup>
             </div>
-        </BottomSheet>
+        </Sheet>
     );
 }

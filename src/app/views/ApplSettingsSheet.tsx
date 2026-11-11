@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { BottomSheet } from '../ui/BottomSheet';
+import { Banner } from '../ui/Banner';
+import { Button } from '../ui/Button';
+import { TextField } from '../ui/Field';
+import { Icon } from '../ui/Icon';
+import { Sheet } from '../ui/Sheet';
 import { SheetGroup, SheetRow, SheetStatus, SheetToggleRow } from '../ui/SheetControls';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { applSettingsSheetTarget, closeApplSettingsSheet } from '../state/settingsSheet';
@@ -108,24 +112,13 @@ function summarize(schedule: UnlockScheduleStatus, running: boolean, moment: (at
     };
 }
 
-function ProblemIcon() {
+/** The title of a row that reports a problem: the warning icon, then the words. */
+function ProblemTitle({ children }: { children: string }) {
     return (
-        <svg
-            class="sheet-problem-icon"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-        >
-            <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
-            <path d="M12 9v4" />
-            <path d="M12 17h.01" />
-        </svg>
+        <span class="settings-problem">
+            <Icon name="warning" size={16} />
+            {children}
+        </span>
     );
 }
 
@@ -409,9 +402,9 @@ export function ApplSettingsSheet() {
 
     if (!renderTarget) {
         return (
-            <BottomSheet open={false} onClose={closeApplSettingsSheet} title="Scheduled unlock">
+            <Sheet open={false} onClose={closeApplSettingsSheet} title="Scheduled unlock">
                 {null}
-            </BottomSheet>
+            </Sheet>
         );
     }
 
@@ -435,36 +428,40 @@ export function ApplSettingsSheet() {
     const stopKeys = (event: KeyboardEvent) => event.stopPropagation();
 
     return (
-        <BottomSheet
+        <Sheet
             open={!!target}
             onClose={closeApplSettingsSheet}
             title="Scheduled unlock"
             subtitle={entry ? deviceName(entry) : 'iPhone'}
         >
-            <div class="appl-settings-sheet">
-                {!tracker && <SheetStatus tone="warning">Waiting for the phone…</SheetStatus>}
+            <div class="appl-settings">
+                {!tracker && <Banner>Waiting for the phone…</Banner>}
                 {tracker && !connected && (
-                    <SheetStatus tone="warning">
+                    <Banner>
                         The phone is not connected. Changes are kept on the server and apply when it is back.
-                    </SheetStatus>
+                    </Banner>
                 )}
 
                 <SheetGroup
+                    kit
                     title="Schedule"
                     hint="Unlocks the iPhone twice a day, at the set time and 12 hours later, then locks it again. The iPhone stops accepting connections 24 hours after the passcode was last entered."
-                    status={note && <SheetStatus tone={note.tone}>{note.text}</SheetStatus>}
+                    status={
+                        note && (
+                            <SheetStatus kit tone={note.tone}>
+                                {note.text}
+                            </SheetStatus>
+                        )
+                    }
                 >
                     <SheetRow
-                        title={
-                            <>
-                                {summary.tone === 'error' && <ProblemIcon />}
-                                {summary.title}
-                            </>
-                        }
+                        kit
+                        title={summary.tone === 'error' ? <ProblemTitle>{summary.title}</ProblemTitle> : summary.title}
                         description={summary.text}
                         attributes={{ 'data-unlock-summary': summary.state, 'data-tone': summary.tone }}
                     />
                     <SheetToggleRow
+                        kit
                         title="Unlock twice a day"
                         description={
                             schedule.hasPasscode
@@ -476,12 +473,13 @@ export function ApplSettingsSheet() {
                         disabled={locked || (!schedule.hasPasscode && !schedule.enabled)}
                         onChange={onToggle}
                     />
-                    <SheetRow title="Time" description={timeDescription} attributes={{ 'data-unlock-time': '' }}>
+                    <SheetRow kit title="Time" description={timeDescription} attributes={{ 'data-unlock-time': '' }}>
+                        {/* Written with the kit's class: the field is read through its ref. */}
                         <input
                             ref={timeInput}
                             type="time"
                             step="60"
-                            class="sheet-input"
+                            class="kit-field"
                             aria-label="Unlock time"
                             value={timeDraft ?? schedule.time}
                             // Not disabled by its own save: that would drop focus in the middle of typing.
@@ -508,6 +506,7 @@ export function ApplSettingsSheet() {
                     </SheetRow>
                     {browserZone && schedule.timeZone !== browserZone && (
                         <SheetRow
+                            kit
                             title="Time zone"
                             description={
                                 schedule.timeZone
@@ -516,25 +515,26 @@ export function ApplSettingsSheet() {
                             }
                             layout="stack"
                         >
-                            <button type="button" class="sheet-button" disabled={locked} onClick={onUseBrowserZone}>
+                            <Button disabled={locked} onClick={onUseBrowserZone}>
                                 Use {browserZone}
-                            </button>
+                            </Button>
                         </SheetRow>
                     )}
                     {!schedule.hasPasscode || replacing ? (
                         <SheetRow
+                            kit
                             title="Passcode"
                             description="Enter it twice. Encrypted on the server; never shown or sent to a browser."
                             layout="stack"
                         >
-                            <input
+                            <TextField
+                                label="Passcode for scheduled unlock"
+                                labelHidden
                                 type="password"
                                 inputMode="numeric"
                                 enterKeyHint="next"
                                 autoComplete="off"
                                 maxLength={10}
-                                class="sheet-input"
-                                aria-label="Passcode for scheduled unlock"
                                 value={passcode}
                                 disabled={locked}
                                 onInput={(event) => setPasscode(event.currentTarget.value)}
@@ -547,14 +547,14 @@ export function ApplSettingsSheet() {
                                 }}
                                 onKeyUp={stopKeys}
                             />
-                            <input
+                            <TextField
+                                label="Repeat the passcode"
+                                labelHidden
                                 type="password"
                                 inputMode="numeric"
                                 enterKeyHint="go"
                                 autoComplete="off"
                                 maxLength={10}
-                                class="sheet-input"
-                                aria-label="Repeat the passcode"
                                 placeholder="Repeat"
                                 value={passcodeAgain}
                                 disabled={locked}
@@ -568,18 +568,15 @@ export function ApplSettingsSheet() {
                                 }}
                                 onKeyUp={stopKeys}
                             />
-                            <button
-                                type="button"
-                                class="sheet-button primary"
+                            <Button
+                                variant="primary"
                                 disabled={locked || !passcode || !passcodeAgain}
                                 onClick={onSavePasscode}
                             >
                                 Save on server
-                            </button>
+                            </Button>
                             {replacing && (
-                                <button
-                                    type="button"
-                                    class="sheet-button"
+                                <Button
                                     disabled={locked}
                                     onClick={() => {
                                         setReplacing(false);
@@ -588,11 +585,12 @@ export function ApplSettingsSheet() {
                                     }}
                                 >
                                     Cancel
-                                </button>
+                                </Button>
                             )}
                         </SheetRow>
                     ) : (
                         <SheetRow
+                            kit
                             title="Passcode"
                             description={
                                 schedule.passcodeRejected
@@ -602,27 +600,23 @@ export function ApplSettingsSheet() {
                             layout="pair"
                             attributes={{ 'data-tone': schedule.passcodeRejected ? 'error' : undefined }}
                         >
-                            <button
-                                type="button"
-                                class="sheet-button"
-                                disabled={locked}
-                                onClick={() => setReplacing(true)}
-                            >
+                            <Button size="compact" disabled={locked} onClick={() => setReplacing(true)}>
                                 Replace
-                            </button>
-                            <button
-                                type="button"
-                                class="sheet-button danger"
+                            </Button>
+                            <Button
+                                size="compact"
+                                variant="danger"
                                 disabled={locked}
                                 onClick={(event) => confirmRemove.arm('passcode', event.currentTarget)}
                             >
                                 Remove
-                            </button>
+                            </Button>
                         </SheetRow>
                     )}
                 </SheetGroup>
                 {confirmRemove.armed && removable && (
                     <ConfirmPrompt
+                        kit
                         action={confirmRemove}
                         question={`Remove the stored passcode for ${entry ? deviceName(entry) : 'this iPhone'}?`}
                         consequence={
@@ -637,16 +631,19 @@ export function ApplSettingsSheet() {
                 )}
 
                 <SheetGroup
+                    kit
                     title="Runs"
-                    status={runNote && <SheetStatus tone={runNote.tone}>{runNote.text}</SheetStatus>}
+                    status={
+                        runNote && (
+                            <SheetStatus kit tone={runNote.tone}>
+                                {runNote.text}
+                            </SheetStatus>
+                        )
+                    }
                 >
                     <SheetRow
-                        title={
-                            <>
-                                {lastRunProblem && <ProblemIcon />}
-                                Last run
-                            </>
-                        }
+                        kit
+                        title={lastRunProblem ? <ProblemTitle>Last run</ProblemTitle> : 'Last run'}
                         description={lastRun ? describeRun(lastRun, moment(lastRun.at)) : 'No run yet.'}
                         attributes={{
                             'data-outcome': lastRun?.outcome,
@@ -654,6 +651,7 @@ export function ApplSettingsSheet() {
                         }}
                     />
                     <SheetRow
+                        kit
                         title="Run now"
                         description={
                             connected || !tracker
@@ -662,36 +660,32 @@ export function ApplSettingsSheet() {
                         }
                         attributes={{ 'data-unlock-run': connected ? 'ready' : 'unavailable' }}
                     >
-                        <button
-                            type="button"
-                            class="sheet-button"
-                            disabled={locked || running || !connected}
-                            onClick={onRunNow}
-                        >
+                        <Button size="compact" disabled={locked || running || !connected} onClick={onRunNow}>
                             {running ? 'Running…' : 'Run now'}
-                        </button>
+                        </Button>
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup title="Phone">
-                    <dl class="sheet-facts">
-                        <dt>Model</dt>
-                        <dd>{descriptor?.model || 'unknown'}</dd>
-                        <dt>iOS</dt>
-                        <dd>{descriptor?.version || 'unknown'}</dd>
-                        <dt>Serial</dt>
-                        <dd>{renderTarget.udid}</dd>
-                        <dt>Developer Mode</dt>
-                        <dd>
+                <SheetGroup kit title="Phone">
+                    <SheetRow kit title="Model">
+                        <span class="kit-row-value">{descriptor?.model || 'unknown'}</span>
+                    </SheetRow>
+                    <SheetRow kit title="iOS">
+                        <span class="kit-row-value">{descriptor?.version || 'unknown'}</span>
+                    </SheetRow>
+                    {/* A serial is long: it goes under its name, where it can wrap. */}
+                    <SheetRow kit title="Serial" description={renderTarget.udid} />
+                    <SheetRow kit title="Developer Mode">
+                        <span class="kit-row-value">
                             {developerMode === 'unknown' || developerMode === undefined
                                 ? 'unknown'
                                 : developerMode
                                   ? 'on'
                                   : 'off'}
-                        </dd>
-                    </dl>
+                        </span>
+                    </SheetRow>
                 </SheetGroup>
             </div>
-        </BottomSheet>
+        </Sheet>
     );
 }

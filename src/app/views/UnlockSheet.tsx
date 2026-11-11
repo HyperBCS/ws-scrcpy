@@ -1,5 +1,10 @@
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { BottomSheet } from '../ui/BottomSheet';
+import { useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { Banner } from '../ui/Banner';
+import { Button } from '../ui/Button';
+import { Checkbox } from '../ui/Checkbox';
+import { InlineStatus } from '../ui/InlineStatus';
+import { SegmentedControl } from '../ui/SegmentedControl';
+import { Sheet } from '../ui/Sheet';
 import { UnlockRequestError } from '../googDevice/client/passcode';
 import { readSavedPasscode, savePasscode, forgetPasscode, PasscodeMode } from '../state/savedPasscode';
 import type { DeviceLockValue } from './LockScreenNotice';
@@ -48,6 +53,8 @@ export function UnlockSheet({
     const [remember, setRemember] = useState(false);
     const [phase, setPhase] = useState<Phase>('idle');
     const [feedback, setFeedback] = useState('');
+    const formId = useId();
+    const fieldId = useId();
     const confirmed = connected && locked === false && keyguardShowing === false;
     const pending = phase === 'sending' || phase === 'waiting';
 
@@ -206,48 +213,78 @@ export function UnlockSheet({
               : 'This phone reports that it is unlocked.'
           : feedback;
 
+    const failed = phase === 'error' || phase === 'unconfirmed';
+
     return (
-        <BottomSheet open={open} onClose={close} title="Unlock device" subtitle={deviceName}>
+        <Sheet
+            open={open}
+            onClose={close}
+            title="Unlock device"
+            subtitle={deviceName}
+            footer={
+                <div class="unlock-actions">
+                    <Button onClick={close}>{confirmed ? 'Back to screen' : 'Use remote screen'}</Button>
+                    {!confirmed && (
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            // The form is in the body of the sheet; the button belongs to it by name.
+                            attributes={{ form: formId }}
+                            disabled={!connected || pending || !hasDraft || keyguardOccluded === true}
+                        >
+                            {pending ? 'Waiting for the phone…' : `Send ${mode === 'pin' ? 'PIN' : 'password'}`}
+                        </Button>
+                    )}
+                </div>
+            }
+        >
             <form
-                class="unlock-sheet-content"
+                id={formId}
+                class="unlock-form"
                 onSubmit={submit}
                 autoComplete="off"
                 onKeyUp={(event) => event.stopPropagation()}
             >
-                <p class="unlock-sheet-intro">Enter the phone’s PIN or password.</p>
+                <p class="unlock-intro">Enter the phone’s PIN or password.</p>
                 {keyguardOccluded === true && (
-                    <p class="unlock-sheet-feedback warning" role="status">
+                    <Banner>
                         Another screen is covering the phone lock. Return to the lock screen before sending a passcode.
-                    </p>
+                    </Banner>
                 )}
                 {locked === false && keyguardShowing === true && (
-                    <p class="unlock-sheet-feedback" role="status">
+                    <Banner tone="info">
                         The phone does not report a passcode lock. You may only need to swipe its lock screen.
-                    </p>
+                    </Banner>
                 )}
-                <fieldset class="unlock-sheet-modes" disabled={pending || confirmed}>
-                    <legend>Unlock with</legend>
-                    {(['pin', 'password'] as const).map((value) => (
-                        <label key={value}>
-                            <input
-                                type="radio"
-                                name="unlock-mode"
-                                checked={mode === value}
-                                onChange={() => {
-                                    clearDraft();
-                                    setMode(value);
-                                    setFeedback('');
-                                    setPhase('idle');
-                                }}
-                            />
-                            <span>{value === 'pin' ? 'PIN' : 'Password'}</span>
-                        </label>
-                    ))}
-                </fieldset>
-                <label class="unlock-sheet-field">
-                    <span>{mode === 'pin' ? 'Phone PIN' : 'Phone password'}</span>
+                <div class="kit-field-group">
+                    <span class="kit-field-label">Unlock with</span>
+                    <SegmentedControl
+                        label="Unlock with"
+                        full
+                        value={mode}
+                        options={[
+                            { value: 'pin', label: 'PIN' },
+                            { value: 'password', label: 'Password' },
+                        ]}
+                        disabled={pending || confirmed}
+                        onChange={(value) => {
+                            clearDraft();
+                            setMode(value);
+                            setFeedback('');
+                            setPhase('idle');
+                        }}
+                    />
+                </div>
+                {/* Written with the kit's classes: the field keeps its value out of the component
+                    state and is read and cleared through its ref. */}
+                <div class="kit-field-group">
+                    <label class="kit-field-label" for={fieldId}>
+                        {mode === 'pin' ? 'Phone PIN' : 'Phone password'}
+                    </label>
                     <input
                         ref={input}
+                        id={fieldId}
+                        class="kit-field unlock-field"
                         type="password"
                         inputMode={mode === 'pin' ? 'numeric' : 'text'}
                         enterKeyHint="go"
@@ -263,55 +300,45 @@ export function UnlockSheet({
                         onCompositionStart={() => (composing.current = true)}
                         onCompositionEnd={() => (composing.current = false)}
                     />
-                </label>
-                <label class="unlock-remember">
-                    <input
-                        type="checkbox"
+                </div>
+                <div class="unlock-remember">
+                    <Checkbox
                         checked={remember}
                         disabled={pending}
-                        onChange={(event) => {
-                            const checked = event.currentTarget.checked;
+                        describedBy="unlock-input-hint"
+                        onChange={(checked) => {
                             setRemember(checked);
                             if (!checked && saved && forgetPasscode(udid)) {
                                 setSaved(false);
                                 clearDraft();
                             }
                         }}
-                    />
-                    <span>Remember in this browser</span>
-                </label>
-                <p id="unlock-input-hint" class="unlock-sheet-hint">
-                    {saved
-                        ? 'Saved in this browser as plain text. Clear the box to forget it.'
-                        : remember
-                          ? 'Saved as plain text in this browser once the phone confirms it is unlocked.'
-                          : 'Not saved. Tick the box to keep it in this browser after a confirmed unlock.'}
-                </p>
+                    >
+                        Remember in this browser
+                    </Checkbox>
+                    <p id="unlock-input-hint" class="unlock-hint">
+                        {saved
+                            ? 'Saved in this browser as plain text. Clear the box to forget it.'
+                            : remember
+                              ? 'Saved as plain text in this browser once the phone confirms it is unlocked.'
+                              : 'Not saved. Tick the box to keep it in this browser after a confirmed unlock.'}
+                    </p>
+                </div>
+                {/* A live region from the start, so the first message is read out too. */}
                 <div
                     id="unlock-feedback"
-                    class={`unlock-sheet-feedback ${phase === 'error' || phase === 'unconfirmed' ? 'warning' : ''}`}
-                    role="status"
+                    class="unlock-feedback"
                     aria-live="polite"
                     data-unlock-state={confirmed ? 'confirmed' : !connected ? 'disconnected' : phase}
                 >
-                    {stateMessage}
-                </div>
-                <div class="unlock-sheet-actions">
-                    <button type="button" onClick={close}>
-                        {confirmed ? 'Back to screen' : 'Use remote screen'}
-                    </button>
-                    {!confirmed && (
-                        <button
-                            type="submit"
-                            class="primary"
-                            disabled={!connected || pending || !hasDraft || keyguardOccluded === true}
-                        >
-                            {pending ? 'Waiting for the phone…' : `Send ${mode === 'pin' ? 'PIN' : 'password'}`}
-                        </button>
+                    {stateMessage && (
+                        <InlineStatus tone={failed ? 'error' : confirmed ? 'success' : 'neutral'}>
+                            {stateMessage}
+                        </InlineStatus>
                     )}
                 </div>
-                <p class="unlock-sheet-hint">For a pattern lock, draw on the remote screen or unlock on the phone.</p>
+                <p class="unlock-hint">For a pattern lock, draw on the remote screen or unlock on the phone.</p>
             </form>
-        </BottomSheet>
+        </Sheet>
     );
 }

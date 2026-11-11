@@ -1,6 +1,6 @@
 const { settleMotion } = require('./ui-motion');
 // BASE=http://127.0.0.1:8000 node scripts/e2e-ios-typing.js
-// The iOS "Type text" overlay against fixture sockets: every HID report is captured in the
+// The iOS "Type text" sheet against fixture sockets: every HID report is captured in the
 // browser, nothing reaches a phone. Covers the phone layout, live typing order, editing keys,
 // smart punctuation, paste, IME commits, focus retention and dismissal. The viewport case
 // simulates keyboard shrink/pan; physical iOS/PWA keyboard behavior needs a device check.
@@ -82,6 +82,9 @@ async function start(browser, { mobile = true, mockViewport = false, udid = UDID
     return { context, page, errors, sent, keys, waitForKeys };
 }
 
+// Type text is a kit sheet: the open dialog that holds the typing field.
+const typingSheet = (page) => page.locator('dialog.kit-sheet[open]').filter({ has: page.locator('.live-text') });
+const closeTyping = (page) => page.getByRole('button', { name: 'Close Type text', exact: true });
 const press = (usage) => [[usage], []];
 const shifted = (usage) => [[SHIFT], [SHIFT, usage], [SHIFT], []];
 
@@ -97,7 +100,7 @@ async function openOverlay(page, mobile) {
     } else {
         await page.locator('.control-buttons-list [title="Type text"]').click();
     }
-    await page.locator('.live-text-overlay').waitFor();
+    await typingSheet(page).waitFor();
     await settleMotion(page);
 }
 
@@ -107,14 +110,24 @@ async function mobileFlow(browser) {
     await openOverlay(page, true);
     assert.equal(
         await page.evaluate(() => document.activeElement?.className),
-        'live-text-input',
+        'kit-field live-text-input',
         'the field is focused so the phone keyboard opens',
+    );
+    // One sheet, on the kit's dialog, with one header. Nothing of the older bar is left.
+    assert.deepEqual(
+        await typingSheet(page).evaluate((dialog) => ({
+            modal: dialog.matches('dialog:modal'),
+            headers: dialog.querySelectorAll('.kit-sheet-header').length,
+            title: document.getElementById(dialog.getAttribute('aria-labelledby'))?.textContent,
+            older: document.querySelectorAll('.live-text-overlay, .live-text-bar, .live-text-done').length,
+        })),
+        { modal: true, headers: 1, title: 'Type text', older: 0 },
     );
     assert.match(await page.locator('#live-text-hint').textContent(), /on the phone/);
 
     await settleMotion(page);
     const geometry = await page.evaluate(() => {
-        const bar = document.querySelector('.live-text-bar');
+        const bar = document.querySelector('dialog.kit-sheet[open] .kit-sheet-panel');
         const rect = bar.getBoundingClientRect();
         const small = Array.from(bar.querySelectorAll('button, input'))
             .map((el) => ({ name: el.getAttribute('aria-label') || el.textContent.trim(), ...el.getBoundingClientRect().toJSON() }))
@@ -153,7 +166,7 @@ async function mobileFlow(browser) {
     const enter = await page.locator('button[aria-label="Send Enter"]').boundingBox();
     await page.touchscreen.tap(enter.x + enter.width / 2, enter.y + enter.height / 2);
     assert.deepEqual((await test.waitForKeys(18)).slice(16), press(0x28));
-    assert.equal(await page.evaluate(() => document.activeElement?.className), 'live-text-input');
+    assert.equal(await page.evaluate(() => document.activeElement?.className), 'kit-field live-text-input');
     const right = await page.locator('button[aria-label="Move cursor right"]').boundingBox();
     await page.touchscreen.tap(right.x + right.width / 2, right.y + right.height / 2);
     assert.deepEqual((await test.waitForKeys(20)).slice(18), press(0x4f));
@@ -194,7 +207,7 @@ async function mobileFlow(browser) {
     assert(!test.sent.some((message) => message.type === 'touch'), 'sheet taps never become remote touches');
 
     await page.keyboard.press('Escape');
-    await page.locator('.live-text-overlay').waitFor({ state: 'detached' });
+    await typingSheet(page).waitFor({ state: 'hidden' });
     assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('floating-toolbar-fab')), true, 'focus returns to the controls button');
     assert.deepEqual(test.errors, []);
     await test.context.close();
@@ -205,6 +218,20 @@ async function desktopFlow(browser) {
     const test = await start(browser, { mobile: false });
     const { page } = test;
     await openOverlay(page, false);
+    // A dialog from 600px, at the bottom of the window, with the picture fitted above it: the
+    // field being typed into on the phone is not under the sheet.
+    await page.waitForFunction(() => {
+        const video = document.querySelector('.video')?.getBoundingClientRect();
+        const panel = document.querySelector('dialog.kit-sheet[open] .kit-sheet-panel')?.getBoundingClientRect();
+        return !!video && !!panel && video.height > 100 && video.bottom <= panel.top + 1;
+    }, undefined, { timeout: 3000 }).catch(() => undefined);
+    const desk = await page.evaluate(() => ({
+        video: document.querySelector('.video').getBoundingClientRect().toJSON(),
+        panel: document.querySelector('dialog.kit-sheet[open] .kit-sheet-panel').getBoundingClientRect().toJSON(),
+        height: innerHeight,
+    }));
+    assert.ok(desk.video.height > 100 && desk.video.bottom <= desk.panel.top + 1, `desktop: the picture is fitted above the dialog (${JSON.stringify(desk)})`);
+    assert.ok(desk.panel.bottom < desk.height && desk.panel.bottom > desk.height - 40, 'desktop: the dialog stands a little above the bottom edge');
     await page.keyboard.type('a1!');
     assert.deepEqual(await test.waitForKeys(8), [...press(0x04), ...press(0x1e), ...shifted(0x1e)]);
     await page.keyboard.press('ArrowLeft');
@@ -214,9 +241,8 @@ async function desktopFlow(browser) {
     // The window-level capture must stay quiet while the overlay owns the keyboard: no report
     // for the physical H key beyond the typed text itself.
     assert.equal(test.keys().length, 14);
-    const done = page.locator('.live-text-done');
-    await done.click();
-    await page.locator('.live-text-overlay').waitFor({ state: 'detached' });
+    await closeTyping(page).click();
+    await typingSheet(page).waitFor({ state: 'hidden' });
     assert.deepEqual(test.errors, []);
     await test.context.close();
     console.log('desktop: ok');
@@ -236,10 +262,10 @@ async function keyboardLifecycleFlow(browser) {
         await openOverlay(page, true);
         assert.deepEqual(keyboardMessages(), [], 'opening the typing dock does not register a keyboard or send an empty report');
         await page.keyboard.insertText('a'.repeat(32));
-        await page.locator('.live-text-done').click();
-        await page.locator('.live-text-overlay').waitFor({ state: 'detached' });
-        assert.ok(test.keys().length < 64, 'Done closes while the queued text is still being sent');
-        await waitUntil(() => detachCount() === 1, 'Done detaches the virtual keyboard after queued text finishes');
+        await closeTyping(page).click();
+        await typingSheet(page).waitFor({ state: 'hidden' });
+        assert.ok(test.keys().length < 64, 'Close closes while the queued text is still being sent');
+        await waitUntil(() => detachCount() === 1, 'Close detaches the virtual keyboard after queued text finishes');
         assert.deepEqual(test.keys(), repeatPress(32), 'closing preserves every queued character');
         assert.equal(keyboardMessages().at(-1).type, 'keyboard-detach', 'detach follows the final key release');
 
@@ -248,8 +274,8 @@ async function keyboardLifecycleFlow(browser) {
         const firstRunEnd = keyboardMessages().length;
         await openOverlay(page, true);
         await page.keyboard.insertText('a'.repeat(120));
-        await page.locator('.live-text-done').click();
-        await page.locator('.live-text-overlay').waitFor({ state: 'detached' });
+        await closeTyping(page).click();
+        await typingSheet(page).waitFor({ state: 'hidden' });
         await openOverlay(page, true);
         assert.ok(test.keys().length < 64 + 240, 'the dock reopens before the earlier text finishes');
         await page.keyboard.insertText('b');
@@ -257,8 +283,8 @@ async function keyboardLifecycleFlow(browser) {
         await page.waitForTimeout(50);
         assert.equal(detachCount(), 1, 'reopening cancels the older queued detach');
         assert.deepEqual(keyboardMessages().slice(firstRunEnd).map(message => message.usages), [...repeatPress(120), ...press(0x05)], 'the reopened session retains text order without a detach between batches');
-        await page.locator('.live-text-done').click();
-        await page.locator('.live-text-overlay').waitFor({ state: 'detached' });
+        await closeTyping(page).click();
+        await typingSheet(page).waitFor({ state: 'hidden' });
         await waitUntil(() => detachCount() === 2, 'the newly closed session still detaches');
 
         await openOverlay(page, true);
@@ -278,8 +304,8 @@ async function keyboardLifecycleFlow(browser) {
         assert.deepEqual(test.keys().slice(beforeBlur + 48), press(0x06));
         assert.equal(keyboardMessages().at(-1).type, 'keyboard-detach');
         await page.evaluate(() => { delete document.visibilityState; });
-        await page.locator('.live-text-done').click();
-        await page.locator('.live-text-overlay').waitFor({ state: 'detached' });
+        await closeTyping(page).click();
+        await typingSheet(page).waitFor({ state: 'hidden' });
         await waitUntil(() => detachCount() === 5, 'closing a backgrounded session remains safe');
 
         // Captured physical keys release held usages before detaching on window blur.
@@ -336,12 +362,17 @@ async function typingGeometry(page) {
         return {
             viewport: { top: viewport.offsetTop, left: viewport.offsetLeft, width: viewport.width, height: viewport.height },
             stream: rect('.stream-view'), header: rect('.kit-bar'), stage: rect('.stream-stage'), video: rect('.video'),
-            dock: rect('.live-text-bar'), canvas: rect('.typing-fixture-video'), touch: rect('.typing-fixture-touch'), feedbackError: rect('.live-text-feedback-error'),
+            dock: rect('dialog.kit-sheet[open] .kit-sheet-panel'), canvas: rect('.typing-fixture-video'), touch: rect('.typing-fixture-touch'), feedbackError: rect('.live-text-feedback-error'),
             active: document.activeElement?.className,
-            buttons: [...document.querySelectorAll('.live-text-bar button, .live-text-bar input')]
+            buttons: [...document.querySelectorAll('dialog.kit-sheet[open] .kit-sheet-panel button, dialog.kit-sheet[open] .kit-sheet-panel input')]
                 .filter(el => el.getClientRects().length)
                 .map(el => ({ name: el.getAttribute('aria-label') || el.textContent.trim(), ...el.getBoundingClientRect().toJSON() })),
-            overflow: document.documentElement.scrollWidth > innerWidth || document.querySelector('.live-text-bar').scrollWidth > document.querySelector('.live-text-bar').clientWidth,
+            overflow: document.documentElement.scrollWidth > innerWidth || document.querySelector('dialog.kit-sheet[open] .kit-sheet-body').scrollWidth > document.querySelector('dialog.kit-sheet[open] .kit-sheet-body').clientWidth,
+            // Below 600px the sheet is at the bottom edge; from there it is a dialog a little above
+            // it, and on the edge in a short window.
+            docked: innerWidth < 600,
+            short: innerHeight <= 500,
+            field: rect('.live-text-input'),
         };
     });
 }
@@ -355,22 +386,30 @@ async function captureTyping(page, label) {
 async function assertTypingLayout(page, label) {
     await captureTyping(page, label);
     const boxes = await typingGeometry(page);
-    const { viewport: vv, header, video, dock, canvas, touch } = boxes;
+    const { viewport: vv, header, video, dock, canvas, touch, field } = boxes;
     assert.ok(header.top >= vv.top - 1, `${label}: the stream header is not clipped above the visual viewport`);
     assert.ok(header.bottom <= vv.top + vv.height, `${label}: the stream header remains visible`);
     assert.ok(dock.left >= vv.left - 1 && dock.right <= vv.left + vv.width + 1, `${label}: the dock fits horizontally inside the visual viewport`);
     assert.ok(dock.top >= vv.top - 1 && dock.bottom <= vv.top + vv.height + 1, `${label}: every dock row stays above the local keyboard`);
     assert.ok(video.top >= header.bottom - 1, `${label}: the full stream starts below its header`);
+    // A bottom sheet, and a dialog in a short window, stand on the keyboard; a dialog in a taller
+    // window stands a little above it. The picture is fitted above the sheet in every case.
+    const gap = vv.top + vv.height - dock.bottom;
+    if (boxes.docked || boxes.short) assert.ok(Math.abs(gap) < 1.1, `${label}: the sheet stands on the local keyboard (${gap}px)`);
+    else assert.ok(gap > 8 && gap < 40, `${label}: the dialog stands a little above the local keyboard (${gap}px)`);
     assert.ok(video.bottom <= dock.top + 1, `${label}: the video area is reserved above the typing dock`);
+    assert.ok(field.top >= vv.top - 1 && field.bottom <= vv.top + vv.height + 1, `${label}: the typing field stays above the local keyboard`);
     assert.ok(video.height > 20, `${label}: the stream retains usable vertical space`);
     assert.ok(canvas.height > 20 && canvas.top >= video.top - 1 && canvas.bottom <= video.bottom + 1, `${label}: the whole portrait frame fits above the dock`);
     assert.ok(Math.abs(canvas.width / canvas.height - 428 / 926) < .01, `${label}: the frame keeps its aspect ratio`);
     for (const key of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(canvas[key] - touch[key]) < 1.1, `${label}: video and touch layers stay aligned (${key})`);
-    assert.ok(dock.height <= 160, `${label}: the mobile typing dock stays compact`);
+    // The sheet's header, the field and one row of keys, and one more line while a send has failed.
+    assert.ok(dock.height <= (boxes.docked ? (boxes.feedbackError ? 212 : 186) : 160), `${label}: the typing sheet stays compact (${dock.height}px)`);
+    assert.ok(boxes.buttons.every(button => button.top >= vv.top - 1 && button.bottom <= vv.top + vv.height + 1), `${label}: every control is in view above the local keyboard`);
     if (boxes.feedbackError) assert.ok(boxes.feedbackError.top >= dock.top && boxes.feedbackError.bottom <= dock.bottom, `${label}: send errors remain visible inside the dock`);
     assert.ok(boxes.buttons.every(button => button.height >= 44 && button.width >= 44), `${label}: all controls remain usable touch targets`);
     assert.equal(boxes.overflow, false, `${label}: no horizontal overflow`);
-    assert.equal(boxes.active, 'live-text-input', `${label}: keyboard focus stays on the live typing field`);
+    assert.equal(boxes.active, 'kit-field live-text-input', `${label}: keyboard focus stays on the live typing field`);
     return boxes;
 }
 
@@ -404,17 +443,17 @@ async function keyboardViewportFlow(browser) {
 
         await page.setViewportSize({ width: 390, height: 844 });
         await setVisualViewport(page, { height: null, width: null, offsetTop: 0, offsetLeft: 0 });
-        await page.locator('.live-text-done').click();
-        await page.locator('.live-text-overlay').waitFor({ state: 'detached' });
+        await closeTyping(page).click();
+        await typingSheet(page).waitFor({ state: 'hidden' });
         await settleLayout(page);
         const restored = await page.locator('.video').boundingBox();
-        assert.ok(Math.abs(restored.height - initial.height) < 1.1, 'Done restores the original stream height');
-        assert.ok(Math.abs(restored.y - initial.y) < 1.1, 'Done restores the original stream top');
+        assert.ok(Math.abs(restored.height - initial.height) < 1.1, 'Close restores the original stream height');
+        assert.ok(Math.abs(restored.y - initial.y) < 1.1, 'Close restores the original stream top');
         assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('floating-toolbar-fab')), true);
-        assert.equal(await page.locator('.stream-view').evaluate(el => el.classList.contains('stream-typing')), false, 'Done clears the temporary typing layout');
+        assert.equal(await page.locator('.stream-view').evaluate(el => el.classList.contains('stream-typing')), false, 'Close clears the temporary typing layout');
         assert.deepEqual(test.errors, []);
         await captureTyping(page, 'keyboard-closed');
-        console.log('keyboard viewport: compact dock, uncut stream, rotation, short viewport and Done restoration passed (visualViewport simulation)');
+        console.log('keyboard viewport: compact dock, uncut stream, rotation, short viewport and Close restoration passed (visualViewport simulation)');
     } finally { await test.context.close(); }
 }
 
@@ -462,7 +501,7 @@ async function clipboardLimitFlow(browser) {
             await dialog.waitFor(); await settleMotion(page);
             const draft = dialog.getByLabel('Text for the phone clipboard');
             const send = dialog.getByRole('button', { name: 'Send to phone', exact: true });
-            const tooLong = dialog.getByText('This text is too long to send. The limit is 256 KB.', { exact: true });
+            const tooLong = dialog.getByRole('alert').filter({ hasText: /^This text is too long to send\. The limit is 256 KB\.$/ });
             const clipboardMessages = () => test.sent.filter((message) => message.type === 'clipboard');
             await draft.fill('a'.repeat((1 << 18) - 13));
             await tooLong.waitFor();
@@ -471,7 +510,7 @@ async function clipboardLimitFlow(browser) {
             await tooLong.scrollIntoViewIfNeeded();
             await fs.mkdir(SCREENSHOTS, { recursive: true });
             await page.screenshot({ path: path.join(SCREENSHOTS, `ws-ios-clipboard-limit-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`), animations: 'disabled' });
-            const box = await tooLong.boundingBox(), panel = await dialog.boundingBox();
+            const box = await tooLong.boundingBox(), panel = await dialog.locator('.kit-sheet-panel').boundingBox();
             assert(box.x >= panel.x && box.x + box.width <= panel.x + panel.width + 1, 'the message stays inside the sheet');
             // Three bytes per character: the limit counts UTF-8 bytes, not characters.
             await draft.fill('\u20ac'.repeat(Math.floor(((1 << 18) - 14) / 3) + 1));

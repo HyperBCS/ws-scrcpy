@@ -39,8 +39,8 @@ async function openFab(page) {
     for (const it of items) {
         const snap = () =>
             p.evaluate(() =>
-                Array.from(document.querySelectorAll('.bottom-sheet-root'))
-                    .map((el) => (el.classList.contains('open') ? el.querySelector('.bottom-sheet-title')?.textContent : null))
+                Array.from(document.querySelectorAll('.bottom-sheet-root.open, dialog.kit-sheet[open]'))
+                    .map((el) => el.querySelector('.bottom-sheet-title, .kit-sheet-title')?.textContent)
                     .filter(Boolean)
                     .join(','),
             );
@@ -56,7 +56,7 @@ async function openFab(page) {
         const after = await snap();
         console.log(`  [${it.i}] ${(it.title || it.cls).padEnd(22)} openSheets "${before}" -> "${after}"  ${before !== after ? 'OPENED' : '*** NO EFFECT ***'}`);
         // close any sheet before the next one
-        await p.evaluate(() => { const bd = document.querySelector('.bottom-sheet-backdrop'); if (bd) bd.click(); });
+        await p.evaluate(() => { const bd = document.querySelector('dialog.kit-sheet[open] .kit-sheet-backdrop, .bottom-sheet-root.open .bottom-sheet-backdrop'); if (bd) bd.click(); });
         await p.waitForTimeout(500);
     }
     if (errs.length) console.log('PAGE ERRORS:', errs.slice(0, 5));

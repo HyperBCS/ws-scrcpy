@@ -1,466 +1,131 @@
 @layer tokens, base, components, views;
 
 @layer views {
-.settings-sheet-content {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 24px;
+/* Stream settings (views/SettingsSheet.tsx) and Scheduled unlock (views/ApplSettingsSheet.tsx)
+   are built from the kit's groups, rows and disclosures. These rules only place those parts in
+   the two sheets. */
+.stream-settings,
+.appl-settings {
     min-width: 0;
-    max-width: 100%;
 }
-.settings-sheet-content *,
-.settings-sheet-content *::before,
-.settings-sheet-content *::after {
-    box-sizing: border-box;
+
+/* A condition that covers the whole sheet stands above its first group. */
+.appl-settings > .kit-banner {
+    margin-bottom: var(--space-16);
 }
-.settings-sheet-content > *,
-.settings-sheet-section,
-.settings-advanced,
-.settings-playback,
-.settings-advanced-body,
-.settings-sheet-row > *,
-.settings-sheet-banner > *,
-.settings-sheet-button-row > * {
-    min-width: 0;
-    max-width: 100%;
+
+/* A disclosure that holds the rest of the group above it sits closer to that group than the
+   next group does. */
+.settings-advanced {
+    margin: calc(var(--space-12) * -1) 0 var(--space-20);
 }
-.settings-sheet-section {
+
+/* A line of text that is not a row: under the first line of a disclosure, and alone under the
+   last group. */
+.settings-note {
     margin: 0;
-}
-.settings-sheet-section-title {
-    font-size: 14px;
-    font-weight: 600;
-    margin: 0 0 6px 2px;
-    letter-spacing: -0.14px;
-}
-.settings-sheet-section-hint,
-.settings-sheet-hint {
-    font-size: 13.02px;
-    line-height: 1.5;
-    color: var(--text-color-light);
-    margin: 0 0 16px;
+    padding: 0 var(--space-16) var(--space-12);
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    line-height: 1.4;
     overflow-wrap: anywhere;
 }
-/* A hint that follows a card or a collapsed section keeps clear of its border. */
-.settings-sheet-card + .settings-sheet-hint,
-.settings-advanced + .settings-sheet-hint {
-    margin-top: 12px;
+.stream-settings > .settings-note {
+    padding: 0 var(--space-4);
 }
-.settings-sheet-section > .settings-sheet-hint:last-child,
-.settings-sheet-content > .settings-sheet-hint {
-    margin-bottom: 0;
+/* A note about the disclosure above it stays as close to it as the disclosure is to its group. */
+.settings-advanced + .settings-note {
+    margin: calc(var(--space-12) * -1) 0 var(--space-20);
 }
-.settings-quality-presets {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
+
+/* Three presets share the width of a 320px phone. */
+.stream-settings [data-setting='quality'] .kit-segment > span {
+    padding: 0 var(--space-4);
 }
-.settings-quality-preset {
+
+/* A select beside its text takes a fixed share of the row. Below 600px the row puts it under
+   the text at full width. */
+@media (min-width: 600px) {
+    .stream-settings .kit-row-pair[data-setting] > .kit-row-control {
+        flex: 0 0 240px;
+    }
+    .stream-settings .kit-row-pair[data-setting] > .kit-row-control > .kit-field-group {
+        flex: 1 1 auto;
+    }
+}
+
+/* The footer of Stream settings: the outcome of the last apply, then the question or the two
+   buttons. It takes the width of the sheet at every size. */
+.settings-apply {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    position: relative;
-    gap: 8px;
+    gap: var(--space-8);
     min-width: 0;
-    padding: 16px 12px;
-    border: 1px solid var(--device-border-color);
-    border-radius: 11.2px;
-    background: var(--main-bg-color);
-    color: var(--text-color);
-    font: inherit;
-    cursor: pointer;
-    text-align: left;
 }
-.settings-quality-preset[aria-pressed='true'] {
-    border-color: var(--button-text-color);
-    background: var(--progress-background-color);
+.kit-sheet-footer > .settings-apply {
+    flex: 1 1 auto;
 }
-.settings-quality-preset:disabled {
-    opacity: 0.6;
-    cursor: default;
+/* A long reason from the phone scrolls in its own few lines, so the footer keeps its buttons in
+   view and leaves room for the settings above it. */
+.settings-apply-message {
+    max-height: calc(var(--space-32) * 3);
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
-.settings-preset-mark {
-    font-size: 14px;
-    color: var(--button-text-color);
-}
-.settings-quality-preset strong {
-    font-size: 14px;
-    line-height: 1.3;
-}
-.settings-quality-preset > span:not(.settings-preset-mark) {
-    font-size: 13.02px;
-    line-height: 1.4;
-    color: var(--text-color-light);
-}
-.settings-quality-preset small {
-    font-size: 13.02px;
-    color: var(--text-color-light);
-    line-height: 1.4;
-    white-space: nowrap;
-}
-.settings-quality-summary > span {
-    white-space: nowrap;
-}
-.settings-quality-summary {
-    font-size: 13.02px;
-    color: var(--text-color-light);
-    margin: 12px 0 16px;
-    line-height: 1.5;
-}
-.settings-advanced,
-.settings-playback {
-    border: 1px solid var(--device-border-color);
-    border-radius: 11.2px;
-    margin-top: 16px;
-}
-.settings-sheet-content > .settings-playback {
-    margin-top: 0;
-}
-.settings-advanced summary,
-.settings-playback summary {
-    list-style: none;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4.9px;
-    min-height: 56px;
-    padding: 12px 16px;
-    box-sizing: border-box;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-}
-.settings-advanced summary::-webkit-details-marker,
-.settings-playback summary::-webkit-details-marker {
-    display: none;
-}
-.settings-advanced summary::after,
-.settings-playback summary::after {
-    margin-left: auto;
-    font-size: 16.8px;
-    color: var(--text-color-light);
-}
-.settings-playback summary > span {
-    color: var(--text-color-light);
-    font-size: 13.02px;
-    font-weight: 400;
-}
-.settings-advanced-body {
-    padding: 0 16px 12px;
-}
-.settings-sheet-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
-    align-items: center;
-    gap: 12px;
-    min-height: 48px;
-    padding: 16px 0;
-    border-bottom: 1px solid var(--device-border-color);
-    font-size: 14px;
-    overflow-wrap: anywhere;
-}
-.settings-sheet-row:last-child {
-    border-bottom: none;
-}
-.settings-sheet-row > span {
-    min-width: 0;
-    line-height: 1.35;
-    font-weight: 600;
-}
-.settings-sheet-row small {
-    display: block;
-    color: var(--text-color-light);
-    font-size: 13.02px;
-    font-weight: 400;
-    line-height: 1.45;
-    margin-top: 4px;
-}
-/* Rows grouped into one bordered card, like the Actions sheets (ui/SheetControls.css). */
-.settings-sheet-card {
-    border: 1px solid var(--device-border-color);
-    border-radius: 14px;
-    background: var(--device-list-default-color);
-    overflow: hidden;
-}
-.settings-sheet-card > .settings-sheet-row {
-    padding: 12px 14px;
-}
-.settings-sheet-card > .settings-sheet-row:last-child {
-    border-bottom: none;
-}
-.settings-sheet-card > .settings-sheet-button-row {
-    padding: 0 14px 12px;
-}
-.settings-sheet-card + .settings-advanced {
-    margin-top: 12px;
-}
-.settings-sheet-row select {
-    box-sizing: border-box;
-    min-width: 0;
-    width: 100%;
-    max-width: 100%;
-    min-height: 48px;
-    font-family: inherit;
-    font-size: 16px;
-    color: var(--text-color);
-    background-color: var(--main-bg-color);
-    border: 1px solid var(--control-border-color);
-    border-radius: 7.7px;
-    padding: 10px 12px;
-    text-overflow: ellipsis;
-}
-.settings-encoder-row,
-.settings-volume-row {
-    grid-template-columns: minmax(0, 1fr);
-}
-.settings-listen-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-}
-.settings-listen-row .settings-sheet-button-row {
-    grid-auto-columns: max-content;
-}
-.settings-listen-row small {
-    font-weight: 400;
-}
-.settings-toggle-row {
-    grid-template-columns: minmax(0, 1fr) 48px;
-}
-.settings-sheet-row input[type='checkbox'] {
-    appearance: none;
-    -webkit-appearance: none;
-    position: relative;
-    width: 48px;
-    height: 44px;
-    flex: 0 0 48px;
+.settings-apply-message > .kit-status {
     margin: 0;
-    border: none;
-    background: transparent;
-    cursor: pointer;
 }
-.settings-sheet-row input[type='checkbox']::before {
-    content: '';
-    position: absolute;
-    inset: 8px 0;
-    border-radius: 999px;
-    background: var(--control-border-color);
-    transition: background 150ms ease;
+/* A message takes focus when it replaces the button that was pressed. */
+.settings-apply-message:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+    border-radius: var(--radius-sm);
 }
-.settings-sheet-row input[type='checkbox']::after {
-    content: '';
-    position: absolute;
-    left: 4px;
-    top: 12px;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: white;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    transition: transform 150ms ease;
-}
-.settings-sheet-row input[type='checkbox']:checked::before {
-    background: var(--accent-solid, #2868e8);
-}
-.settings-sheet-row input[type='checkbox']:checked::after {
-    transform: translateX(20px);
-}
-.settings-sheet-row input:disabled {
-    opacity: 0.45;
-    cursor: default;
-}
-.settings-sheet-apply-bar {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
+.settings-apply-question {
     margin: 0;
-    padding: 16px 0 4px;
-    border-top: 1px solid var(--device-border-color);
-    background: var(--device-list-default-color);
-    box-shadow: 0 -8px 16px var(--device-list-default-color);
-}
-/* `AutoHeight` wraps the bar's children in one element, so the column and its gap go on that
-   element; on the bar itself the gap had a single child and did nothing. */
-.settings-sheet-apply-bar > .settings-sheet-apply-items {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-/* Nothing to apply and nothing to report: the bar takes no room. */
-.settings-sheet-apply-bar.empty {
-    margin-top: -24px;
-    padding: 0;
-    border-top: 0;
-    box-shadow: none;
-}
-.settings-sheet-apply-bar.empty::after {
-    display: none;
-}
-.settings-sheet-apply-bar::after {
-    /* Continue the sticky surface through the shared scroller's bottom gutter,
-       so settings cannot peek out below the action buttons while scrolling. */
-    content: '';
-    position: absolute;
-    top: 100%;
-    inset-inline: 0;
-    height: var(--sheet-gutter);
-    background: inherit;
-    pointer-events: none;
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.4;
 }
 .settings-apply-note {
-    color: var(--text-color-light);
-    font-size: 13.02px;
-    line-height: 1.45;
     margin: 0;
-    text-align: center;
-}
-.settings-sheet-button-row {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(0, 1fr);
-    gap: 12px;
-}
-.settings-sheet-button {
-    min-width: 0;
-    min-height: 48px;
-    padding: 12px;
-    border-radius: 9.1px;
-    border: 1px solid var(--button-border-color);
-    background-color: var(--main-bg-color);
-    color: var(--text-color);
-    font: inherit;
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 1.35;
-    cursor: pointer;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    line-height: 1.4;
     overflow-wrap: anywhere;
 }
-.settings-sheet-button:disabled {
-    opacity: 0.45;
-    cursor: default;
+/* Side by side, and one under the other where the two labels do not fit. */
+.settings-apply-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8);
 }
-.settings-sheet-button.primary {
-    background-color: var(--accent-solid, #2868e8);
-    border-color: var(--accent-solid, #2868e8);
-    color: white;
+.settings-apply-buttons > .kit-button {
+    flex: 1 1 auto;
 }
-.settings-sheet-button.primary:disabled {
-    background-color: var(--main-bg-color);
-    border-color: var(--button-border-color);
-    color: var(--text-color);
-}
-.settings-sheet-banner {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-    border-radius: 9.1px;
-    padding: 16px;
-    font-size: 13.02px;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-}
-.settings-sheet-banner p {
-    margin: 0;
-}
-.settings-audio > .settings-sheet-banner {
-    margin-top: 16px;
-}
-/* Banner text stays in the normal text colour. The tint and the edge carry the tone: coloured
-   words on a tint of the same colour could not be read in the light theme. */
-.settings-sheet-banner {
-    border: 1px solid transparent;
-    color: var(--text-color);
-}
-.settings-sheet-banner.warning {
-    background-color: color-mix(in srgb, var(--status-starting-fill) 12%, transparent);
-    border-color: color-mix(in srgb, var(--status-starting-text) 45%, transparent);
-}
-.settings-sheet-banner.progress {
-    background-color: color-mix(in srgb, var(--accent-solid) 10%, transparent);
-    border-color: color-mix(in srgb, var(--accent-solid) 45%, transparent);
-}
-.settings-sheet-banner.success {
-    background: color-mix(in srgb, var(--status-ready-fill) 12%, transparent);
-    border-color: color-mix(in srgb, var(--status-ready-text) 45%, transparent);
-}
-.settings-sheet-banner.error {
-    background: color-mix(in srgb, var(--status-unauthorized-fill) 10%, transparent);
-    border-color: var(--status-unauthorized-text);
-}
-.settings-sheet-banner:focus-visible {
-    outline-offset: 1px;
-}
-
-@media (max-width: 600px) {
-    .settings-sheet-row:not(.settings-toggle-row) {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 8px;
+@media (min-width: 600px) {
+    .settings-apply-buttons {
+        justify-content: flex-end;
     }
-    .settings-listen-row .settings-sheet-button-row {
-        grid-auto-columns: minmax(0, 1fr);
-    }
-}
-@media (max-width: 480px) {
-    .settings-quality-presets {
-        grid-template-columns: minmax(0, 1fr);
-    }
-    .settings-quality-preset {
-        display: grid;
-        grid-template-columns: 16px minmax(0, 1fr) auto;
-        align-items: center;
-        gap: 4px 12px;
-        padding: 14px;
-    }
-    .settings-preset-mark {
-        grid-column: 1;
-        grid-row: 1 / 3;
-    }
-    .settings-quality-preset strong {
-        grid-column: 2;
-        grid-row: 1;
-    }
-    .settings-quality-preset > span:not(.settings-preset-mark) {
-        grid-column: 2;
-        grid-row: 2;
-        min-height: auto;
-    }
-    .settings-quality-preset small {
-        grid-column: 3;
-        grid-row: 1 / 3;
-        text-align: right;
-    }
-}
-@media (max-height: 500px) {
-    .settings-sheet-apply-bar {
-        /* Short landscape viewports need every line of confirmation/error feedback
-           to remain reachable in the same vertical scroll area. */
-        position: static;
-    }
-    .settings-sheet-apply-bar::after {
-        display: none;
-    }
-}
-@media (prefers-reduced-motion: reduce) {
-    .settings-sheet-row input[type='checkbox']::before,
-    .settings-sheet-row input[type='checkbox']::after {
-        transition: none;
+    .settings-apply-buttons > .kit-button {
+        flex: 0 0 auto;
     }
 }
 
-/* The iPhone sheet (views/ApplSettingsSheet.tsx) is built from ui/SheetControls.css rows; it
-   only needs the facts grid padded when it stands alone in a group card. */
-.appl-settings-sheet {
-    padding-top: 4px;
-    min-width: 0;
+/* Scheduled unlock: a schedule that cannot run and a run that failed must not look like one
+   that worked. */
+.appl-settings .kit-row[data-tone='error'] .kit-row-title,
+.appl-settings .kit-row[data-tone='error'] .kit-row-desc {
+    color: var(--danger-text);
 }
-.appl-settings-sheet .sheet-group-card > .sheet-facts {
-    padding: 12px 14px;
+/* The warning icon before the title of such a row. */
+.settings-problem {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-4);
 }
-/* A schedule that cannot run and a run that failed must not look like one that worked. */
-.appl-settings-sheet .sheet-row[data-tone='error'] .sheet-row-title,
-.appl-settings-sheet .sheet-row[data-tone='error'] .sheet-row-desc {
-    color: var(--status-unauthorized-color);
-}
-.appl-settings-sheet .sheet-problem-icon {
-    margin-right: 6px;
-    vertical-align: -2px;
+/* The two passcode fields share a line; the buttons go under them. */
+.appl-settings .kit-row-stack > .kit-row-control > .kit-field-group {
+    flex: 1 1 112px;
 }
 }

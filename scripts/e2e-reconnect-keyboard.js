@@ -33,13 +33,10 @@ async function settings(page) {
     const fab = page.locator('.floating-toolbar-fab');
     if ((await fab.getAttribute('aria-expanded')) !== 'true') await fab.click();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.locator('.bottom-sheet-root.open .settings-quality-preset:not(:disabled)').first().waitFor();
+    await page.locator('dialog.kit-sheet[open] [data-setting="quality"] input[type="radio"]:not(:disabled)').first().waitFor();
 }
 async function applyPreset(page, name, nextHandshake) {
-    await page
-        .getByRole('button', { name: new RegExp(name) })
-        .filter({ has: page.locator('strong') })
-        .click();
+    await page.getByRole('radio', { name, exact: true }).click();
     await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
     await page.getByRole('button', { name: 'Apply & restart', exact: true }).click();
     await page
@@ -88,7 +85,7 @@ async function main() {
         await page.keyboard.type('shared', { delay: 70 });
         assert.equal(field(dump()), 'beforeshared', 'closing another viewer must not destroy this keyboard');
         await settings(page);
-        const originalPreset = await page.locator('.settings-quality-preset[aria-pressed="true"] strong').innerText();
+        const originalPreset = await page.locator('[data-setting="quality"] .kit-segment:has(input:checked) span').innerText();
         const testPreset = originalPreset === 'Data saver' ? 'Balanced' : 'Data saver';
         const next = handshakes + 1;
         await applyPreset(page, testPreset, () => waitHandshake(next));
@@ -98,7 +95,7 @@ async function main() {
         assert.equal(field(dump()), 'beforesharedafter', 'UHID keyboard reaches device after stream restart');
         await settings(page);
         assert.equal(
-            await page.locator('.settings-quality-preset[aria-pressed="true"] strong').innerText(),
+            await page.locator('[data-setting="quality"] .kit-segment:has(input:checked) span').innerText(),
             testPreset,
             'settings show the saved values when reopened',
         );
