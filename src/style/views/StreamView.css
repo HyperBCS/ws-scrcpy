@@ -192,8 +192,9 @@
     overflow-wrap: anywhere;
     line-height: 1.5;
 }
-/* Above the sleep overlay: a stopped service is the reason nothing can be done there. */
-.stream-service-stopped {
+/* Above the sleep overlay: a stopped service is the reason nothing can be done there. Two
+   classes, so the general .stream-start-error layer below does not override it. */
+.stream-start-error.stream-service-stopped {
     z-index: 6;
 }
 .stream-stopped-actions {
