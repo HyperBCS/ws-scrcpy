@@ -124,9 +124,10 @@ export class CommandControlMessage extends ControlMessage {
     }
 
     /**
-     * Wire format: type(1) id(2) state(1) size(u32) nameLength(u16) name [overwrite(1)].
+     * Wire format: type(1) id(2) state(1) size(u32) nameLength(u16) name [overwrite(1) [sizeHigh(u32)]].
      * The trailing byte is sent only when the caller states a choice, so the scrcpy variant of
-     * this message keeps its original length.
+     * this message keeps its original length. `size` holds the low 32 bits; the high word
+     * follows the overwrite byte only for a file of 4 GiB or more.
      */
     private static createPushFileStartCommand(
         id: number,
@@ -143,10 +144,23 @@ export class CommandControlMessage extends ControlMessage {
         const textLengthField = 2;
         const textLength = text.length;
         const overwriteField = overwrite === undefined ? 0 : 1;
+        const sizeHigh = Math.floor(fileSize / 0x100000000);
+        if (sizeHigh && !overwriteField) {
+            throw RangeError('A file of 4 GB or more cannot be sent this way.');
+        }
+        const sizeHighField = sizeHigh ? 4 : 0;
         let offset = CommandControlMessage.PAYLOAD_LENGTH;
 
         const buffer = Buffer.alloc(
-            offset + typeField + idField + stateField + sizeField + textLengthField + textLength + overwriteField,
+            offset +
+                typeField +
+                idField +
+                stateField +
+                sizeField +
+                textLengthField +
+                textLength +
+                overwriteField +
+                sizeHighField,
         );
         buffer.writeUInt8(event.type, offset);
         offset += typeField;
@@ -154,7 +168,7 @@ export class CommandControlMessage extends ControlMessage {
         offset += idField;
         buffer.writeInt8(FilePushState.START, offset);
         offset += stateField;
-        buffer.writeUInt32BE(fileSize, offset);
+        buffer.writeUInt32BE(fileSize % 0x100000000, offset);
         offset += sizeField;
         buffer.writeUInt16BE(textLength, offset);
         offset += textLengthField;
@@ -163,6 +177,9 @@ export class CommandControlMessage extends ControlMessage {
         });
         if (overwriteField) {
             buffer.writeUInt8(overwrite ? 1 : 0, offset + textLength);
+        }
+        if (sizeHighField) {
+            buffer.writeUInt32BE(sizeHigh, offset + textLength + overwriteField);
         }
         event.buffer = buffer;
         return event;
@@ -243,6 +260,10 @@ export class CommandControlMessage extends ControlMessage {
             fileName = Util.utf8ByteArrayToString(buffer.slice(offset, offset + textLength));
             offset += textLength;
             overwrite = buffer.length > offset && buffer.readUInt8(offset) === 1;
+            offset += 1;
+            if (buffer.length >= offset + 4) {
+                fileSize += buffer.readUInt32BE(offset) * 0x100000000;
+            }
         }
         return { id, state, chunk, fileName, fileSize, overwrite };
     }

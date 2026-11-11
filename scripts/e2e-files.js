@@ -11,6 +11,7 @@ const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-files';
 const UDID = 'files-fixture';
 const ROOT = '/data/local/tmp';
+const LARGE = '/data/local/large';
 function frame(type, id, payload = Buffer.alloc(0)) {
     const buffer = Buffer.alloc(5 + payload.length);
     buffer[0] = type;
@@ -66,7 +67,11 @@ async function fixture(page) {
         [ROOT + '/photo.png', Buffer.alloc(2048)],
         [ROOT + '/.hidden-cache', Buffer.from('x')],
     ]);
-    const dirs = new Set(['/', '/data', '/data/local', ROOT, ROOT + '/empty', ROOT + '/denied', ROOT + '/archive']);
+    const dirs = new Set(['/', '/data', '/data/local', ROOT, ROOT + '/empty', ROOT + '/denied', ROOT + '/archive', LARGE]);
+    // True sizes of files too large to hold in memory. LIST states them modulo 4 GiB, as adb does.
+    const sizes = new Map([[LARGE + '/film.mkv', 5 * 1024 ** 3 + 7]]);
+    files.set(LARGE + '/film.mkv', Buffer.alloc(0));
+    files.set(LARGE + '/clip.mp4', Buffer.alloc(64));
     const traffic = {
         requests: [], operations: [], closed: [], fsChannels: 0, uploads: [], starts: [], hold: false, pending: null,
         holdList: false, releaseList: null, holdStat: false, releaseStat: null,
@@ -223,10 +228,24 @@ async function fixture(page) {
                                 send(dent(path.posix.basename(directory), DIR));
                         for (const [file, bytes] of files)
                             if (path.posix.dirname(file) === destination)
-                                send(dent(path.posix.basename(file), FILE, bytes.length));
+                                send(dent(path.posix.basename(file), FILE, (sizes.get(file) ?? bytes.length) % 2 ** 32));
                         if (destination === ROOT)
                             send(dent('a_very_long_file_name_'.repeat(5) + '.txt', FILE, 123456));
                         end(0);
+                    } else if (cmd === 'SIZE') {
+                        for (const [file, size] of sizes) {
+                            if (path.posix.dirname(file) !== destination) continue;
+                            const name = Buffer.from(path.posix.basename(file));
+                            const record = Buffer.alloc(16 + name.length);
+                            record.write('SIZE');
+                            record.writeUInt32LE(size % 2 ** 32, 4);
+                            record.writeUInt32LE(Math.floor(size / 2 ** 32), 8);
+                            record.writeUInt32LE(name.length, 12);
+                            name.copy(record, 16);
+                            send(record);
+                        }
+                        send(Buffer.from('DONE'));
+                        end();
                     } else if (cmd === 'RECV') {
                         send(Buffer.concat([Buffer.from('DATA'), files.get(destination) || Buffer.alloc(0)]));
                         send(Buffer.from('DONE'));
@@ -274,7 +293,7 @@ async function fixture(page) {
             }
         });
     });
-    return { files, dirs, traffic };
+    return { files, dirs, sizes, traffic };
 }
 
 const row = (page, name) => page.locator(`.fx-row[data-name="${name}"]`);
@@ -296,6 +315,14 @@ async function fillFilter(page, text) {
     const input = page.locator('.fx-filter-input');
     if (!(await input.isVisible())) await page.getByRole('button', { name: 'Filter this folder', exact: true }).click();
     await input.fill(text);
+}
+
+// Types a path into the address bar.
+async function goTo(page, target) {
+    await page.getByRole('button', { name: 'Type a folder path', exact: true }).click();
+    await page.locator('.fx-address-input').fill(target);
+    await page.locator('.fx-address-input').press('Enter');
+    await page.locator(`.file-explorer[data-listing="ready"] .fx-crumb[aria-current="page"]`).filter({ hasText: path.posix.basename(target) }).waitFor();
 }
 
 // A mouse selects on one click and opens on two; a touch tap opens immediately.
@@ -612,6 +639,25 @@ async function main() {
             await page.locator('.fx-crumb[aria-current="page"]').filter({ hasText: 'archive' }).waitFor();
             assert.equal(await addressInput.isVisible(), false, 'the field leaves once the path is entered');
             await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
+            await row(page, 'notes.txt').waitFor();
+
+            // A file of 4 GiB or more: the listing wraps its size, and the explorer corrects it.
+            await goTo(page, LARGE);
+            await row(page, 'film.mkv').waitFor();
+            await page.waitForFunction(
+                () => document.querySelector('.fx-row[data-name="film.mkv"] .entry-size')?.textContent === '5.0 GB',
+            );
+            assert.equal(await row(page, 'clip.mp4').locator('.entry-size').innerText(), '64 B');
+            await select(page, 'film.mkv');
+            await row(page, 'film.mkv').locator('.fx-row-menu').click();
+            await page.getByRole('menuitem', { name: 'Properties', exact: true }).click();
+            assert(
+                (await page.locator('.fx-properties').innerText()).includes((5 * 1024 ** 3 + 7).toLocaleString('en-US')),
+                'Properties shows the full byte count',
+            );
+            await page.getByRole('button', { name: 'Close', exact: true }).click();
+            await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+            await goTo(page, ROOT);
             await row(page, 'notes.txt').waitFor();
 
             // New folder, rename and delete each send one framed operation and re-list.

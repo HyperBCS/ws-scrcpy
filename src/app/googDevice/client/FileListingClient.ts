@@ -24,7 +24,7 @@ import { pushRoute } from '../../state/router';
 import { formatMode, formatModified, formatSize, iconMarkup, kindOf, typeLabel } from './fileTypes';
 
 type Request = {
-    kind: 'stat' | 'list' | 'download' | 'mutate';
+    kind: 'stat' | 'list' | 'download' | 'mutate' | 'sizes';
     path: string;
     generation: number;
     entry?: Entry;
@@ -1906,7 +1906,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 this.handleReply(channel, request, Buffer.from(event.data));
             } catch {
                 request.failed = true;
-                this.report('Could not read this folder or file. Refresh to try again.', true);
+                if (kind !== 'sizes') {
+                    this.report('Could not read this folder or file. Refresh to try again.', true);
+                }
                 channel.close();
             }
         };
@@ -1922,7 +1924,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             if (kind === 'mutate') {
                 this.operations = Math.max(0, this.operations - 1);
             }
-            if (this.stopped || stale()) {
+            if (this.stopped || stale() || kind === 'sizes') {
+                // A size correction that does not arrive leaves the listing as it was.
                 return;
             }
             if (
@@ -1960,6 +1963,19 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             throw Error('Truncated reply');
         }
         const code = data.subarray(0, 4).toString('ascii');
+        if (request.kind === 'sizes') {
+            if (code === FileCommand.SIZES && data.length >= 16) {
+                const name = data.subarray(16, 16 + data.readUInt32LE(12)).toString('utf8');
+                const index = this.entries.findIndex((item) => item.name === name);
+                if (index >= 0) {
+                    const entry = this.entries[index];
+                    const size = data.readUInt32LE(4) + data.readUInt32LE(8) * 0x100000000;
+                    this.entries[index] = new Entry(name, entry.mode, size, entry.mtime.getTime() / 1000);
+                    this.scheduleRender();
+                }
+            }
+            return;
+        }
         if (code === Protocol.FAIL) {
             request.failed = true;
             const message = data.subarray(8, 8 + data.readUInt32LE(4)).toString('utf8');
@@ -2049,6 +2065,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.renderItems();
         if (request.failed) {
             return;
+        }
+        // The listing states sizes in 32 bits. Ask for the true size of anything larger.
+        if (request.kind === 'list' && this.entries.some((entry) => entry.isFile())) {
+            this.send('sizes', this.stringCommand(FileCommand.SIZES, this.path), this.path);
         }
         if (this.operationError) {
             this.report(this.operationError, true);
