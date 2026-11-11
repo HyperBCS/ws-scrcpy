@@ -255,7 +255,6 @@ export function NotificationsView() {
     };
     useEffect(() => {
         document.body.className = 'list';
-        document.title = 'Notifications · ws-scrcpy';
         mounted.current = true;
         let alive = true;
         const poll = () => {

@@ -1,9 +1,12 @@
-import { useLayoutEffect } from 'preact/hooks';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import { devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/devices';
+import { listSummary, needsAttention } from '../state/deviceStatus';
+import { rememberListScroll, savedListScroll } from '../state/deviceListView';
 import { hostsError, hostsStatus } from '../state/hosts';
 import { DeviceCard } from './DeviceCard';
 import { DeviceIcon } from '../ui/DeviceIcon';
 import { TrackerStatusNotice } from '../ui/TrackerStatusNotice';
+import { NotificationsLink } from '../ui/NotificationsLink';
 import '../../style/views/DeviceList.css';
 
 interface HostGroup {
@@ -33,13 +36,19 @@ function groupByHost(list: DeviceEntry[]): HostGroup[] {
 }
 
 export function DeviceList() {
+    const scroller = useRef<HTMLElement>(null);
     useLayoutEffect(() => {
         document.body.className = 'list';
-        document.title = 'Devices · ws-scrcpy';
+        // Back from a screen, a tool or Notifications: the list is where it was left. The cards
+        // have already reopened their disclosures (see `CardDetails`), so the height is final.
+        if (scroller.current) {
+            scroller.current.scrollTop = savedListScroll();
+        }
     }, []);
 
     const entries = Array.from(devices.value.values());
     const available = entries.filter(isDeviceAvailable).length;
+    const attention = entries.filter(needsAttention).length;
     entries.sort(
         (a, b) =>
             Number(isDeviceAvailable(b)) - Number(isDeviceAvailable(a)) || deviceName(a).localeCompare(deviceName(b)),
@@ -48,17 +57,39 @@ export function DeviceList() {
     const disconnected = hostsStatus.value === 'disconnected' || hostsStatus.value === 'error';
 
     return (
-        <main id="devices">
+        <main id="devices" ref={scroller} onScroll={(event) => rememberListScroll(event.currentTarget.scrollTop)}>
             <div class="devices-content">
                 <header class="device-list-header">
                     <h1>Devices</h1>
                     <div class="device-list-summary" role="status">
-                        <span class={`device-list-summary-dot ${available ? 'available' : ''}`} />
-                        {available
-                            ? `${available} available`
-                            : entries.length
-                              ? 'No devices available'
-                              : 'Waiting for devices'}
+                        <span
+                            class={`device-list-summary-dot ${attention ? 'attention' : available ? 'available' : ''}`}
+                        />
+                        {listSummary(entries.length, available, attention)}
+                    </div>
+                    <div class="device-list-actions">
+                        <NotificationsLink />
+                        {/* An installed app has no browser reload button, and pull-to-refresh is off. */}
+                        <button
+                            type="button"
+                            class="device-list-reload"
+                            title="Reload"
+                            aria-label="Reload"
+                            onClick={() => location.reload()}
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.8"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <path d="M20 11a8 8 0 1 0-2.3 6.3" />
+                                <path d="M20 4v7h-7" />
+                            </svg>
+                        </button>
                     </div>
                 </header>
                 <TrackerStatusNotice />

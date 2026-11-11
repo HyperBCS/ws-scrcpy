@@ -136,19 +136,10 @@ export function syncPushSubscription(retry = false): Promise<PushSync> {
 import type { NotificationSummary } from '../../common/Notification';
 export type { NotificationSummary } from '../../common/Notification';
 export const notificationSummary = signal<NotificationSummary>({ unread: 0, unreadBySource: {}, sources: [] });
-// False until the first summary arrives, so an iPhone is not shown as unlinked before it is known.
-export const notificationSummaryLoaded = signal(false);
 let summaryVersion = 0;
-
-/** Whether this iPhone shares its notifications. `undefined` until the server has said. */
-export function notificationsLinked(udid: string): boolean | undefined {
-    if (!notificationSummaryLoaded.value) return undefined;
-    return notificationSummary.value.sources.some((source) => source.id === udid);
-}
 
 export function applyNotificationSummary(value: NotificationSummary): void {
     summaryVersion++;
-    notificationSummaryLoaded.value = true;
     notificationSummary.value = {
         unread: value.unread || 0,
         unreadBySource: value.unreadBySource || {},

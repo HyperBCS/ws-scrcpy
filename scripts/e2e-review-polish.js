@@ -53,7 +53,7 @@ async function main() {
             }));
             await page.goto(BASE); await page.locator('.device').nth(1).waitFor(); await settleMotion(page);
             assert.equal(await page.getByRole('link', { name: 'Open screen', exact: true }).count(), 2);
-            assert.equal(await page.locator('.device summary').filter({ hasText: 'Connection & tools' }).count(), 2);
+            assert.equal(await page.locator('.device summary').filter({ hasText: 'Details' }).count(), 2);
             assert.equal(await page.locator('.device .stream-service-status').count(), 2);
             assert.equal(await page.locator('.tracker-block').count(), 1, 'one host shares one grid across platforms');
             if (width > 720) {

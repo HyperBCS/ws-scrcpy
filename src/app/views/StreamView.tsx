@@ -15,6 +15,8 @@ import {
     unlockSheetOpen,
 } from '../state/stream';
 import { findDeviceForStream } from '../state/streamDevice';
+import { deviceName } from '../state/devices';
+import { NotificationsLink } from '../ui/NotificationsLink';
 import { goToDeviceList } from '../state/router';
 import { ActionsSheet } from './ActionsSheet';
 import { FloatingToolbar } from './FloatingToolbar';
@@ -83,7 +85,8 @@ export function StreamView({ params }: StreamViewProps) {
     // Only on positive evidence: `screen.power` is 'unknown' on devices whose dumpsys does not
     // report it, and an unknown screen must never be treated as a sleeping one.
     const screenOff = descriptor ? descriptor['screen.power'] === 'off' || descriptor['device.awake'] === false : false;
-    const name = (entry?.descriptor as GoogDeviceDescriptor | undefined)?.['ro.product.model'] || params.udid;
+    // The same name as on the card and in the switcher; the serial until the device list arrives.
+    const name = entry ? deviceName(entry) : params.udid;
     const wake = () => {
         session?.client.sendMessage(new KeyCodeControlMessage(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_WAKEUP, 0, 0));
         session?.client.sendMessage(new KeyCodeControlMessage(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_WAKEUP, 0, 0));
@@ -127,6 +130,7 @@ export function StreamView({ params }: StreamViewProps) {
                     </span>
                     <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
                 </div>
+                <NotificationsLink compact />
                 <button
                     type="button"
                     class="stream-header-switch"

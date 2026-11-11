@@ -734,15 +734,16 @@ async function perDeviceHistory(browser) {
         await f.page.getByRole('link', { name: '← Devices', exact: true }).click();
         await f.page.getByRole('heading', { name: 'Devices', exact: true }).waitFor();
         await until(() => f.summaryPolls > 0, 'Devices loads the lightweight unread summary');
-        assert.equal(await f.page.locator('.device-list-header a[href*=notifications]').count(), 0, 'Devices has no global Notifications link');
+        const headerLink = f.page.locator('.device-list-header a[href*=notifications]');
+        assert.equal(await headerLink.getAttribute('href'), '#!action=notifications', 'Devices has a Notifications link that does not depend on a card');
+        assert.equal(await headerLink.locator('.notification-unread-count').textContent(), '1', 'the header shows the total unread count');
         const card = id => f.page.locator(`article.device[data-device-key$=":${id}"]`);
         await card('phone-b').locator('.device-notification-history').waitFor();
         assert.equal(await card('phone-a').locator('.notification-unread-count').count(), 0);
         assert.equal(await card('phone-b').locator('.notification-unread-count').textContent(), '1');
-        await card('phone-c').locator('.device-notification-history').click();
-        await f.page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
-        assert.equal(await f.page.locator('#notification-history-heading').count(), 0, 'an unconfigured device opens setup, never another phone’s feed');
-        await f.page.getByRole('link', { name: '← Devices', exact: true }).click();
+        // An iPhone that does not send notifications here has no inbox, so its card has no button.
+        await card('phone-c').waitFor();
+        assert.equal(await card('phone-c').locator('.device-notification-history').count(), 0, 'an unconfigured device offers no inbox');
         await card('phone-b').locator('.device-notification-history').click();
         await f.page.locator('#notification-history-heading').waitFor();
         assert.equal(await f.page.getByRole('combobox', { name: 'Device', exact: true }).inputValue(), 'phone-b');
@@ -1043,10 +1044,10 @@ async function openScreenFromInbox(browser) {
         await f.page.keyboard.press('Enter');
         await f.page.waitForFunction(hash => location.hash === hash, streamHash);
         // The iPhone's screen links back to its notifications, with the unread count.
-        const back = f.page.locator('.stream-header-notifications');
+        const back = f.page.locator('.stream-header .notifications-link');
         await back.waitFor();
         assert.equal(await back.getAttribute('href'), '#!action=notifications&source=phone-a');
-        await f.page.waitForFunction(() => document.querySelector('.stream-header-notifications')?.getAttribute('aria-label') === 'Notifications, 2 unread');
+        await f.page.waitForFunction(() => document.querySelector('.stream-header .notifications-link')?.getAttribute('aria-label') === 'Notifications, 2 unread');
         assert.equal(await back.locator('.notification-unread-count').textContent(), '2');
         await back.click();
         await f.page.locator('#notification-history-heading').waitFor();
@@ -1101,10 +1102,10 @@ async function unlinkedDeepLink(browser) {
         await f.page.getByRole('heading', { name: 'Devices', exact: true }).waitFor();
         const card = id => f.page.locator(`article.device[data-device-key$=":${id}"]`);
         await card('phone-a').locator('.device-notification-history').waitFor();
-        await f.page.waitForFunction(() => [...document.querySelectorAll('.device-notification-history')].some(link => link.textContent === 'Set up notifications'));
-        assert.equal(await card('phone-c').locator('.device-notification-history').textContent(), 'Set up notifications', 'an unlinked iPhone offers setup');
-        assert.match(await card('phone-b').locator('.device-notification-history').textContent(), /^Notifications/);
-        await card('phone-c').locator('.device-notification-history').click();
+        // The card of an unlinked iPhone has no inbox button; a link that names it opens setup.
+        await card('phone-c').waitFor();
+        assert.equal(await card('phone-c').locator('.device-notification-history').count(), 0, 'an unlinked iPhone has no inbox button');
+        await f.page.evaluate(() => { location.hash = '#!action=notifications&source=phone-c'; });
         await f.page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
         const add = f.page.locator('details.notification-pairing');
         await f.page.waitForFunction(() => document.querySelector('details.notification-pairing')?.open);

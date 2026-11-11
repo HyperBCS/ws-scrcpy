@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { ACTION } from '../../common/Action';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { BaseClient } from '../client/BaseClient';
-import { deviceName, DeviceEntry } from '../state/devices';
+import { deviceName, DeviceEntry, supportsDeviceTools } from '../state/devices';
 import { DEFAULT_FILES_PATH } from '../googDevice/client/deviceTools';
 import { findDeviceForTool } from '../state/toolDevice';
 import { buildLinkHref } from '../state/links';
@@ -11,6 +11,7 @@ import { goToDeviceList } from '../state/router';
 import { closeAllSheets, openSheet } from '../state/stream';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
+import { NotificationsLink } from '../ui/NotificationsLink';
 import '../../style/views/StreamView.css';
 import '../../style/views/ToolView.css';
 
@@ -137,7 +138,6 @@ export function ToolView({ params }: { params: URLSearchParams }) {
         setLost(retrying ? 'reconnecting' : '');
         setControl(false);
         document.body.className = `tool-page ${action === ACTION.FILE_LISTING ? 'file-listing' : action}`;
-        document.title = `${tool?.title || 'Tools'} · ${udid}`;
         mountTool(routeRef.current, mount, () => cancelled)
             .then((client) => {
                 if (!client) return;
@@ -284,6 +284,7 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                     <strong>{entry ? deviceName(entry) : udid}</strong>
                     <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
                 </div>
+                <NotificationsLink compact />
                 <button type="button" class="stream-header-switch" onClick={() => openSheet('devices')}>
                     Switch
                 </button>
@@ -385,6 +386,9 @@ export function ToolView({ params }: { params: URLSearchParams }) {
             </section>
             <DeviceSwitcherSheet
                 currentDeviceKey={entry?.key}
+                filter={supportsDeviceTools}
+                title={`Switch device · ${tool?.title || 'Tools'}`}
+                openLabel={tool?.title}
                 onSelectDevice={(next: DeviceEntry) => switchTool(action as ACTION, next)}
             />
         </main>

@@ -103,6 +103,16 @@ async function main() {
             const search = page.getByRole('searchbox', { name: 'Find a device to switch to' });
             await page.waitForFunction(() => document.querySelectorAll('.device-switcher-list button').length === 28);
             await checkGeometry(page);
+            // The search field is one 48px row: it used to take a 220px flex-basis as its height.
+            const field = await root.locator('.device-switcher-search').boundingBox();
+            const firstRow = await list.locator('button').first().boundingBox();
+            assert.ok(Math.abs(field.height - 48) <= 1, `${label}: the search field is 48px tall, not ${field.height}`);
+            assert.ok(field.height < firstRow.height, `${label}: search is shorter than a device row`);
+            assert.equal(await root.locator('.device-switcher-search svg').count(), 1, 'the search icon is drawn, not a text glyph');
+            assert.equal(await list.getAttribute('tabindex'), null, 'the list is not a tab stop of its own');
+            // With a mouse and keyboard the search field has focus; a touch screen keeps its keyboard down.
+            await page.waitForTimeout(80);
+            assert.equal(await search.evaluate((el) => el === document.activeElement), !touch, `${label}: search focus on open`);
             const searchStart = await search.boundingBox();
             const headerStart = await root.locator('.bottom-sheet-header').boundingBox();
             const listBox = await list.boundingBox();
@@ -205,6 +215,59 @@ async function main() {
                 messages.filter((packet) => packet.length === 32 && packet[0] === 2).length >= beforeTouches + 2,
                 'mock screen receives down/up after dismissal',
             );
+            if (!touch) {
+                // Keyboard only: the shortcut opens the sheet, typing filters, Enter opens the only match.
+                // This page was opened with captureKeyboard=0, so the keys are the browser's.
+                const udidOf = () => page.evaluate(() => new URLSearchParams(location.hash.slice(2)).get('udid'));
+                const searchFocused = () => page.waitForFunction(() => document.activeElement?.type === 'search');
+                await page.keyboard.press('Control+k');
+                await root.waitFor();
+                await settle(page);
+                await searchFocused();
+                await page.keyboard.type('Device 05');
+                assert.equal(await list.locator('button').count(), 1, 'typing goes to the search field');
+                await page.keyboard.press('Enter');
+                await page.waitForFunction((udid) => new URLSearchParams(location.hash.slice(2)).get('udid') === udid, descriptors[5].udid);
+                await root.waitFor({ state: 'hidden' });
+                await page.getByText('Connected', { exact: true }).waitFor();
+                // The link the switcher built captures the keyboard for the phone, as stream links
+                // do by default. Ctrl+K then goes to the phone and the sheet stays closed.
+                await page.locator('.touch-layer').waitFor({ state: 'visible' });
+                await page.keyboard.press('Control+k');
+                await page.waitForTimeout(150);
+                assert.equal(await root.count(), 0, 'with keyboard capture on, Ctrl+K belongs to the phone');
+                // Arrow keys move a highlight through the rows that can be opened; Enter opens it.
+                await trigger.click();
+                await root.waitFor();
+                await settle(page);
+                await searchFocused();
+                const highlighted = () => list.locator('button.highlighted strong').allTextContents();
+                assert.deepEqual(await highlighted(), [], 'nothing is highlighted before an arrow key');
+                await page.keyboard.press('ArrowDown');
+                assert.deepEqual(await highlighted(), ['Fixture Device 00']);
+                await page.keyboard.press('ArrowUp');
+                assert.deepEqual(await highlighted(), ['Fixture Device 23'], 'ArrowUp wraps to the last row that can be opened, past the offline ones');
+                assert.ok(await list.evaluate((el) => el.scrollTop > 50), 'the highlighted row is scrolled into view');
+                await page.keyboard.press('ArrowDown');
+                await page.keyboard.press('ArrowDown');
+                assert.deepEqual(await highlighted(), ['Fixture Device 01']);
+                assert.equal(await search.evaluate((el) => el === document.activeElement), true, 'focus stays in the search field');
+                await page.keyboard.press('Enter');
+                await page.waitForFunction((udid) => new URLSearchParams(location.hash.slice(2)).get('udid') === udid, descriptors[1].udid);
+                await root.waitFor({ state: 'hidden' });
+                await page.getByText('Connected', { exact: true }).waitFor();
+                // Enter with several matches and no highlight opens nothing.
+                await trigger.click();
+                await root.waitFor();
+                await settle(page);
+                await searchFocused();
+                await page.keyboard.type('Device 1');
+                await page.keyboard.press('Enter');
+                await page.waitForTimeout(80);
+                assert.equal(await udidOf(), descriptors[1].udid, 'Enter does not guess among several matches');
+                await page.keyboard.press('Escape');
+                await root.waitFor({ state: 'hidden' });
+            }
             await trigger.click();
             await root.waitFor();
             await settle(page);
@@ -221,7 +284,7 @@ async function main() {
             console.log(
                 'PASS',
                 label,
-                'native list scroll, final row, sticky search, filtering, Close/drag and remote isolation',
+                'native list scroll, final row, 48px sticky search, filtering, keyboard, Close/drag and remote isolation',
             );
         }
     } finally {

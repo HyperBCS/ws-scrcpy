@@ -14,12 +14,12 @@ import {
     streamConnected,
     streamNotice,
 } from '../state/stream';
-import { findDeviceByUdid } from '../state/devices';
+import { deviceName, findDeviceByUdid } from '../state/devices';
+import { NotificationsLink } from '../ui/NotificationsLink';
 import { goToDeviceList } from '../state/router';
 import { FloatingToolbar } from './FloatingToolbar';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { ApplActionsSheet } from './ApplActionsSheet';
-import { StreamNotificationsLink } from './StreamNotificationsLink';
 import { ApplUnlockSheet } from './ApplUnlockSheet';
 import { LiveTextOverlay } from './LiveTextOverlay';
 import { LockScreenNotice } from './LockScreenNotice';
@@ -103,7 +103,8 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
     const liveText = useMemo(() => (active ? coreDeviceLiveTextTarget(active.client) : undefined), [active?.client]);
     const entry = findDeviceByUdid(params.udid);
     const descriptor = entry?.params.type === 'ios' ? (entry.descriptor as ApplDeviceDescriptor) : undefined;
-    const name = descriptor?.name || params.udid;
+    // The same name as on the card and in the switcher; the serial until the device list arrives.
+    const name = entry && descriptor ? deviceName(entry) : params.udid;
     useEffect(() => {
         if (descriptor?.name && active?.client) {
             active.client.setDeviceName(descriptor.name);
@@ -183,7 +184,7 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                         {statusText}
                     </span>
                 </div>
-                <StreamNotificationsLink udid={params.udid} />
+                <NotificationsLink compact udid={params.udid} />
                 <button
                     type="button"
                     class="stream-header-switch"

@@ -1,13 +1,19 @@
 {
     "id": ".",
     "name": "ws-scrcpy",
-    "short_name": "scrcpy",
+    "short_name": "ws-scrcpy",
     "start_url": ".",
     "scope": ".",
     "display": "standalone",
     "orientation": "any",
-    "background_color": "#000000",
-    "theme_color": "#000000",
+    "background_color": "#17191d",
+    "theme_color": "#17191d",
+    "shortcuts": [
+        {
+            "name": "Notifications",
+            "url": "./#!action=notifications"
+        }
+    ],
     "icons": [
         {
             "src": "icon-192.png",

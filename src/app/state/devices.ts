@@ -39,6 +39,37 @@ export function isDeviceAvailable(entry: DeviceEntry): boolean {
     return entry.descriptor.state === (entry.params.type === 'android' ? DeviceState.DEVICE : DeviceState.CONNECTED);
 }
 
+/** A connected device whose screen can be opened. An iPhone with Developer Mode off cannot. */
+export function canOpenScreen(entry: DeviceEntry): boolean {
+    return (
+        isDeviceAvailable(entry) &&
+        !(entry.params.type === 'ios' && (entry.descriptor as ApplDeviceDescriptor).developerMode === false)
+    );
+}
+
+/** Files and Shell run over adb, so only Android devices have them. */
+export function supportsDeviceTools(entry: DeviceEntry): boolean {
+    return entry.params.type === 'android';
+}
+
+/**
+ * The device a tool link names, when it is one that has no tools (an iPhone). `undefined` for an
+ * Android device and for a serial that is not listed, which may still be connecting.
+ */
+export function findDeviceWithoutTools(udid: string): DeviceEntry | undefined {
+    let found: DeviceEntry | undefined;
+    for (const entry of devices.value.values()) {
+        if (entry.descriptor.udid !== udid) {
+            continue;
+        }
+        if (supportsDeviceTools(entry)) {
+            return undefined;
+        }
+        found = entry;
+    }
+    return found;
+}
+
 function keyFor(trackerId: string, udid: string): string {
     return `${trackerId}:${udid}`;
 }

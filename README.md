@@ -516,10 +516,10 @@ iPhone’s notifications, with **All**, **Unread**, and **Archive** views. Besid
 iPhone’s name it shows whether its Bluetooth link is **Connected**,
 **Reconnecting** or needs action, and when the last notification arrived, with a
 notice when nothing new can arrive. **Open screen** there opens that iPhone’s screen,
-and is off while the iPhone is not connected by USB. Device cards link directly to
-that iPhone’s inbox, or to **Set up notifications** for an iPhone that is not
-linked yet; there is no global link on the Devices page. The iPhone screen’s header
-links back to its notifications with the unread count. The NUC keeps up to 500 alerts per phone for 30 days in its private data directory. History starts with alerts collected by this
+and is off while the iPhone is not connected by USB. The card of a linked iPhone
+links directly to that iPhone’s inbox. **Notifications** in the page header, on
+Devices, the screen and the tool pages, opens the inbox with the unread count; on
+a linked iPhone’s screen it opens that iPhone’s inbox. The NUC keeps up to 500 alerts per phone for 30 days in its private data directory. History starts with alerts collected by this
 relay, including those iOS shares when connecting; it cannot recover alerts the
 phone no longer exposes. Turning message previews off also removes saved message
 text for that phone. Removing a source deletes its history and cached icons.
