@@ -4,6 +4,9 @@ const { settleMotion } = require('./ui-motion');
 const fs = require('node:fs');
 const { chromium } = require('playwright');
 const { initialStreamPacket } = require('./e2e-sheets');
+// The one icon set, to tell which icon a terminal key shows.
+require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
+const { ICONS } = require('../src/app/ui/icons');
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const UDID = 'tool-fixture-001';
 const descriptor = (udid = UDID) => ({
@@ -83,14 +86,17 @@ async function geometry(page) {
         const view = document.querySelector('.tool-view');
         const terminal = document.querySelector('.terminal-container');
         const box = view.getBoundingClientRect(), term = terminal.getBoundingClientRect();
-        const controls = Array.from(document.querySelectorAll('.tool-navigation button,.shell-shortcuts button,.stream-header button'));
+        const controls = Array.from(document.querySelectorAll('.kit-tab,.shell-shortcuts button,.kit-bar button'));
+        // The kit's compact controls are 32px under a mouse and 44px under a finger.
+        const least = el => el.matches('.kit-button-compact,.kit-icon-button-compact') && !matchMedia('(pointer: coarse)').matches ? 32 : 44;
         return { width:view.clientWidth, content:view.scrollWidth, height:box.height, viewport:visualViewport.height, terminalHeight:term.height,
-            outside:controls.filter(el=>{ const r=el.getBoundingClientRect(); return r.x<0 || r.right>visualViewport.width+1 || r.bottom>visualViewport.height+1 || r.width<44 || r.height<44; }).map(el=>el.textContent),
-            bodyScroll:document.scrollingElement.scrollTop };
+            outside:controls.filter(el=>{ const r=el.getBoundingClientRect(); return r.x<0 || r.right>visualViewport.width+1 || r.bottom>visualViewport.height+1 || r.width<least(el) || r.height<least(el); }).map(el=>el.textContent || el.getAttribute('aria-label')),
+            controls:controls.length, bodyScroll:document.scrollingElement.scrollTop };
     });
     assert(result.content <= result.width + 1, 'no horizontal page overflow');
     assert(result.height <= result.viewport + 1, 'tool fits visible viewport');
     assert(result.terminalHeight > 20, 'terminal retains usable space');
+    assert.equal(result.controls, 11, 'Back, Switch, three tabs and six terminal keys are measured');
     assert.deepEqual(result.outside, [], '44px controls fit visible viewport');
     assert.equal(result.bodyScroll,0);
 }
@@ -164,6 +170,17 @@ async function main() {
             assert.equal(state.starts[0].udid,UDID);
             assert(state.starts[0].cols>0 && state.starts[0].rows>0,'terminal starts with valid dimensions');
             await geometry(page);
+            // The terminal keys are the kit's buttons. The ones without words are icon buttons
+            // with a name and an icon of the one set; none is drawn with a character.
+            const keys = await page.locator('.shell-shortcuts > *').evaluateAll(list=>list.map(key=>({
+                kit:key.matches('button.kit-button.kit-button-compact, button.kit-icon-button.kit-icon-button-compact'),
+                name:key.getAttribute('aria-label') || key.textContent, text:key.textContent, path:key.querySelector('svg.kit-icon > path')?.getAttribute('d') })));
+            assert.deepEqual(keys,[
+                {kit:true,name:'Show keyboard',text:'',path:ICONS.keyboard},{kit:true,name:'Ctrl',text:'Ctrl',path:undefined},
+                {kit:true,name:'Esc',text:'Esc',path:undefined},{kit:true,name:'Tab',text:'Tab',path:undefined},
+                {kit:true,name:'Previous command',text:'',path:ICONS.arrowUp},{kit:true,name:'Next command',text:'',path:ICONS.arrowDown}],'the terminal keys');
+            assert.equal(await page.locator('header.kit-bar').count(),1,'the tool header is the kit bar');
+            assert.deepEqual(await page.locator('h1').evaluateAll(list=>list.map(h1=>h1.className)),['kit-bar-name'],'one h1, the name in the bar');
             fs.mkdirSync('/tmp/ws-scrcpy-tools', {recursive:true});
             await page.screenshot({path:`/tmp/ws-scrcpy-tools/${name}-shell.png`});
             await page.locator('.stream-service-status[data-stream-service="running"]').waitFor();
@@ -240,7 +257,7 @@ async function main() {
             assert.equal(state.starts.at(-1).udid,'tool-fixture-002');
             assert(state.closed.includes('SHEL'),'old shell channel is closed');
             // The tabs of the phone's page: the screen, then the tools.
-            assert.deepEqual(await page.locator('.tool-navigation button').allInnerTexts(),['Screen','Files','Shell']);
+            assert.deepEqual(await page.locator('nav.kit-tabs .kit-tab').allInnerTexts(),['Screen','Files','Shell']);
             await page.getByRole('button',{name:'Files',exact:true}).click();
             await page.locator('.file-listing-client').waitFor();
             // A tab change hides the shell and keeps its session. Leaving the page ends it.

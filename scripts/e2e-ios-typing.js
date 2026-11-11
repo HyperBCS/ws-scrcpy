@@ -72,7 +72,7 @@ async function start(browser, { mobile = true, mockViewport = false, udid = UDID
     url.hash = `!${new URLSearchParams({ action: 'stream-coredevice', udid })}`;
     await page.goto(url.toString());
     await page.waitForFunction(() =>
-        document.querySelector('.stream-header-status')?.textContent.includes('Connected'),
+        document.querySelector('.kit-bar-status')?.textContent.includes('Connected'),
     );
     const keys = () => sent.filter((message) => message.type === 'key').map((message) => message.usages);
     const waitForKeys = async (count) => {
@@ -195,7 +195,7 @@ async function mobileFlow(browser) {
 
     await page.keyboard.press('Escape');
     await page.locator('.live-text-overlay').waitFor({ state: 'detached' });
-    assert.equal(await page.evaluate(() => document.activeElement?.className), 'floating-toolbar-fab', 'focus returns to the controls button');
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('floating-toolbar-fab')), true, 'focus returns to the controls button');
     assert.deepEqual(test.errors, []);
     await test.context.close();
     console.log('mobile: ok');
@@ -335,7 +335,7 @@ async function typingGeometry(page) {
         const viewport = visualViewport;
         return {
             viewport: { top: viewport.offsetTop, left: viewport.offsetLeft, width: viewport.width, height: viewport.height },
-            stream: rect('.stream-view'), header: rect('.stream-header'), stage: rect('.stream-stage'), video: rect('.video'),
+            stream: rect('.stream-view'), header: rect('.kit-bar'), stage: rect('.stream-stage'), video: rect('.video'),
             dock: rect('.live-text-bar'), canvas: rect('.typing-fixture-video'), touch: rect('.typing-fixture-touch'), feedbackError: rect('.live-text-feedback-error'),
             active: document.activeElement?.className,
             buttons: [...document.querySelectorAll('.live-text-bar button, .live-text-bar input')]
@@ -410,7 +410,7 @@ async function keyboardViewportFlow(browser) {
         const restored = await page.locator('.video').boundingBox();
         assert.ok(Math.abs(restored.height - initial.height) < 1.1, 'Done restores the original stream height');
         assert.ok(Math.abs(restored.y - initial.y) < 1.1, 'Done restores the original stream top');
-        assert.equal(await page.evaluate(() => document.activeElement?.className), 'floating-toolbar-fab');
+        assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('floating-toolbar-fab')), true);
         assert.equal(await page.locator('.stream-view').evaluate(el => el.classList.contains('stream-typing')), false, 'Done clears the temporary typing layout');
         assert.deepEqual(test.errors, []);
         await captureTyping(page, 'keyboard-closed');

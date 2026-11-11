@@ -159,12 +159,12 @@ async function start(browser, viewport, hash = '', { holdStat = false } = {}) {
 }
 
 const card = (page, key) => page.locator(`article.device[data-device-key="${key}"]`);
-const tab = (page, name) => page.locator('.tool-tabs').getByRole('button', { name, exact: true });
+const tab = (page, name) => page.locator('.kit-tabs-list').getByRole('button', { name, exact: true });
 const crumb = (page, name) => page.locator('.file-explorer[data-listing="ready"] .fx-crumb[aria-current="page"]').filter({ hasText: name });
 const article = (page, title) => page.locator('article.notification-history-item').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
 const at = (page) => page.evaluate(() => ({ index: history.state?.nav?.index, overlay: history.state?.nav?.overlay || 0, hash: location.hash }));
 const quiet = (page, ms = 400) => page.waitForTimeout(ms);
-const connected = (page) => page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
+const connected = (page) => page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
 const hashIs = (page, expected) => page.waitForFunction((value) => location.hash === value, expected);
 /** Waits until the tab is on the history entry `index`, with `overlay` overlay entries on the page. */
 const untilAt = (page, index, overlay) =>
@@ -256,7 +256,7 @@ async function walk(browser, viewport) {
         await crumb(page, 'tmp').waitFor();
         await hashIs(page, filesOf(PIXEL, ROOT));
         await openFilesMenu(test);
-        await page.locator('.stream-header .notifications-link').click({ force: true });
+        await page.locator('.kit-bar .notifications-link').click({ force: true });
         await page.locator('.notifications-page').waitFor();
         await untilAt(page, list.index + 2, 0);
         await nothingOver(page, `${label} Notifications from Files`);
@@ -292,7 +292,7 @@ async function walk(browser, viewport) {
         assert.equal(test.streams.length, 3, `${label}: Forward starts no stream`);
 
         // The bell: Notifications as a new entry. The stream of Pixel 8 stops.
-        await page.locator('.stream-header .notifications-link').click();
+        await page.locator('.kit-bar .notifications-link').click();
         await page.locator('.notifications-page').waitFor();
         await article(page, 'Coffee at four?').waitFor();
         await untilAt(page, list.index + 2, 0);
@@ -348,7 +348,7 @@ async function walk(browser, viewport) {
         await nothingOver(page, `${label} Pixel 8 after Back`);
         await quiet(page);
         assert.deepEqual(test.streams.slice(4), [PIXEL_2], `${label}: Back to a phone's screen opens its one stream`);
-        await page.locator('.stream-header-back').click();
+        await page.locator('.kit-bar-back').click();
         await page.locator('#devices').waitFor();
         assert.deepEqual(await at(page), list, `${label}: the back control ends on the list entry`);
         await nothingOver(page, `${label} list`);
@@ -432,7 +432,7 @@ async function olderFilesLink(browser, viewport) {
         assert.equal(await page.locator('.file-explorer').count(), 1, 'one explorer');
         assert.equal(test.opened.filter((code) => code === 'FSLS').length, 1, 'one Files channel');
         assert.equal(await page.evaluate(() => history.length), 2, 'the blank page and this one: the link is rewritten in place');
-        const tabs = await page.locator('.tool-tabs button').allInnerTexts();
+        const tabs = await page.locator('.kit-tabs-list .kit-tab').allInnerTexts();
         assert.deepEqual(tabs, ['Screen', 'Files', 'Shell']);
         assert.deepEqual(test.streams, []);
         assert.deepEqual(test.errors, []);

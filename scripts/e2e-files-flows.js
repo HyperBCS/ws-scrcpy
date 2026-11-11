@@ -885,7 +885,7 @@ async function uploads(browser, layout, name, scheme) {
         buffer: Buffer.alloc(size, 7),
     });
     await rowFor('stay.bin').waitFor();
-    const tabButton = (name) => page.locator('.tool-tabs').getByRole('button', { name, exact: true });
+    const tabButton = (name) => page.locator('.kit-tabs-list').getByRole('button', { name, exact: true });
     await tabButton('Shell').click();
     await page.waitForFunction((udid) => location.hash === `#!action=device&udid=${udid}&view=shell`, UDID);
     assert.equal(await page.locator('.fx-dialog[open]').count(), 0, 'a change of view on the same phone asks nothing');

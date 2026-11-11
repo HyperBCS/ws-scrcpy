@@ -326,7 +326,7 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await leave(target.getByRole('link', { name: 'Open screen', exact: true }));
         await page.locator('.stream-view').waitFor();
         await page.waitForFunction(() => document.title === 'Google Extra 15 · Screen · ws-scrcpy');
-        assert.equal(await page.locator('.stream-header-device > strong').textContent(), 'Google Extra 15', 'the stream header names the device like its card');
+        assert.equal(await page.locator('.kit-bar-name').textContent(), 'Google Extra 15', 'the stream header names the device like its card');
         await page.getByRole('button', { name: 'Phones', exact: true }).click();
         await check('the back control');
         await leave(target.getByRole('link', { name: 'Open screen', exact: true }));
@@ -338,7 +338,7 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await leave(target.getByRole('link', { name: 'Files', exact: true }));
         await page.locator('.tool-view').waitFor();
         await page.waitForFunction(() => document.title === 'Google Extra 15 · Files · ws-scrcpy');
-        assert.equal(await page.locator('.stream-header-device > strong').textContent(), 'Google Extra 15');
+        assert.equal(await page.locator('.kit-bar-name').textContent(), 'Google Extra 15');
         await page.getByRole('button', { name: 'Phones', exact: true }).click();
         await check('Files');
 
@@ -377,9 +377,9 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
     const test = await start(browser, { width, height, mobile, colorScheme });
     const { page } = test;
     try {
-        const headerLink = page.locator('.stream-header .notifications-link');
+        const headerLink = page.locator('.kit-bar .notifications-link');
         const fits = async (what) => {
-            const boxes = await page.locator('.stream-header').evaluate((header) => [...header.children].map((child) => child.getBoundingClientRect().toJSON()));
+            const boxes = await page.locator('.kit-bar').evaluate((header) => [...header.children].map((child) => child.getBoundingClientRect().toJSON()));
             assert.ok(boxes.every((box) => box.left >= 0 && box.right <= width + 1), `${label}: the ${what} header fits`);
             const link = await headerLink.boundingBox();
             assert.ok(link.width >= 44 && link.height >= 44, `${label}: the ${what} header link is a 44px target`);
@@ -400,7 +400,7 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         await page.locator('.stream-view').waitFor();
         await page.getByRole('link', { name: 'Notifications, 2 unread', exact: true }).waitFor();
         assert.equal(await headerLink.getAttribute('href'), `#!action=notifications&source=${LINKED}`);
-        assert.equal(await page.locator('.stream-header-device > strong').textContent(), 'iPhone linked');
+        assert.equal(await page.locator('.kit-bar-name').textContent(), 'iPhone linked');
         await page.waitForFunction(() => document.title === 'iPhone linked · Screen · ws-scrcpy');
         await fits('iPhone screen');
         await page.getByRole('button', { name: 'Phones', exact: true }).click();
@@ -492,7 +492,7 @@ async function toolLinkForIphone(browser, { width, height, mobile, colorScheme }
             await page.waitForFunction((title) => document.title === title, `iPhone linked · ${tool} · ws-scrcpy`);
             assert.equal(await page.locator('.tool-view, .terminal-container, .file-listing-client').count(), 0, 'no tool is mounted for an iPhone');
             assert.deepEqual(test.channels.filter((code) => !['HSTS', 'GTRC', 'ATRC'].includes(code)), [], 'no tool channel was opened for the iPhone, also not before the device list arrived');
-            assert.equal(await page.locator('.stream-header-device > strong').textContent(), 'iPhone linked', 'the header shows the name, not the serial');
+            assert.equal(await page.locator('.kit-bar-name').textContent(), 'iPhone linked', 'the header shows the name, not the serial');
             assert.equal(await noOverflow(page), true);
             await page.screenshot({ path: path.join(OUT, `tool-refused-${action}-${label}.png`) });
             await page.getByRole('link', { name: 'Open screen', exact: true }).click();

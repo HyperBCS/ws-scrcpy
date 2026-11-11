@@ -113,7 +113,7 @@ const at = (page) => page.evaluate(() => ({ index: history.state?.nav?.index, ov
 /** Waits until the tab is on the history entry `index`, with `overlay` overlay entries on the page. */
 const untilAt = (page, index, overlay) =>
     page.waitForFunction(([i, o]) => history.state?.nav?.index === i && (history.state.nav.overlay || 0) === o, [index, overlay]);
-const connected = (page) => page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
+const connected = (page) => page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
 
 async function press(test, locator) {
     if (test.mobile) await locator.tap();
@@ -484,7 +484,7 @@ async function notificationsPage(browser, viewport) {
         await page.locator('.tool-view-shell').waitFor();
         await dialog().waitFor({ state: 'hidden' });
         assert.equal(await dialog().count(), 0, `${label}: the sheet does not show over Shell`);
-        await page.locator('.stream-header-back').first().click();
+        await page.locator('.kit-bar-back').first().click();
         await page.locator('#devices').waitFor();
 
         // Back from Notifications with nothing open is the list, in one step.
@@ -524,7 +524,7 @@ async function stepNeverReported(browser) {
         const entries = await page.evaluate(() => history.length);
         await page.evaluate(() => history.replaceState({ ...history.state, nav: { index: 6, below: 1 } }, ''));
         const pressed = Date.now();
-        await page.locator('.stream-header-back').first().click();
+        await page.locator('.kit-bar-back').first().click();
         await page.waitForTimeout(500);
         assert.equal(await page.locator('.stream-view').count(), 1, 'the page waits for the step it asked for');
         await page.locator('#devices').waitFor({ timeout: 5000 });

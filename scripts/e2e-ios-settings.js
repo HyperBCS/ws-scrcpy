@@ -115,7 +115,7 @@ async function start(browser, { width = 390, height = 844, mobile = true, colorS
     if (refusal) {
         await page.locator('.stream-start-error').waitFor();
     } else if (stream) {
-        await page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
+        await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
     } else {
         await page.locator(`[data-device-key="ios:${UDID}"]`).waitFor();
     }
@@ -732,7 +732,7 @@ async function streamSheetsFlow(browser) {
             const before = sockets.stream;
             before.close({ code: 4007, reason: 'Session stopped' });
             await actionsDialog.getByText('The connection dropped before the phone answered. Try again once the stream is back.').waitFor();
-            await page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'), undefined, { timeout: 10000 });
+            await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'), undefined, { timeout: 10000 });
             assert.notEqual(sockets.stream, before, 'the stream reconnected');
             await page.waitForFunction(() => {
                 const button = Array.from(document.querySelectorAll('.bottom-sheet-root.open button')).find((el) => el.textContent.trim() === 'Send to phone');
@@ -756,7 +756,7 @@ async function streamSheetsFlow(browser) {
             assert.equal(await actionsDialog.locator('.sheet-row', { hasText: 'Refresh info' }).getByRole('button').isEnabled(), true);
 
             // With the tracker back, a command is answered by request id and its text is shown.
-            await page.waitForFunction(() => !!document.querySelector('.stream-header-device strong')?.textContent.includes('iPhone fixture'), undefined, { timeout: 10000 });
+            await page.waitForFunction(() => !!document.querySelector('.kit-bar-name')?.textContent.includes('iPhone fixture'), undefined, { timeout: 10000 });
             handlers.onCommand = (command) => (command.type === 'refresh_device' ? { result: null } : undefined);
             const refresh = actionsDialog.locator('.sheet-row', { hasText: 'Refresh info' }).getByRole('button');
             await page.waitForTimeout(2500);

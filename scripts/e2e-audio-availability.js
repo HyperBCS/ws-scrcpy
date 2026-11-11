@@ -4,6 +4,9 @@
 const assert = require('node:assert/strict');
 const { chromium } = require('playwright');
 const { fixture, UDID } = require('./e2e-settings');
+// The one icon set, to tell which icon Sound shows.
+require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
+const { ICONS } = require('../src/app/ui/icons');
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 
 async function main() {
@@ -47,6 +50,16 @@ async function main() {
             await page.goto(url.toString());
             const sound = page.locator('[data-control="audio"]');
             await sound.waitFor();
+            // Sound is the kit's icon button with the headphones, never a speaker, and it says
+            // whether it is on: here it cannot be.
+            const drawn = await sound.evaluate((button) => ({
+                kit: button.matches('button.kit-icon-button'), name: button.getAttribute('aria-label'), pressed: button.getAttribute('aria-pressed'),
+                icons: button.querySelectorAll('svg').length, path: button.querySelector('svg.kit-icon > path')?.getAttribute('d'),
+            }));
+            assert.deepEqual(drawn, { kit: true, name: 'Listen', pressed: 'false', icons: 1, path: ICONS.headphones }, mode + ': Sound');
+            for (const key of ['Mute device', 'Volume up']) {
+                assert.notEqual(await page.locator(`.control-buttons-list [title="${key}"] svg > path`).getAttribute('d'), drawn.path, `${mode}: Sound is not drawn like ${key}`);
+            }
             const bounds = await sound.boundingBox();
             assert(
                 bounds && bounds.y >= 0 && bounds.y + bounds.height <= 600,

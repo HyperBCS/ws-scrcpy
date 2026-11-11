@@ -148,7 +148,7 @@ async function armAndCheck(test, { trigger: button, scope, question, consequence
 
 async function openActions(test) {
     const { page } = test;
-    await page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
+    await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
     if (test.mobile) {
         await page.locator('.floating-toolbar-fab').click();
         await settleMotion(page);

@@ -219,13 +219,13 @@ async function backAfterSwitching(browser, viewport) {
             await card(tool, `android:${PIXEL}`).getByRole('link', { name: 'Files', exact: true }).click();
             await tool.locator('.tool-view-list-files').waitFor();
             const inTool = await tool.evaluate(() => history.length);
-            await tool.locator('.tool-tabs').getByRole('button', { name: 'Shell', exact: true }).click();
+            await tool.locator('.kit-tabs-list').getByRole('button', { name: 'Shell', exact: true }).click();
             await tool.locator('.tool-view-shell').waitFor();
             assert.equal(await hash(tool), `#!action=device&udid=${PIXEL}&view=shell`);
-            await tool.locator('.tool-tabs').getByRole('button', { name: 'Files', exact: true }).click();
+            await tool.locator('.kit-tabs-list').getByRole('button', { name: 'Files', exact: true }).click();
             await tool.locator('.tool-view-list-files').waitFor();
             assert.equal(await tool.evaluate(() => history.length), inTool, `${viewport.name}: a tab change adds no entry`);
-            await tool.locator('.stream-header .notifications-link').click();
+            await tool.locator('.kit-bar .notifications-link').click();
             await tool.locator('.notifications-page').waitFor();
             // A link in the older form, as a bookmark or an earlier build has it.
             await tool.evaluate((udid) => { location.hash = `#!action=stream-coredevice&udid=${udid}`; }, IPHONE);
@@ -263,8 +263,8 @@ async function linksOpenOnce(browser) {
         await page.getByText('Connected', { exact: true }).first().waitFor();
         assert.equal(await hash(page), `#!${rewritten}`, 'the older address is rewritten to the phone and its view');
         assert.equal(await page.evaluate(() => history.length), 2, 'in place: the tab has the blank page and this one');
-        assert.equal(await page.locator('.stream-header-device > strong').textContent(), PIXEL, 'the list has not arrived yet');
-        await page.waitForFunction(() => document.querySelector('.stream-header-device > strong')?.textContent === 'Google Pixel 9');
+        assert.equal(await page.locator('h1.kit-bar-name').textContent(), PIXEL, 'the list has not arrived yet');
+        await page.waitForFunction(() => document.querySelector('h1.kit-bar-name')?.textContent === 'Google Pixel 9');
         await quiet(page, 500);
         assert.deepEqual(test.streams.map((stream) => stream.udid), [PIXEL], 'one socket: the list arriving does not start the stream again');
         // Tab opened on a phone: the back control turns this entry into the list.
@@ -313,7 +313,7 @@ async function linksOpenOnce(browser) {
             if (action === 'proxy-adb') {
                 await page.getByText('Connected', { exact: true }).first().waitFor();
                 // The header finds the phone by its socket: the one found here is the tracker's own.
-                assert.equal(await page.locator('.stream-header-device > strong').textContent(), 'Google Pixel 9');
+                assert.equal(await page.locator('h1.kit-bar-name').textContent(), 'Google Pixel 9');
             }
             assert.deepEqual(test.errors, []);
         } finally { await test.context.close(); }
@@ -374,12 +374,13 @@ async function phoneNotListed(browser) {
                 await page.getByRole('heading', { name: 'This phone is not connected', exact: true }).waitFor();
                 await page.getByText('It is not in the list of phones. This page shows its screen when it is connected.', { exact: true }).waitFor();
                 assert.deepEqual(test.streams, [], 'no stream is started for a phone of an unknown kind');
-                // The header is the stream header: same classes, same size, same back control.
-                const header = page.locator('header.stream-header');
-                assert.equal(await header.locator('.stream-header-device > strong').textContent(), GONE);
+                // The header is the kit's bar, as on the stream: same classes, same size, same back control.
+                const header = page.locator('header.kit-bar');
+                assert.equal(await header.locator('h1.kit-bar-name').textContent(), GONE);
+                assert.equal(await page.locator('h1').count(), 1, `${label}: the name in the bar is the page's one h1`);
                 const bar = await header.boundingBox();
-                assert.ok(bar.height >= 48 && bar.height <= 50, `${label}: the bar is as tall as the stream header (${bar.height})`);
-                const back = header.locator('button.stream-header-back');
+                assert.ok(bar.height >= 60 && bar.height <= 62, `${label}: the bar is as tall as the stream header (${bar.height})`);
+                const back = header.locator('button.kit-bar-back');
                 assert.equal(await back.getAttribute('aria-label'), 'Phones');
                 const target = await back.boundingBox();
                 assert.ok(target.width >= 44 && target.height >= 44, `${label}: the back control is a 44px target`);

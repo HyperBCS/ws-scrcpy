@@ -174,7 +174,7 @@ async function stoppedStream(browser, layout, label) {
     const url = new URL(BASE);
     url.hash = `!${new URLSearchParams({ action: 'stream', udid: UDID, player: 'webcodecs', ws: ws.toString(), captureKeyboard: '0', fitToScreen: '1' })}`;
     await page.goto(url.toString());
-    const status = page.locator('.stream-header-status');
+    const status = page.locator('.kit-bar-status');
     await status.getByText('Connected', { exact: true }).waitFor();
     assert.equal(state.streams.length, 1);
 
@@ -191,8 +191,10 @@ async function stoppedStream(browser, layout, label) {
     await fits(page, panel, `${label} stopped panel`);
     for (const name of ['Start again', 'Phones']) {
         const box = await panel.getByRole('button', { name, exact: true }).boundingBox();
-        assert(box.height >= 40, `${name} is a usable target`);
+        assert(box.height >= 44, `${name} is a 44px target`);
     }
+    // The card's actions are the kit's buttons: Start again is the one primary.
+    assert.deepEqual(await panel.locator('button').evaluateAll((buttons) => buttons.map((button) => button.className)), ['kit-button kit-button-primary', 'kit-button'], `${label}: the card's buttons`);
     await page.screenshot({ path: path.join(OUT, `${label}-stream-stopped.png`) });
 
     await panel.getByRole('button', { name: 'Start again', exact: true }).click();
@@ -202,7 +204,7 @@ async function stoppedStream(browser, layout, label) {
 
     // Any other close still reconnects by itself.
     state.streams[1].close({ code: 4007, reason: 'Stream restarted' });
-    await page.waitForFunction(() => !document.querySelector('.stream-header-status.connected'));
+    await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.trim() !== 'Connected');
     await status.getByText('Connected', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(state.streams.length, 3);
     assert.equal(await panel.count(), 0);

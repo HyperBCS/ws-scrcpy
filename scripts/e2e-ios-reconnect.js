@@ -67,7 +67,7 @@ async function run(browser, { width, height, colorScheme, checkTiming }) {
             }
         });
     });
-    const header = page.locator('.stream-header-status');
+    const header = page.locator('.kit-bar-status');
     const notice = page.locator('.stream-start-error');
     const noOverflow = async () =>
         assert.ok(
@@ -95,6 +95,8 @@ async function run(browser, { width, height, colorScheme, checkTiming }) {
         assert.equal(await notice.locator('.stream-start-error-note').count(), 0, `${label}: no retry is promised`);
         const retry = notice.getByRole('button', { name: 'Retry', exact: true });
         assert.ok(await retry.isVisible());
+        // The card's actions are the kit's buttons: Retry is the one primary.
+        assert.deepEqual(await notice.locator('button').evaluateAll((buttons) => buttons.map((button) => button.className)), ['kit-button kit-button-primary', 'kit-button'], `${label}: the card's buttons`);
         const box = await retry.boundingBox();
         assert.ok(box.x >= 0 && box.x + box.width <= width, `${label}: Retry is inside the viewport`);
         for (const name of ['Retry', 'Phones']) {
@@ -117,7 +119,7 @@ async function run(browser, { width, height, colorScheme, checkTiming }) {
         // Retry connects at once.
         mode = 'ready';
         await retry.click();
-        await page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
+        await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
         assert.equal(opened.length, 4);
         // The error notice goes once the stream is up.
         await notice.waitFor({ state: 'hidden' });
@@ -183,10 +185,10 @@ async function noPicture(browser, { width, height, colorScheme }) {
             }
         });
     });
-    const header = page.locator('.stream-header-status');
+    const header = page.locator('.kit-bar-status');
     const card = page.locator('.stream-start-error');
     const say = (message) => sockets.at(-1).send(JSON.stringify(message));
-    const headerIs = (text) => page.waitForFunction((wanted) => document.querySelector('.stream-header-status')?.textContent.trim() === wanted, text);
+    const headerIs = (text) => page.waitForFunction((wanted) => document.querySelector('.kit-bar-status')?.textContent.trim() === wanted, text);
     // The hardware buttons sit in the rail on a desktop and behind the controls button on a phone.
     // The toolbar applies the state in an effect, a moment after the header text changes.
     const hardwareDisabled = (disabled) =>
@@ -203,7 +205,16 @@ async function noPicture(browser, { width, height, colorScheme }) {
         url.hash = `!${new URLSearchParams({ action: 'stream-coredevice', udid: UDID })}`;
         await page.goto(url.toString());
         // A first start is progress, not a problem: the notice, no card.
-        await page.locator('.stream-notice').filter({ hasText: 'Preparing the device' }).waitFor();
+        const progress = page.locator('.stream-notice').filter({ hasText: 'Preparing the device' });
+        await progress.waitFor();
+        // The progress of a start is the kit's banner, hung under the header without moving the stage.
+        assert.equal(await progress.evaluate((notice) => notice.matches('.kit-banner.kit-banner-info[role="status"]')), true, `${label}: the notice is an info banner`);
+        const hung = await page.evaluate(() => {
+            const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
+            return { bar: rect('.kit-bar').bottom, notice: rect('.stream-notice').top, stage: rect('.stream-stage').top };
+        });
+        assert.ok(hung.notice >= hung.bar, `${label}: the notice is under the header (${hung.notice}, ${hung.bar})`);
+        assert.ok(Math.abs(hung.stage - hung.bar) <= 1, `${label}: the stage starts under the header while a notice shows (${hung.stage}, ${hung.bar})`);
         await headerIs('Starting the phone stream…');
         assert.equal(await card.count(), 0);
         await hardwareDisabled(true); // no controls before the stream is up
@@ -218,7 +229,7 @@ async function noPicture(browser, { width, height, colorScheme }) {
         assert.equal(await card.getByRole('heading').textContent(), 'Stream stopped');
         assert.equal(await card.locator('p').first().textContent(), 'Device is rebooting');
         await headerIs('Stream stopped');
-        assert.equal(await header.evaluate((el) => el.classList.contains('connected')), false);
+        assert.notEqual((await header.textContent()).trim(), 'Connected');
         await hardwareDisabled(true); // no controls for a stopped stream
         for (const name of ['Retry', 'Phones']) {
             assert.ok(await reachable(page, card.getByRole('button', { name, exact: true })), `${label}: ${name} can be pressed`);
@@ -244,7 +255,7 @@ async function noPicture(browser, { width, height, colorScheme }) {
         assert.equal(await card.getByRole('heading').textContent(), 'This browser cannot show the stream');
         assert.match(await card.locator('p').first().textContent(), /cannot decode the phone's HEVC stream \(hev1\.9\.9\.L999\.B0\)/);
         await headerIs('No picture');
-        assert.equal(await header.evaluate((el) => el.classList.contains('connected')), false, `${label}: not Connected without a picture`);
+        assert.notEqual((await header.textContent()).trim(), 'Connected', `${label}: not Connected without a picture`);
         assert.equal(await card.getByRole('button', { name: 'Retry', exact: true }).count(), 0, `${label}: a retry cannot add a decoder`);
         assert.equal(await page.locator('.stream-notice:visible').count(), 0, `${label}: the reason is not a dismissible notice as well`);
         await hardwareDisabled(true);

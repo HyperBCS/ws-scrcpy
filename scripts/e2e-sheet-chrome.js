@@ -77,7 +77,7 @@ async function android(browser, { mobile = false, dark = false, stream = true, v
     }
     await page.goto(url.toString());
     if (stream) {
-        await page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
+        await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
         await page.locator('.touch-layer').waitFor({ state: 'visible' });
     } else {
         await page.locator('.device').filter({ hasText: UDID }).waitFor();
@@ -132,7 +132,7 @@ async function ios(browser, { mobile = false, dark = false, stream = true, init,
     if (stream) url.hash = `!${new URLSearchParams({ action: 'stream-coredevice', udid: IOS_UDID })}`;
     await page.goto(url.toString());
     if (stream) {
-        await page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'));
+        await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
     } else {
         await page.locator(`[data-device-key="ios:${IOS_UDID}"]`).waitFor();
     }
@@ -420,7 +420,7 @@ async function listenControl(browser) {
         const listen = page.locator('[data-control="audio"]');
         assert.equal(await listen.getAttribute('title'), 'Listen');
         assert.equal(await listen.getAttribute('aria-label'), 'Listen');
-        assert.equal(await listen.locator('.floating-control-label').count(), 1, 'one caption');
+        assert.equal(await listen.locator('.kit-icon-button-caption').count(), 1, 'one caption');
         const icon = (locator) => locator.locator('svg path').first().getAttribute('d');
         for (const key of ['Mute device', 'Volume up', 'Volume down']) {
             assert.notEqual(await icon(listen), await icon(page.locator(`.control-buttons-list [title="${key}"]`)), `Listen is not drawn like ${key}`);
@@ -447,7 +447,7 @@ async function listenControl(browser) {
         await settleMotion(page);
         const listen = page.locator('[data-control="audio"]');
         assert.equal(await listen.getAttribute('title'), 'Listen');
-        assert.equal(await listen.locator('.floating-control-label').textContent(), 'Listen');
+        assert.equal(await listen.locator('.kit-icon-button-caption').textContent(), 'Listen');
         await shot(page, 'toolbar-listen-iphone-phone-light');
         await toolbar(phone, 'Actions');
         await sheet(page, 'Actions').getByText('Listen in this browser', { exact: true }).waitFor();
@@ -652,7 +652,7 @@ async function namesAndLabels(browser) {
     const droid = await android(browser, { mobile: true });
     try {
         const { page } = droid;
-        assert.equal(await page.locator('.stream-header-device > strong').first().textContent(), ANDROID_NAME, 'the header uses the same name as the card and the sheets');
+        assert.equal(await page.locator('.kit-bar-name').first().textContent(), ANDROID_NAME, 'the header uses the same name as the card and the sheets');
         await toolbar(droid, 'Actions');
         const actions = sheet(page, 'Actions');
         assert.equal(await actions.locator('.bottom-sheet-subtitle').textContent(), ANDROID_NAME);
