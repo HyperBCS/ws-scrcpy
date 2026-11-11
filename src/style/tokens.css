@@ -1,4 +1,105 @@
-/* Shared surfaces, controls and motion. */
+/* Role tokens. New rules use these. Nothing reads them yet: each screen moves to them in its own
+   step, and the older names further down keep their values until the last screen has moved.
+   The colours here are the light theme; the dark theme is the block after this one. */
+:root {
+    --surface: #f5f6f8;
+    --surface-raised: #ffffff;
+    --surface-sunken: #eceef2;
+    --border: #dfe2e8;
+    /* The edge of a field or an off switch: 3:1 against the surface it sits on. */
+    --border-strong: #828997;
+    --text: #20242c;
+    --text-muted: #5b6270;
+    --accent: #2868e8;
+    /* Accent as words on a surface, and the tint behind a selected item. */
+    --accent-text: #1b56c9;
+    --accent-soft: #e3ecfd;
+    /* Words and icons on --accent and on --danger-fill. */
+    --on-accent: #ffffff;
+    /* Each status has `-text` for words and icons and `-fill` for the background behind them.
+       The fill is a tint that takes its own `-text`, except danger: its fill is solid and takes
+       --on-accent. */
+    --danger-text: #b3261e;
+    --danger-fill: #b3261e;
+    --success-text: #127436;
+    --success-fill: #e1f3e7;
+    --warning-text: #7a5200;
+    --warning-fill: #f8ecd2;
+    --info-text: #3949ab;
+    --info-fill: #e8eaf8;
+    --neutral-text: #565c68;
+    --neutral-fill: #e6e8ec;
+    --scrim: rgba(20, 24, 32, 0.45);
+    --shadow-raised: 0 8px 30px rgba(20, 24, 32, 0.18);
+    --focus-ring: 2px solid var(--accent);
+    --focus-ring-offset: 2px;
+    --disabled-opacity: 0.5;
+
+    /* Type: six sizes, with 12px the floor and only for captions. Inputs are 16px so that iOS
+       does not zoom the page on focus. */
+    --font-size-12: 12px;
+    --font-size-13: 13px;
+    --font-size-15: 15px;
+    --font-size-17: 17px;
+    --font-size-20: 20px;
+    --font-size-24: 24px;
+    --font-size-input: 16px;
+    --font-weight-regular: 400;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+
+    --space-4: 4px;
+    --space-8: 8px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-20: 20px;
+    --space-24: 24px;
+    --space-32: 32px;
+
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-full: 999px;
+
+    --control-height: 44px;
+    --control-height-compact: 32px;
+
+    /* Stacking, lowest first. */
+    --z-header: 5;
+    --z-overlay: 10;
+    --z-sheet: 20;
+    --z-toast: 30;
+
+    /* Breakpoints are 600px and 1024px. A media query cannot read a custom property, so rules
+       write the numbers. */
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --surface: #17191d;
+        --surface-raised: #202329;
+        --surface-sunken: #2a2e36;
+        --border: #343943;
+        --border-strong: #7d8490;
+        --text: #edf0f5;
+        --text-muted: #a0a7b3;
+        --accent-text: #8fb8f5;
+        --accent-soft: #1d2a47;
+        --danger-text: #f29a94;
+        --success-text: #5fd08a;
+        --success-fill: #1c3326;
+        --warning-text: #f0b849;
+        --warning-fill: #3a2f18;
+        --info-text: #aab4f2;
+        --info-fill: #252a45;
+        --neutral-text: #b4bac4;
+        --neutral-fill: #2c3038;
+        --scrim: rgba(0, 0, 0, 0.6);
+        --shadow-raised: 0 8px 30px rgba(0, 0, 0, 0.5);
+    }
+}
+
+/* The older names: shared surfaces, controls and motion. Motion tokens stay. */
 :root {
     color-scheme: light;
     --accent-solid: #2868e8;
