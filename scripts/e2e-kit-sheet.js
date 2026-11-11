@@ -16,7 +16,8 @@
 //   touch, mouse and wheel events in a sheet or a menu do not reach document.body;
 //   the sheet follows the visual viewport when an on-screen keyboard resizes it;
 //   the menu opens at its button, moves with the arrow keys, closes on Escape, a press outside,
-//   Back and a scroll that moves its button (not on another scroll), and returns focus.
+//   Back and a scroll that moves its button (not on another scroll), and returns focus; a sheet
+//   opened from a menu item returns focus to the menu's button.
 // The page talks to no phone: every socket is refused here.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -739,6 +740,23 @@ async function menu(test) {
     await press(test, list.getByRole('menuitem', { name: 'Delete' }));
     await gone('an item');
     await page.getByText('Last choice: Delete.').waitFor();
+
+    // An item that opens a sheet. The item has gone with its menu when the sheet closes, so
+    // focus goes back to the menu's button, by key and by press.
+    for (const how of ['key', 'press']) {
+        await openMenu();
+        if (how === 'key') await page.keyboard.press('Enter');
+        else await press(test, list.getByRole('menuitem', { name: 'Rename' }));
+        const renamed = sheet(page, 'Text field');
+        await renamed.waitFor();
+        await settleMotion(page);
+        await list.waitFor({ state: 'detached' });
+        await untilAt(page, home.index + 1, home.overlay + 1);
+        assert.ok(await renamed.evaluate((node) => document.activeElement === node), `the sheet opened from the menu (${how}) has focus`);
+        await page.keyboard.press('Escape');
+        await closed(test, renamed, home, 'Escape');
+        assert.equal(await focused(page), 'button.kit-sheets-button:More', `a sheet opened from a menu item (${how}) returns focus to the menu's button`);
+    }
 
     // Presses in the menu do not reach the listeners that drive a phone.
     await openMenu();

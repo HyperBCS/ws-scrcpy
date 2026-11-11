@@ -4,7 +4,7 @@ import { useId, useLayoutEffect, useRef } from 'preact/hooks';
 import '../../style/kit/Sheet.css';
 import { cancelConfirmPrompt } from './ConfirmAction';
 import { rememberDialogFocus, returnDialogFocus, stopRemoteInteraction, trapDialogTab } from './dialogFocus';
-import { closeMenusIn } from './Menu';
+import { closeMenusIn, menuButtonOf } from './Menu';
 import { useOverlayHistory } from './overlayHistory';
 import { usePresence } from './Presence';
 import { bindSheetDrag } from './sheetDrag';
@@ -108,7 +108,9 @@ export function Sheet({
         if (!present || !root) {
             return;
         }
-        rememberDialogFocus(root);
+        // Opened from a menu item: the item goes with its menu, so focus goes back to the
+        // menu's button.
+        rememberDialogFocus(root, menuButtonOf(document.activeElement) ?? document.activeElement);
         // Keep the phone list where it is while the sheet is open.
         const list = document.getElementById('devices');
         const listScrollTop = list?.scrollTop ?? 0;

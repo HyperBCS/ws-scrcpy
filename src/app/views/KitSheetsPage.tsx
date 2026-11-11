@@ -47,7 +47,15 @@ export function KitSheetsPage() {
             anchor={where === 'page' ? pageMenuButton : sheetMenuButton}
             label="More actions"
         >
-            <MenuItem onSelect={() => setChoice('Rename')}>Rename</MenuItem>
+            {/* An item that opens a sheet. */}
+            <MenuItem
+                onSelect={() => {
+                    setChoice('Rename');
+                    setExample('field');
+                }}
+            >
+                Rename
+            </MenuItem>
             <MenuItem onSelect={() => setChoice('Move')}>Move</MenuItem>
             <MenuItem onSelect={() => setChoice('Share')} disabled>
                 Share

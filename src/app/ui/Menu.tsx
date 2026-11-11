@@ -14,8 +14,9 @@ const ITEMS = '[role^="menuitem"]:not(:disabled):not([aria-disabled="true"])';
 const GAP = 4;
 const EDGE = 8;
 
-// Menus on screen, so the sheet that holds one can close it before it closes itself.
-const openMenus = new Map<HTMLElement, () => void>();
+// Menus on screen, so the sheet that holds one can close it before it closes itself, and a
+// sheet opened from an item knows the menu's button.
+const openMenus = new Map<HTMLElement, { close: () => void; opener: HTMLElement | null }>();
 
 /**
  * Closes the menus shown inside `container`, if there are any. A sheet calls this when the
@@ -23,13 +24,26 @@ const openMenus = new Map<HTMLElement, () => void>();
  */
 export function closeMenusIn(container: HTMLElement): boolean {
     let closed = false;
-    openMenus.forEach((close, menu) => {
+    openMenus.forEach(({ close }, menu) => {
         if (container.contains(menu)) {
             close();
             closed = true;
         }
     });
     return closed;
+}
+
+/**
+ * The button of the open menu that holds `element`. A sheet opened from a menu item returns
+ * focus there when it closes: the item goes with its menu.
+ */
+export function menuButtonOf(element: Element | null): HTMLElement | undefined {
+    for (const [menu, { opener }] of openMenus) {
+        if (opener?.isConnected && element && menu.contains(element)) {
+            return opener;
+        }
+    }
+    return undefined;
 }
 
 /** Under the button and in line with its left edge; moved only as far as the window needs. */
@@ -120,7 +134,7 @@ export function bindMenu(menu: HTMLElement, anchor: MenuAnchor, onClose: () => v
     document.addEventListener('scroll', scrolled, true);
     window.addEventListener('resize', place);
     const allowRemote = stopRemoteInteraction(menu);
-    openMenus.set(menu, onClose);
+    openMenus.set(menu, { close: onClose, opener });
     const entry = openOverlay(onClose);
 
     return () => {
