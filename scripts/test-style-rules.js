@@ -146,7 +146,24 @@ function layerFaults(file, source, parsed) {
     return { faults, otherLayers };
 }
 
-const COLOUR = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(|(?:^|[\s,(])(?:white|black)(?=$|[\s,)!])/i;
+// The CSS colour keywords. `transparent` and `currentColor` are not raw colours.
+const NAMED_COLOURS = `aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue
+    blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan
+    darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta darkolivegreen
+    darkorange darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey
+    darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite
+    forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink
+    indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral
+    lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen
+    lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen magenta
+    maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue
+    mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite
+    navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise
+    palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown
+    royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray
+    slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke
+    yellow yellowgreen`.split(/\s+/);
+const COLOUR = new RegExp(`#[0-9a-f]{3,8}\\b|\\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\\(|(?<![\\w-])(?:${NAMED_COLOURS.join('|')})(?![\\w(-])`, 'i');
 const LENGTH = /(?:^|[\s,(/])-?(?:\d+\.?\d*|\.\d+)(?:[a-z]+|%)/i;
 const fontSizeOf = (declaration) => {
     if (declaration.prop === 'font-size') return declaration.value;
@@ -163,7 +180,8 @@ function count(parsed) {
         // What a url() holds is a picture, not a value of the page.
         const value = declaration.value.replace(/url\((?:"[^"]*"|'[^']*'|[^)]*)\)/g, 'url()');
         if (/!\s*important/i.test(value)) counts.important++;
-        if (COLOUR.test(value)) counts.colours++;
+        // A name in quotes is text or an area name, not a colour.
+        if (COLOUR.test(value.replace(/"[^"]*"|'[^']*'/g, "''"))) counts.colours++;
         if (declaration.prop === 'z-index' && /^-?\d+/.test(value)) counts.zIndex++;
         if (/^border(-[a-z]+)*-radius$/.test(declaration.prop) && LENGTH.test(value)) counts.radii++;
         const size = fontSizeOf({ ...declaration, value });
@@ -193,6 +211,17 @@ test('the reader finds the rules, the layers and the values of a stylesheet', ()
     assert.deepEqual(faults, ['views/Example.css:9 has the rule ".loose" outside a layer']);
     assert.equal(otherLayers, 0);
     assert.equal(layerFaults('ui/Example.css', `${ORDER}\n`, parsed).otherLayers, 1);
+});
+
+test('a colour written by its name counts, and a word that only holds one does not', () => {
+    const colours = (css) => count(read(`${ORDER}\n@layer views {\n${css}\n}\n`)).counts.colours;
+    assert.equal(colours('.a { color: red; }'), 1);
+    assert.equal(colours('.a { border: 1px solid RebeccaPurple; }'), 1);
+    assert.equal(colours('.a { box-shadow: 0 0 0 2px var(--ring, navy); }'), 1);
+    assert.equal(colours('.a { background: white; }'), 1);
+    assert.equal(colours('.a { color: var(--status-red-text); white-space: nowrap; animation: tan-in 1s; }'), 0);
+    assert.equal(colours(".a { content: 'red'; grid-template-areas: 'gold teal'; color: currentColor; }"), 0);
+    assert.equal(colours('.a { background: transparent; rotate: calc(tan(1) * 1deg); }'), 0);
 });
 
 test('every stylesheet opens with the layer order and keeps each rule in a layer', () => {
