@@ -584,7 +584,8 @@ Browser requests retain same-origin validation. The server also checks the
 `Host` header of every request and WebSocket upgrade, so a page on another site
 cannot reach it through a DNS name that was pointed at its address. It answers to
 IP addresses, `localhost`, the machine's own name (also with `.local`) and the
-`WS_PUBLIC_URL` host. Any other name gets `403 Host not allowed`: add it to
+`WS_PUBLIC_URL` host (also its first label, the MagicDNS short name). Any other
+name gets `403 Host not allowed`: add it to
 `allowedHosts` in the configuration file, or to the comma-separated
 `WS_ALLOWED_HOSTS` environment variable. Every response forbids framing by other
 sites and limits the page's connections to this server and the hosts in

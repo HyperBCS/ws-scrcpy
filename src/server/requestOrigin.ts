@@ -50,7 +50,13 @@ function knownHostNames(): Set<string> {
     add(label);
     // The name the machine answers to over mDNS.
     add(`${label}.local`);
-    add(publicUrl()?.hostname);
+    const publicName = publicUrl()?.hostname;
+    add(publicName);
+    if (publicName && net.isIP(publicName.replace(/^\[|\]$/g, '')) === 0) {
+        // The short name, as Tailscale MagicDNS resolves it: http://box:8000 for
+        // box.example.ts.net. A single label is resolved on the local network only.
+        add(publicName.split('.')[0]);
+    }
     (process.env[ALLOWED_HOSTS_ENV] || '').split(',').forEach(add);
     const config = Config.getInstance();
     config.allowedHosts.forEach(add);

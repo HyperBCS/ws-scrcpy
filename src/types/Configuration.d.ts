@@ -46,6 +46,6 @@ export interface Configuration {
     announceGoogTracker?: boolean;
     remoteHostList?: HostsItem[];
     // Extra host names the server answers to. IP addresses, localhost, the machine's own name
-    // and the WS_PUBLIC_URL host are always accepted.
+    // and the WS_PUBLIC_URL host with its short name are always accepted.
     allowedHosts?: string[];
 }

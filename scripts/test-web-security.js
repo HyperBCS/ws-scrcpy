@@ -148,6 +148,8 @@ test('a rebound name is refused although its Origin matches its Host', async () 
         `${os.hostname().split('.')[0]}.local:8000`,
         'phone.example',
         'phone.example:8000',
+        // The short name of the WS_PUBLIC_URL host, as Tailscale MagicDNS resolves it.
+        'phone:8000',
         'configured.example:8000',
         'from-env.example',
         'second-env.example:8443',
@@ -159,6 +161,7 @@ test('a rebound name is refused although its Origin matches its Host', async () 
         '',
         'evil.example',
         'phone.example.evil.example',
+        'phone.evil.example',
         'evil.example:8000/phone.example',
         'user@localhost',
         'localhost.evil.example',
