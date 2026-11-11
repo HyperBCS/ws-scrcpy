@@ -80,7 +80,7 @@ async function start(browser, { viewport = PHONE, colorScheme = 'light', hash = 
         viewport: { width: viewport.width, height: viewport.height }, isMobile: viewport.mobile, hasTouch: viewport.mobile, colorScheme, serviceWorkers: 'block',
     });
     const page = await context.newPage();
-    const state = { context, page, errors: [], streams: [], streamsClosed: [], opened: [], closed: [], shells: [], input: [], lists: [], trackers: {} };
+    const state = { context, page, errors: [], streams: [], streamsClosed: [], opened: [], closed: [], shells: [], input: [], resizes: [], lists: [], trackers: {} };
     page.on('pageerror', (error) => state.errors.push(error.message));
     await page.route('**/api/notifications/**', (route) => {
         const pathname = new URL(route.request().url()).pathname;
@@ -132,6 +132,10 @@ async function start(browser, { viewport = PHONE, colorScheme = 'light', hash = 
                     state.input.push(body);
                     socket.send(frame(32, id, body));
                 }
+            } else if (type === 16 && channels.get(id) === 'SHEL') {
+                // After the start, the terminal size travels in binary frames.
+                const message = JSON.parse(payload.toString());
+                if (message.data?.type === 'resize') state.resizes.push(`${message.data.cols}x${message.data.rows}`);
             } else if (type === 64 && channels.get(id) === 'FSLS') {
                 const inner = payload[0], channel = payload.readUInt32LE(1), request = payload.subarray(5);
                 if (inner !== 4) return;
@@ -166,6 +170,7 @@ const count = (list, value) => list.filter((item) => item === value).length;
 const tab = (page, name) => page.locator('.tool-tabs').getByRole('button', { name, exact: true });
 const crumb = (page, name) => page.locator('.file-explorer[data-listing="ready"] .fx-crumb[aria-current="page"]').filter({ hasText: name });
 const terminalText = (page) => page.locator('.terminal-container .xterm-rows').innerText();
+const terminalRows = (page) => page.locator('.terminal-container .xterm-rows > div').count();
 
 async function until(condition, label, timeout = 5000) {
     const deadline = Date.now() + timeout;
@@ -315,6 +320,7 @@ async function androidTabs(browser, viewport, colorScheme) {
         await page.locator('.tool-view-shell').waitFor();
         await page.locator('.tool-connection.connected').waitFor();
         await until(async () => (await terminalText(page)).includes('Fixture terminal 1 ready'), 'the shell starts');
+        const rows = await terminalRows(page);
         assert.equal(await hash(page), `#!action=device&udid=${PIXEL}&view=shell`);
         assert.equal(await entries(page), afterFolder, 'a tab change adds no entry');
         await checkChrome(page, `${label} Shell`, 'Shell', viewport);
@@ -371,6 +377,10 @@ async function androidTabs(browser, viewport, colorScheme) {
         assert.deepEqual(test.shells, [PIXEL], 'the shell session was not started again');
         const text = await terminalText(page);
         assert.ok(text.includes('$ kept') && !text.includes('Fixture terminal 2'), 'the terminal shows the session it had');
+        // Hidden, the terminal kept its size: the phone's terminal was never resized.
+        await quiet(page, 300);
+        assert.equal(await terminalRows(page), rows, 'the terminal has the rows it had');
+        assert.deepEqual(test.resizes, [], 'a tab change does not resize the terminal on the phone');
         await page.getByRole('button', { name: 'Show keyboard', exact: true }).click();
         await page.keyboard.type('!');
         await until(() => test.input.join('') === 'kept!', 'input reaches the same session');

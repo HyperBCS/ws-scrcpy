@@ -111,6 +111,17 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
     const entry = findDeviceForTool({ ...BaseClient.parseParameters(params), udid });
     const descriptor = entry?.descriptor as GoogDeviceDescriptor | undefined;
     const viewRef = useRef<HTMLElement>(null);
+    const workspaceRef = useRef<HTMLElement>(null);
+    // A hidden tool keeps its workspace where the header and the tabs left it. Grown into their
+    // place, it would refit the terminal, and Shell would resize the phone's terminal twice for
+    // each look at another tab. Measured as the tab is left, while the header is still drawn.
+    const chromeHeight = useRef(0);
+    const wasActive = useRef(active);
+    if (wasActive.current && !active && viewRef.current && workspaceRef.current) {
+        chromeHeight.current =
+            workspaceRef.current.getBoundingClientRect().top - viewRef.current.getBoundingClientRect().top;
+    }
+    wasActive.current = active;
     const mountRef = useRef<HTMLDivElement>(null);
     const clientRef = useRef<MountedTool>();
     const routeRef = useRef(params);
@@ -146,6 +157,9 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
 
     useEffect(() => {
         if (!active) {
+            // Measured again when the tab is shown. A height kept from an open keyboard would
+            // squeeze the tool for one frame and refit it twice.
+            setViewportHeight(undefined);
             return;
         }
         const update = () => setViewportHeight(window.visualViewport?.height);
@@ -314,7 +328,13 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
             ref={viewRef}
             class={`tool-view tool-view-${action}`}
             hidden={!active}
-            style={viewportHeight ? { height: `${viewportHeight}px` } : undefined}
+            style={
+                !active
+                    ? { top: `${chromeHeight.current}px` }
+                    : viewportHeight
+                      ? { height: `${viewportHeight}px` }
+                      : undefined
+            }
         >
             {active && (
                 <AppBar
@@ -345,7 +365,7 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                                       : 'Opening…'}
                     </span>,
                 )}
-            <section class="tool-workspace" aria-label={tool?.title}>
+            <section ref={workspaceRef} class="tool-workspace" aria-label={tool?.title}>
                 <Presence show={showBanner} kind="collapse" class="tool-error" role="status">
                     <span>{bannerRef.current.text}</span>
                     <button type="button" onClick={codeMissing ? () => location.reload() : reconnect}>
