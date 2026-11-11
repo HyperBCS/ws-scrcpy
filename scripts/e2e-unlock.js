@@ -210,7 +210,7 @@ async function main() {
             );
             test.update({ 'device.locked': false, 'keyguard.showing': false });
             await state(page, 'confirmed');
-            assert((await status(page).textContent()).includes('Device confirmed unlocked'));
+            assert((await status(page).textContent()).includes('Phone confirmed unlocked'));
             assert.deepEqual(await passcodeKeys(page), [], 'A confirmed unlock stores nothing unless asked');
             test.update(LOCKED);
             await state(page, 'idle');
@@ -230,7 +230,7 @@ async function main() {
             await state(page, 'error');
             assert.equal(await field(page).inputValue(), '');
             assert.equal(test.texts.length, 1, 'Unsupported password characters are rejected before transport');
-            assert((await status(page).textContent()).includes('Other characters must be entered on the device'));
+            assert((await status(page).textContent()).includes('Other characters must be entered on the phone'));
             await field(page).fill(PASSWORD);
             await page.getByRole('button', { name: 'Send password', exact: true }).click();
             await state(page, 'waiting');

@@ -101,7 +101,7 @@ export function UnlockSheet({
                 cancelPending();
                 setPhase('error');
                 setFeedback(
-                    'Connection lost. The passcode may already have been sent. Check the device before trying again.',
+                    'Connection lost. The passcode may already have been sent. Check the phone before trying again.',
                 );
             }
         } else if (confirmed && controller.current) {
@@ -111,11 +111,11 @@ export function UnlockSheet({
             // The only place a passcode is written to storage: after the device confirmed it.
             if (confirmedPasscode) setSaved(savePasscode(udid, confirmedPasscode.value, confirmedPasscode.mode));
             setPhase('confirmed');
-            setFeedback('Device confirmed unlocked.');
+            setFeedback('Phone confirmed unlocked.');
         } else if (!confirmed && phase === 'confirmed') {
             clearDraft();
             setPhase('idle');
-            setFeedback('The device lock state changed. Check the device before sending another passcode.');
+            setFeedback('The phone lock state changed. Check the phone before sending another passcode.');
         }
     }, [open, connected, confirmed, phase]);
 
@@ -150,7 +150,7 @@ export function UnlockSheet({
             setFeedback(
                 mode === 'pin'
                     ? 'A PIN uses digits only. Choose Password for letters or symbols.'
-                    : 'Use up to 128 standard English letters, numbers, spaces or symbols. Other characters must be entered on the device.',
+                    : 'Use up to 128 standard English letters, numbers, spaces or symbols. Other characters must be entered on the phone.',
             );
             return;
         }
@@ -158,7 +158,7 @@ export function UnlockSheet({
         controller.current = attempt;
         toRemember.current = remember ? { value: passcode, mode } : undefined;
         setPhase('sending');
-        setFeedback('Checking the device lock before sending…');
+        setFeedback('Checking the phone lock before sending…');
         timeout.current = setTimeout(() => {
             if (controller.current !== attempt) return;
             cancelPending();
@@ -179,11 +179,11 @@ export function UnlockSheet({
                 cancelPending();
                 setPhase('error');
                 setFeedback(
-                    'The passcode was not sent. Make sure the device is connected and its PIN or password screen is visible, then try again.',
+                    'The passcode was not sent. Make sure the phone is connected and its PIN or password screen is visible, then try again.',
                 );
             } else {
                 setPhase('waiting');
-                setFeedback('Passcode sent once. Waiting for the device to confirm it is unlocked…');
+                setFeedback('Passcode sent once. Waiting for the phone to confirm it is unlocked…');
             }
         } catch (error) {
             if (attempt.signal.aborted || controller.current !== attempt) return;
@@ -193,17 +193,17 @@ export function UnlockSheet({
             setFeedback(
                 error instanceof UnlockRequestError
                     ? error.message
-                    : 'Could not complete the unlock request. Check the device before trying again.',
+                    : 'Could not complete the unlock request. Check the phone before trying again.',
             );
         }
     };
 
     const stateMessage = !connected
-        ? 'Waiting for the device to reconnect. No passcode will be queued.'
+        ? 'Waiting for the phone to reconnect. No passcode will be queued.'
         : confirmed
           ? phase === 'confirmed'
               ? feedback
-              : 'This device reports that it is unlocked.'
+              : 'This phone reports that it is unlocked.'
           : feedback;
 
     return (
@@ -214,15 +214,15 @@ export function UnlockSheet({
                 autoComplete="off"
                 onKeyUp={(event) => event.stopPropagation()}
             >
-                <p class="unlock-sheet-intro">Enter the device’s PIN or password.</p>
+                <p class="unlock-sheet-intro">Enter the phone’s PIN or password.</p>
                 {keyguardOccluded === true && (
                     <p class="unlock-sheet-feedback warning" role="status">
-                        Another screen is covering the device lock. Return to the lock screen before sending a passcode.
+                        Another screen is covering the phone lock. Return to the lock screen before sending a passcode.
                     </p>
                 )}
                 {locked === false && keyguardShowing === true && (
                     <p class="unlock-sheet-feedback" role="status">
-                        The device does not report a passcode lock. You may only need to swipe its lock screen.
+                        The phone does not report a passcode lock. You may only need to swipe its lock screen.
                     </p>
                 )}
                 <fieldset class="unlock-sheet-modes" disabled={pending || confirmed}>
@@ -245,7 +245,7 @@ export function UnlockSheet({
                     ))}
                 </fieldset>
                 <label class="unlock-sheet-field">
-                    <span>{mode === 'pin' ? 'Device PIN' : 'Device password'}</span>
+                    <span>{mode === 'pin' ? 'Phone PIN' : 'Phone password'}</span>
                     <input
                         ref={input}
                         type="password"
@@ -284,7 +284,7 @@ export function UnlockSheet({
                     {saved
                         ? 'Saved in this browser as plain text. Clear the box to forget it.'
                         : remember
-                          ? 'Saved as plain text in this browser once the device confirms it is unlocked.'
+                          ? 'Saved as plain text in this browser once the phone confirms it is unlocked.'
                           : 'Not saved. Tick the box to keep it in this browser after a confirmed unlock.'}
                 </p>
                 <div
@@ -306,11 +306,11 @@ export function UnlockSheet({
                             class="primary"
                             disabled={!connected || pending || !hasDraft || keyguardOccluded === true}
                         >
-                            {pending ? 'Waiting for device…' : `Send ${mode === 'pin' ? 'PIN' : 'password'}`}
+                            {pending ? 'Waiting for the phone…' : `Send ${mode === 'pin' ? 'PIN' : 'password'}`}
                         </button>
                     )}
                 </div>
-                <p class="unlock-sheet-hint">For a pattern lock, draw on the remote screen or unlock on the device.</p>
+                <p class="unlock-sheet-hint">For a pattern lock, draw on the remote screen or unlock on the phone.</p>
             </form>
         </BottomSheet>
     );

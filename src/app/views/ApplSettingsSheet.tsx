@@ -401,7 +401,7 @@ export function ApplSettingsSheet() {
             subtitle={entry ? deviceName(entry) : 'iPhone'}
         >
             <div class="appl-settings-sheet">
-                {!tracker && <SheetStatus tone="warning">Waiting for device…</SheetStatus>}
+                {!tracker && <SheetStatus tone="warning">Waiting for the phone…</SheetStatus>}
                 {tracker && !connected && (
                     <SheetStatus tone="warning">
                         The phone is not connected. Changes are kept on the server and apply when it is back.

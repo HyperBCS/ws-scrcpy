@@ -123,7 +123,7 @@ export function SettingsSheet() {
         pendingRequestId.current = undefined;
         if (!tracker) {
             setLoading(false);
-            setLoadError('Waiting for device…');
+            setLoadError('Waiting for the phone…');
             return;
         }
         const udid = target.udid;
@@ -131,7 +131,7 @@ export function SettingsSheet() {
         const loadTimeout = setTimeout(() => {
             loadRequestId = undefined;
             setLoading(false);
-            setLoadError('Device settings took too long to load. Check the connection and try again.');
+            setLoadError('Stream settings took too long to load. Check the connection and try again.');
         }, LOAD_TIMEOUT_MS);
         const onEncoders = (data: ListEncodersReply) => {
             if (!data || data.udid !== udid || data.requestId !== loadRequestId) {
@@ -141,7 +141,7 @@ export function SettingsSheet() {
             loadRequestId = undefined;
             setLoading(false);
             if (data.error) {
-                setLoadError(`Could not load device settings: ${data.error}`);
+                setLoadError(`Could not load stream settings: ${data.error}`);
                 return;
             }
             setLoadError(undefined);
@@ -231,7 +231,7 @@ export function SettingsSheet() {
     const audioUnavailableReason = !isAudioAvailable()
         ? audioAvailability.value.message
         : !isNaN(sdkInt) && sdkInt < 30
-          ? `This device runs Android API ${sdkInt}. Capturing sound requires Android 11 or later.`
+          ? `This phone runs Android API ${sdkInt}. Capturing sound requires Android 11 or later.`
           : undefined;
     // Missing tracker properties are not proof of an unsupported device. Let the capture
     // handshake report actual support instead of permanently greying out newer Android phones.
@@ -298,7 +298,7 @@ export function SettingsSheet() {
             pendingRequestId.current = undefined;
             setApplying(false);
             setApplyError(
-                'The device has not confirmed the change. Reopen settings to check its current values, or try again.',
+                'The phone has not confirmed the change. Reopen Stream settings to check its current values, or try again.',
             );
         }, APPLY_TIMEOUT_MS);
         pendingRequestId.current = tracker.sendCommand(ControlCenterCommand.UPDATE_STREAM_CONFIG, {
@@ -370,7 +370,7 @@ export function SettingsSheet() {
                     )}
                     {!loading && codec !== 'h264' && (
                         <div class="settings-sheet-banner warning" role="status">
-                            This device is using {codec?.toUpperCase()}, which this app cannot play. Choose a quality
+                            This phone is using {codec?.toUpperCase()}, which this app cannot play. Choose a quality
                             preset or H.264 below, then apply the change to restore video.
                         </div>
                     )}
@@ -437,14 +437,14 @@ export function SettingsSheet() {
                             <label class="settings-sheet-row settings-encoder-row">
                                 <span>
                                     Video encoder
-                                    <small>Automatic lets the device choose. Hardware encoders are listed first.</small>
+                                    <small>Automatic lets the phone choose. Hardware encoders are listed first.</small>
                                 </span>
                                 <select
                                     value={encoder}
                                     onChange={(event) => setFields({ videoEncoder: event.currentTarget.value })}
                                     disabled={locked}
                                 >
-                                    <option value="">Automatic · device default</option>
+                                    <option value="">Automatic · phone default</option>
                                     {encoder &&
                                         !filteredEncoders.some((candidate) => candidate.encoderName === encoder) && (
                                             <option value={encoder}>{encoder}</option>
@@ -464,7 +464,7 @@ export function SettingsSheet() {
                             </label>
                             {!loading && !encoders.length && (
                                 <p class="settings-sheet-hint">
-                                    No encoders were listed. Automatic uses the device's default encoder.
+                                    No encoders were listed. Automatic uses the phone's default encoder.
                                 </p>
                             )}
                             <label class="settings-sheet-row">
@@ -571,7 +571,7 @@ export function SettingsSheet() {
                             <span>
                                 Audio source
                                 <small>
-                                    Device media is what the device plays. Call audio is the far side of a phone call.
+                                    Device media is what the phone plays. Call audio is the far side of a phone call.
                                 </small>
                             </span>
                             <select
@@ -688,7 +688,7 @@ export function SettingsSheet() {
                             </label>
                             <label class="settings-sheet-row settings-toggle-row">
                                 <span>
-                                    Fit screen<small>Keep the full device visible</small>
+                                    Fit screen<small>Keep the whole phone screen visible</small>
                                 </span>
                                 <input
                                     type="checkbox"
@@ -715,7 +715,7 @@ export function SettingsSheet() {
                             </label>
                             <label class="settings-sheet-row settings-toggle-row">
                                 <span>
-                                    Physical keyboard<small>Send hardware keystrokes to the device</small>
+                                    Physical keyboard<small>Send hardware keystrokes to the phone</small>
                                 </span>
                                 <input
                                     type="checkbox"
@@ -728,7 +728,7 @@ export function SettingsSheet() {
                             </label>
                             <label class="settings-sheet-row settings-toggle-row">
                                 <span>
-                                    Native keyboard (UHID)<small>Use the device's keyboard layout · Android 11+</small>
+                                    Native keyboard (UHID)<small>Use the phone's keyboard layout · Android 11+</small>
                                 </span>
                                 <input
                                     type="checkbox"

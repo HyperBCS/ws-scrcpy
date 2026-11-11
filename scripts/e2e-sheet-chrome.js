@@ -666,6 +666,13 @@ async function namesAndLabels(browser) {
         await settings.waitFor();
         assert.equal(await settings.locator('.bottom-sheet-subtitle').textContent(), ANDROID_NAME);
         assert.equal(await page.locator('.settings-device-context, .settings-device-dot').count(), 0, 'no pill and no dot');
+        await page.waitForFunction(() => !document.querySelector('.bottom-sheet-root.open')?.textContent.includes('Loading settings…'));
+        const settingsCopy = await settings.evaluate((el) => {
+            const copy = el.cloneNode(true);
+            copy.querySelectorAll('[data-audio-state] small').forEach((node) => node.remove());
+            return copy.textContent;
+        });
+        assert.doesNotMatch(settingsCopy, /\b(the|this) device\b|device's/i, 'Stream settings call the controlled phone a phone');
         assert.deepEqual(droid.errors, []);
     } finally {
         await droid.context.close();

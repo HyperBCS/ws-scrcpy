@@ -76,7 +76,7 @@ export function ApplUnlockSheet({ client }: { client: StreamClientCoreDevice }) 
           ? 'The stored passcode was rejected by the phone. Save it again in Settings before it is used again.'
           : '';
     const stateMessage = !connected
-        ? 'Waiting for the device to reconnect.'
+        ? 'Waiting for the phone to reconnect.'
         : note || (locked === false ? 'This phone reports that it is unlocked.' : unusable);
 
     return (

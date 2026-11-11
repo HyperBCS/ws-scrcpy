@@ -315,8 +315,8 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
                     autocapitalize="off"
                     autocorrect="off"
                     spellcheck={false}
-                    placeholder={connected ? 'Type or paste text…' : 'Reconnecting to device…'}
-                    aria-label="Text to send to device"
+                    placeholder={connected ? 'Type or paste text…' : 'Reconnecting to the phone…'}
+                    aria-label="Text to send to the phone"
                     disabled={!connected}
                     onBeforeInput={onBeforeInput}
                     onInput={onInput}
