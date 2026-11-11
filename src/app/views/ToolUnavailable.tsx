@@ -4,6 +4,7 @@ import { deviceHref, followLink } from '../state/links';
 import { goUp } from '../state/router';
 import { LIST_PAGE_NAME } from '../state/routes';
 import { AppBar } from '../ui/AppBar';
+import { Button } from '../ui/Button';
 import '../../style/views/StreamView.css';
 import '../../style/views/ToolUnavailable.css';
 
@@ -20,14 +21,14 @@ export function ToolUnavailable({ entry, tool }: { entry: DeviceEntry; tool: str
     const screen = deviceHref(entry.descriptor.udid, 'screen', entry.params);
     return (
         <main class="tool-unavailable">
-            <AppBar title={name} />
+            <AppBar kit title={name} />
             <section class="tool-unavailable-body" role="alert">
                 <h2>{tool} is not available for this device</h2>
                 <p>Files and Shell work on Android devices only. {name} is an iPhone or iPad.</p>
                 <div class="tool-unavailable-actions">
                     {canOpenScreen(entry) && (
-                        <a
-                            class="ui-button ui-button-primary"
+                        <Button
+                            variant="primary"
                             href={screen}
                             onClick={(event) => {
                                 if (event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
@@ -40,11 +41,9 @@ export function ToolUnavailable({ entry, tool }: { entry: DeviceEntry; tool: str
                             }}
                         >
                             Open screen
-                        </a>
+                        </Button>
                     )}
-                    <button type="button" class="ui-button" onClick={goUp}>
-                        {LIST_PAGE_NAME}
-                    </button>
+                    <Button onClick={goUp}>{LIST_PAGE_NAME}</Button>
                 </div>
             </section>
         </main>

@@ -20,6 +20,7 @@ import {
     rememberPhone,
 } from '../state/routes';
 import { AppBar } from '../ui/AppBar';
+import { Button } from '../ui/Button';
 import { Tab, TabStrip } from '../ui/TabStrip';
 import { StreamView } from './StreamView';
 import { CoreDeviceStreamView } from './CoreDeviceStreamView';
@@ -92,14 +93,12 @@ function PhoneNotListed({ udid }: { udid: string }) {
     }, []);
     return (
         <main class="tool-unavailable">
-            <AppBar title={udid} />
+            <AppBar kit title={udid} />
             <section class="tool-unavailable-body" role="status">
                 <h2>This phone is not connected</h2>
                 <p>It is not in the list of phones. This page shows its screen when it is connected.</p>
                 <div class="tool-unavailable-actions">
-                    <button type="button" class="ui-button" onClick={goUp}>
-                        {LIST_PAGE_NAME}
-                    </button>
+                    <Button onClick={goUp}>{LIST_PAGE_NAME}</Button>
                 </div>
             </section>
         </main>
@@ -205,7 +204,7 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
     };
     const tabs = (status?: ComponentChildren) =>
         PHONE_TABS.length > 1 ? (
-            <TabStrip label="Phone views" tabs={PHONE_TABS} current={view} onSelect={selectTab}>
+            <TabStrip kit label="Phone views" tabs={PHONE_TABS} current={view} onSelect={selectTab}>
                 {status}
             </TabStrip>
         ) : null;

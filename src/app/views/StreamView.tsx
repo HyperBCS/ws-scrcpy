@@ -21,6 +21,9 @@ import { NotificationsLink } from '../ui/NotificationsLink';
 import { goUp } from '../state/router';
 import { LIST_PAGE_NAME } from '../state/routes';
 import { AppBar, AppBarStatus } from '../ui/AppBar';
+import { Button } from '../ui/Button';
+import { Icon } from '../ui/Icon';
+import { IconButton } from '../ui/IconButton';
 import { ActionsSheet } from './ActionsSheet';
 import { FloatingToolbar } from './FloatingToolbar';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
@@ -33,6 +36,7 @@ import { submitDevicePasscode } from '../state/unlockDevice';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import KeyEvent from '../googDevice/android/KeyEvent';
 import { KeyCodeControlMessage } from '../controlMessage/KeyCodeControlMessage';
+import '../../style/kit/Banner.css';
 import '../../style/views/StreamView.css';
 
 interface StreamViewProps {
@@ -100,10 +104,11 @@ export function StreamView({ params, tabs }: StreamViewProps) {
     return (
         <div class="stream-view">
             <AppBar
+                kit
                 title={String(name)}
                 status={
                     <>
-                        <AppBarStatus connected={streamConnected.value}>
+                        <AppBarStatus kit>
                             {error
                                 ? 'Unable to connect'
                                 : streamConnected.value
@@ -117,14 +122,14 @@ export function StreamView({ params, tabs }: StreamViewProps) {
                 }
             >
                 <NotificationsLink compact />
-                <button
-                    type="button"
+                <Button
+                    size="compact"
                     class="stream-header-switch"
                     onClick={() => openSheet('devices')}
                     disabled={!session}
                 >
                     Switch
-                </button>
+                </Button>
             </AppBar>
             {tabs}
             <LockScreenNotice
@@ -135,11 +140,18 @@ export function StreamView({ params, tabs }: StreamViewProps) {
                 keyguardShowing={keyguardShowing}
                 onUnlock={() => openSheet('unlock')}
             />
-            <Presence show={!!streamNotice.value} kind="collapse" key="notice" class="stream-notice" role="status">
-                <span>{streamNotice.value}</span>
-                <button type="button" onClick={() => (streamNotice.value = '')} aria-label="Dismiss message">
-                    ✕
-                </button>
+            <Presence show={!!streamNotice.value} key="notice" class="stream-notice-anchor">
+                <div class="kit-banner stream-notice" role="status">
+                    <Icon name="warning" size={16} />
+                    <span class="kit-banner-text">{streamNotice.value}</span>
+                    <IconButton
+                        icon="close"
+                        label="Dismiss message"
+                        variant="bare"
+                        size="compact"
+                        onClick={() => (streamNotice.value = '')}
+                    />
+                </div>
             </Presence>
             {/* `StreamClientScrcpy` owns everything inside this node imperatively (see the effect
                 above); the sheets/overlays below are rendered by Preact as siblings, not children,
@@ -155,22 +167,20 @@ export function StreamView({ params, tabs }: StreamViewProps) {
                 <div class="stream-start-error" role="alert">
                     <h2>Unable to start this stream</h2>
                     <p>{error}</p>
-                    <button type="button" class="sheet-button" onClick={goUp}>
-                        {LIST_PAGE_NAME}
-                    </button>
+                    <div class="stream-start-error-actions">
+                        <Button onClick={goUp}>{LIST_PAGE_NAME}</Button>
+                    </div>
                 </div>
             )}
             {stopped && !error && (
                 <div class="stream-start-error stream-service-stopped" role="alert">
                     <h2>Stream service stopped</h2>
                     <p>The stream service on this device was stopped. Start it to see the screen again.</p>
-                    <div class="stream-stopped-actions">
-                        <button type="button" class="sheet-button primary" onClick={() => setAttempt(attempt + 1)}>
+                    <div class="stream-start-error-actions">
+                        <Button variant="primary" onClick={() => setAttempt(attempt + 1)}>
                             Start again
-                        </button>
-                        <button type="button" class="sheet-button" onClick={goUp}>
-                            {LIST_PAGE_NAME}
-                        </button>
+                        </Button>
+                        <Button onClick={goUp}>{LIST_PAGE_NAME}</Button>
                     </div>
                 </div>
             )}

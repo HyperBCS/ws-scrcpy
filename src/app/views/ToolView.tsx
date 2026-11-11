@@ -11,6 +11,10 @@ import { deviceHref, followLink } from '../state/links';
 import type { DeviceView } from '../state/routes';
 import { closeAllSheets, openSheet } from '../state/stream';
 import { AppBar } from '../ui/AppBar';
+import { Banner } from '../ui/Banner';
+import { Button } from '../ui/Button';
+import { IconButton } from '../ui/IconButton';
+import type { IconName } from '../ui/icons';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { NotificationsLink } from '../ui/NotificationsLink';
@@ -42,6 +46,14 @@ const RETRY_DELAYS_MS = [1000, 2000, 4000];
 const RETRY_SETTLE_MS = 4000;
 /** A first connection that has not opened by now counts as lost. */
 const FIRST_CONNECT_MS = 10000;
+
+/** The keys under the terminal that a phone keyboard lacks, and what each sends. */
+const SHELL_KEYS: ReadonlyArray<{ label: string; input: string; icon?: IconName }> = [
+    { label: 'Esc', input: '\x1b' },
+    { label: 'Tab', input: '\t' },
+    { label: 'Previous command', input: '\x1b[A', icon: 'arrowUp' },
+    { label: 'Next command', input: '\x1b[B', icon: 'arrowDown' },
+];
 
 /** '' while there is nothing to report, then one state at a time. */
 type Lost = '' | 'reconnecting' | 'closed' | 'ended';
@@ -338,13 +350,14 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
         >
             {active && (
                 <AppBar
+                    kit
                     title={entry ? deviceName(entry) : udid}
                     status={<StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />}
                 >
                     <NotificationsLink compact />
-                    <button type="button" class="stream-header-switch" onClick={() => openSheet('devices')}>
+                    <Button size="compact" class="stream-header-switch" onClick={() => openSheet('devices')}>
                         Switch
-                    </button>
+                    </Button>
                 </AppBar>
             )}
             {active &&
@@ -366,40 +379,31 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                     </span>,
                 )}
             <section ref={workspaceRef} class="tool-workspace" aria-label={tool?.title}>
-                <Presence show={showBanner} kind="collapse" class="tool-error" role="status">
-                    <span>{bannerRef.current.text}</span>
-                    <button type="button" onClick={codeMissing ? () => location.reload() : reconnect}>
-                        {bannerRef.current.button}
-                    </button>
+                <Presence show={showBanner} kind="collapse" class="tool-error">
+                    <Banner
+                        action={{
+                            label: bannerRef.current.button,
+                            run: codeMissing ? () => location.reload() : reconnect,
+                        }}
+                    >
+                        {bannerRef.current.text}
+                    </Banner>
                 </Presence>
                 <div key="tool-mount" ref={mountRef} class="tool-mount" />
                 {action === ACTION.SHELL && (
-                    <div class="shell-shortcuts" aria-label="Terminal keys">
-                        <button
-                            type="button"
+                    <div class="shell-shortcuts" role="group" aria-label="Terminal keys">
+                        <IconButton
+                            icon="keyboard"
+                            label="Show keyboard"
+                            size="compact"
                             disabled={!connected}
                             onClick={() => clientRef.current?.focus?.()}
-                            aria-label="Show keyboard"
-                            title="Show keyboard"
-                        >
-                            <svg
-                                width="24"
-                                height="24"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="1.6"
-                                aria-hidden="true"
-                            >
-                                <rect x="2" y="5" width="20" height="14" rx="2" />
-                                <path d="M5 9h2m2 0h2m2 0h2m2 0h2M5 12h2m2 0h2m2 0h2m2 0h2M7 15h10" />
-                            </svg>
-                        </button>
-                        <button
-                            type="button"
+                        />
+                        <Button
+                            size="compact"
                             disabled={!connected}
-                            aria-pressed={control}
-                            title="Ctrl for the next key"
+                            pressed={control}
+                            attributes={{ title: 'Ctrl for the next key' }}
                             onClick={() => {
                                 const next = !control;
                                 setControl(next);
@@ -408,25 +412,28 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                             }}
                         >
                             Ctrl
-                        </button>
-                        {(
-                            [
-                                ['Esc', '\x1b'],
-                                ['Tab', '\t'],
-                                ['↑', '\x1b[A'],
-                                ['↓', '\x1b[B'],
-                            ] as const
-                        ).map(([label, input]) => (
-                            <button
-                                key={label}
-                                type="button"
-                                disabled={!connected}
-                                aria-label={label === '↑' ? 'Previous command' : label === '↓' ? 'Next command' : label}
-                                onClick={() => clientRef.current?.sendInput?.(input)}
-                            >
-                                {label}
-                            </button>
-                        ))}
+                        </Button>
+                        {SHELL_KEYS.map(({ label, input, icon }) =>
+                            icon ? (
+                                <IconButton
+                                    key={label}
+                                    icon={icon}
+                                    label={label}
+                                    size="compact"
+                                    disabled={!connected}
+                                    onClick={() => clientRef.current?.sendInput?.(input)}
+                                />
+                            ) : (
+                                <Button
+                                    key={label}
+                                    size="compact"
+                                    disabled={!connected}
+                                    onClick={() => clientRef.current?.sendInput?.(input)}
+                                >
+                                    {label}
+                                </Button>
+                            ),
+                        )}
                     </div>
                 )}
             </section>

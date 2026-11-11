@@ -7,11 +7,11 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: var(--header-bg-color);
+    background: var(--surface-sunken);
 }
 
-/* The tool page gives every spare pixel to the tool itself: the navigation row carries the
-   connection state, so there is no separate title block above the workspace. */
+/* The tab row before the kit (`ui/TabStrip.tsx` without `kit`). No page draws it any more; the
+   rules stay with the component until step 4d removes both. */
 .tool-navigation {
     display: flex;
     align-items: center;
@@ -36,67 +36,15 @@
     min-width: 0;
 }
 
-.tool-navigation button,
-.tool-error button,
-.shell-shortcuts button {
-    min-height: 44px;
-    border: 1px solid var(--device-border-color);
-    border-radius: 9px;
-    background: var(--main-bg-color);
-    color: var(--text-color);
-    padding: 6px 12px;
-    font: 600 13px var(--font-stack);
-    cursor: pointer;
-}
-
-.tool-view .stream-header-back {
-    padding: 0;
-    border: 0;
-}
-
-.tool-navigation button:disabled,
-.tool-error button:disabled,
-.shell-shortcuts button:disabled {
-    opacity: 0.5;
-    cursor: default;
-}
-
-.tool-navigation button[aria-current='page'] {
-    color: var(--button-text-color);
-    border-color: var(--button-text-color);
-    background: var(--device-list-hover-color);
-}
-
+/* The connection state of the open tool, at the end of the tab row. The row gives it its size
+   and colour. It keeps to the right edge, and the ellipsis is for a narrow phone. */
 .tool-connection {
     flex: 0 1 auto;
-    /* `margin-left: auto` pins the chip to the right edge whether or not the capped tabs left
-       any slack, and the ellipsis is the safety valve for a narrow phone. */
     margin-left: auto;
     min-width: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    color: var(--text-color-light);
-    font-size: 11px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-.tool-connection::before {
-    content: '';
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--status-starting-fill);
-}
-
-.tool-connection.connected {
-    color: var(--status-ready-color);
-}
-
-.tool-connection.connected::before {
-    background: var(--status-ready-fill);
 }
 
 .tool-workspace {
@@ -108,28 +56,14 @@
     width: 100%;
     box-sizing: border-box;
     margin: 0 auto;
-    padding: 6px max(6px, env(safe-area-inset-right, 0px)) max(6px, env(safe-area-inset-bottom, 0px))
-        max(6px, env(safe-area-inset-left, 0px));
-    gap: 6px;
+    padding: var(--space-8) max(var(--space-8), env(safe-area-inset-right, 0px))
+        max(var(--space-8), env(safe-area-inset-bottom, 0px)) max(var(--space-8), env(safe-area-inset-left, 0px));
+    gap: var(--space-8);
 }
 
+/* The banner for a tool that lost its connection. `Presence` collapses this wrapper. */
 .tool-error {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex: 0 0 auto;
-    gap: 10px;
-    padding: 6px 8px;
-    border: 1px solid var(--device-border-color);
-    border-radius: 9px;
-    background: var(--main-bg-color);
-    overflow-wrap: anywhere;
-}
-
-/* The message wraps; the button keeps its label on one line and its full width. */
-.tool-error button {
-    flex: 0 0 auto;
-    white-space: nowrap;
+    flex: none;
 }
 
 .tool-mount {
@@ -137,15 +71,17 @@
     min-height: 0;
     min-width: 0;
     overflow: hidden;
-    border: 1px solid var(--device-border-color);
-    border-radius: 10px;
-    background: var(--main-bg-color);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    /* Files draws on this: its rows and places have no fill of their own. */
+    background: var(--surface);
 }
 
-/* Files manages its own scrolling regions; anything else scrolls as a whole. */
+/* Files manages its own scrolling regions; anything else scrolls as a whole. The terminal is
+   black in both themes. */
 .tool-view-shell .tool-mount {
     background: #000;
-    padding: 6px;
+    padding: var(--space-8);
 }
 .tool-view .terminal-container {
     width: 100%;
@@ -153,37 +89,19 @@
     padding: 0;
     box-sizing: border-box;
 }
-.shell-shortcuts {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(44px, 1fr));
-    flex: 0 0 auto;
-    gap: 5px;
-}
-.shell-shortcuts button {
-    display: grid;
-    place-items: center;
-    min-width: 0;
-    padding: 6px 4px;
-    font-size: 12px;
-}
 
-/* Ctrl reads as a held key until the next character uses it. */
-.shell-shortcuts button[aria-pressed='true'] {
-    color: var(--button-text-color);
-    border-color: var(--button-text-color);
-    background: var(--device-list-hover-color);
+/* The keys a phone keyboard lacks, under the terminal: the kit's buttons in a row. */
+.shell-shortcuts {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    gap: var(--space-4);
 }
 
 @media (min-width: 1000px) {
     .tool-workspace {
         max-width: 1600px;
-        padding-inline: max(10px, env(safe-area-inset-left, 0px));
-    }
-}
-
-@media (max-width: 600px) {
-    .tool-navigation button {
-        padding: 6px 4px;
+        padding-inline: max(var(--space-12), env(safe-area-inset-left, 0px));
     }
 }
 
@@ -200,18 +118,18 @@
         border-radius: 0;
     }
     .tool-error {
-        margin: 6px;
+        padding: var(--space-8);
     }
     .shell-shortcuts {
-        padding: 6px;
+        padding: var(--space-8);
     }
 }
 
 @media (max-height: 450px) {
     .tool-workspace {
-        padding-top: 4px;
-        padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
-        gap: 4px;
+        padding-top: var(--space-4);
+        padding-bottom: max(var(--space-4), env(safe-area-inset-bottom, 0px));
+        gap: var(--space-4);
     }
 }
 
