@@ -7,6 +7,7 @@ import Util from '../Util';
 import { DisplayInfo } from '../DisplayInfo';
 import { ParamsStream } from '../../types/ParamsStream';
 import { AUDIO_MAGIC, AudioMetadata } from '../../common/AudioProtocol';
+import { STREAM_SERVICE_STOPPED } from '../../common/StreamCloseCode';
 import { audioErrorMetadata, parseAudioPacket } from './audioPacket';
 import type { AudioFrame } from './audioPacket';
 
@@ -157,6 +158,10 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
         this.audioConfig = undefined;
         console.log(`${TAG}. WS closed: ${ev.reason}`);
         this.emit('disconnected', ev);
+        if (ev.code === STREAM_SERVICE_STOPPED) {
+            // The owner stopped the stream service. A reconnect would start it again.
+            return;
+        }
         this.scheduleReconnect();
     }
 

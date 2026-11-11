@@ -2,10 +2,12 @@
 // Android server lifecycle: adb helpers, device tracking and the scrcpy process. No device needed.
 const assert = require('node:assert/strict');
 const { test, after } = require('node:test');
-const { EventEmitter } = require('node:events');
+const { EventEmitter, once } = require('node:events');
+const { createServer } = require('node:net');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const childProcess = require('node:child_process');
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-android-server-'));
 const previousConfigPath = process.env.WS_SCRCPY_STREAM_CONFIG_PATH;
@@ -25,6 +27,13 @@ const { ExtendedSync } = require('../src/server/goog-device/adb/ExtendedSync');
 const { Device } = require('../src/server/goog-device/Device');
 const { ControlCenter: AndroidControlCenter } = require('../src/server/goog-device/services/ControlCenter');
 const { DeviceTracker: AndroidDeviceTracker } = require('../src/server/goog-device/mw/DeviceTracker');
+const { ScrcpyServer } = require('../src/server/goog-device/ScrcpyServer');
+const { ScrcpyInstance } = require('../src/server/goog-device/ScrcpyInstance');
+const { WebsocketProxyOverAdb } = require('../src/server/goog-device/mw/WebsocketProxyOverAdb');
+const { broadcastManager } = require('../src/common/BroadcastManager');
+const { STREAM_SERVICE_STOPPED } = require('../src/common/StreamCloseCode');
+const { streamConfig } = require('../src/server/goog-device/StreamConfig');
+const { StreamReceiver } = require('../src/app/client/StreamReceiver');
 
 // Nothing in this file may reach a real adb server. Every Device and ControlCenter built here
 // gets this client in place of adbkit's, and it refuses every call. Tests that need adb to
@@ -412,4 +421,447 @@ test('a device list opened while adb is down receives the phones when adb return
         2,
         'a closed list is no longer told about adb',
     );
+});
+
+const SCRCPY = ['app_process', '/', 'com.genymobile.scrcpy.Server', '4.1', 'tunnel_forward=true'];
+const ownServer = () => [...SCRCPY, `scid=${ScrcpyInstance.getScid()}`];
+
+// A Device whose phone is a table of processes. The adb calls a Device makes are all replaced:
+// nothing in these tests reaches a real adb server or spawns the adb binary.
+function deviceFixture(t, udid = 'phone') {
+    const noStartup = t.mock.method(Device.prototype, 'setState', () => {});
+    const device = new Device(udid, 'device');
+    noStartup.mock.restore();
+    const phone = { processes: new Map(), killed: [] };
+    device.getPidOf = async () => [...phone.processes.keys()];
+    device.runShellCommandAdbKit = async (command) => {
+        const cmdline = command.match(/^cat \/proc\/(\d+)\/cmdline$/);
+        if (cmdline) {
+            return (phone.processes.get(Number(cmdline[1])) || []).join('\0');
+        }
+        const kill = command.match(/^kill (\d+)$/);
+        if (kill) {
+            phone.killed.push(Number(kill[1]));
+            phone.processes.delete(Number(kill[1]));
+            return '';
+        }
+        assert.fail(`unexpected device command: ${command}`);
+    };
+    device.listEncoders = async () => [];
+    t.mock.method(AdbUtils, 'removeFileSocketForwards', async () => {});
+    // The adb child of a launch. spawn is replaced, so no adb process is ever started.
+    const children = [];
+    t.mock.method(childProcess, 'spawn', (_command, args) => {
+        const child = new EventEmitter();
+        child.pid = 4000 + children.length;
+        child.args = args;
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.signals = [];
+        child.kill = (signal) => {
+            child.signals.push(signal);
+            return true;
+        };
+        children.push(child);
+        return child;
+    });
+    t.after(() => device.release());
+    return { device, phone, children };
+}
+
+// Stands in for the launch: a started server is a new process on the phone with a live stream.
+function streamFixture(t, phone) {
+    const stream = { up: false, launches: 0 };
+    t.mock.method(ScrcpyServer, 'run', async () => {
+        stream.launches++;
+        phone.processes.set(900 + stream.launches, ownServer());
+        stream.up = true;
+    });
+    t.mock.method(broadcastManager, 'hasBroadcast', () => stream.up);
+    t.mock.method(broadcastManager, 'stopBroadcast', () => {
+        stream.up = false;
+    });
+    return stream;
+}
+
+function withTimings(t, timings) {
+    const previous = {};
+    for (const key of Object.keys(timings)) {
+        previous[key] = Device[key];
+        Device[key] = timings[key];
+    }
+    t.after(() => Object.assign(Device, previous));
+}
+
+const settle = async () => {
+    for (let turn = 0; turn < 8; turn++) await tick();
+};
+
+test('each server keeps its own scid per port, and every launch carries it', (t) => {
+    const { Config } = require('../src/server/Config');
+    let port = 8000;
+    t.mock.method(Config, 'getInstance', () => ({ servers: [{ port }] }));
+    const file = path.join(process.env.WS_NOTIFICATION_DATA, 'scrcpy-instance.json');
+    const restart = () => {
+        ScrcpyInstance.scid = undefined;
+        return ScrcpyInstance.getScid();
+    };
+    const main = restart();
+    t.after(() => {
+        ScrcpyInstance.scid = main;
+    });
+    assert.match(main, /^[0-7][0-9a-f]{7}$/, 'eight hex digits that fit in 31 bits, as scrcpy requires');
+    assert.equal(ScrcpyInstance.socketName(), `localabstract:scrcpy_${main}`);
+    const args = ScrcpyServer.buildLaunchArgs(streamConfig.get('any-phone'));
+    assert.match(args, /^4\.1 .*tunnel_forward=true/);
+    assert.ok(args.split(' ').includes(`scid=${main}`));
+    assert.ok(args.split(' ').includes('power_on=false'), 'a start does not wake the screen');
+    assert.equal(restart(), main, 'a restarted server finds its scid again');
+
+    port = 8010;
+    const test = restart();
+    assert.notEqual(test, main, 'a test server on another port is a different instance');
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { 8000: main, 8010: test });
+    port = 8000;
+    assert.equal(restart(), main);
+
+    assert.equal(ScrcpyServer.isOwnServer(ownServer()), true);
+    assert.equal(ScrcpyServer.isOwnServer([...SCRCPY, `scid=${test}`]), false);
+    assert.equal(ScrcpyServer.isOwnServer(SCRCPY), false, 'a scrcpy with no scid is not ours either');
+    assert.equal(ScrcpyServer.isOwnServer([...ownServer(), 'list_encoders=true']), false);
+});
+
+test('a scrcpy that another server or desktop scrcpy started is never reported or stopped', async (t) => {
+    const { device, phone } = deviceFixture(t);
+    const stream = streamFixture(t, phone);
+    phone.processes.set(301, [...SCRCPY, 'scid=0badc0de']); // a test server on another port
+    phone.processes.set(302, SCRCPY); // a scrcpy started without an scid
+    await device.refreshServicePid();
+    assert.equal(device.descriptor.pid, -1, 'their pids are not reported as this server’s');
+
+    device.addViewer({ close() {} });
+    await device.ensureServer();
+    assert.equal(stream.launches, 1, 'this server starts its own');
+    assert.deepEqual(phone.killed, [], 'and replaces nobody');
+    assert.equal(device.descriptor.pid, 901);
+
+    await device.killServer(301);
+    assert.deepEqual(phone.killed, [901], 'Stop ends only this server’s process, whatever pid was asked for');
+    assert.deepEqual([...phone.processes.keys()], [301, 302]);
+});
+
+test('a server left behind by this server’s previous run is replaced', async (t) => {
+    const { device, phone } = deviceFixture(t);
+    const stream = streamFixture(t, phone);
+    phone.processes.set(555, ownServer());
+    device.addViewer({ close() {} });
+    await device.ensureServer();
+    assert.deepEqual(phone.killed, [555]);
+    assert.equal(stream.launches, 1);
+    assert.equal(device.descriptor.pid, 901);
+});
+
+test('starting waits for the launch itself and never polls for a PID file', async () => {
+    const launches = [];
+    const device = {
+        udid: 'phone',
+        TAG: '[phone]',
+        isConnected: () => true,
+        push: async () => {
+            const transfer = new EventEmitter();
+            setImmediate(() => transfer.emit('end'));
+            return transfer;
+        },
+        getLaunchStreamConfig: () => streamConfig.get('phone'),
+        launchServer: async (command, audio) => launches.push({ command, audio }),
+        runShellCommandAdbKit: () => assert.fail('the start must not poll the phone'),
+        getPidOf: () => assert.fail('the start must not poll the phone'),
+    };
+    await ScrcpyServer.run(device);
+    assert.equal(launches.length, 1);
+    assert.match(
+        launches[0].command,
+        /^CLASSPATH=\/data\/local\/tmp\/scrcpy-server\.jar app_process \/ com\.genymobile\.scrcpy\.Server 4\.1 /,
+    );
+    assert.ok(launches[0].command.endsWith(` scid=${ScrcpyInstance.getScid()} power_on=false`));
+    assert.equal(launches[0].audio, true);
+
+    device.launchServer = async () => {
+        throw Error('The stream service did not start in time.');
+    };
+    await assert.rejects(ScrcpyServer.run(device), /did not start in time/);
+});
+
+const streamHeader = () => {
+    const header = Buffer.alloc(16);
+    header.writeUInt32BE(0x68323634, 0);
+    header.writeUInt32BE(720, 8);
+    header.writeUInt32BE(1280, 12);
+    return header;
+};
+
+test('a slow start is not given up on: the stream connects once scrcpy listens', { timeout: 10000 }, async (t) => {
+    const { device, children } = deviceFixture(t, 'slow-phone');
+    withTimings(t, { STREAM_CONNECT_DELAY_MS: 5, STREAM_RETRY_DELAY_MS: 5 });
+    // The adb forward port. Until scrcpy listens on the phone, adb accepts and closes at once.
+    let listening = false;
+    let refused = 0;
+    const peers = [];
+    const server = createServer((socket) => {
+        socket.on('error', () => {});
+        if (!listening) {
+            refused++;
+            socket.destroy();
+            return;
+        }
+        peers.push(socket);
+        if (peers.length === 1) socket.write(streamHeader());
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    t.after(() => {
+        broadcastManager.stopBroadcast('slow-phone');
+        peers.forEach((socket) => socket.destroy());
+        server.close();
+    });
+    const forwards = [];
+    t.mock.method(AdbUtils, 'forward', async (serial, remote) => {
+        forwards.push(`${serial} ${remote}`);
+        return server.address().port;
+    });
+
+    let ready = false;
+    const starting = device.launchServer('scrcpy fixture', false).then(() => (ready = true));
+    assert.deepEqual(children[0].args, ['-s', 'slow-phone', 'shell', 'scrcpy fixture']);
+    children[0].stdout.emit('data', Buffer.from('[server] INFO: Device: fixture\n'));
+    await wait(80);
+    assert.ok(refused >= 2, 'the stream was tried while scrcpy was not listening yet');
+    assert.equal(ready, false, 'the start is still in progress');
+    assert.deepEqual(children[0].signals, [], 'and the server is not stopped for being slow');
+    assert.equal(broadcastManager.hasBroadcast('slow-phone'), false);
+
+    listening = true;
+    await starting;
+    assert.deepEqual(forwards, [`slow-phone ${ScrcpyInstance.socketName()}`], 'the socket is this server’s own');
+    assert.equal(await broadcastManager.getBroadcast('slow-phone').whenReady(), true);
+    assert.equal(device.launch.child, children[0], 'the adb child is kept for shutdown');
+
+    // The server ends by itself later: its stream goes with it.
+    children[0].emit('close', 0);
+    assert.equal(broadcastManager.hasBroadcast('slow-phone'), false);
+    assert.equal(device.launch, undefined);
+});
+
+test('a server that exits while starting fails the launch at once, with its last output', async (t) => {
+    const { device, children } = deviceFixture(t, 'broken-phone');
+    const starting = device.launchServer('scrcpy fixture', true);
+    children[0].stderr.emit('data', Buffer.from('Error: Could not find or load main class\n'));
+    children[0].emit('close', 1);
+    await assert.rejects(starting, /exited before it was ready: Error: Could not find or load main class/);
+    assert.deepEqual(children[0].signals, [], 'a process that is gone is not signalled');
+    assert.equal(device.launch, undefined);
+});
+
+test('a start that takes too long is stopped and reported once', async (t) => {
+    const { device, children } = deviceFixture(t, 'stuck-phone');
+    withTimings(t, { SERVER_START_TIMEOUT_MS: 30 });
+    await assert.rejects(device.launchServer('scrcpy fixture', false), /did not start in time/);
+    assert.deepEqual(children[0].signals, ['SIGTERM'], 'the adb child is stopped, so nothing is left starting');
+    children[0].emit('close', null);
+    assert.equal(device.launch, undefined);
+});
+
+test('attaching a phone reads the service status and starts nothing', async (t) => {
+    const { device, phone } = deviceFixture(t);
+    t.mock.method(ScrcpyServer, 'run', () => assert.fail('scrcpy must not start when a phone is attached'));
+    device.startServer = () => assert.fail('scrcpy must not start when a phone is attached');
+    device.getProperties = async () => ({});
+    device.updateInterfaces = async () => [{ name: 'wlan0', ipv4: '192.0.2.10' }];
+    device.fetchDeviceInfo();
+    await settle();
+    assert.equal(device.descriptor.pid, -1, 'the service is reported as stopped');
+    assert.deepEqual(phone.killed, []);
+    assert.equal(device.updateTimeoutId, undefined, 'and a stopped service is not retried as a failure');
+});
+
+test('scrcpy starts with the first viewer and stops a grace period after the last one leaves', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { device, phone } = deviceFixture(t);
+    const stream = streamFixture(t, phone);
+    const viewer = () => ({ close() {} });
+
+    const leaveFirst = device.addViewer(viewer());
+    await device.ensureServer();
+    const leaveSecond = device.addViewer(viewer());
+    await device.ensureServer();
+    assert.equal(stream.launches, 1, 'two viewers share one server');
+
+    leaveFirst();
+    t.mock.timers.tick(120000);
+    await settle();
+    assert.deepEqual(phone.killed, [], 'it keeps running while someone is watching');
+
+    leaveSecond();
+    t.mock.timers.tick(29000);
+    await settle();
+    assert.deepEqual(phone.killed, [], 'it survives a reload');
+    const leaveReloaded = device.addViewer(viewer());
+    await device.ensureServer();
+    t.mock.timers.tick(120000);
+    await settle();
+    assert.equal(stream.launches, 1, 'and the reloaded page reuses it');
+    assert.deepEqual(phone.killed, []);
+
+    leaveReloaded();
+    leaveReloaded();
+    t.mock.timers.tick(30000);
+    await settle();
+    assert.deepEqual(phone.killed, [901], 'with nobody watching it is stopped');
+    assert.equal(stream.up, false);
+    assert.equal(device.descriptor.pid, -1);
+
+    device.addViewer(viewer());
+    await device.ensureServer();
+    assert.equal(stream.launches, 2, 'the next viewer starts it again');
+});
+
+test('a service started from the card is stopped again when nobody opens the screen', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { device, phone } = deviceFixture(t);
+    const stream = streamFixture(t, phone);
+    assert.equal(await device.startServer(), 901);
+    t.mock.timers.tick(30000);
+    await settle();
+    assert.deepEqual(phone.killed, [901]);
+    assert.equal(stream.up, false);
+});
+
+test('the owner’s Stop closes every viewer with the code that tells it not to reconnect', async (t) => {
+    const { device, phone } = deviceFixture(t);
+    const stream = streamFixture(t, phone);
+    const closes = [];
+    const viewer = () => ({ close: (code, reason) => closes.push({ code, reason, streamUp: stream.up }) });
+    device.addViewer(viewer());
+    device.addViewer(viewer());
+    await device.ensureServer();
+    await device.killServer(901);
+    assert.equal(STREAM_SERVICE_STOPPED, 4012);
+    assert.deepEqual(
+        closes.map((close) => close.code),
+        [4012, 4012],
+    );
+    assert.ok(
+        closes.every((close) => close.streamUp),
+        'before the stream is torn down, so this is the close the browser sees',
+    );
+    assert.deepEqual(phone.killed, [901]);
+    assert.equal(stream.up, false);
+});
+
+test('a settings change restarts a watched stream and only stops an unwatched one', async (t) => {
+    const { device, phone } = deviceFixture(t, 'settings-phone');
+    const stream = streamFixture(t, phone);
+    const leave = device.addViewer({ close() {} });
+    await device.ensureServer();
+    await device.updateStreamConfig({ maxFps: 30 });
+    assert.deepEqual(phone.killed, [901]);
+    assert.equal(stream.launches, 2, 'a watched stream comes back with the new settings');
+
+    leave();
+    await device.updateStreamConfig({ maxFps: 60 });
+    assert.deepEqual(phone.killed, [901, 902]);
+    assert.equal(stream.launches, 2, 'with nobody watching, the next viewer gets the new settings');
+    assert.equal(stream.up, false);
+    assert.equal(streamConfig.get('settings-phone').maxFps, 60);
+});
+
+test('a stream connection counts as a viewer until its socket closes', async (t) => {
+    const calls = [];
+    const device = {
+        addViewer: (viewer) => {
+            calls.push('add');
+            device.viewer = viewer;
+            return () => calls.push('leave');
+        },
+        ensureServer: async () => calls.push('ensure'),
+        getDeviceName: () => 'Fixture phone',
+        getCachedEncoders: () => [],
+    };
+    t.mock.method(AndroidControlCenter, 'hasInstance', () => true);
+    t.mock.method(AndroidControlCenter, 'getInstance', () => ({
+        getDevice: (udid) => (udid === 'phone' ? device : undefined),
+    }));
+
+    const socket = new BrowserSocket();
+    WebsocketProxyOverAdb.createProxyOverAdb(socket, 'phone', 'tcp:8886');
+    assert.deepEqual(calls, ['add', 'ensure'], 'the viewer is registered before the server is started');
+    await settle();
+    // No stream came up in this fixture, so the proxy closes the socket for a retry.
+    assert.deepEqual(
+        socket.closes.map((close) => close.code),
+        [4008],
+    );
+    assert.deepEqual(calls, ['add', 'ensure', 'leave']);
+
+    const second = new BrowserSocket();
+    WebsocketProxyOverAdb.createProxyOverAdb(second, 'phone', 'tcp:8886');
+    device.viewer.close(STREAM_SERVICE_STOPPED, 'Stream service stopped');
+    assert.deepEqual(second.closes, [{ code: 4012, reason: 'Stream service stopped' }]);
+    await settle();
+});
+
+test('a viewer closed by Stop stays closed, and any other close reconnects', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    class ViewerSocket extends EventEmitter {
+        static instances = [];
+        CONNECTING = 0;
+        OPEN = 1;
+        CLOSING = 2;
+        CLOSED = 3;
+        readyState = 0;
+        constructor() {
+            super();
+            ViewerSocket.instances.push(this);
+        }
+        addEventListener(type, listener) {
+            this.on(type, listener);
+        }
+        send() {}
+        open() {
+            this.readyState = this.OPEN;
+            this.emit('open', {});
+        }
+        close(code = 1000, reason = '') {
+            this.readyState = this.CLOSED;
+            this.emit('close', { code, reason });
+        }
+    }
+    const previous = global.WebSocket;
+    global.WebSocket = ViewerSocket;
+    t.after(() => {
+        global.WebSocket = previous;
+    });
+    // The socket is the class above: this address is never contacted.
+    const receiver = new StreamReceiver({
+        udid: 'phone',
+        action: 'proxy_adb',
+        hostname: 'viewer.invalid',
+        port: 1,
+        pathname: '/',
+    });
+    t.after(() => receiver.stop());
+    const sockets = ViewerSocket.instances;
+    const seen = [];
+    receiver.on('disconnected', (event) => seen.push(event.code));
+
+    sockets[0].open();
+    sockets[0].close(4007, 'Stream restarted');
+    t.mock.timers.tick(10000);
+    assert.equal(sockets.length, 2, 'a settings restart is followed by a reconnect');
+
+    sockets[1].open();
+    sockets[1].close(STREAM_SERVICE_STOPPED, 'Stream service stopped');
+    t.mock.timers.tick(120000);
+    assert.equal(sockets.length, 2, 'Stop is not: reconnecting would start the service again');
+    assert.deepEqual(seen, [4007, 4012]);
 });

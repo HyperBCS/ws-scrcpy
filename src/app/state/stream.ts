@@ -39,6 +39,10 @@ export const lastFrameAt = signal<number | undefined>(undefined);
 // no transport, not merely a quiet screen.
 export const streamConnected = signal(false);
 
+// The owner stopped the Android stream service while this stream was open. The receiver does not
+// reconnect in this state, because a reconnect would start the service again.
+export const streamServiceStopped = signal(false);
+
 // Last clipboard text the device sent back (in response to a GET_CLIPBOARD command). `undefined`
 // means "never asked"; empty string means the device's clipboard really is empty.
 export const deviceClipboard = signal<string | undefined>(undefined);

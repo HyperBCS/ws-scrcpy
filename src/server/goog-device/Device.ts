@@ -2,7 +2,7 @@ import { AdbExtended } from './adb';
 import AdbKitClient from '@dead50f7/adbkit/lib/adb/client';
 import { AdbUtils } from './AdbUtils';
 import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
-import { spawn } from 'child_process';
+import { ChildProcess, spawn } from 'child_process';
 import { NetInterface } from '../../types/NetInterface';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import { broadcastManager } from '../../common/BroadcastManager';
@@ -10,6 +10,8 @@ import { Broadcast } from '../../common/Broadcast';
 import { AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, AudioMetadata } from '../../common/AudioProtocol';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { EncoderInfo, ScrcpyServer } from './ScrcpyServer';
+import { ScrcpyInstance } from './ScrcpyInstance';
+import { STREAM_SERVICE_STOPPED } from '../../common/StreamCloseCode';
 import { StreamConfigData, streamConfig } from './StreamConfig';
 import { Properties } from './Properties';
 import { LOCK_STATE_COMMAND, parseLockState, unknownLockState } from './LockState';
@@ -29,6 +31,19 @@ export interface DeviceEvents {
     update: Device;
 }
 
+/** A browser that has this device's screen open. */
+export interface StreamViewer {
+    close(code: number, reason: string): void;
+}
+
+/** One run of the scrcpy server, from the adb child that started it. */
+interface ServerLaunch {
+    child: ChildProcess;
+    /** Set once the launch has either connected its stream or failed. */
+    done: boolean;
+    broadcast?: Broadcast;
+}
+
 function sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -42,6 +57,14 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private static readonly RUNTIME_STATE_IDLE_INTERVAL = 60000;
     private static readonly LOCK_STATE_ACTIVE_INTERVAL = 2000;
     private static readonly LOCK_STATE_IDLE_INTERVAL = 60000;
+    // scrcpy runs while a browser has the screen open. It keeps running this long after the
+    // last one left, so a reload or a trip to the device list and back does not restart it.
+    private static readonly STREAM_IDLE_GRACE_MS = 30000;
+    // The one limit on a launch, from spawning adb to the first bytes of the stream.
+    private static readonly SERVER_START_TIMEOUT_MS = 15000;
+    // scrcpy prints its first line shortly before it starts to listen for the stream sockets.
+    private static readonly STREAM_CONNECT_DELAY_MS = 1000;
+    private static readonly STREAM_RETRY_DELAY_MS = 500;
     // Verified against a real device (Xiaomi, Android 16). Notes on each part:
     //  - `Display Power: state=` is NOT emitted by `dumpsys power` on Android 16, so
     //    `dumpsys display`'s `mScreenState=` is the primary screen-state source; the older
@@ -59,7 +82,9 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private pidDetectionVariant: PID_DETECTION = PID_DETECTION.UNKNOWN;
     private client: AdbKitClient;
     private properties?: Record<string, string>;
-    private spawnServer = true;
+    private viewers: Set<StreamViewer> = new Set();
+    private idleStopTimeoutId?: Timeout;
+    private launch?: ServerLaunch;
     private updateTimeoutId?: Timeout;
     private updateTimeout = Device.INITIAL_UPDATE_TIMEOUT;
     private updateCount = 0;
@@ -166,6 +191,8 @@ export class Device extends TypedEmitter<DeviceEvents> {
         this.lockStatePollInFlight = false;
         this.stopRuntimeStateUpdates();
         this.stopLockStateUpdates();
+        this.clearIdleStop();
+        this.viewers.clear();
         if (this.updateTimeoutId) {
             clearTimeout(this.updateTimeoutId);
             this.updateTimeoutId = undefined;
@@ -229,7 +256,17 @@ export class Device extends TypedEmitter<DeviceEvents> {
         });
     }
 
-    public async runShellCommandAdbSpecial(command: string, udid: string, audioEnabled: boolean): Promise<string> {
+    /**
+     * Starts the scrcpy server through `adb shell` and connects its stream. The adb child stays
+     * for as long as the server runs.
+     *
+     * Resolves once the stream has delivered its header. Rejects when adb cannot be spawned, the
+     * server exits first, or the whole start takes longer than `SERVER_START_TIMEOUT_MS`; a
+     * failed launch leaves no process or stream behind. Callers run on the server operation
+     * queue, so nothing else starts or stops a server while one is still coming up.
+     */
+    public launchServer(command: string, audioEnabled: boolean): Promise<void> {
+        const udid = this.udid;
         const launchGeneration = ++this.audioLaunchGeneration;
         const connectionGeneration = this.connectionGeneration;
         this.servicePidRevision++;
@@ -239,14 +276,18 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 this.audioFailure = metadata;
             }
         };
-        return new Promise<string>((resolve, reject) => {
+        return new Promise<void>((resolve, reject) => {
             const cmd = 'adb';
-            const args = ['-s', `${this.udid}`, 'shell', command];
+            const args = ['-s', udid, 'shell', command];
             const adb = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-            let output = '';
+            const launch: ServerLaunch = { child: adb, done: false };
             let exited = false;
-            let broadcast: Broadcast | undefined;
+            let lastOutput = '';
             let audioLogTail = '';
+            const timer = setTimeout(() => {
+                console.error(this.TAG, 'The stream service did not start in time');
+                finish(new Error('The stream service did not start in time.'));
+            }, Device.SERVER_START_TIMEOUT_MS);
             const checkAudioError = (data: Buffer) => {
                 if (!audioEnabled) {
                     return;
@@ -270,76 +311,80 @@ export class Device extends TypedEmitter<DeviceEvents> {
             };
 
             const stopOwnBroadcast = () => {
+                const broadcast = launch.broadcast;
+                launch.broadcast = undefined;
                 if (broadcast) {
                     broadcastManager.stopBroadcast(udid, broadcast);
                 }
             };
 
+            // Settles the launch once: ready without an error, failed with one.
+            const finish = (error?: Error) => {
+                if (launch.done) {
+                    return;
+                }
+                launch.done = true;
+                clearTimeout(timer);
+                if (!error) {
+                    resolve();
+                    return;
+                }
+                stopOwnBroadcast();
+                if (!exited) {
+                    // The adb client. scrcpy on the phone ends when its shell goes away.
+                    adb.kill('SIGTERM');
+                }
+                reject(error);
+            };
+
             adb.on('error', (error: Error) => {
                 console.error(this.TAG, `failed to spawn adb process.\n${error.stack}`);
-                stopOwnBroadcast();
-                reject(error);
+                exited = true;
+                finish(error);
             });
 
             if (typeof adb.pid !== 'number') {
                 const msg = `[${udid}] Failed to spawn adb process: ${cmd} ${args.join(' ')}`;
                 console.error(msg);
-                reject(new Error(msg));
+                exited = true;
+                finish(new Error(msg));
                 return;
             }
 
+            this.launch = launch;
+
             adb.stdout.once('data', () => {
-                // The adb daemon may run outside this container. TCP reaches its forward
-                // through the shared network; a filesystem socket lives in the daemon's /tmp.
-                AdbUtils.forward(udid, 'localabstract:scrcpy')
-                    .then(async (port: number) => {
-                        console.log(`[${udid}] Starting broadcast on 127.0.0.1:${port}`);
-                        try {
-                            await sleep(1000); // 1s delay
-                            if (exited) {
-                                return;
-                            }
-                            // Use the launch-time audio setting: an Apply may already have
-                            // changed the stored config while this process is still connecting.
-                            await broadcastManager.startBroadcast(udid, port, audioEnabled, {
-                                onFailure: reportAudioFailure,
-                                failure: audioEnabled ? undefined : this.audioFailure,
-                            });
-                            broadcast = broadcastManager.getBroadcast(udid);
-                            if (exited) {
-                                stopOwnBroadcast();
-                                return;
-                            }
-                            resolve();
-                        } catch (err) {
-                            console.log('HUH???', err);
-                            reject(err);
-                        }
-                    })
-                    .catch((e: Error) => {
-                        const msg = `[${udid}] Failed to start service: ${e.message}`;
-                        console.error(msg);
-                        console.log(e);
-                        reject(e);
-                    });
+                this.connectStream(launch, audioEnabled, reportAudioFailure).then(
+                    () => finish(),
+                    (error: Error) => {
+                        console.error(`[${udid}] Failed to start service: ${error.message}`);
+                        finish(error);
+                    },
+                );
             });
 
             adb.stdout.on('data', (data) => {
                 checkAudioError(data);
-                output += data.toString();
+                lastOutput = data.toString().trim() || lastOutput;
                 console.log(this.TAG, `stdout: ${data.toString().replace(/\n$/, '')}`);
             });
 
             adb.stderr.on('data', (data) => {
                 checkAudioError(data);
+                lastOutput = data.toString().trim() || lastOutput;
                 console.error(this.TAG, `stderr: ${data}`);
             });
 
             adb.on('close', (code) => {
                 exited = true;
                 console.log(this.TAG, `adb process (${args.join(' ')}) exited with code ${code}`);
+                if (this.launch === launch) {
+                    this.launch = undefined;
+                }
                 // A slow close from the old adb process must not stop its replacement.
                 stopOwnBroadcast();
+                const detail = lastOutput.split('\n').pop();
+                finish(new Error(`The stream service exited before it was ready${detail ? `: ${detail}` : '.'}`));
                 if (
                     this.connected &&
                     connectionGeneration === this.connectionGeneration &&
@@ -348,9 +393,55 @@ export class Device extends TypedEmitter<DeviceEvents> {
                     this.setServerPid(0);
                     void this.refreshServicePid();
                 }
-                resolve(output);
             });
         });
+    }
+
+    /**
+     * Connects the stream sockets of a launch and waits for the stream header.
+     *
+     * scrcpy prints before it listens. A connection made too early is accepted by adb and closed
+     * again, so the attempt is repeated until the header arrives or the launch is over.
+     */
+    private async connectStream(
+        launch: ServerLaunch,
+        audioEnabled: boolean,
+        onAudioFailure: (metadata: AudioMetadata) => void,
+    ): Promise<void> {
+        const udid = this.udid;
+        // The adb daemon may run outside this container. TCP reaches its forward
+        // through the shared network; a filesystem socket lives in the daemon's /tmp.
+        const port = await AdbUtils.forward(udid, ScrcpyInstance.socketName());
+        console.log(`[${udid}] Starting broadcast on 127.0.0.1:${port}`);
+        let delay = Device.STREAM_CONNECT_DELAY_MS;
+        while (!launch.done) {
+            await sleep(delay);
+            if (launch.done) {
+                return;
+            }
+            // Use the launch-time audio setting: an Apply may already have changed the stored
+            // config while this process is still connecting.
+            await broadcastManager.startBroadcast(udid, port, audioEnabled, {
+                onFailure: onAudioFailure,
+                failure: audioEnabled ? undefined : this.audioFailure,
+            });
+            const broadcast = broadcastManager.getBroadcast(udid);
+            if (launch.done) {
+                if (broadcast) {
+                    broadcastManager.stopBroadcast(udid, broadcast);
+                }
+                return;
+            }
+            launch.broadcast = broadcast;
+            if (broadcast && (await broadcast.whenReady())) {
+                return;
+            }
+            launch.broadcast = undefined;
+            if (broadcast) {
+                broadcastManager.stopBroadcast(udid, broadcast);
+            }
+            delay = Device.STREAM_RETRY_DELAY_MS;
+        }
     }
 
     public async runShellCommandAdbKit(command: string, timeoutMs?: number): Promise<string> {
@@ -606,15 +697,9 @@ export class Device extends TypedEmitter<DeviceEvents> {
             const netIntPromise = this.updateInterfaces().then((interfaces) => {
                 return !!interfaces.length;
             });
-            let pidPromise: Promise<number | void>;
-            if (this.spawnServer) {
-                pidPromise = this.startServer();
-            } else {
-                pidPromise = this.refreshServicePid();
-            }
-            const serverPromise = pidPromise.then(() => {
-                return !this.spawnServer || this.descriptor.pid > 0;
-            });
+            // Only a status read. scrcpy starts when the first viewer opens the screen, not when
+            // the phone is attached: a running server takes over the phone's media audio.
+            const serverPromise = this.refreshServicePid().then(() => true);
             Promise.all([propsPromise, netIntPromise, serverPromise])
                 .then((results) => {
                     this.updateTimeoutId = undefined;
@@ -853,7 +938,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
         }
     }
 
-    /** Read-only periodic status: never restart or remove another scrcpy process. */
+    /** Read-only periodic status of this server's own scrcpy process. Starts and stops nothing. */
     private async refreshServicePid(): Promise<void> {
         if (!this.connected) {
             return;
@@ -862,7 +947,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
         const revision = this.servicePidRevision;
         let pid = 0;
         try {
-            const pids = await ScrcpyServer.getServerPid(this, false);
+            const pids = await ScrcpyServer.getServerPid(this, true);
             pid = pids?.find((value) => Number.isInteger(value) && value > 0) ?? -1;
         } catch {
             // A diagnostic failure is unknown, not proof the service stopped.
@@ -893,23 +978,32 @@ export class Device extends TypedEmitter<DeviceEvents> {
         });
     }
 
+    /**
+     * The owner's Stop. Viewers are closed first, with the code that tells them not to
+     * reconnect: a reconnecting viewer would start the service again at once.
+     */
     public async killServer(pid: number): Promise<void> {
-        return this.queueServerOperation(() => this.killServerNow(pid));
+        return this.queueServerOperation(async () => {
+            this.viewers.forEach((viewer) => viewer.close(STREAM_SERVICE_STOPPED, 'Stream service stopped'));
+            await this.killServerNow(pid);
+        });
     }
 
-    private async killServerNow(pid: number): Promise<void> {
+    /** Stops this server's scrcpy process, if any, and its stream. */
+    private async killServerNow(pid?: number): Promise<void> {
         // Closing audio is expected during an intentional restart, not a capture failure.
         // Late events from that old process must not disable the replacement's audio.
         this.audioLaunchGeneration++;
-        this.spawnServer = false;
-        const realPid = await this.getServerPid();
-        if (typeof realPid !== 'number') {
-            return;
-        }
-        if (realPid !== pid) {
-            console.error(this.TAG, `Requested to kill server with PID ${pid}. Real server PID is ${realPid}.`);
-        }
+        this.clearIdleStop();
+        const launch = this.launch;
         try {
+            const realPid = await this.getServerPid();
+            if (typeof realPid !== 'number') {
+                return;
+            }
+            if (pid && realPid !== pid) {
+                console.error(this.TAG, `Requested to kill server with PID ${pid}. Real server PID is ${realPid}.`);
+            }
             const output = await this.killProcess(realPid);
             if (output) {
                 console.log(this.TAG, `kill server: "${output}"`);
@@ -923,43 +1017,111 @@ export class Device extends TypedEmitter<DeviceEvents> {
         } catch (error: any) {
             console.error(this.TAG, `Error: ${error.message}`);
             throw error;
+        } finally {
+            // The old Broadcast tears itself down only once its sockets close. Remove it now,
+            // or the next start would find it still registered and attach viewers to nothing.
+            broadcastManager.stopBroadcast(this.udid);
+            // The adb client of that run. It has normally exited with the process by now.
+            launch?.child.kill('SIGTERM');
         }
     }
 
+    /** The card's Start. A server nobody opens is stopped again after the idle grace period. */
     public async startServer(): Promise<number | undefined> {
         return this.queueServerOperation(() => this.startServerNow());
     }
 
-    private async startServerNow(): Promise<number | undefined> {
-        this.spawnServer = true;
-        const pid = await this.getServerPid();
-        if (typeof pid === 'number') {
-            if (broadcastManager.hasBroadcast(this.udid)) {
-                return pid;
+    /**
+     * Registers a browser that has the screen open. scrcpy runs while there is at least one;
+     * the returned function removes it again.
+     */
+    public addViewer(viewer: StreamViewer): () => void {
+        this.viewers.add(viewer);
+        this.clearIdleStop();
+        return () => {
+            if (this.viewers.delete(viewer) && !this.viewers.size) {
+                this.scheduleIdleStop();
             }
-            // A scrcpy server is running on the device that this ws-scrcpy process never
-            // attached to -- left behind by a previous instance that was killed without
-            // cleaning up. Nothing can proxy it (the broadcast belongs to a dead process), so
-            // every viewer would be closed with "no active stream" forever. Replace it.
+        };
+    }
+
+    /**
+     * Starts the server for a viewer unless its stream is already up. Queued like every other
+     * start and stop, so it also waits for a stop or a settings restart that is under way.
+     */
+    public async ensureServer(): Promise<void> {
+        return this.queueServerOperation(async () => {
+            if (!broadcastManager.hasBroadcast(this.udid)) {
+                await this.startServerNow();
+            }
+        });
+    }
+
+    private scheduleIdleStop(): void {
+        this.clearIdleStop();
+        if (this.released) {
+            return;
+        }
+        const timer = setTimeout(() => {
+            if (this.idleStopTimeoutId !== timer) {
+                return;
+            }
+            this.idleStopTimeoutId = undefined;
+            this.queueServerOperation(async () => {
+                // A viewer that arrived while this waited in the queue keeps the stream.
+                if (this.released || this.viewers.size || this.idleStopTimeoutId) {
+                    return;
+                }
+                console.log(this.TAG, 'No viewers left. Stopping the stream service');
+                await this.killServerNow();
+            }).catch((error: Error) => {
+                console.error(this.TAG, `Failed to stop the idle stream service: ${error.message}`);
+            });
+        }, Device.STREAM_IDLE_GRACE_MS);
+        // Never the reason the process stays up: shutdown stops the stream by itself.
+        timer.unref();
+        this.idleStopTimeoutId = timer;
+    }
+
+    private clearIdleStop(): void {
+        if (this.idleStopTimeoutId) {
+            clearTimeout(this.idleStopTimeoutId);
+            this.idleStopTimeoutId = undefined;
+        }
+    }
+
+    private async startServerNow(): Promise<number | undefined> {
+        let pid = await this.getServerPid();
+        if (typeof pid === 'number' && !broadcastManager.hasBroadcast(this.udid)) {
+            // A scrcpy server with this server's scid that this process is not attached to:
+            // left behind by a previous run that was killed without cleaning up, or one whose
+            // stream died. Nothing can proxy it, so every viewer would be closed with "no
+            // active stream" for ever. Replace it. A scrcpy that someone else started carries
+            // another scid, or none, and is never seen here.
             console.log(this.TAG, `Replacing orphaned scrcpy server (pid ${pid})`);
             await this.killServerNow(pid);
-            this.spawnServer = true;
+            pid = undefined;
         }
         try {
-            const output = await ScrcpyServer.run(this);
-            if (output) {
-                console.log(this.TAG, `start server: "${output}"`);
+            if (typeof pid !== 'number') {
+                await ScrcpyServer.run(this);
+                // Fire-and-forget: WebsocketProxy reads getCachedEncoders() on the hot connect
+                // path and must not block on this. `list_encoders=true` spawns a whole second
+                // JVM on-device, so it runs in the background once a server just came up.
+                this.listEncoders().catch((e: Error) => {
+                    console.error(this.TAG, `Failed to list encoders: ${e.message}`);
+                });
+                pid = await this.getServerPid();
             }
-            // Fire-and-forget: WebsocketProxy reads getCachedEncoders() on the hot connect path
-            // and must not block on this. `list_encoders=true` spawns a whole second JVM
-            // on-device, so it runs in the background once we know a server just came up.
-            this.listEncoders().catch((e: Error) => {
-                console.error(this.TAG, `Failed to list encoders: ${e.message}`);
-            });
-            return this.getServerPid();
+            return pid;
         } catch (error: any) {
             console.error(this.TAG, `Error: ${error.message}`);
             throw error;
+        } finally {
+            if (!this.viewers.size) {
+                // Started from the card, or the viewer left while it was starting.
+                this.scheduleIdleStop();
+            }
         }
     }
 
@@ -1034,17 +1196,15 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     private async restartWithCurrentConfig(): Promise<void> {
+        // With nobody watching, the new settings take effect the next time the screen is opened.
+        const watched = this.viewers.size > 0;
         try {
-            await this.killServerNow(this.descriptor.pid);
+            await this.killServerNow();
         } catch (e: any) {
             console.error(this.TAG, `updateStreamConfig: kill failed, relaunching anyway: ${e.message}`);
         }
-        // killServer() only stops the process. Clear the broadcast map entry synchronously here
-        // too: the old Broadcast tears itself down asynchronously once its sockets actually
-        // close, and if startServer() below (or a client reconnect) ran before that finished,
-        // BroadcastManager.startBroadcast()'s `if (this.broadcasts.has(udid)) return;` guard
-        // would silently drop the fresh broadcast, leaving every viewer attached to nothing.
-        broadcastManager.stopBroadcast(this.udid);
-        await this.startServerNow();
+        if (watched) {
+            await this.startServerNow();
+        }
     }
 }

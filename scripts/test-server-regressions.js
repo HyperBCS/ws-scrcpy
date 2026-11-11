@@ -27,6 +27,7 @@ const { ControlCenterCommand } = require('../src/common/ControlCenterCommand');
 const { Config } = require('../src/server/Config');
 const { Device } = require('../src/server/goog-device/Device');
 const { ScrcpyServer } = require('../src/server/goog-device/ScrcpyServer');
+const { ScrcpyInstance } = require('../src/server/goog-device/ScrcpyInstance');
 const { streamConfig, validateStreamConfigPatch } = require('../src/server/goog-device/StreamConfig');
 const { ControlCenter: AndroidControlCenter } = require('../src/server/goog-device/services/ControlCenter');
 const { ControlCenter: IosControlCenter } = require('../src/server/appl-device/services/ControlCenter');
@@ -255,6 +256,7 @@ test('tracker service release cancels device polling and invalidates pending loc
     center.onDeviceUpdate = () => {};
     center.deviceMap = new Map([['test', device]]);
     center.descriptors = new Map([['test', device.descriptor]]);
+    center.adbListeners = new Set();
     center.release();
     assert.equal(device.lockStateTimeoutId, undefined);
     assert.equal(device.isConnected(), false);
@@ -267,11 +269,13 @@ test('tracker service release cancels device polling and invalidates pending loc
     assert.equal(device.lockStateTimeoutId, undefined);
 });
 
-test('read-only service discovery ignores enumeration helpers and never kills old versions', async () => {
+test('read-only service discovery counts this server only, ignores enumeration helpers and never kills', async () => {
+    const own = `scid=${ScrcpyInstance.getScid()}`;
     const argumentsByPid = new Map([
-        [101, ['app_process', '/', 'com.genymobile.scrcpy.Server', '4.1', 'tunnel_forward=true']],
-        [102, ['app_process', '/', 'com.genymobile.scrcpy.Server', '4.1', 'list_encoders=true']],
+        [101, ['app_process', '/', 'com.genymobile.scrcpy.Server', '4.1', 'tunnel_forward=true', own]],
+        [102, ['app_process', '/', 'com.genymobile.scrcpy.Server', '4.1', 'list_encoders=true', own]],
         [103, ['app_process', '/', 'com.genymobile.scrcpy.Server', '1.20-ws1', 'tunnel_forward=true']],
+        [104, ['app_process', '/', 'com.genymobile.scrcpy.Server', '4.1', 'tunnel_forward=true', 'scid=0badc0de']],
     ]);
     const device = {
         isConnected: () => true,
@@ -285,7 +289,7 @@ test('read-only service discovery ignores enumeration helpers and never kills ol
         },
         killProcess: () => assert.fail('Status discovery must never kill a device process'),
     };
-    assert.deepEqual((await ScrcpyServer.getServerPid(device, false)).sort(), [101, 103]);
+    assert.deepEqual(await ScrcpyServer.getServerPid(device, true), [101]);
 });
 
 test('service PID polling reports running, confirmed stop, and failed-read unknown without launching', async (t) => {
@@ -293,8 +297,8 @@ test('service PID polling reports running, confirmed stop, and failed-read unkno
     let result = [321];
     let failure = false;
     device.startServer = () => assert.fail('Status polling must not launch a stream');
-    t.mock.method(ScrcpyServer, 'getServerPid', async (_device, cleanUp) => {
-        assert.equal(cleanUp, false);
+    t.mock.method(ScrcpyServer, 'getServerPid', async (_device, strict) => {
+        assert.equal(strict, true);
         if (failure) throw Error('Device diagnostic failed');
         return result;
     });
@@ -341,16 +345,18 @@ test('owned process exit clears stale PID while an old close cannot overwrite th
         child.pid = 500 + children.length;
         child.stdout = new EventEmitter();
         child.stderr = new EventEmitter();
+        child.kill = () => true;
         children.push(child);
         return child;
     });
     t.mock.method(ScrcpyServer, 'getServerPid', async () => []);
-    const first = device.runShellCommandAdbSpecial('fixture one', device.udid, false);
+    // Neither launch connects a stream here, so each one ends as "exited before it was ready".
+    const first = device.launchServer('fixture one', false).catch((error) => error);
     device.setServerPid(123);
-    const second = device.runShellCommandAdbSpecial('fixture two', device.udid, false);
+    const second = device.launchServer('fixture two', false).catch((error) => error);
     device.setServerPid(456);
     children[0].emit('close', 0);
-    await first;
+    assert.match((await first).message, /exited before it was ready/);
     assert.equal(device.descriptor.pid, 456);
     children[1].emit('close', 0);
     assert.equal(device.descriptor.pid, 0, 'Invalidate immediately before checking remaining processes');
@@ -1047,6 +1053,7 @@ test('simultaneous viewers launch only one scrcpy process', async (t) => {
     const device = Object.create(Device.prototype);
     device.restartChain = Promise.resolve();
     device.TAG = '[test]';
+    device.viewers = new Set([{ close() {} }]);
     let pid;
     device.getServerPid = async () => pid;
     device.listEncoders = async () => [];
@@ -1075,6 +1082,7 @@ test('a scrcpy server left behind by a previous ws-scrcpy process is replaced, n
     device.restartChain = Promise.resolve();
     device.TAG = '[test]';
     device.udid = 'orphaned';
+    device.viewers = new Set([{ close() {} }]);
     let pid = 4242;
     device.getServerPid = async () => pid;
     device.listEncoders = async () => [];
@@ -1089,7 +1097,6 @@ test('a scrcpy server left behind by a previous ws-scrcpy process is replaced, n
     });
     assert.equal(await device.startServer(), 777);
     assert.deepEqual(killed, [4242], 'the orphan is killed before a fresh server is launched');
-    assert.equal(device.spawnServer, true, 'the replacement keeps auto-restart semantics');
     assert.equal(await device.startServer(), 777, 'a server with a live broadcast is reused as before');
     assert.deepEqual(killed, [4242]);
 });
@@ -1252,8 +1259,9 @@ test('fatal audio startup logs trigger fallback, while late errors from an inten
     child.pid = 123;
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
+    child.kill = () => true;
     t.mock.method(childProcess, 'spawn', () => child);
-    const running = device.runShellCommandAdbSpecial('scrcpy test fixture', device.udid, true);
+    const running = device.launchServer('scrcpy test fixture', true).catch((error) => error);
     child.stderr.emit('data', Buffer.from('[server] ERROR: Audio recording error'));
     assert.equal(device.getLaunchStreamConfig().audio, false);
     await device.killServerNow(123);
