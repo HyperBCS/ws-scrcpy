@@ -1,3 +1,4 @@
+import { followLink } from '../state/links';
 import { notificationSummary } from '../state/notifications';
 import { notificationsTarget } from '../state/notificationsTarget';
 import '../../style/ui/NotificationsLink.css';
@@ -32,10 +33,20 @@ export function BellIcon() {
  */
 export function NotificationsLink({ udid, compact = false }: NotificationsLinkProps) {
     const { href, unread } = notificationsTarget(notificationSummary.value, udid);
+    const onClick = (event: MouseEvent) => {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+            return;
+        }
+        // Through the router. A Files menu closes on the same tap and steps back over its history
+        // entry; a plain link would be written first, and that step would undo it.
+        event.preventDefault();
+        followLink(href, 'open');
+    };
     return (
         <a
             class={`notifications-link ${compact ? 'compact' : ''}`}
             href={href}
+            onClick={onClick}
             title="Notifications"
             aria-label={unread ? `Notifications, ${unread} unread` : 'Notifications'}
         >

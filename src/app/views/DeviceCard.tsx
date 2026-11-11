@@ -30,6 +30,7 @@ import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { hasRunningStreamService } from '../state/streamService';
 import { notificationSummary } from '../state/notifications';
 import { isNotificationSource } from '../state/notificationsTarget';
+import { notificationRoute } from '../state/notificationPage';
 import { rememberCardOpen, wasCardOpen } from '../state/deviceListView';
 import { UnreadBadge } from './NotificationHistory';
 import { DeviceIcon } from '../ui/DeviceIcon';
@@ -539,7 +540,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                 {hasInbox && (
                     <a
                         class="action-button device-notification-history"
-                        href={`#!${new URLSearchParams({ action: 'notifications', source: descriptor.udid })}`}
+                        href={`#!${notificationRoute({ source: descriptor.udid })}`}
                         title="Notifications"
                         aria-label={
                             unread ? `Notifications for ${name}, ${unread} unread` : `Notifications for ${name}`
