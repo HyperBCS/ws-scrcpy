@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'preact/hooks';
 import { Presence } from './Presence';
+import { AboveSheet } from './Sheet';
 import '../../style/ui/Toast.css';
 
 interface ToastProps {
@@ -59,7 +60,7 @@ export function Toast({
             pause.current = resume.current = () => undefined;
         };
     }, [message, identity, duration]);
-    return (
+    const toast = (
         <Presence
             show={!!message}
             kind="toast"
@@ -111,4 +112,7 @@ export function Toast({
             </button>
         </Presence>
     );
+    // A sheet on the native dialog covers the page and makes it inert: a toast raised while one
+    // is open is shown inside it.
+    return <AboveSheet>{toast}</AboveSheet>;
 }
