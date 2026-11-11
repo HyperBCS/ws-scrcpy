@@ -261,7 +261,10 @@ function computedStyles(full) {
         // of the app names it.
         if (element.classList.contains('xterm-scroll-area')) continue;
         const classes = typeof element.className === 'string' ? element.className : element.getAttribute('class') || '';
-        const name = element.tagName.toLowerCase() + (element.id ? `#${element.id}` : '') + classes.split(/\s+/).filter(Boolean).map((c) => `.${c}`).join('');
+        // An id from Preact's useId (`P0-11`) counts the components drawn before it, which differs
+        // from run to run, so it does not name the element.
+        const id = element.id && !/^P\d+-\d+$/.test(element.id) ? `#${element.id}` : '';
+        const name = element.tagName.toLowerCase() + id + classes.split(/\s+/).filter(Boolean).map((c) => `.${c}`).join('');
         rows.push([name, read(element), read(element, '::before'), read(element, '::after')].map((value) => value || ''));
     }
     return rows;
