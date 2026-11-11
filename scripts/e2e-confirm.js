@@ -363,7 +363,12 @@ async function deviceCards(browser, mobile) {
             await confirmAfterGuard(dialog, confirmLabel);
             await dialog.waitFor({ state: 'detached' });
             assert.equal(ofType(type).length, 1, `${name} is sent once after confirming`);
-            if (type !== 'kill_server') await card.getByText('Fixture done.', { exact: true }).waitFor();
+            if (type !== 'kill_server') {
+                await card.getByText('Fixture done.', { exact: true }).waitFor();
+                // The outcome is the status line under the row whose button was pressed.
+                const outcome = trouble.locator(`.device-trouble-row:has(> [aria-label="${name}"]) + .kit-status`);
+                assert.equal(await outcome.textContent(), 'Fixture done.', `${name}: the outcome is under its row`);
+            }
         }
         assert.deepEqual(ofType('kill_server')[0].data, { udid: UDID, pid: 1 });
 

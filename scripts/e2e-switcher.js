@@ -191,6 +191,11 @@ async function main() {
                 await search.evaluate((el) => document.activeElement !== el),
                 'Search action dismisses the phone keyboard',
             );
+            // Focus stays in the dialog, where the sheet hears Escape; the page behind is inert.
+            assert(
+                await root.evaluate((el) => el.contains(document.activeElement)),
+                `${label}: focus stays in the sheet when Search finds nothing to open`,
+            );
             assert.equal(await list.locator('button').count(), 1, 'search filters without scrolling page');
             assert.equal(await list.evaluate((el) => el.scrollTop), 0, 'search resets list to its first result');
             await search.fill('no matching device');
