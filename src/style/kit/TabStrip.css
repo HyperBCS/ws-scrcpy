@@ -1,0 +1,77 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* The tabs under the bar in the kit look (`ui/TabStrip.tsx` with `kit`). The open tab carries
+   `aria-current="page"`: accent words over an accent line. On a phone the tabs share the width;
+   from 1024px they keep their own. */
+.kit-tabs {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-8);
+    box-sizing: border-box;
+    padding: 0 max(var(--space-8), env(safe-area-inset-right, 0px)) 0 max(var(--space-8), env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-raised);
+    color: var(--text-muted);
+    font-size: var(--font-size-12);
+}
+.kit-tabs-list {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.kit-tab {
+    flex: 1 1 0;
+    box-sizing: border-box;
+    min-width: 0;
+    height: var(--control-height);
+    margin: 0;
+    padding: 0 var(--space-8);
+    overflow: hidden;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+        color var(--motion-fast) ease,
+        border-color var(--motion-fast) ease;
+}
+.kit-tab[aria-current='page'] {
+    border-bottom-color: var(--accent);
+    color: var(--accent-text);
+}
+@media (hover: hover) {
+    .kit-tab:hover:not(:disabled) {
+        color: var(--text);
+    }
+    .kit-tab[aria-current='page']:hover {
+        color: var(--accent-text);
+    }
+}
+.kit-tab:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: calc(var(--focus-ring-offset) * -1);
+}
+.kit-tab:disabled {
+    opacity: var(--disabled-opacity);
+    cursor: default;
+}
+@media (min-width: 1024px) {
+    .kit-tabs {
+        padding-right: max(var(--space-24), env(safe-area-inset-right, 0px));
+        padding-left: max(var(--space-24), env(safe-area-inset-left, 0px));
+    }
+    .kit-tab {
+        flex: none;
+        padding: 0 var(--space-24);
+    }
+}
+}
