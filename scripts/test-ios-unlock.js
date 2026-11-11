@@ -954,6 +954,18 @@ class FakeMonitor extends TypedEmitter {
     constructor() {
         super();
         this.states = new Map();
+        // Phones the monitor watches, and the connection checks asked of it while they refuse
+        // connections. None is watched unless a test says so.
+        this.watched = new Set();
+        this.reconnects = [];
+        this.answers = false;
+    }
+    isWatching(udid) {
+        return this.watched.has(udid);
+    }
+    async reconnect(udid) {
+        this.reconnects.push(udid);
+        return this.answers;
     }
     getState(udid) {
         return this.states.get(udid) || { 'screen.power': 'unknown', 'device.locked': 'unknown' };
@@ -2174,6 +2186,95 @@ test('scheduler: the hand-unlock state clears when the monitor reaches the phone
         assert.equal(ctx.scheduler.getStatus(udid).needsManualUnlock, undefined);
     } finally {
         ctx.scheduler.release();
+    }
+});
+
+test('scheduler with the real monitor: a phone that refuses connections gets a new observer and a screen read every five minutes, and the state clears when it answers', async () => {
+    const udid = 'iphone-lockout-observer';
+    const slot = Date.UTC(2026, 10, 12, 3, 0);
+    let clock = slot;
+    fs.rmSync(logFile, { force: true });
+    const output = captureConsole();
+    const monitor = new DeviceStateMonitor();
+    let checks = 0;
+    const reconnect = monitor.reconnect.bind(monitor);
+    monitor.reconnect = (id) => {
+        checks++;
+        return reconnect(id);
+    };
+    const store = new MemoryStore(() => clock);
+    const runner = CoreDeviceRunner.getInstance();
+    const pushes = [];
+    const statuses = [];
+    const scheduler = new UnlockScheduler({
+        store,
+        driver: new UnlockDriver({ runner, monitor, hasInputOwner: () => false }),
+        monitor,
+        notify: (push) => pushes.push(push),
+        now: () => clock,
+    });
+    scheduler.on('status', (event) => statuses.push(event.status));
+    const tickAt = async (time) => {
+        clock = time;
+        scheduler.tick();
+        await scheduler.chain;
+        await tick();
+        await waitFor(() => !scheduler.checkingLockout.has(udid), 'a check in progress ends');
+    };
+    const observers = () => calls().filter((line) => line.includes('"notification","observe"')).length;
+    try {
+        await withEnv({ FAKE_LOG: logFile }, async () => {
+            monitor.watch(udid, { version: '27.2', language: 'en-US' });
+            await waitFor(
+                () => monitor.getState(udid)['device.locked'] === true && monitor.getState(udid)['screen.power'] === 'on',
+                'the first readings',
+            );
+            scheduler.start({ isConnected: () => true });
+            store.updateSchedule(udid, { enabled: true, time: '03:00', timeZone: ZONE });
+            store.setPasscode(udid, PASSCODE);
+            store.setRunState(udid, { lastSlotAt: slot - HALF_DAY });
+            const record = store.devices.get(udid);
+            assert.equal(observers(), 1);
+
+            // 24 hours after the passcode was last entered: every new connection is refused, and
+            // the observer opened before keeps running and relays nothing.
+            await withEnv({ FAKE_PASSCODE_LOCKOUT: 'all' }, async () => {
+                await tickAt(slot);
+                assert.equal(record.lastRun.outcome, 'needs-manual-unlock', record.lastRun.message);
+                assert.equal(record.lockedOutAt, slot);
+                assert.equal(pushes.length, 1);
+                await tickAt(slot + 4 * MINUTE);
+                assert.equal(checks, 0, 'nothing is checked in the first five minutes');
+                assert.equal(observers(), 1);
+                await tickAt(slot + 5 * MINUTE);
+                assert.equal(checks, 1);
+                assert(observers() >= 2, 'the observer is dropped and opened again');
+                assert.equal(record.lockedOutAt, slot, 'still refused: the state stays');
+                assert.equal(scheduler.getStatus(udid).needsManualUnlock, true);
+                await tickAt(slot + 6 * MINUTE);
+                assert.equal(checks, 1, 'the next check is five minutes later');
+            });
+
+            // The owner enters the passcode on the phone.
+            statuses.length = 0;
+            const before = observers();
+            await tickAt(slot + 10 * MINUTE);
+            assert.equal(checks, 2);
+            assert.equal(record.lockedOutAt, undefined, 'the phone answers: the state clears');
+            assert(observers() > before, 'with a new observer');
+            assert(statuses.length > 0, 'the change is broadcast');
+            assert.equal(statuses.at(-1).needsManualUnlock, undefined);
+            assert.equal(record.lastRun.outcome, 'needs-manual-unlock', 'the last run is still what it was');
+            assert.equal(pushes.length, 1);
+            assert(!calls().some((line) => line.includes('"serve-web"')), 'no display session was opened');
+            await tickAt(slot + 20 * MINUTE);
+            assert.equal(checks, 2, 'no check once the phone answers');
+        });
+    } finally {
+        output.restore();
+        scheduler.release();
+        monitor.release();
+        runner.stopSession(udid);
     }
 });
 

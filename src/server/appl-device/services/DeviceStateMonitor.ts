@@ -288,6 +288,28 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
     }
 
     /**
+     * Whether the phone accepts a new connection, for a phone taken to refuse connections until
+     * its passcode is entered on it. The notification observer is dropped and opened again, since
+     * one opened before the refusal can stay open and deliver nothing after it (2026-11-11), and
+     * the backlight is read once: that needs a new service connection, and no display session.
+     * A screen value that is read is cached like any other reading. False for a phone that is
+     * not watched.
+     */
+    public async reconnect(udid: string): Promise<boolean> {
+        const entry = this.watched.get(udid);
+        if (!entry) {
+            return false;
+        }
+        this.restartObserver(entry);
+        const screen = await this.probeScreen(udid);
+        if (entry.stopped || screen === 'unknown') {
+            return false;
+        }
+        this.update(entry, { ...entry.state, 'screen.power': screen });
+        return true;
+    }
+
+    /**
      * Ask for a fresh lock reading (`refresh`) and resolve with `device.locked` as soon as a
      * reading equal to `locked` arrives, or with the latest known value when `timeoutMs` elapses.
      * Resolves `'unknown'` when the lock probe is off or the read failed.
@@ -611,6 +633,27 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
         };
         child.on('error', onExit);
         child.on('close', onExit);
+    }
+
+    /** Stop the observer, or its pending retry, and start a new one now. */
+    private restartObserver(entry: Watched): void {
+        if (entry.stopped) {
+            return;
+        }
+        for (const timer of [entry.observerRetryTimer, entry.observerSettleTimer]) {
+            if (timer) {
+                clearTimeout(timer);
+            }
+        }
+        entry.observerRetryTimer = undefined;
+        entry.observerSettleTimer = undefined;
+        const wasObserved = entry.observed;
+        this.killObserver(entry);
+        if (wasObserved) {
+            // Back to polling until the new observer has settled.
+            this.armScreenTimer(entry);
+        }
+        this.startObserver(entry);
     }
 
     private onObserverOutput(entry: Watched, chunk: string): void {

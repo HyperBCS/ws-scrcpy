@@ -2111,7 +2111,19 @@ pushes again if it is still refused. `lockedOutAt` is removed when a run gets a 
 (`REACHED_OUTCOMES`), when the monitor reports `device.locked: false`, or when `screen.power`
 becomes known after `unknown`: the screen is read over a new diagnostics connection each time,
 so a reading means the phone accepts connections. A lock reading alone does not count, because
-the observer's old connection keeps delivering them. `isUnlockProblem` is false for the new
+the observer's old connection keeps delivering them.
+
+**Checking a phone that refuses connections.** At 04:50 UTC the owner entered the passcode on
+the phone and it accepted connections again, but the live server did not notice: its
+`notification observe` process was the one started before the lockout, and it delivered nothing
+after it. So while `lockedOutAt` is set, `UnlockScheduler.checkLockout` asks the monitor every
+five minutes (`LOCKOUT_CHECK_MS`, from the minute tick) for `DeviceStateMonitor.reconnect`: the
+observer is stopped and started again, and the backlight is read once over a new diagnostics
+connection. A reading clears the state at once. No display session is opened, nothing runs
+while a run for the phone is in progress, and a phone the monitor does not watch is not
+checked. A new observer the phone refuses exits and is retried by the monitor's usual backoff
+(5 s doubling to 60 s), as before. Long-lived screen sessions are left alone: a viewer may be
+using one. `isUnlockProblem` is false for the new
 outcome; the panel and the card show the problem from `needsManualUnlock`, so a cleared state
 leaves only the Last run row.
 
@@ -2131,7 +2143,9 @@ next slot. Fields the new code does not know (`deadlineWarnedFor`, `lastTimerRun
 dropped on load.
 
 **Fixture.** `FAKE_PASSCODE_LOCKOUT=mount` or `serve-web` makes that step fail with the
-`PasswordRequiredError` line.
+`PasswordRequiredError` line. `all` refuses every command that needs a new service connection
+(mount, serve-web, diagnostics, notifications, the lock probe), while an observer started
+before keeps running and relays nothing.
 
 **Not verified on hardware.** That the limit is 24 hours from the passcode entry on every
 iOS version; whether a Face ID unlock moves it; whether a phone that is unlocked and in use at

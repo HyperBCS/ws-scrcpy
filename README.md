@@ -245,8 +245,9 @@ When the phone answers that it is password protected, the 24 hours are over.
 The run ends at once, without a retry, and the panel, the device card, a push
 and the stream page say: "The iPhone stopped accepting connections. Enter the
 passcode on the phone." The stored passcode is not marked as rejected. The next
-of the two times tries again, and the notice goes away when a run or a screen
-reading reaches the phone again. With the schedule on, a push is also sent when
+of the two times tries again. While the notice is up, the server checks every
+five minutes with a new connection, without a screen session, and the notice
+goes away as soon as the phone answers or a run reaches it. With the schedule on, a push is also sent when
 the passcode was last entered 20 hours ago, with the hours left.
 
 A run that typed the passcode is never retried. If the phone is still locked

@@ -66,6 +66,9 @@ const REACHED_OUTCOMES = new Set<UnlockRunOutcome>([
 ]);
 const PAUSED_NOTE = 'Scheduled unlock is paused until the passcode is saved again';
 const HOUR_MS = 3600 * 1000;
+// While a phone refuses connections, this often the monitor opens a new observer and reads the
+// screen once, to see whether the passcode has been entered on the phone.
+const LOCKOUT_CHECK_MS = 5 * 60 * 1000;
 const DISCONNECTED_MESSAGE = 'Not connected over USB. If the phone restarted, unlock it once on the phone.';
 const PUSH_TITLE = 'iPhone unlock';
 
@@ -154,6 +157,9 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
     private readonly inflight = new Map<string, { run: Promise<UnlockRunResult>; keepUnlocked: boolean }>();
     // When each recent run that opened a display session ended, per device, oldest first.
     private readonly sessionRuns = new Map<string, number[]>();
+    // When the last check of a phone that refuses connections started, and the checks in progress.
+    private readonly lockoutChecks = new Map<string, number>();
+    private readonly checkingLockout = new Set<string>();
     private storeChecked = false;
     private released = false;
 
@@ -238,6 +244,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
         this.options = undefined;
         this.lastState.clear();
         this.waiting.clear();
+        this.lockoutChecks.clear();
         this.storeChecked = false;
     }
 
@@ -422,6 +429,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
      * `settleSlot`. A new slot replaces whatever the one before still owed.
      */
     private tickDevice(udid: string, now: number): void {
+        this.checkLockout(udid, now);
         const schedule = this.store.getSchedule(udid);
         if (!schedule.enabled) {
             this.waiting.delete(udid);
@@ -558,6 +566,42 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             console.error(`${TAG} [${udid}] could not clear the lockout: ${(error as Error).message}`);
             return false;
         }
+    }
+
+    /**
+     * While the phone refuses connections, every 5 minutes: the monitor drops and reopens its
+     * observer and reads the screen over a new connection (`DeviceStateMonitor.reconnect`). An
+     * answer means the passcode has been entered on the phone, and the state is cleared without
+     * waiting for the observer that was open before the refusal. Opens no display session, and
+     * does nothing while a run for the phone is queued or in progress.
+     */
+    private checkLockout(udid: string, now: number): void {
+        const { lockedOutAt } = this.store.getRunState(udid);
+        if (lockedOutAt === undefined) {
+            this.lockoutChecks.delete(udid);
+            return;
+        }
+        const since = Math.max(lockedOutAt, this.lockoutChecks.get(udid) ?? -Infinity);
+        if (
+            now - since < LOCKOUT_CHECK_MS ||
+            this.checkingLockout.has(udid) ||
+            (this.pending.get(udid) ?? 0) > 0 ||
+            !this.monitor.isWatching(udid)
+        ) {
+            return;
+        }
+        this.lockoutChecks.set(udid, now);
+        this.checkingLockout.add(udid);
+        this.monitor
+            .reconnect(udid)
+            .then((answered) => {
+                if (answered && !this.released && this.clearLockout(udid)) {
+                    console.log(`${TAG} [${udid}] the phone accepts connections again`);
+                    this.emitStatus(udid);
+                }
+            })
+            .catch((error: Error) => console.error(`${TAG} [${udid}] connection check failed: ${error.message}`))
+            .finally(() => this.checkingLockout.delete(udid));
     }
 
     // ------------------------------------------------------------------ runs

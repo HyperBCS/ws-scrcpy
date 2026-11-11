@@ -11,7 +11,10 @@
 //   FAKE_MOUNT_FAIL     "devmode" | "other": make `mounter auto-mount` fail that way
 //   FAKE_PASSCODE_LOCKOUT  "mount" | "serve-web": that step is refused with pymobiledevice3's
 //                       PasswordRequiredError text, as a phone does 24 hours after its passcode
-//                       was last entered. With "serve-web" the mount passes and serve-web exits 1
+//                       was last entered. With "serve-web" the mount passes and serve-web exits 1.
+//                       "all": every new service connection is refused that way (the mount,
+//                       serve-web, diagnostics, notifications and the lock probe). An observer
+//                       started before keeps running and relays nothing
 //   FAKE_SERVE_EXIT     exit code for serve-web to die with immediately
 //   FAKE_SERVE_DELAY_MS how long /codec answers 503 before the stream is "ready"
 //   FAKE_PREFLIGHT_MS   how long serve-web takes before it binds HTTP and installs its SIGTERM
@@ -70,6 +73,24 @@ const flag = (name) => {
 const udid = flag('--udid') ?? process.env.PYMOBILEDEVICE3_UDID;
 const valued = ['--udid', '--bind', '--http-port', '--ioclass', '--domain', '--key', '--tunnel'];
 const command = args.filter((arg, index) => !arg.startsWith('--') && !valued.includes(args[index - 1])).join(' ');
+
+// What `logger.error(str(error))` prints for a PasswordRequiredError raised without arguments.
+const PASSCODE_LOCKOUT =
+    '2026-11-11 03:11:47 host pymobiledevice3.__main__[4711] ERROR Device is password protected. Please unlock and retry.\n';
+// The commands that need a new service connection on the phone.
+const SERVICE_COMMANDS = [
+    'mounter auto-mount',
+    'developer core-device display serve-web',
+    'diagnostics ioregistry',
+    'lockstate.py',
+];
+if (
+    process.env.FAKE_PASSCODE_LOCKOUT === 'all' &&
+    (SERVICE_COMMANDS.includes(command) || command.startsWith('notification '))
+) {
+    process.stderr.write(PASSCODE_LOCKOUT);
+    process.exit(1);
+}
 
 if (command === 'usbmux list' || command === 'usbmux list simple usb') {
     const list = (process.env.FAKE_DEVICES ?? 'fake-iphone').split(',').filter(Boolean);
@@ -189,9 +210,6 @@ if (command === 'amfi enable-developer-mode') {
     process.stdout.write('\n');
     process.exit(0);
 }
-// What `logger.error(str(error))` prints for a PasswordRequiredError raised without arguments.
-const PASSCODE_LOCKOUT =
-    '2026-11-11 03:11:47 host pymobiledevice3.__main__[4711] ERROR Device is password protected. Please unlock and retry.\n';
 if (command === 'mounter auto-mount') {
     if (process.env.FAKE_PASSCODE_LOCKOUT === 'mount') {
         process.stderr.write(PASSCODE_LOCKOUT);
