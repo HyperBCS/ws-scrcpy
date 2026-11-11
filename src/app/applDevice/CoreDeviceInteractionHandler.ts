@@ -29,6 +29,8 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
         'mousedown',
     ];
     private touches = new Map<number, CoreDeviceContact>();
+    /** Where touches that began beside the picture would go down, by touch identifier. */
+    private edgeTouches = new Map<number, { x: number; y: number }>();
     private mouseActive = false;
     private pending?: { x: number; y: number; size: Size };
     private frame?: number;
@@ -90,6 +92,7 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
     }
 
     public releaseActiveTouch = (): void => {
+        this.edgeTouches.clear();
         if (this.touches.size) {
             const size = this.player.getScreenInfo()?.videoSize;
             this.cancelPending();
@@ -111,14 +114,22 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
     };
 
     protected onInteraction(event: MouseEvent | TouchEvent): void {
-        if (event.target !== this.tag) {
-            return;
-        }
         if (window['TouchEvent'] && event instanceof TouchEvent) {
-            this.onTouch(event);
-        } else if (event instanceof MouseEvent) {
+            // The bands beside the picture count too, so that a swipe in from an edge works.
+            if (this.isTouchTarget(event.target)) {
+                this.onTouch(event);
+            }
+        } else if (event instanceof MouseEvent && event.target === this.tag) {
             this.onMouse(event);
         }
+    }
+
+    private addContact(identifier: number, at: { x: number; y: number }): CoreDeviceContact {
+        const used = new Set([...this.touches.values()].map((c) => c.id));
+        const id = [0, 1, 2, 3, 4].find((id) => !used.has(id))!;
+        const contact = { id, touching: true, x: at.x, y: at.y };
+        this.touches.set(identifier, contact);
+        return contact;
     }
 
     private cancelPending(): void {
@@ -136,14 +147,36 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
             return;
         }
         const ending = event.type === 'touchend' || event.type === 'touchcancel';
+        const send = () => {
+            this.frame = undefined;
+            this.target.sendContacts(
+                [...this.touches.values()].map((c) => ({ ...c })),
+                size,
+            );
+        };
         for (const touch of Array.from(event.changedTouches)) {
             let contact = this.touches.get(touch.identifier);
             const position = this.position(touch.clientX, touch.clientY);
-            if (!contact && event.type === 'touchstart' && this.touches.size < 5 && position) {
-                const used = new Set([...this.touches.values()].map((c) => c.id));
-                const id = [0, 1, 2, 3, 4].find((id) => !used.has(id))!;
-                contact = { id, touching: true, x: position.x, y: position.y };
-                this.touches.set(touch.identifier, contact);
+            if (!contact && position && this.touches.size < 5) {
+                const inside = this.isInsidePicture(touch.clientX, touch.clientY);
+                const edgeStart = this.edgeTouches.get(touch.identifier);
+                if (event.type === 'touchstart' && inside) {
+                    contact = this.addContact(touch.identifier, position);
+                } else if (event.type === 'touchstart') {
+                    // Began beside the picture. A tap there is not a tap on the phone, so
+                    // nothing is sent until the finger moves onto the picture.
+                    this.edgeTouches.set(touch.identifier, position);
+                } else if (event.type === 'touchmove' && edgeStart && inside) {
+                    // An edge swipe: the finger goes down on the edge where it started, which is
+                    // where iOS expects a Home or Back gesture to begin, in a frame of its own.
+                    this.edgeTouches.delete(touch.identifier);
+                    contact = this.addContact(touch.identifier, edgeStart);
+                    this.cancelPending();
+                    send();
+                }
+            }
+            if (ending) {
+                this.edgeTouches.delete(touch.identifier);
             }
             if (contact) {
                 if (position) {
@@ -154,13 +187,6 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
             }
         }
         if (!this.touches.size) return;
-        const send = () => {
-            this.frame = undefined;
-            this.target.sendContacts(
-                [...this.touches.values()].map((c) => ({ ...c })),
-                size,
-            );
-        };
         if (event.type === 'touchmove') {
             if (this.frame === undefined) this.frame = requestAnimationFrame(send);
         } else {

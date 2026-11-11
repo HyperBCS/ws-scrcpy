@@ -63,7 +63,7 @@ export class FeaturedInteractionHandler extends InteractionHandler {
      * trackpad's many small steps scroll by their total and not by one full notch each.
      */
     public buildScrollEvent(event: WheelEvent, screenInfo: ScreenInfo): ScrollControlMessage[] {
-        const touchOnClient = InteractionHandler.buildTouchOnClient(event, screenInfo);
+        const touchOnClient = this.buildTouchOnClient(event, screenInfo);
         if (!touchOnClient) {
             return [];
         }
@@ -113,8 +113,8 @@ export class FeaturedInteractionHandler extends InteractionHandler {
                 this.lastPosition = event;
             }
         } else if (window['TouchEvent'] && event instanceof TouchEvent) {
-            // TODO: Research drag from out of the target inside it
-            if (event.target !== this.tag) {
+            // The bands beside the picture count too, so that a swipe in from an edge works.
+            if (!this.isTouchTarget(event.target)) {
                 return;
             }
             storage = this.storedFromTouchEvent;

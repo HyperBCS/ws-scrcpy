@@ -621,3 +621,127 @@ test('the Android client has no fit-to-screen mode and stores nothing per window
     assert.deepEqual(writes, [], 'no player writes video settings to storage');
     assert.deepEqual([...stored.keys()], ['theme', 'ios-passcode:00008110']);
 });
+
+// ---------------------------------------------------------------- swipes from beside the picture
+
+// A browser keeps a touch's target for its whole life: the element it started on.
+const touches = (type, target, ...points) =>
+    new TouchEvent(type, {
+        target,
+        changedTouches: points.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY, target, force: 1 })),
+    });
+const ACTION = { DOWN: 0, UP: 1, MOVE: 2 };
+const summary = (messages) => messages.map((m) => [m.action, m.position.point.x, m.position.point.y]);
+
+test('Android: a swipe that starts beside the picture goes down on the nearest edge when it reaches the picture', (t) => {
+    // The 360x640 picture sits at x 30..390 in a 420 px wide stream area; the video is 720x1280.
+    const { handler, wrapper, canvas, sent } = androidHandler(t);
+
+    // Back gesture: the finger lands on the 30 px band left of the picture and slides in.
+    const start = touches('touchstart', wrapper, [1, 10, 300]);
+    handler.onInteraction(start);
+    assert.equal(start.defaultPrevented, true, 'the browser does not scroll or navigate instead');
+    assert.deepEqual(sent, [], 'nothing is sent while the finger is beside the picture');
+    handler.onInteraction(touches('touchmove', wrapper, [1, 25, 305]));
+    assert.deepEqual(sent, []);
+    handler.onInteraction(touches('touchmove', wrapper, [1, 60, 310]));
+    assert.deepEqual(
+        summary(sent),
+        [
+            [ACTION.DOWN, 0, 600],
+            [ACTION.MOVE, 60, 620],
+        ],
+        'down on the left edge at the height it started, then the move',
+    );
+    handler.onInteraction(touches('touchmove', wrapper, [1, 130, 310]));
+    handler.onInteraction(touches('touchend', wrapper, [1, 130, 310]));
+    assert.deepEqual(summary(sent.slice(2)), [
+        [ACTION.MOVE, 200, 620],
+        [ACTION.UP, 200, 620],
+    ]);
+    assert.equal(sent.at(-1).pressure, 0);
+
+    // A tap on the band is not a tap on the device.
+    sent.length = 0;
+    handler.onInteraction(touches('touchstart', wrapper, [2, 400, 300]));
+    handler.onInteraction(touches('touchend', wrapper, [2, 400, 300]));
+    assert.deepEqual(sent, []);
+
+    // Home gesture from below the picture (a landscape layout leaves the band there).
+    handler.onInteraction(touches('touchstart', wrapper, [3, 200, 660]));
+    handler.onInteraction(touches('touchmove', wrapper, [3, 200, 600]));
+    assert.deepEqual(summary(sent), [
+        [ACTION.DOWN, 340, 1279],
+        [ACTION.MOVE, 340, 1200],
+    ]);
+    handler.onInteraction(touches('touchend', wrapper, [3, 200, 500]));
+
+    // A touch on the picture is unchanged, and sliding off it rides the edge instead of lifting.
+    sent.length = 0;
+    handler.onInteraction(touches('touchstart', canvas, [4, 380, 100]));
+    handler.onInteraction(touches('touchmove', canvas, [4, 410, 100]));
+    handler.onInteraction(touches('touchend', canvas, [4, 410, 100]));
+    assert.deepEqual(summary(sent), [
+        [ACTION.DOWN, 700, 200],
+        [ACTION.MOVE, 719, 200],
+        [ACTION.UP, 719, 200],
+    ]);
+
+    // Anything else on the page is not the remote screen.
+    sent.length = 0;
+    const toolbar = element();
+    const elsewhere = touches('touchstart', toolbar, [5, 100, 100]);
+    handler.onInteraction(elsewhere);
+    handler.onInteraction(touches('touchmove', toolbar, [5, 120, 120]));
+    assert.deepEqual(sent, []);
+    assert.notEqual(elsewhere.defaultPrevented, true, 'other controls keep their own touch handling');
+});
+
+test('iPhone: a swipe from beside the picture starts on the edge, and a tap there sends nothing', (t) => {
+    const { CoreDeviceInteractionHandler } = require('../src/app/applDevice/CoreDeviceInteractionHandler');
+    const wrapper = element({ clientWidth: 384, clientHeight: 764 });
+    // A 324x704 picture with a 30 px band on every side; the video is 1296x2816.
+    const canvas = element({
+        clientWidth: 324,
+        clientHeight: 704,
+        getBoundingClientRect: () => ({ left: 30, top: 30, width: 324, height: 704 }),
+    });
+    wrapper.appendChild(canvas);
+    const frames = [];
+    t.mock.method(global, 'requestAnimationFrame', (fn) => frames.push(fn));
+    t.mock.method(global, 'cancelAnimationFrame', () => frames.splice(0));
+    const flush = () => frames.splice(0).forEach((fn) => fn());
+    const sent = [];
+    const handler = new CoreDeviceInteractionHandler(
+        { getTouchableElement: () => canvas, getScreenInfo: () => screen(1296, 2816) },
+        { sendContacts: (contacts) => sent.push(contacts.map((c) => [c.id, c.touching, c.x, c.y])), sendTouch() {} },
+    );
+    t.after(() => handler.release());
+
+    // Home gesture: the finger lands below the picture and slides up onto it.
+    handler.onInteraction(touches('touchstart', wrapper, [1, 192, 750]));
+    assert.deepEqual(sent, []);
+    handler.onInteraction(touches('touchmove', wrapper, [1, 192, 740]));
+    flush();
+    assert.deepEqual(sent, [], 'still below the picture');
+    handler.onInteraction(touches('touchmove', wrapper, [1, 192, 634]));
+    assert.deepEqual(sent, [[[0, true, 648, 2816]]], 'the finger goes down on the bottom edge first');
+    flush();
+    assert.deepEqual(sent.at(-1), [[0, true, 648, 2416]], 'then moves to where it is');
+    handler.onInteraction(touches('touchend', wrapper, [1, 192, 500]));
+    assert.deepEqual(sent.at(-1), [[0, false, 648, 1880]]);
+
+    sent.length = 0;
+    handler.onInteraction(touches('touchstart', wrapper, [2, 10, 300]));
+    handler.onInteraction(touches('touchend', wrapper, [2, 10, 300]));
+    flush();
+    assert.deepEqual(sent, [], 'a tap on the band is not a tap on the phone');
+
+    handler.onInteraction(touches('touchstart', canvas, [3, 192, 382]));
+    assert.deepEqual(sent, [[[0, true, 648, 1408]]], 'a touch on the picture goes down at once');
+    handler.onInteraction(touches('touchend', canvas, [3, 192, 382]));
+
+    sent.length = 0;
+    handler.onInteraction(touches('touchstart', element(), [4, 192, 382]));
+    assert.deepEqual(sent, [], 'a touch on another control is not passed on');
+});

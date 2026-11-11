@@ -8,6 +8,7 @@ import TouchPointPNG from '../../public/images/multitouch/touch_point.png';
 import CenterPointPNG from '../../public/images/multitouch/center_point.png';
 import Util from '../Util';
 import { BasePlayer } from '../player/BasePlayer';
+import { ClientBox, clientPointToVideo } from '../applDevice/touchMath';
 
 interface Touch {
     action: number;
@@ -72,6 +73,8 @@ export abstract class InteractionHandler {
     private multiTouchCenter?: Point;
     private multiTouchShift = false;
     private dirtyPlace: Point[] = [];
+    /** Touches that began beside the picture and have not reached it yet, by pointer id. */
+    private readonly edgeStarts = new Map<number, Position>();
     protected readonly ctx: CanvasRenderingContext2D | null;
     protected readonly tag: HTMLCanvasElement;
     protected over = false;
@@ -200,56 +203,54 @@ export abstract class InteractionHandler {
         return pointerId;
     }
 
-    protected static buildTouchOnClient(event: CommonTouchAndMouse, screenInfo: ScreenInfo): TouchOnClient | null {
-        const action = this.mapTypeToAction(event.type);
+    /** The touch layer's place on the page. The layer is sized to the picture. */
+    private touchBox(): ClientBox {
+        const rect = this.tag.getBoundingClientRect();
+        return { left: rect.left, top: rect.top, width: this.tag.clientWidth, height: this.tag.clientHeight };
+    }
+
+    /**
+     * A touch that starts on the bands beside the picture has the stream area as its target,
+     * not the touch layer. It still belongs to the remote screen: an edge swipe begins there.
+     */
+    protected isTouchTarget(target: EventTarget | null): boolean {
+        return !!target && (target === this.tag || target === this.tag.parentElement);
+    }
+
+    protected isInsidePicture(clientX: number, clientY: number): boolean {
+        const box = this.touchBox();
+        return (
+            clientX >= box.left &&
+            clientX <= box.left + box.width &&
+            clientY >= box.top &&
+            clientY <= box.top + box.height
+        );
+    }
+
+    /**
+     * Maps a page point to video pixels. A point beside the picture is clamped onto its nearest
+     * edge, so a finger that slides off the picture keeps its gesture and ends it at the edge.
+     */
+    protected buildTouchOnClient(event: CommonTouchAndMouse, screenInfo: ScreenInfo): TouchOnClient | null {
+        const action = InteractionHandler.mapTypeToAction(event.type);
         const { width, height } = screenInfo.videoSize;
-        const target: HTMLElement = event.target as HTMLElement;
-        const rect = target.getBoundingClientRect();
-        let { clientWidth, clientHeight } = target;
-        let touchX = event.clientX - rect.left;
-        let touchY = event.clientY - rect.top;
-        let invalid = false;
-        if (touchX < 0 || touchX > clientWidth || touchY < 0 || touchY > clientHeight) {
-            invalid = true;
+        const box = this.touchBox();
+        const point = clientPointToVideo(event.clientX, event.clientY, box, screenInfo.videoSize);
+        if (!point) {
+            return null;
         }
-        const eps = 1e5;
-        const ratio = width / height;
-        const shouldBe = Math.round(eps * ratio);
-        const haveNow = Math.round((eps * clientWidth) / clientHeight);
-        if (shouldBe > haveNow) {
-            const realHeight = Math.ceil(clientWidth / ratio);
-            const top = (clientHeight - realHeight) / 2;
-            if (touchY < top || touchY > top + realHeight) {
-                invalid = true;
-            }
-            touchY -= top;
-            clientHeight = realHeight;
-        } else if (shouldBe < haveNow) {
-            const realWidth = Math.ceil(clientHeight * ratio);
-            const left = (clientWidth - realWidth) / 2;
-            if (touchX < left || touchX > left + realWidth) {
-                invalid = true;
-            }
-            touchX -= left;
-            clientWidth = realWidth;
-        }
-        const x = (touchX * width) / clientWidth;
-        const y = (touchY * height) / clientHeight;
-        const size = new Size(width, height);
-        const point = new Point(x, y);
-        const position = new Position(point, size);
-        if (x < 0 || y < 0 || x > width || y > height) {
-            invalid = true;
-        }
+        // The last pixel is width - 1; scrcpy ignores a point outside the screen.
+        const x = Math.min(point.x, width - 1);
+        const y = Math.min(point.y, height - 1);
         return {
             client: {
-                width: clientWidth,
-                height: clientHeight,
+                width: box.width,
+                height: box.height,
             },
             touch: {
-                invalid,
+                invalid: false,
                 action,
-                position,
+                position: new Position(new Point(x, y), new Size(width, height)),
                 buttons: event.buttons,
             },
         };
@@ -316,7 +317,7 @@ export abstract class InteractionHandler {
         ctrlKey: boolean,
         shiftKey: boolean,
     ): Touch[] | null {
-        const touchOnClient = InteractionHandler.buildTouchOnClient(e, screenInfo);
+        const touchOnClient = this.buildTouchOnClient(e, screenInfo);
         if (!touchOnClient) {
             return null;
         }
@@ -458,10 +459,9 @@ export abstract class InteractionHandler {
             for (let i = 0, l = touches.length; i < l; i++) {
                 const touch = touches[i];
                 const pointerId = InteractionHandler.getPointerId(e.type, touch.identifier);
-                if (touch.target !== this.tag) {
+                if (!this.isTouchTarget(touch.target)) {
                     continue;
                 }
-                const previous = storage.get(pointerId);
                 const item: CommonTouchAndMouse = {
                     clientX: touch.clientX,
                     clientY: touch.clientY,
@@ -469,29 +469,52 @@ export abstract class InteractionHandler {
                     buttons: MotionEvent.BUTTON_PRIMARY,
                     target: e.target,
                 };
-                const event = InteractionHandler.buildTouchOnClient(item, screenInfo);
-                if (event) {
-                    const { action, buttons, position, invalid } = event.touch;
-                    let pressure = 1;
-                    if (action === MotionEvent.ACTION_UP) {
-                        pressure = 0;
-                    } else if (typeof touch.force === 'number') {
-                        pressure = touch.force;
-                    }
-                    if (!invalid) {
-                        const message = new TouchControlMessage(action, pointerId, position, pressure, buttons);
-                        messages.push(
-                            ...InteractionHandler.validateMessage(e, message, storage, `${logPrefix}[validate]`),
-                        );
-                    } else {
-                        if (previous) {
-                            messages.push(InteractionHandler.createEmulatedMessage(MotionEvent.ACTION_UP, previous));
-                            storage.delete(pointerId);
-                        }
-                    }
-                } else {
+                const event = this.buildTouchOnClient(item, screenInfo);
+                if (!event) {
                     console.error(logPrefix, `Failed to format touch`, touch);
+                    continue;
                 }
+                const { action, buttons, position } = event.touch;
+                let pressure = 1;
+                if (action === MotionEvent.ACTION_UP) {
+                    pressure = 0;
+                } else if (typeof touch.force === 'number') {
+                    pressure = touch.force;
+                }
+                if (!storage.has(pointerId)) {
+                    const inside = this.isInsidePicture(touch.clientX, touch.clientY);
+                    if (action === MotionEvent.ACTION_DOWN && !inside) {
+                        // Began beside the picture. A tap there is not a tap on the device, so
+                        // nothing is sent until the finger moves onto the picture.
+                        this.edgeStarts.set(pointerId, position);
+                        continue;
+                    }
+                    const edgeStart = this.edgeStarts.get(pointerId);
+                    if (edgeStart) {
+                        if (action === MotionEvent.ACTION_UP) {
+                            this.edgeStarts.delete(pointerId);
+                            continue;
+                        }
+                        if (!inside) {
+                            continue;
+                        }
+                        // An edge swipe: the finger came onto the picture from beside it. Put
+                        // it down on the edge where it started, which is where the device
+                        // expects a Back or Home gesture to begin, then send this move.
+                        this.edgeStarts.delete(pointerId);
+                        const down = new TouchControlMessage(
+                            MotionEvent.ACTION_DOWN,
+                            pointerId,
+                            edgeStart,
+                            pressure,
+                            buttons,
+                        );
+                        storage.set(pointerId, down);
+                        messages.push(down);
+                    }
+                }
+                const message = new TouchControlMessage(action, pointerId, position, pressure, buttons);
+                messages.push(...InteractionHandler.validateMessage(e, message, storage, `${logPrefix}[validate]`));
             }
         } else {
             console.error(logPrefix, 'No "touches"', e);
@@ -551,6 +574,7 @@ export abstract class InteractionHandler {
     }
 
     public release(): void {
+        this.edgeStarts.clear();
         InteractionHandler.unbindListeners(this);
     }
 }
