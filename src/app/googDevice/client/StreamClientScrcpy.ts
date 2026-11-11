@@ -20,7 +20,8 @@ import { ACTION } from '../../../common/Action';
 import { StreamReceiverScrcpy } from './StreamReceiverScrcpy';
 import { getVideoBounds } from '../../ControlBarLayout';
 import { UhidKeyboard } from '../UhidKeyboard';
-import { deviceClipboard, lastFrameAt, streamConnected, streamNotice } from '../../state/stream';
+import { deviceClipboard, lastFrameAt, streamConnected, streamNotice, streamServiceStopped } from '../../state/stream';
+import { STREAM_SERVICE_STOPPED } from '../../../common/StreamCloseCode';
 import { AudioSession, createAudioSession } from '../../state/audio';
 import { isLocalKeyboardTarget } from '../localKeyboardTarget';
 
@@ -290,8 +291,9 @@ export class StreamClientScrcpy
     // come back after a restart even though the socket-level reconnect worked perfectly. Only
     // pause playback here; real teardown (unsubscribing, releasing handlers) belongs in `stop()`,
     // which runs once, for good.
-    public onDisconnected = (): void => {
+    public onDisconnected = (event?: CloseEvent): void => {
         streamConnected.value = false;
+        streamServiceStopped.value = event?.code === STREAM_SERVICE_STOPPED;
         this.clientId = -1;
         // A replacement scrcpy process has no virtual keyboard, even if capture remains on.
         this.uhidKeyboard?.reset();
@@ -300,6 +302,7 @@ export class StreamClientScrcpy
 
     public onConnected = (): void => {
         streamConnected.value = true;
+        streamServiceStopped.value = false;
     };
 
     // Tears down the DOM this client owns and stops the underlying receiver/player. Wired up as

@@ -1,0 +1,11 @@
+.tracker-status-notice {
+    margin: 0 0 16px;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid color-mix(in srgb, var(--status-starting-color) 45%, transparent);
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--status-starting-color) 10%, transparent);
+    color: var(--text-color);
+    font-size: 0.85rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}

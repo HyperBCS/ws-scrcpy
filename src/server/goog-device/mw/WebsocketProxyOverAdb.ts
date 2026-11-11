@@ -1,6 +1,5 @@
 import { StreamMeta, WebsocketProxy } from '../../mw/WebsocketProxy';
 import { ControlCenter } from '../services/ControlCenter';
-import { broadcastManager } from '../../../common/BroadcastManager';
 import WS from 'ws';
 import { RequestParameters } from '../../mw/Mw';
 import { ACTION } from '../../../common/Action';
@@ -49,31 +48,31 @@ export class WebsocketProxyOverAdb extends WebsocketProxy {
 
     public static createProxyOverAdb(ws: WS, udid: string, _: string, __?: string | null): WebsocketProxy {
         const service = new WebsocketProxy(ws);
-        this.connect(service, udid).catch((e: Error) => {
+        this.connect(service, udid, ws).catch((e: Error) => {
             console.error(`[${this.TAG}] Failed to start service: ${e.message}`);
         });
         return service;
     }
 
     /**
-     * Makes sure a scrcpy server is actually running for this device before attaching the proxy.
+     * Registers this browser as a viewer of the device and makes sure its scrcpy server runs
+     * before attaching the proxy.
      *
-     * The server exits once its last viewer disconnects, and the only other caller of
-     * `startServer()` is `fetchDeviceInfo`'s update cycle -- which deliberately backs off and
-     * stops. So without this, closing the last tab left the device permanently unstreamable:
-     * every later connection found no broadcast and was closed, with nothing ever restarting the
-     * server short of restarting ws-scrcpy itself. `startServer()` is idempotent (it returns the
-     * existing pid when one is running), so this is cheap on the common path.
+     * Viewers are what keep scrcpy running: the device starts it for the first one and stops it
+     * a short while after the last one has gone (`Device.addViewer`). Nothing starts it when the
+     * phone is attached.
      */
-    private static async connect(service: WebsocketProxy, udid: string): Promise<void> {
+    private static async connect(service: WebsocketProxy, udid: string, ws: WS): Promise<void> {
         // Looked up here rather than inside WebsocketProxy: this class is already Android-only
         // and behind INCLUDE_GOOG, so reaching into the Android ControlCenter is free, whereas
         // doing it from the platform-agnostic mw/ layer would statically bundle adbkit into an
         // iOS-only build.
         const device = ControlCenter.hasInstance() ? ControlCenter.getInstance().getDevice(udid) : undefined;
-        if (device && !broadcastManager.hasBroadcast(udid)) {
+        if (device) {
+            const leave = device.addViewer({ close: (code, reason) => ws.close(code, reason) });
+            ws.once('close', leave);
             try {
-                await device.startServer();
+                await device.ensureServer();
             } catch (e) {
                 console.error(`[${this.TAG}] Could not start scrcpy server: ${(e as Error).message}`);
             }

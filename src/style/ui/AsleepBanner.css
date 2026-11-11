@@ -1,0 +1,12 @@
+/* The banner itself is styled with the device card (views/DeviceList.css). */
+#devices .device-asleep-text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+#devices .device-asleep-banner .wake-button {
+    flex: 0 0 auto;
+}
+#devices .device-asleep-banner .wake-button:disabled {
+    opacity: 0.6;
+    cursor: default;
+}

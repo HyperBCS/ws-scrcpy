@@ -20,6 +20,8 @@ export interface ShutdownWaiter {
  * phone's display service until it is rebooted (docs/HANDOFF.md).
  */
 export class Shutdown {
+    /** How long Node may keep running once the services are released and the children closed. */
+    public static EXIT_BACKSTOP_MS = 3000;
     private stopping = false;
     private crashed = false;
     private readonly waiters: ShutdownWaiter[] = [];
@@ -109,6 +111,16 @@ export class Shutdown {
             }, this.budgetMs());
             deadline.unref();
         }
+        // Every service has been released and the children are given their time. Anything that
+        // still keeps Node running after that (a socket or a child some service left open) would
+        // hold the process until Docker kills it at the end of its grace period.
+        void this.childrenClosed().then(() => {
+            const backstop = setTimeout(() => {
+                console.error('Still running after shutdown; exiting');
+                process.exit();
+            }, Shutdown.EXIT_BACKSTOP_MS);
+            backstop.unref();
+        });
     }
 
     private pending(): boolean {

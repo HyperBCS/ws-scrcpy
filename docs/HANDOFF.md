@@ -220,11 +220,15 @@ input silently goes nowhere.
 
 Ordered by how much time they cost.
 
-1. **The scrcpy server exits when its last viewer disconnects.** It used to never restart —
-   closing the last tab left a device unstreamable until ws-scrcpy itself was restarted.
-   `WebsocketProxyOverAdb.connect()` now calls `startServer()` first. If you see "nothing works",
-   **check `adb shell pidof app_process` before debugging anything else.** A dead server is
-   indistinguishable from a dead feature, and it invalidated an entire round of my conclusions.
+1. **scrcpy runs only while someone has the screen open.** Attaching a phone starts nothing.
+   The first viewer starts it (`WebsocketProxyOverAdb.connect()` calls `Device.ensureServer()`),
+   and it stops 30 s after the last viewer leaves (`STREAM_IDLE_GRACE_MS`). The owner's Stop
+   closes viewers with code 4012, which they do not reconnect from. Each ws-scrcpy server
+   launches with its own `scid`, kept per port in `data/scrcpy-instance.json`, and counts or stops
+   only processes that carry it; desktop scrcpy and a test server on another port are left
+   alone. If you see "nothing works", **check `adb shell pidof app_process` and the `scid=` in
+   `/proc/<pid>/cmdline` before debugging anything else.** A dead server is indistinguishable
+   from a dead feature, and it invalidated an entire round of my conclusions.
 2. **MIUI wipes `/data/local/tmp`.** The jar disappears mid-session; `CLASSPATH` then points at
    nothing and you get `ClassNotFoundException`, which looks like a renamed class. ws-scrcpy
    re-pushes on start so it self-heals in normal use, but manual testing needs a re-push.
@@ -817,7 +821,9 @@ The symptom on the bench was the `ux`/`deeplink` fixtures timing out on "Connect
 server restart while `adb shell ps` looked innocent (the process is `app_process`, not
 "scrcpy"). `startServerNow()` now treats "pid but no broadcast" as an orphan: it kills the
 phone-side process and launches a fresh one (`test-server-regressions.js`: "a scrcpy server
-left behind by a previous ws-scrcpy process is replaced, not reused").
+left behind by a previous ws-scrcpy process is replaced, not reused"). Since November 2026 only
+a process with this server's `scid` can be an orphan; before that, a server on port 8010 killed
+the main server's scrcpy this way.
 
 ### iOS route 2: CoreDevice screen + HID (September 2026, verified on an iPhone 13 Pro Max / iOS 27.0)
 

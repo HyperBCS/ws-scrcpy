@@ -21,8 +21,17 @@ export type ShellResult = {
 
 // Copying or deleting a large folder takes far longer than a diagnostic shell read.
 const FILE_OPERATION_TIMEOUT = 120000;
+// adb frames a request with four hex digits of length, so anything past 65,535 bytes is cut
+// short without an error. The limit leaves room for the service prefix and the status marker.
+const MAX_SHELL_COMMAND_BYTES = 65000;
+// One `rm` command stays well under that limit; a larger selection is deleted in batches.
+const MAX_REMOVE_COMMAND_BYTES = 32 * 1024;
+// How many ports to try when adb reports that one is already forwarded or bound.
+const FORWARD_ATTEMPTS = 10;
 
 export class AdbUtils {
+    private static forwardQueue: Promise<void> = Promise.resolve();
+
     private static async formatStatsMin(entry: Entry): Promise<FileStats> {
         return {
             name: entry.name,
@@ -120,7 +129,22 @@ export class AdbUtils {
         return sendFileDownload(() => client.pull(serial, pathString), stream);
     }
 
-    public static async forward(serial: string, remote: string): Promise<number> {
+    /**
+     * The local TCP port that reaches `remote` on this device, forwarding one if needed.
+     *
+     * Calls run one at a time. Two phones that start together would otherwise both be handed
+     * the same free port, and adb would point it at whichever asked last.
+     */
+    public static forward(serial: string, remote: string): Promise<number> {
+        const pending = AdbUtils.forwardQueue.then(() => AdbUtils.forwardNow(serial, remote));
+        AdbUtils.forwardQueue = pending.then(
+            () => undefined,
+            () => undefined,
+        );
+        return pending;
+    }
+
+    private static async forwardNow(serial: string, remote: string): Promise<number> {
         const client = AdbExtended.createClient();
         const forwards = await client.listForwards(serial);
         const forward = forwards.find((item: Forward) => {
@@ -130,10 +154,34 @@ export class AdbUtils {
             const { local } = forward;
             return parseInt(local.split('tcp:')[1], 10);
         }
-        const port = await portfinder.getPortPromise();
-        const local = `tcp:${port}`;
-        await client.forward(serial, local, remote);
-        return port;
+        // adb lists the forwards of every device here. A port another phone holds is not free,
+        // even where this process cannot see adb's listener (adb on another host).
+        const taken = new Set(
+            forwards
+                .filter((item: Forward) => item.local.startsWith('tcp:'))
+                .map((item: Forward) => parseInt(item.local.split('tcp:')[1], 10)),
+        );
+        let next = portfinder.basePort;
+        let failure: Error | undefined;
+        for (let attempt = 0; attempt < FORWARD_ATTEMPTS; attempt++) {
+            let port = await portfinder.getPortPromise({ port: next });
+            while (taken.has(port)) {
+                port = await portfinder.getPortPromise({ port: port + 1 });
+            }
+            next = port + 1;
+            try {
+                // Another server on the same adb may take the port between the check and here.
+                // adb then refuses, where the plain form would move that forward to this device.
+                await client.forwardNoRebind(serial, `tcp:${port}`, remote);
+                return port;
+            } catch (error) {
+                failure = error as Error;
+                if (!/rebind|bind|in use/i.test(failure.message)) {
+                    throw failure;
+                }
+            }
+        }
+        throw failure ?? Error('No free port for the device connection.');
     }
 
     /** Remove legacy filesystem forwards left by an earlier server version. */
@@ -155,6 +203,9 @@ export class AdbUtils {
      * code, because `mkdir`/`mv`/`rm` report failures on stderr and adb still exits 0.
      */
     public static async shellExec(serial: string, command: string, timeoutMs = 15000): Promise<ShellResult> {
+        if (Buffer.byteLength(command) > MAX_SHELL_COMMAND_BYTES) {
+            throw Error('This command is too long to send to the device.');
+        }
         const client = AdbExtended.createClient();
         let stream: Duplex | undefined;
         let expired = false;
@@ -330,13 +381,34 @@ export class AdbUtils {
         return path.posix.join(path.posix.dirname(target), `.partial-${randomBytes(6).toString('hex')}`);
     }
 
+    /** Deletes in batches, in order, and stops at the first batch the device refuses. */
     public static async remove(serial: string, paths: string[]): Promise<void> {
-        const targets = paths.map((item) => AdbUtils.quote(item)).join(' ');
-        return AdbUtils.runFileOperation(
-            serial,
-            `rm -rf -- ${targets}`,
-            'The device refused to delete this item.',
-            FILE_OPERATION_TIMEOUT,
-        );
+        const prefix = 'rm -rf --';
+        let batch: string[] = [];
+        let size = prefix.length;
+        const run = async (): Promise<void> => {
+            if (!batch.length) {
+                return;
+            }
+            const command = `${prefix} ${batch.join(' ')}`;
+            batch = [];
+            size = prefix.length;
+            await AdbUtils.runFileOperation(
+                serial,
+                command,
+                'The device refused to delete this item.',
+                FILE_OPERATION_TIMEOUT,
+            );
+        };
+        for (const item of paths) {
+            const target = AdbUtils.quote(item);
+            const length = Buffer.byteLength(target) + 1;
+            if (batch.length && size + length > MAX_REMOVE_COMMAND_BYTES) {
+                await run();
+            }
+            batch.push(target);
+            size += length;
+        }
+        await run();
     }
 }

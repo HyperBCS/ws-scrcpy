@@ -42,7 +42,12 @@ export function validateStreamConfigPatch(value: unknown): Partial<StreamConfigD
                 patch.audioCodec = entry;
                 break;
             case 'audioSource':
-                if (entry !== undefined && entry !== 'output' && entry !== 'voice-call-downlink') {
+                if (
+                    entry !== undefined &&
+                    entry !== 'output' &&
+                    entry !== 'playback' &&
+                    entry !== 'voice-call-downlink'
+                ) {
                     throw new Error('Invalid audio source');
                 }
                 patch.audioSource = entry;

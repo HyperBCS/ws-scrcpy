@@ -6,6 +6,7 @@ import { ACTION } from '../../../common/Action';
 import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import { DeviceTrackerEvent } from '../../../types/DeviceTrackerEvent';
 import { DeviceTrackerEventList } from '../../../types/DeviceTrackerEventList';
+import { TRACKER_STATUS, TrackerStatus } from '../../../common/TrackerStatus';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import { ChannelCode } from '../../../common/ChannelCode';
 
@@ -15,6 +16,7 @@ export class DeviceTracker extends Mw {
     private adt: ControlCenter = ControlCenter.getInstance();
     private readonly id: string;
     private watching = false;
+    private stopWatchingAdb?: () => void;
 
     public static processChannel(ws: Multiplexer, code: string): Mw | undefined {
         if (code !== ChannelCode.GTRC) {
@@ -34,18 +36,28 @@ export class DeviceTracker extends Mw {
         super(ws);
 
         this.id = this.adt.getId();
-        this.adt
-            .init()
-            .then(() => {
-                this.adt.on('device', this.sendDeviceMessage);
-                this.adt.addTrackerClient();
-                this.watching = true;
-                this.buildAndSendMessage(this.adt.getDevices());
-            })
-            .catch((error: Error) => {
-                console.error(`[${DeviceTracker.TAG}] Error: ${error.message}`);
-            });
+        // Subscribe at once, whatever state adb is in. ControlCenter keeps retrying by itself,
+        // and a list opened while adb was down receives the phones when it comes back.
+        this.adt.on('device', this.sendDeviceMessage);
+        this.stopWatchingAdb = this.adt.onAdbAvailability(this.sendTrackerStatus);
+        this.adt.addTrackerClient();
+        this.watching = true;
+        this.buildAndSendMessage(this.adt.getDevices());
+        this.sendTrackerStatus(this.adt.isAdbAvailable());
     }
+
+    private sendTrackerStatus = (available: boolean): void => {
+        const data: TrackerStatus = {
+            id: this.id,
+            name: this.adt.getName(),
+            available,
+        };
+        this.sendMessage({
+            id: -1,
+            type: TRACKER_STATUS,
+            data,
+        });
+    };
 
     private sendDeviceMessage = (device: GoogDeviceDescriptor): void => {
         const data: DeviceTrackerEvent<GoogDeviceDescriptor> = {
@@ -112,7 +124,9 @@ export class DeviceTracker extends Mw {
     public release(): void {
         super.release();
         this.adt.off('device', this.sendDeviceMessage);
-        // Guarded: `init()` may have rejected, in which case we never registered.
+        this.stopWatchingAdb?.();
+        this.stopWatchingAdb = undefined;
+        // Guarded: release() can run more than once.
         if (this.watching) {
             this.watching = false;
             this.adt.removeTrackerClient();

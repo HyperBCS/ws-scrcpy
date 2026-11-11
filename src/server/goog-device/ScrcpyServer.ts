@@ -2,10 +2,16 @@ import '../../../vendor/Genymobile/scrcpy/scrcpy-server.jar';
 import '../../../vendor/Genymobile/scrcpy/LICENSE';
 
 import { Device } from './Device';
-import { buildScrcpyArgs, SERVER_PACKAGE, SERVER_PROCESS_NAME, SERVER_VERSION } from '../../common/Constants';
+import {
+    buildScrcpyArgs,
+    ScrcpyServerConfig,
+    SERVER_PACKAGE,
+    SERVER_PROCESS_NAME,
+    SERVER_VERSION,
+} from '../../common/Constants';
 import path from 'path';
 import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
-import { ServerVersion } from './ServerVersion';
+import { ScrcpyInstance } from './ScrcpyInstance';
 import { once } from 'events';
 
 const TEMP_PATH = '/data/local/tmp/';
@@ -22,10 +28,7 @@ export interface EncoderInfo {
     aliasFor?: string;
 }
 
-type WaitForPidParams = { tryCounter: number; processExited: boolean; lookPidFile: boolean };
-
 export class ScrcpyServer {
-    private static PID_FILE_PATH = '/data/local/tmp/ws_scrcpy.pid';
     // Matches the lines scrcpy-server prints for `list_encoders=true`, e.g.
     //     --video-codec=h264 --video-encoder='OMX.qcom.video.encoder.avc'
     // Quoting is inconsistent across scrcpy versions/shells, so single, double and no quotes
@@ -43,106 +46,71 @@ export class ScrcpyServer {
         return transfer;
     }
 
-    // Important to notice that we first try to read PID from file.
-    // Checking with `.getServerPid()` will return process id, but process may stop.
-    // PID file only created after WebSocket server has been successfully started.
-    private static async waitForServerPid(device: Device, params: WaitForPidParams): Promise<number[] | undefined> {
-        const { tryCounter, processExited, lookPidFile } = params;
-        if (processExited) {
-            return;
-        }
-        const timeout = 500 + 100 * tryCounter;
-        if (lookPidFile) {
-            const fileName = ScrcpyServer.PID_FILE_PATH;
-            const content = await device.runShellCommandAdbKit(`test -f ${fileName} && cat ${fileName}`);
-            if (content.trim()) {
-                const pid = parseInt(content, 10);
-                if (pid && !isNaN(pid)) {
-                    const realPid = await this.getServerPid(device);
-                    if (realPid?.includes(pid)) {
-                        return realPid;
-                    } else {
-                        params.lookPidFile = false;
-                    }
-                }
-            }
-        } else {
-            const list = await this.getServerPid(device);
-            if (Array.isArray(list) && list.length) {
-                return list;
-            }
-        }
-        if (++params.tryCounter > 5) {
-            throw new Error('Failed to start server');
-        }
-        return new Promise<number[] | undefined>((resolve) => {
-            setTimeout(() => {
-                resolve(this.waitForServerPid(device, params));
-            }, timeout);
-        });
-    }
-
-    public static async getServerPid(device: Device, cleanUpOldVersions = true): Promise<number[] | undefined> {
+    /**
+     * The scrcpy processes on the phone that this server started: `app_process` running the
+     * scrcpy package with this server's scid. Every other scrcpy is someone else's (desktop
+     * scrcpy, or another ws-scrcpy) and is never counted, reported or stopped.
+     *
+     * @param strict bound each adb read and report a failed one, where the default treats it as
+     *     "nothing found". Status polling uses it so a failed read is not shown as "stopped".
+     */
+    public static async getServerPid(device: Device, strict = false): Promise<number[] | undefined> {
         if (!device.isConnected()) {
             return;
         }
-        const list = await device.getPidOf(SERVER_PROCESS_NAME, !cleanUpOldVersions);
+        const list = await device.getPidOf(SERVER_PROCESS_NAME, strict);
         if (!Array.isArray(list) || !list.length) {
             return;
         }
         const serverPid: number[] = [];
         const promises = list.map((pid) => {
             return device
-                .runShellCommandAdbKit(`cat /proc/${pid}/cmdline`, cleanUpOldVersions ? undefined : 6500)
+                .runShellCommandAdbKit(`cat /proc/${pid}/cmdline`, strict ? 6500 : undefined)
                 .then((output) => {
-                    const args = output.split('\0');
-                    if (!args.length || args[0] !== SERVER_PROCESS_NAME) {
-                        return;
-                    }
-                    let first = args[0];
-                    while (args.length && first !== SERVER_PACKAGE) {
-                        args.shift();
-                        first = args[0];
-                    }
-                    if (args.length < 3) {
-                        return;
-                    }
-                    if (args.some((arg) => /^list_[^=]+=true$/.test(arg))) {
-                        // Encoder/camera/display enumeration runs a short-lived helper JVM too.
-                        // Its PID does not prove that the mirroring service is available.
-                        return;
-                    }
-                    const versionString = args[1];
-                    if (versionString === SERVER_VERSION || !cleanUpOldVersions) {
+                    if (ScrcpyServer.isOwnServer(output.split('\0'))) {
                         serverPid.push(pid);
-                    } else {
-                        const currentVersion = new ServerVersion(versionString);
-                        if (currentVersion.isCompatible()) {
-                            const desired = new ServerVersion(SERVER_VERSION);
-                            if (desired.gt(currentVersion)) {
-                                console.log(
-                                    device.TAG,
-                                    `Found old server version running (PID: ${pid}, Version: ${versionString})`,
-                                );
-                                console.log(device.TAG, 'Perform kill now');
-                                device.killProcess(pid);
-                            }
-                        }
                     }
-                    return;
                 });
         });
         await Promise.all(promises);
         return serverPid;
     }
 
-    public static async run(device: Device): Promise<number[] | undefined> {
+    /** Whether a process command line is a mirroring server launched by this ws-scrcpy server. */
+    public static isOwnServer(cmdline: string[]): boolean {
+        if (cmdline[0] !== SERVER_PROCESS_NAME) {
+            return false;
+        }
+        const args = cmdline.slice(cmdline.indexOf(SERVER_PACKAGE));
+        if (args[0] !== SERVER_PACKAGE || args.length < 3) {
+            return false;
+        }
+        if (args.some((arg) => /^list_[^=]+=true$/.test(arg))) {
+            // Encoder/camera/display enumeration runs a short-lived helper JVM too.
+            // Its PID does not prove that the mirroring service is available.
+            return false;
+        }
+        return ScrcpyInstance.owns(args);
+    }
+
+    /**
+     * The server's launch arguments: the stream settings, then what every launch from this
+     * server carries. `scid` names the device socket and marks the process as ours.
+     * `power_on=false` keeps a start from waking the phone's screen: scrcpy starts when someone
+     * opens the screen in a browser, and the viewer has its own Wake button.
+     */
+    public static buildLaunchArgs(config: ScrcpyServerConfig): string {
+        return `${buildScrcpyArgs(config)} scid=${ScrcpyInstance.getScid()} power_on=false`;
+    }
+
+    /**
+     * Pushes the jar and launches the mirroring server. Resolves once its stream is connected
+     * and rejects if the launch fails, the process exits first, or it takes too long
+     * (`Device.launchServer`).
+     */
+    public static async run(device: Device): Promise<void> {
         if (!device.isConnected()) {
             return;
-        }
-        let list: number[] | string | undefined = await this.getServerPid(device);
-        if (Array.isArray(list) && list.length) {
-            return list;
         }
         await this.copyServer(device);
 
@@ -150,29 +118,8 @@ export class ScrcpyServer {
         // and this is the only place that launches the mirroring server, so there is no separate
         // "reload config" step to keep in sync.
         const config = device.getLaunchStreamConfig();
-        const args = buildScrcpyArgs(config);
-        const runCommand = `${CLASSPATH_PREFIX} / ${SERVER_PACKAGE} ${args}`;
-
-        const params: WaitForPidParams = { tryCounter: 0, processExited: false, lookPidFile: true };
-        const runPromise = device.runShellCommandAdbSpecial(runCommand, device.udid, config.audio);
-        runPromise
-            .then((out) => {
-                if (device.isConnected()) {
-                    console.log(device.TAG, 'Server exited:', out);
-                }
-            })
-            .catch((e) => {
-                console.log(device.TAG, 'Error:', e.message);
-            })
-            .finally(() => {
-                params.processExited = true;
-            });
-        list = await Promise.race([runPromise, this.waitForServerPid(device, params)]);
-        console.log('return done');
-        if (Array.isArray(list) && list.length) {
-            return list;
-        }
-        return;
+        const runCommand = `${CLASSPATH_PREFIX} / ${SERVER_PACKAGE} ${this.buildLaunchArgs(config)}`;
+        await device.launchServer(runCommand, config.audio);
     }
 
     /**

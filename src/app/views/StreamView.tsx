@@ -11,6 +11,7 @@ import {
     openSheet,
     streamConnected,
     streamNotice,
+    streamServiceStopped,
     unlockSheetOpen,
 } from '../state/stream';
 import { findDeviceForStream } from '../state/streamDevice';
@@ -36,6 +37,9 @@ interface StreamViewProps {
 export function StreamView({ params }: StreamViewProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [error, setError] = useState('');
+    // Counts the owner's "Start again" after the stream service was stopped: a new connection
+    // is what starts the service, so the stream is mounted again.
+    const [attempt, setAttempt] = useState(0);
 
     useEffect(() => {
         const container = containerRef.current;
@@ -45,6 +49,7 @@ export function StreamView({ params }: StreamViewProps) {
         closeAllSheets();
         deviceClipboard.value = undefined;
         streamNotice.value = '';
+        streamServiceStopped.value = false;
         setError('');
         // `StreamClientScrcpy` sets `document.body.className = 'stream'` itself; navigating back
         // to the device list re-sets it to 'list' from there (see `views/DeviceList.tsx`).
@@ -62,12 +67,14 @@ export function StreamView({ params }: StreamViewProps) {
             activeStream.value = undefined;
             closeAllSheets();
             deviceClipboard.value = undefined;
+            streamServiceStopped.value = false;
         };
         // Re-mount the stream when the deep link actually points at a different device/player/
         // socket; other param changes (title, ...) do not warrant tearing the player down.
-    }, [params.udid, params.player, params.ws]);
+    }, [params.udid, params.player, params.ws, attempt]);
 
     const session = activeStream.value;
+    const stopped = streamServiceStopped.value && !streamConnected.value;
     const liveText = useMemo(() => (session ? scrcpyLiveTextTarget(session.client) : undefined), [session?.client]);
     const entry = findDeviceForStream(params);
     const descriptor = entry?.params.type === 'android' ? (entry.descriptor as GoogDeviceDescriptor) : undefined;
@@ -110,7 +117,13 @@ export function StreamView({ params }: StreamViewProps) {
                     <strong title={String(name)}>{name}</strong>
                     <span class={`stream-header-status ${streamConnected.value ? 'connected' : ''}`} role="status">
                         <span class="stream-header-status-dot" aria-hidden="true" />
-                        {error ? 'Unable to connect' : streamConnected.value ? 'Connected' : 'Connecting…'}
+                        {error
+                            ? 'Unable to connect'
+                            : streamConnected.value
+                              ? 'Connected'
+                              : stopped
+                                ? 'Stopped'
+                                : 'Connecting…'}
                     </span>
                     <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
                 </div>
@@ -154,6 +167,20 @@ export function StreamView({ params }: StreamViewProps) {
                     <button type="button" class="sheet-button" onClick={goToDeviceList}>
                         Back to devices
                     </button>
+                </div>
+            )}
+            {stopped && !error && (
+                <div class="stream-start-error stream-service-stopped" role="alert">
+                    <h2>Stream service stopped</h2>
+                    <p>The stream service on this device was stopped. Start it to see the screen again.</p>
+                    <div class="stream-stopped-actions">
+                        <button type="button" class="sheet-button primary" onClick={() => setAttempt(attempt + 1)}>
+                            Start again
+                        </button>
+                        <button type="button" class="sheet-button" onClick={goToDeviceList}>
+                            Back to devices
+                        </button>
+                    </div>
                 </div>
             )}
             {session && session.params.udid === params.udid && (

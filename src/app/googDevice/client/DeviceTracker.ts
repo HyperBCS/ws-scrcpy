@@ -8,6 +8,8 @@ import { ChannelCode } from '../../../common/ChannelCode';
 import { Tool } from '../../client/Tool';
 import { EncoderInfo } from '../../../types/EncoderInfo';
 import { AndroidLockStateReply } from '../../../types/AndroidLockState';
+import { TRACKER_STATUS, TrackerStatus } from '../../../common/TrackerStatus';
+import { setAdbAvailable } from '../../state/trackerStatus';
 
 // Replies to the `ControlCenterCommand`s this tracker's connection can carry beyond the
 // device-list itself (see `ControlCenter.runCommand` on the server and `sendCommand()` above) --
@@ -23,6 +25,9 @@ export interface GoogDeviceTrackerEvents {
     };
     update_stream_config: { udid: string; requestId: number; config?: ScrcpyServerConfig; error?: string };
     get_lock_state: Partial<AndroidLockStateReply> & { udid: string; requestId: number; error?: string };
+    wake_device: { udid: string; requestId: number; error?: string };
+    // Sent by the server, not a reply: whether it can reach adb.
+    [TRACKER_STATUS]: TrackerStatus;
 }
 
 export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, GoogDeviceTrackerEvents> {
@@ -46,7 +51,18 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, GoogD
     protected constructor(params: HostItem, directUrl: string) {
         super({ ...params, action: DeviceTracker.ACTION }, directUrl);
         DeviceTracker.instancesByUrl.set(directUrl, this);
+        this.on(TRACKER_STATUS, (status) => {
+            if (!this.destroyed) {
+                setAdbAvailable(this, status.name, status.available);
+            }
+        });
         this.openNewConnection();
+    }
+
+    protected onSocketClose(event: CloseEvent): void {
+        // The server reports its adb state again when the list reconnects.
+        setAdbAvailable(this, '', true);
+        super.onSocketClose(event);
     }
 
     protected onSocketOpen(): void {
@@ -87,6 +103,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, GoogD
     }
 
     public destroy(): void {
+        setAdbAvailable(this, '', true);
         super.destroy();
         if (DeviceTracker.instancesByUrl.get(this.directUrl) === this) {
             DeviceTracker.instancesByUrl.delete(this.directUrl);
