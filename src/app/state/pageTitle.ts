@@ -32,12 +32,18 @@ export function pageTitle(route: URLSearchParams, list: Iterable<DeviceEntry>): 
     if (custom) {
         return custom;
     }
-    let name = udid;
+    // The device of the page's platform first. A Files or Shell link that names an iPhone is
+    // refused, and that page is still titled with the iPhone's name.
+    let match: DeviceEntry | undefined;
     for (const entry of list) {
-        if (entry.descriptor.udid === udid && entry.params.type === screen.type) {
-            name = deviceName(entry);
+        if (entry.descriptor.udid !== udid) {
+            continue;
+        }
+        if (entry.params.type === screen.type) {
+            match = entry;
             break;
         }
+        match ??= entry;
     }
-    return `${name} · ${screen.label} · ${APP_NAME}`;
+    return `${match ? deviceName(match) : udid} · ${screen.label} · ${APP_NAME}`;
 }

@@ -1,6 +1,6 @@
 import { useLayoutEffect } from 'preact/hooks';
 import { ACTION } from '../../common/Action';
-import { DeviceEntry, deviceName, isDeviceAvailable } from '../state/devices';
+import { canOpenScreen, DeviceEntry, deviceName } from '../state/devices';
 import { buildLinkHref } from '../state/links';
 import { goToDeviceList } from '../state/router';
 import '../../style/views/StreamView.css';
@@ -47,7 +47,7 @@ export function ToolUnavailable({ entry, tool }: { entry: DeviceEntry; tool: str
                 <h2>{tool} is not available for this device</h2>
                 <p>Files and Shell work on Android devices only. {name} is an iPhone or iPad.</p>
                 <div class="tool-unavailable-actions">
-                    {isDeviceAvailable(entry) && (
+                    {canOpenScreen(entry) && (
                         <a
                             class="ui-button ui-button-primary"
                             href={buildLinkHref(

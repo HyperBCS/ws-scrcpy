@@ -11,7 +11,13 @@ const path = require('node:path');
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
 global.location = new URL('http://localhost:8000/');
 
-const { devices, deviceName, supportsDeviceTools, findDeviceWithoutTools } = require('../src/app/state/devices');
+const {
+    devices,
+    deviceName,
+    supportsDeviceTools,
+    findDeviceWithoutTools,
+    canOpenScreen,
+} = require('../src/app/state/devices');
 const { pageTitle, APP_NAME } = require('../src/app/state/pageTitle');
 const { notificationsTarget, isNotificationSource } = require('../src/app/state/notificationsTarget');
 const {
@@ -90,6 +96,8 @@ test('every page takes its tab title from one function with one format', () => {
         pageTitle(route({ action: 'stream', udid: 'SAME' }), [iphone('SAME'), android('SAME')]),
         'Google Pixel 9 Pro · Screen · ws-scrcpy',
     );
+    // A Files or Shell link that names an iPhone is refused; its page still names the iPhone.
+    assert.equal(pageTitle(route({ action: 'shell', udid: 'IPHONE-1' }), list), 'iPhone 13 Pro Max · Shell · ws-scrcpy');
     // A `title` parameter in a device link still replaces the whole title.
     assert.equal(pageTitle(route({ action: 'stream', udid: 'PIXEL-1', title: 'Kitchen tablet' }), list), 'Kitchen tablet');
     assert.equal(pageTitle(route({ title: 'Ignored' }), list), 'Devices · ws-scrcpy');
@@ -178,6 +186,17 @@ test('blocked and failed iPhones do not read as Ready', () => {
     // Android devices report none of these.
     assert.deepEqual(getDeviceProblems(android('H'), now), []);
     assert.equal(status(android('H')), 'ready');
+});
+
+test('a screen opens only on a connected device, and not on an iPhone with Developer Mode off', () => {
+    assert.equal(canOpenScreen(android('A')), true);
+    assert.equal(canOpenScreen(android('B', { state: 'offline' })), false);
+    assert.equal(canOpenScreen(iphone('C')), true);
+    assert.equal(canOpenScreen(iphone('D', { developerMode: false })), false);
+    assert.equal(canOpenScreen(iphone('E', { developerMode: 'unknown' })), true, 'not yet known does not block');
+    assert.equal(canOpenScreen(iphone('F', { state: 'disconnected' })), false);
+    // A failed session or an unlock problem still lets the owner open the screen.
+    assert.equal(canOpenScreen(iphone('G', { session: 'error' })), true);
 });
 
 test('the Devices header counts devices that need attention', () => {

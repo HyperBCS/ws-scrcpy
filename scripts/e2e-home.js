@@ -43,6 +43,7 @@ const IPHONES = [
     }),
     iphone('HOME-IPHONE-STREAM', 'iPhone streaming', { session: 'ready' }),
     iphone('HOME-IPHONE-START', 'iPhone starting', { session: 'starting' }),
+    iphone('HOME-IPHONE-AWAY', 'iPhone away', { state: 'disconnected', unlockSchedule: { ...schedule, hasPasscode: false } }),
 ];
 const SUMMARY = { unread: 5, unreadBySource: { [LINKED]: 2, 'bluetooth-only': 3 }, sources: [{ id: LINKED, name: 'iPhone linked' }, { id: 'bluetooth-only', name: 'Bluetooth iPhone' }] };
 
@@ -155,6 +156,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
             'android:HOME-OFFLINE-0004': 'Offline', 'android:HOME-UNAUTH-0005': 'Unauthorized',
             [`ios:${LINKED}`]: 'Ready', 'ios:HOME-IPAD-NODEV': 'Needs attention', 'ios:HOME-IPHONE-ERROR': 'Error',
             'ios:HOME-IPHONE-UNLOCK': 'Needs attention', 'ios:HOME-IPHONE-STREAM': 'Streaming', 'ios:HOME-IPHONE-START': 'Starting…',
+            'ios:HOME-IPHONE-AWAY': 'Offline',
         };
         for (const [key, status] of Object.entries(expected)) {
             const badge = card(page, key).locator('.device-status');
@@ -238,6 +240,10 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         assert.equal(await unlock.locator('.device-meta .device-unlock-schedule').count(), 0, 'the problem is not repeated in the meta line');
         await unlock.getByText('Screen is asleep.', { exact: true }).waitFor();
         await page.screenshot({ path: path.join(OUT, `devices-${label}.png`), fullPage: true });
+        // An unplugged iPhone has no action for its unlock problem, so the problem stays in its meta line.
+        const away = card(page, 'ios:HOME-IPHONE-AWAY');
+        assert.equal(await away.locator('.device-problem').count(), 0);
+        assert.equal(await away.locator('.device-meta .device-unlock-schedule.problem').textContent(), 'Scheduled unlock cannot run: no passcode');
         await unlockLine.getByRole('button', { name: 'Open settings for iPhone unlock', exact: true }).click();
         const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
         await dialog.waitFor();
@@ -422,16 +428,31 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         assert.equal(rows.some((row) => /iPhone|iPad/.test(row.name)), false);
         assert.equal(rows.find((row) => row.name === 'Google Pixel 9 Pro').status, 'Viewing');
         assert.equal(rows.find((row) => row.name === 'Google Pixel 8').status, 'Shell →', 'a row says what it opens');
+        assert.equal(rows.find((row) => row.name === 'Google Galaxy Tab S9').status, 'Shell →', 'a sleeping screen does not matter to Shell');
         await page.screenshot({ path: path.join(OUT, `switcher-shell-${label}.png`) });
         await sheet.getByRole('button', { name: /Google Pixel 8/ }).click();
         await page.waitForFunction(() => location.hash.includes('action=shell') && location.hash.includes('HOME-LOCKED-0003'));
         await page.waitForFunction(() => document.title === 'Google Pixel 8 · Shell · ws-scrcpy');
 
-        // Files: the switcher names Files.
+        // Files: the switcher names Files. On a desktop Ctrl+K opens it, but not from a text field.
         await page.getByRole('button', { name: 'Files', exact: true }).click();
         await page.waitForFunction(() => document.title === 'Google Pixel 8 · Files · ws-scrcpy');
-        await page.getByRole('button', { name: 'Switch', exact: true }).click();
         const filesSheet = page.getByRole('dialog', { name: 'Switch device · Files', exact: true });
+        if (mobile) {
+            await page.getByRole('button', { name: 'Switch', exact: true }).click();
+        } else {
+            await page.evaluate(() => {
+                const field = document.createElement('input');
+                field.id = 'home-probe-field';
+                document.body.append(field);
+                field.focus();
+            });
+            await page.keyboard.press('Control+k');
+            await page.waitForTimeout(150);
+            assert.equal(await filesSheet.count(), 0, `${label}: a text field keeps Ctrl+K`);
+            await page.evaluate(() => document.getElementById('home-probe-field').remove());
+            await page.keyboard.press('Control+k');
+        }
         await filesSheet.waitFor();
         await settleMotion(page);
         assert.equal(await filesSheet.locator('.device-switcher-item').filter({ hasText: /iPhone|iPad/ }).count(), 0);
@@ -449,6 +470,10 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         await settleMotion(page);
         assert.equal(await streamSheet.locator('.device-switcher-item').count(), ANDROIDS.length + IPHONES.length);
         assert.equal(await streamSheet.locator('.device-switcher-item').filter({ hasText: 'iPhone linked' }).locator('.device-switcher-status').textContent(), 'Screen →');
+        // Developer Mode off: the screen cannot open, so the row cannot be chosen.
+        const ipadRow = streamSheet.locator('.device-switcher-item').filter({ hasText: 'iPad mini' });
+        assert.equal(await ipadRow.isDisabled(), true, 'an iPhone with Developer Mode off is not offered');
+        assert.equal(await ipadRow.locator('.device-switcher-status').textContent(), 'Needs attention');
         assert.deepEqual(test.errors, []);
         console.log('PASS', label, 'Notifications in screen and tool headers; tool switcher lists Android only');
     } finally {
@@ -464,6 +489,7 @@ async function toolLinkForIphone(browser, { width, height, mobile, colorScheme }
         try {
             await page.getByRole('heading', { name: `${tool} is not available for this device`, exact: true }).waitFor();
             await page.getByText('Files and Shell work on Android devices only. iPhone linked is an iPhone or iPad.', { exact: true }).waitFor();
+            await page.waitForFunction((title) => document.title === title, `iPhone linked · ${tool} · ws-scrcpy`);
             assert.equal(await page.locator('.tool-view, .terminal-container, .file-listing-client').count(), 0, 'no tool is mounted for an iPhone');
             assert.deepEqual(test.channels.filter((code) => !['HSTS', 'GTRC', 'ATRC'].includes(code)), [], 'no tool channel was opened for the iPhone, also not before the device list arrived');
             assert.equal(await page.locator('.stream-header-device > strong').textContent(), 'iPhone linked', 'the header shows the name, not the serial');
@@ -476,6 +502,17 @@ async function toolLinkForIphone(browser, { width, height, mobile, colorScheme }
             await page.getByRole('button', { name: 'Back to devices', exact: true }).last().click();
             await page.locator('#devices').waitFor();
             assert.deepEqual(test.errors, []);
+        } finally {
+            await test.context.close();
+        }
+    }
+    // Developer Mode off: the page does not offer a screen that cannot open.
+    {
+        const test = await start(browser, { width, height, mobile, colorScheme, hash: { action: 'shell', udid: 'HOME-IPAD-NODEV' } });
+        try {
+            await test.page.getByRole('heading', { name: 'Shell is not available for this device', exact: true }).waitFor();
+            assert.equal(await test.page.getByRole('link', { name: 'Open screen', exact: true }).count(), 0);
+            await test.page.getByRole('button', { name: 'Back to devices', exact: true }).last().waitFor();
         } finally {
             await test.context.close();
         }

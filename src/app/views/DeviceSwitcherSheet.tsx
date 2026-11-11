@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
-import { devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/devices';
+import { canOpenScreen, devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/devices';
 import { activeStream, deviceSwitcherOpen, activeCoreDeviceStream, openSheet } from '../state/stream';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
@@ -26,6 +26,15 @@ interface DeviceSwitcherSheetProps {
 
 // A mouse and a keyboard: the search field can take focus without raising a phone keyboard.
 const KEYBOARD_QUERY = '(hover: hover) and (pointer: fine)';
+
+/** A text field other than the switcher's search keeps Ctrl+K, for example the Live text box. */
+function isOtherTextField(target: EventTarget | null, search: HTMLInputElement | null): boolean {
+    return (
+        target instanceof Element &&
+        target !== search &&
+        !!target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
+    );
+}
 
 export function DeviceSwitcherSheet({
     currentDeviceKey,
@@ -62,6 +71,8 @@ export function DeviceSwitcherSheet({
         });
         return () => cancelAnimationFrame(frame);
     }, [open]);
+    // A tool opens on any connected device. A screen also needs Developer Mode on an iPhone.
+    const canOpen = (entry: DeviceEntry) => (onSelectDevice ? isDeviceAvailable(entry) : canOpenScreen(entry));
     const entries = Array.from(devices.value.values()).filter((entry) => !filter || filter(entry));
     const visible = entries
         .filter((entry) =>
@@ -69,11 +80,7 @@ export function DeviceSwitcherSheet({
                 .toLocaleLowerCase()
                 .includes(query.trim().toLocaleLowerCase()),
         )
-        .sort(
-            (a, b) =>
-                Number(isDeviceAvailable(b)) - Number(isDeviceAvailable(a)) ||
-                deviceName(a).localeCompare(deviceName(b)),
-        );
+        .sort((a, b) => Number(canOpen(b)) - Number(canOpen(a)) || deviceName(a).localeCompare(deviceName(b)));
 
     const getSelection = (entry: DeviceEntry) => {
         if (entry.params.type === 'ios') {
@@ -139,7 +146,7 @@ export function DeviceSwitcherSheet({
             : entry.params.type === 'ios'
               ? entry.descriptor.udid === activeCoreDeviceStream.value?.params.udid
               : entry.descriptor.udid === session?.params.udid && selected?.url === session.params.ws;
-        return { entry, isCurrent, available: isDeviceAvailable(entry), info: getDeviceStatusInfo(entry) };
+        return { entry, isCurrent, available: canOpen(entry), info: getDeviceStatusInfo(entry) };
     });
     const selectable = rows.filter((row) => row.available && !row.isCurrent).map((row) => row.entry);
 
@@ -149,7 +156,7 @@ export function DeviceSwitcherSheet({
     latest.current = { selectable, highlight, onSelect };
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
-            if (isSwitcherShortcut(event)) {
+            if (isSwitcherShortcut(event) && !isOtherTextField(event.target, searchRef.current)) {
                 event.preventDefault();
                 if (deviceSwitcherOpen.value) {
                     searchRef.current?.focus({ preventScroll: true });
@@ -264,7 +271,8 @@ export function DeviceSwitcherSheet({
                             {isCurrent
                                 ? 'Viewing'
                                 : available
-                                  ? info.status === 'asleep'
+                                  ? // A sleeping screen matters to a stream, not to Files or Shell.
+                                    info.status === 'asleep' && !onSelectDevice
                                       ? 'Asleep →'
                                       : `${openLabel} →`
                                   : info.label}

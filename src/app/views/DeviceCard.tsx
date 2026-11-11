@@ -1,7 +1,7 @@
 import { ComponentChildren } from 'preact';
 import { AnimatedDetails } from '../ui/AnimatedDetails';
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { DeviceEntry, deviceName } from '../state/devices';
+import { canOpenScreen, DeviceEntry, deviceName } from '../state/devices';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
 import { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
@@ -443,7 +443,6 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
         statusInfo.status === 'asleep' ||
         ((statusInfo.status === 'attention' || statusInfo.status === 'error') && descriptor['screen.power'] === 'off');
     const unlockLine = descriptor.unlockSchedule && unlockCardLine(descriptor.unlockSchedule);
-    const canOpenScreen = isActive && developerMode !== false;
     const hasInbox = isNotificationSource(notificationSummary.value, descriptor.udid);
     const unread = notificationSummary.value.unreadBySource[descriptor.udid] || 0;
     const restartPrompt = (
@@ -469,8 +468,13 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             data-device-key={entry.key}
         >
             <DeviceHeader entry={entry} platform={`iOS ${descriptor.version}`}>
-                {unlockLine && !unlockLine.problem && (
-                    <span class="device-unlock-schedule" title={unlockLine.title}>
+                {/* A connected phone shows an unlock problem as its own line, with an action. An
+                    unplugged one has no action to offer, so the problem stays here. */}
+                {unlockLine && (!unlockLine.problem || !isActive) && (
+                    <span
+                        class={`device-unlock-schedule ${unlockLine.problem ? 'problem' : ''}`}
+                        title={unlockLine.title}
+                    >
                         {unlockLine.text}
                     </span>
                 )}
@@ -546,7 +550,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             )}
             {feedback && <p class="device-unavailable-hint">{feedback}</p>}
             <div class="services device-primary-actions">
-                {canOpenScreen ? (
+                {canOpenScreen(entry) ? (
                     tools.map((tool, index) => (
                         <NavLink
                             key={`${tool.action}_${index}`}

@@ -39,6 +39,14 @@ export function isDeviceAvailable(entry: DeviceEntry): boolean {
     return entry.descriptor.state === (entry.params.type === 'android' ? DeviceState.DEVICE : DeviceState.CONNECTED);
 }
 
+/** A connected device whose screen can be opened. An iPhone with Developer Mode off cannot. */
+export function canOpenScreen(entry: DeviceEntry): boolean {
+    return (
+        isDeviceAvailable(entry) &&
+        !(entry.params.type === 'ios' && (entry.descriptor as ApplDeviceDescriptor).developerMode === false)
+    );
+}
+
 /** Files and Shell run over adb, so only Android devices have them. */
 export function supportsDeviceTools(entry: DeviceEntry): boolean {
     return entry.params.type === 'android';
