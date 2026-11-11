@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const { settleMotion } = require('./ui-motion');
-const { fixture, DEVICE } = require('./e2e-files');
+const { fixture, DEVICE, SHARED } = require('./e2e-files');
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-files';
 const UDID = 'files-fixture';
@@ -363,6 +363,91 @@ async function dialogs(browser) {
     await finish();
 }
 
+async function goTo(page, target) {
+    await page.getByRole('button', { name: 'Type a folder path', exact: true }).click();
+    await page.locator('.fx-address-input').fill(target);
+    await page.locator('.fx-address-input').press('Enter');
+    await crumb(page, path.posix.basename(target));
+    await ready(page);
+}
+const pick = (page, ...list) =>
+    page.locator('.file-explorer input[type=file]').setInputFiles(
+        list.map(([name, text]) => ({ name, mimeType: 'text/plain', buffer: Buffer.from(text) })),
+    );
+const uploadsDone = (page) =>
+    page.waitForFunction(
+        () =>
+            !document.querySelector('.file-listing-upload-progress') &&
+            document.querySelector('.file-listing-client')?.dataset.listing === 'ready',
+    );
+
+// Shared storage ignores case in names, so a name that differs only by case is a conflict there.
+async function nameCase(browser) {
+    const { page, finish, traffic, files } = await start(browser, PHONE, SHARED);
+    const dialog = page.locator('.fx-dialog[open]');
+    const closed = () => page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+    await row(page, 'notes.txt').waitFor();
+
+    await pick(page, ['Notes.txt', 'Capitalised']);
+    await dialog.getByRole('heading', { name: `Replace “notes.txt” on ${DEVICE}?`, exact: true }).waitFor();
+    assert(
+        (await dialog.locator('.fx-dialog-message').innerText()).includes(
+            'This storage treats “Notes.txt” and “notes.txt” as the same name.',
+        ),
+        'the dialog says why the two names collide',
+    );
+    await settleMotion(page);
+    await page.screenshot({ path: path.join(OUT, 'flows-case-conflict.png') });
+    assert.equal(traffic.starts.length, 0, 'nothing is sent before the answer');
+    await dialog.getByRole('button', { name: 'Keep both', exact: true }).click();
+    await closed();
+    await row(page, 'Notes (1).txt').waitFor();
+    assert.deepEqual(traffic.starts.at(-1), { path: SHARED + '/Notes (1).txt', overwrite: false });
+    assert.equal(files.get(SHARED + '/notes.txt').toString(), 'Shared notes\n', 'the existing file is untouched');
+    await uploadsDone(page);
+
+    // Replace is still an explicit answer, and it replaces the file that holds the name.
+    await pick(page, ['NOTES.TXT', 'Replacement']);
+    await dialog.getByRole('heading', { name: `Replace “notes.txt” on ${DEVICE}?`, exact: true }).waitFor();
+    await dialog.getByRole('button', { name: 'Replace', exact: true }).click();
+    await closed();
+    await uploadsDone(page);
+    assert.deepEqual(traffic.starts.at(-1), { path: SHARED + '/NOTES.TXT', overwrite: true });
+    assert.equal(files.has(SHARED + '/notes.txt'), false);
+    assert.equal(files.get(SHARED + '/NOTES.TXT').toString(), 'Replacement');
+
+    // Two spellings of one name in a single batch cannot both land.
+    const startsBefore = traffic.starts.length;
+    await pick(page, ['report.txt', 'First'], ['Report.TXT', 'Second']);
+    await page.getByRole('alert').filter({ hasText: '“Report.TXT” was added more than once.' }).waitFor();
+    await uploadsDone(page);
+    assert.equal(traffic.starts.length, startsBefore + 1);
+    assert.equal(files.get(SHARED + '/report.txt').toString(), 'First');
+
+    // A new folder cannot take a name that differs from a folder here only by case.
+    await page.getByRole('button', { name: 'Actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'New folder', exact: true }).click();
+    await dialog.locator('input[name="value"]').fill('camera');
+    await dialog.getByRole('button', { name: 'Create', exact: true }).click();
+    assert.equal(
+        await dialog.locator('.fx-dialog-error').innerText(),
+        'This storage treats “camera” and “Camera” as the same name.',
+    );
+    await page.keyboard.press('Escape');
+    await closed();
+    assert.equal(traffic.operations.length, 0);
+
+    // Elsewhere on the device the two spellings are two files, and no question is asked.
+    await goTo(page, ROOT);
+    await pick(page, ['Notes.txt', 'A second file']);
+    await row(page, 'Notes.txt').waitFor();
+    await uploadsDone(page);
+    assert.deepEqual(traffic.starts.at(-1), { path: ROOT + '/Notes.txt', overwrite: false });
+    assert.equal(files.get(ROOT + '/notes.txt').toString(), 'Mock download contents\n');
+    assert.equal(files.get(ROOT + '/Notes.txt').toString(), 'A second file');
+    await finish();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -374,6 +459,7 @@ async function main() {
         ['keyboard focus', () => keyboardFocus(browser)],
         ['columns', () => columns(browser)],
         ['dialogs', () => dialogs(browser)],
+        ['names that differ by case', () => nameCase(browser)],
     ];
     try {
         for (const [name, run] of scenarios) {

@@ -12,6 +12,7 @@ const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-files';
 const UDID = 'files-fixture';
 const ROOT = '/data/local/tmp';
 const LARGE = '/data/local/large';
+const SHARED = '/sdcard/Download';
 // The name the page header shows for the fixture phone; destructive questions repeat it.
 const DEVICE = 'Fixture Files test phone';
 function frame(type, id, payload = Buffer.alloc(0)) {
@@ -69,7 +70,15 @@ async function fixture(page) {
         [ROOT + '/photo.png', Buffer.alloc(2048)],
         [ROOT + '/.hidden-cache', Buffer.from('x')],
     ]);
-    const dirs = new Set(['/', '/data', '/data/local', ROOT, ROOT + '/empty', ROOT + '/denied', ROOT + '/archive', LARGE]);
+    const dirs = new Set(['/', '/data', '/data/local', ROOT, ROOT + '/empty', ROOT + '/denied', ROOT + '/archive', LARGE, '/sdcard', SHARED, SHARED + '/Camera']);
+    files.set(SHARED + '/notes.txt', Buffer.from('Shared notes\n'));
+    // Shared storage ignores case in names; everything else on the device does not.
+    const folded = (target) => (target.startsWith('/sdcard/') ? target.toLowerCase() : target);
+    const taken = (target) => {
+        for (const file of files.keys()) if (folded(file) === folded(target)) return { file };
+        for (const directory of dirs) if (folded(directory) === folded(target)) return { directory };
+        return undefined;
+    };
     // True sizes of files too large to hold in memory. LIST states them modulo 4 GiB, as adb does.
     const sizes = new Map([[LARGE + '/film.mkv', 5 * 1024 ** 3 + 7]]);
     files.set(LARGE + '/film.mkv', Buffer.alloc(0));
@@ -272,7 +281,8 @@ async function fixture(page) {
                         traffic.uploads.push(upload.path);
                         traffic.starts.push({ path: upload.path, overwrite });
                         // Like the server: START is refused, with the reason in the close frame.
-                        if (dirs.has(upload.path) || (files.has(upload.path) && !overwrite)) {
+                        const existing = taken(upload.path);
+                        if (existing?.directory || (existing?.file && !overwrite)) {
                             socket.send(
                                 frame(64, id, close(channel, 4013, 'An item with this name already exists.')),
                             );
@@ -283,6 +293,9 @@ async function fixture(page) {
                         upload.chunks.push(data.subarray(8, 8 + data.readUInt32BE(4)));
                         reply(0);
                     } else if (state === 3) {
+                        // A replace removes the file that held the name, however it was spelled.
+                        const replaced = taken(upload.path)?.file;
+                        if (replaced) files.delete(replaced);
                         files.set(upload.path, Buffer.concat(upload.chunks));
                         reply(0);
                         end();
@@ -1064,4 +1077,4 @@ if (require.main === module)
         process.exitCode = 1;
     });
 
-module.exports = { fixture, DEVICE };
+module.exports = { fixture, DEVICE, SHARED };

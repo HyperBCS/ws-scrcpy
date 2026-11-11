@@ -156,3 +156,64 @@ test('HTTP downloads state the file size, and a transfer that ends early is not 
     assert.equal(response.headers.get('content-length'), null);
     assert.equal(await response.text(), 'abc');
 });
+
+test('name conflicts follow the storage: case is ignored on shared storage only', async () => {
+    const { freeName, nameKey, resolveNameConflicts } = require('../src/app/googDevice/filePush/nameConflicts');
+    for (const folder of ['/sdcard', '/sdcard/Download', '/storage/emulated/0/DCIM', '/storage/1A2B-3C4D', '/mnt/sdcard/x']) {
+        assert.equal(nameKey(folder)('Notes.TXT'), nameKey(folder)('notes.txt'), folder);
+    }
+    for (const folder of ['/data/local/tmp', '/', '/sdcardx', '/system/storage']) {
+        assert.notEqual(nameKey(folder)('Notes.TXT'), nameKey(folder)('notes.txt'), folder);
+    }
+
+    const key = nameKey('/sdcard/Download');
+    assert.equal(freeName('Notes.txt', new Set(['notes.txt', 'notes (1).txt']), false, key), 'Notes (2).txt');
+    const existing = new Map([
+        [key('notes.txt'), { isFolder: false, name: 'notes.txt' }],
+        [key('Camera'), { isFolder: true, name: 'Camera' }],
+    ]);
+    const asked = [];
+    const ask = (answers) => async (name, item, canReplace, remaining) => {
+        asked.push({ name, existing: item.name, canReplace, remaining });
+        return answers.shift();
+    };
+    const kept = await resolveNameConflicts(
+        ['Notes.txt', 'camera', 'fresh.txt'],
+        existing,
+        true,
+        ask([{ choice: 'keep', all: false }, { choice: 'keep', all: false }]),
+        () => false,
+        key,
+    );
+    assert.deepEqual(kept, [
+        { name: 'Notes.txt', target: 'Notes (1).txt', replace: false },
+        { name: 'camera', target: 'camera (1)', replace: false },
+        { name: 'fresh.txt', target: 'fresh.txt', replace: false },
+    ]);
+    const replaced = await resolveNameConflicts(
+        ['NOTES.TXT'],
+        existing,
+        true,
+        ask([{ choice: 'replace', all: false }]),
+        () => false,
+        key,
+    );
+    assert.deepEqual(replaced, [{ name: 'NOTES.TXT', target: 'NOTES.TXT', replace: true }]);
+    assert.deepEqual(asked, [
+        { name: 'Notes.txt', existing: 'notes.txt', canReplace: true, remaining: 1 },
+        { name: 'camera', existing: 'Camera', canReplace: false, remaining: 0 },
+        { name: 'NOTES.TXT', existing: 'notes.txt', canReplace: true, remaining: 0 },
+    ]);
+
+    // Where case matters, the same names are simply different files.
+    const exact = nameKey('/data/local/tmp');
+    const plain = await resolveNameConflicts(
+        ['Notes.txt'],
+        new Map([[exact('notes.txt'), { isFolder: false, name: 'notes.txt' }]]),
+        true,
+        async () => assert.fail('no question where the names differ'),
+        () => false,
+        exact,
+    );
+    assert.deepEqual(plain, [{ name: 'Notes.txt', target: 'Notes.txt', replace: false }]);
+});

@@ -17,7 +17,14 @@ import { ChannelCode } from '../../../common/ChannelCode';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import FilePushHandler, { DragAndPushListener, PlannedUpload, PushUpdateParams } from '../filePush/FilePushHandler';
 import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
-import { ConflictAnswer, ConflictChoice, Resolution, resolveNameConflicts } from '../filePush/nameConflicts';
+import {
+    ConflictAnswer,
+    ConflictChoice,
+    ExistingItem,
+    nameKey,
+    Resolution,
+    resolveNameConflicts,
+} from '../filePush/nameConflicts';
 import { DEFAULT_FILES_PATH, fileListingTool } from './deviceTools';
 import { pushRoute, replaceRoute } from '../../state/router';
 import { formatMode, formatModified, formatSize, iconMarkup, kindOf, typeLabel } from './fileTypes';
@@ -1612,7 +1619,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         const folder = this.path;
         const incomingFolders = new Set(folders);
-        const existing = new Map(this.entries.map((entry) => [entry.name, { isFolder: entry.isDirectory() }]));
+        // Compared the way this folder's storage compares names: on /sdcard, case is ignored.
+        const key = nameKey(folder);
+        const existing = new Map(
+            this.entries.map((entry) => [key(entry.name), { isFolder: entry.isDirectory(), name: entry.name }]),
+        );
         this.resolving = true;
         this.updateControls();
         try {
@@ -1621,10 +1632,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 existing,
                 replaceable,
                 async (name, item, canReplace, remaining) => {
-                    const answer = await this.askConflict(name, item.isFolder, canReplace, remaining);
+                    const answer = await this.askConflict(name, item, canReplace, remaining);
                     return this.stopped || this.path !== folder ? undefined : answer;
                 },
                 (name) => incomingFolders.has(name),
+                key,
             );
             if (!resolved.length && !this.stopped && this.path === folder) {
                 this.report(names.length === 1 ? `Skipped ${names[0]}.` : `Skipped ${names.length} items.`);
@@ -1640,12 +1652,15 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         // The answers are about this folder's listing, so the files go to this folder even if
         // the explorer has moved on by the time they start.
         const folder = this.path;
+        const key = nameKey(folder);
         const chosen = new Map<string, File>();
+        const taken = new Set<string>();
         const repeated = new Set<string>();
         files.forEach((file) => {
-            if (chosen.has(file.name)) {
+            if (taken.has(key(file.name))) {
                 repeated.add(file.name);
             } else {
+                taken.add(key(file.name));
                 chosen.set(file.name, file);
             }
         });
@@ -1692,8 +1707,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (/[\x00-\x1f\x7f]/.test(name)) {
             return 'This name contains characters that cannot be used on the device.';
         }
-        if (this.entries.some((entry) => entry.name === name)) {
-            return `“${name}” already exists in this folder.`;
+        const key = nameKey(this.path);
+        const taken = this.entries.find((entry) => key(entry.name) === key(name));
+        if (taken) {
+            return taken.name === name
+                ? `“${name}” already exists in this folder.`
+                : `This storage treats “${name}” and “${taken.name}” as the same name.`;
         }
         return '';
     }
@@ -1816,17 +1835,21 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
      */
     private askConflict(
         name: string,
-        folder: boolean,
+        item: ExistingItem,
         canReplace: boolean,
         remaining: number,
     ): Promise<ConflictAnswer> {
         const device = this.deviceLabel();
-        const title = canReplace ? `Replace “${name}” on ${device}?` : `“${name}” already exists on ${device}`;
-        const message = canReplace
-            ? 'This folder already has a file with this name. Replacing it cannot be undone.'
-            : folder
-              ? 'This folder already has a folder with this name. Folders are not replaced.'
-              : 'This folder already has an item with this name.';
+        // The item that is there, which is what a replace removes. Its name can differ by case.
+        const existing = item.name ?? name;
+        const title = canReplace ? `Replace “${existing}” on ${device}?` : `“${existing}” already exists on ${device}`;
+        const sameName = existing === name ? '' : ` This storage treats “${name}” and “${existing}” as the same name.`;
+        const message =
+            (canReplace
+                ? 'This folder already has a file with this name. Replacing it cannot be undone.'
+                : item.isFolder
+                  ? 'This folder already has a folder with this name. Folders are not replaced.'
+                  : 'This folder already has an item with this name.') + sameName;
         const others = remaining === 1 ? 'the other conflict' : `the other ${remaining} conflicts`;
         this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form fx-conflict">
             <h2>${esc(title)}</h2>
