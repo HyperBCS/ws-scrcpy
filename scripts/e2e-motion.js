@@ -157,13 +157,16 @@ async function disclosuresAndSheets(browser) {
     try {
         await settleMotion(f.page);
         await instrument(f.page);
-        const details = f.page.locator('.notification-history-help');
+        const setup = f.page.getByRole('button', { name: 'Setup & delivery', exact: true });
+        await setup.click();
+        await settleMotion(f.page);
+        const details = f.page.locator('.notification-delivery-details');
         const summary = details.locator('summary');
         await summary.focus();
         const closed = (await details.boundingBox()).height;
-        await freeze(f.page, '.notification-history-help');
+        await freeze(f.page, '.notification-delivery-details');
         await summary.evaluate(el => el.click());
-        await seek(f.page, '.notification-history-help', 0.3);
+        await seek(f.page, '.notification-delivery-details', 0.3);
         const middle = (await details.boundingBox()).height;
         assert(middle > closed + 5, 'disclosure expands through intermediate heights');
         await summary.evaluate(el => el.click());
@@ -172,6 +175,8 @@ async function disclosuresAndSheets(browser) {
         await settleMotion(f.page);
         assert.equal(await details.evaluate(el => el.open), false);
         assert.equal(await summary.evaluate(el => document.activeElement === el), true, 'disclosure retains keyboard focus');
+        await f.page.getByRole('button', { name: 'Inbox', exact: true }).click();
+        await settleMotion(f.page);
         const sheet = await openCardMenu(f.page, 'Coffee at four?');
         await settleMotion(f.page);
         const handle = await sheet.locator('.notification-action-sheet-handle').boundingBox();
@@ -195,6 +200,7 @@ async function disclosuresAndSheets(browser) {
         assert.equal(await toast.evaluate(el => el.getAnimations().length), 0, 'reduced motion shows feedback without movement');
         await toast.getByRole('button', { name: 'Dismiss undo notice' }).click();
         await toast.waitFor({ state: 'detached' });
+        await setup.click();
         await summary.click();
         assert.equal(await details.evaluate(el => el.open && !el.getAnimations().length), true, 'reduced motion changes disclosure state immediately');
         assert.deepEqual(f.errors, []);
@@ -231,19 +237,22 @@ async function toastTimer(browser) {
 }
 
 async function noticeFrames(browser) {
-    const f = await fixture(browser, { history: true, notifications: historyItems() });
+    // The growing notice reports failures on Setup; the inbox reports them at the bottom.
+    const f = await fixture(browser, { storedSources: ['phone-a'], storedReceiver: '' });
     try {
         await settleMotion(f.page);
         await instrument(f.page);
-        f.dismissError = 'Could not dismiss. Try again.';
+        f.testError = 'Could not send. Try again.';
         await freeze(f.page, '.notification-feedback');
-        await cardAction(f.page, 'Coffee at four?', 'Dismiss here');
+        const send = f.page.getByRole('button', { name: 'Send test notification', exact: true });
+        await send.click();
         const notice = f.page.locator('.notification-feedback');
         await notice.waitFor({ state: 'attached' });
         await seek(f.page, '.notification-feedback', 0.3);
         const middle = await notice.evaluate(el => ({ height: el.getBoundingClientRect().height, padding: +parseFloat(getComputedStyle(el).paddingTop) }));
         assert(middle.height > 0 && middle.padding > 0 && middle.padding < 14, 'the notice grows with its padding');
-        await cardAction(f.page, 'Design review', 'Mark read');
+        f.testError = '';
+        await send.click();
         const reversed = await notice.evaluate(el => ({ height: el.getBoundingClientRect().height, padding: +parseFloat(getComputedStyle(el).paddingTop) }));
         assert(Math.abs(reversed.height - middle.height) < 1 && Math.abs(reversed.padding - middle.padding) < 0.1, 'reversing a notice retains height and padding');
         await finish(f.page);

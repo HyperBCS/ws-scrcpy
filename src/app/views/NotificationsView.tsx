@@ -3,7 +3,7 @@ import { Toast } from '../ui/Toast';
 import { AnimatedDetails } from '../ui/AnimatedDetails';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { devices, deviceName } from '../state/devices';
+import { devices, deviceName, findDeviceByUdid } from '../state/devices';
 import {
     notificationRequest as api,
     registerNotificationWorker,
@@ -13,8 +13,8 @@ import {
     pushReceiverId,
     syncPushSubscription,
 } from '../state/notifications';
-import { NotificationHistory, UnreadBadge } from './NotificationHistory';
-import { route } from '../state/router';
+import { FeedBadge, NotificationHistory, UnreadBadge, feedState } from './NotificationHistory';
+import { route, pushRoute } from '../state/router';
 import type {
     NotificationHistoryItem,
     NotificationHistoryReply,
@@ -284,9 +284,7 @@ export function NotificationsView() {
             // may replace it. The result is shared by every visit to this page, so the
             // subscription shown is read from the browser afterwards, never from that result.
             void syncPushSubscription(true).then(async (result) => {
-                const current = await registration
-                    .then((r) => r.pushManager.getSubscription())
-                    .catch(() => undefined);
+                const current = await registration.then((r) => r.pushManager.getSubscription()).catch(() => undefined);
                 if (!alive) return;
                 synced = true;
                 if (current !== undefined) setSubscription(current);
@@ -324,14 +322,16 @@ export function NotificationsView() {
             });
         setReceiver((current) => (valid.has(current) ? current : ''));
     }, [status, initialized]);
-    const run = async (fn: () => Promise<void>) => {
+    // A failure goes to `onError` when given (the inbox reports it beside the list), otherwise
+    // to the notice at the top of Setup.
+    const run = async (fn: () => Promise<void>, onError?: (message: string) => void) => {
         setRunning((value) => value + 1);
         setError('');
         setMessage('');
         try {
             await fn();
         } catch (e) {
-            setError((e as Error).message);
+            (onError || setError)((e as Error).message);
         } finally {
             setRunning((value) => Math.max(0, value - 1));
         }
@@ -359,16 +359,30 @@ export function NotificationsView() {
         });
     };
     const requestedSource = route.value.get('source') || '';
-    const historySource =
-        status?.sources.find((source) => source.id === requestedSource) ||
-        (!requestedSource ? status?.sources[0] : undefined);
+    const linkedRequest = status?.sources.find((source) => source.id === requestedSource);
+    // A device card links every iPhone here, linked or not. One that is not linked opens the
+    // steps to link it; the inbox stays open for the others.
+    const unlinkedRequest = !!requestedSource && !!status && !linkedRequest;
+    const unlinkedEntry = unlinkedRequest ? findDeviceByUdid(requestedSource) : undefined;
+    const unlinkedName = unlinkedEntry ? deviceName(unlinkedEntry) : 'This iPhone';
+    const historySource = linkedRequest || status?.sources[0];
     useEffect(() => {
         if (requestedSource && status) {
             setPanel(status.sources.some((source) => source.id === requestedSource) ? 'history' : 'setup');
             setPhone(requestedSource);
         }
     }, [requestedSource, !!status]);
-    const activePanel = historySource ? panel || 'history' : 'setup';
+    // Inbox drops the unlinked iPhone from the route, so Setup is shown until then.
+    const activePanel = !historySource || unlinkedRequest ? 'setup' : panel || 'history';
+    const openInbox = () => {
+        if (unlinkedRequest) {
+            const params = new URLSearchParams(route.value);
+            params.delete('source');
+            params.delete('notification');
+            pushRoute(params);
+        }
+        setPanel('history');
+    };
     const updateSource = async (source: NotificationSource) => {
         await api('sources', 'POST', source);
         await refresh();
@@ -382,19 +396,20 @@ export function NotificationsView() {
                 </a>
                 <h1>
                     Notifications{' '}
-                    <UnreadBadge count={historySource ? status?.unreadBySource?.[historySource.id] || 0 : 0} />
+                    <UnreadBadge
+                        count={historySource && !unlinkedRequest ? status?.unreadBySource?.[historySource.id] || 0 : 0}
+                    />
                 </h1>
-                {(!status || status.sources.length <= 1 || activePanel === 'setup') && (
-                    <p>{historySource?.name || 'Connect an iPhone to receive its alerts.'}</p>
-                )}
+                {status && !status.sources.length && <p>Connect an iPhone to receive its notifications.</p>}
             </header>
-            {connectionError && status && (
+            {/* The inbox shows this inside its search bar, which stays on screen while scrolling. */}
+            {connectionError && status && activePanel === 'setup' && (
                 <p role="alert" class="notification-notice notification-error">
                     Connection interrupted. {connectionError}
                 </p>
             )}
             <Presence
-                show={!!error}
+                show={!!error && activePanel === 'setup'}
                 kind="collapse"
                 role="alert"
                 class="notification-notice notification-error notification-feedback"
@@ -434,12 +449,8 @@ export function NotificationsView() {
                         style={{ '--segment-index': activePanel === 'setup' ? 1 : 0 }}
                         aria-label="Notification pages"
                     >
-                        <button
-                            disabled={!historySource}
-                            aria-pressed={activePanel === 'history'}
-                            onClick={() => setPanel('history')}
-                        >
-                            History
+                        <button disabled={!historySource} aria-pressed={activePanel === 'history'} onClick={openInbox}>
+                            Inbox
                         </button>
                         <button aria-pressed={activePanel === 'setup'} onClick={() => setPanel('setup')}>
                             Setup &amp; delivery
@@ -451,6 +462,9 @@ export function NotificationsView() {
                                 sources={status.sources}
                                 items={history}
                                 unreadBySource={status.unreadBySource || {}}
+                                statuses={status.statuses}
+                                feedError={status.error}
+                                connectionError={connectionError}
                                 busy={busy}
                                 run={run}
                                 refresh={refresh}
@@ -468,17 +482,17 @@ export function NotificationsView() {
                                     </p>
                                 )}
                                 {status.sources.map((s) => {
-                                    const ready = status.statuses[s.id] === 'Receiving notifications';
+                                    const state = feedState(status.statuses[s.id]);
                                     return (
                                         <article class="notification-source" key={s.id}>
                                             <div class="notification-source-heading">
                                                 <h3>{s.name}</h3>
-                                                <span class={`notification-badge ${ready ? 'ready' : ''}`}>
-                                                    {ready ? 'Connected' : 'Connecting…'}
-                                                </span>
+                                                <FeedBadge state={state} />
                                             </div>
-                                            {!ready && (
-                                                <p class="notification-help">
+                                            {state !== 'connected' && (
+                                                <p
+                                                    class={`notification-help ${state === 'attention' ? 'notification-error' : ''}`}
+                                                >
                                                     {status.statuses[s.id] ||
                                                         'Waiting for Bluetooth. Keep the iPhone near the NUC.'}
                                                 </p>
@@ -508,6 +522,7 @@ export function NotificationsView() {
                                     class="notification-details notification-pairing"
                                     open={
                                         !status.sources.length ||
+                                        unlinkedRequest ||
                                         status.pairingOpen ||
                                         !!status.pairing ||
                                         !!status.pairingRejected
@@ -517,6 +532,12 @@ export function NotificationsView() {
                                         {status.sources.length ? 'Add another iPhone' : 'Connect your first iPhone'}
                                     </summary>
                                     <div class="notification-details-content">
+                                        {unlinkedRequest && (
+                                            <p class="notification-notice" role="status">
+                                                {unlinkedName} is not linked yet. Follow these steps to receive its
+                                                notifications.
+                                            </p>
+                                        )}
                                         <p>Use the iPhone whose notifications you want to forward.</p>
                                         <ol class="notification-setup-steps">
                                             <li>Connect that iPhone to the NUC by USB.</li>
@@ -579,7 +600,7 @@ export function NotificationsView() {
                                             <h3>Match the two connections</h3>
                                             <p class="notification-help">
                                                 Choose the same iPhone in both lists. This connects its screen controls
-                                                with its Bluetooth alerts.
+                                                with its Bluetooth notifications.
                                             </p>
                                             <label>
                                                 iPhone connected to the NUC by USB
@@ -679,7 +700,9 @@ export function NotificationsView() {
                                 </div>
                                 {!window.isSecureContext ? (
                                     <div class="notification-notice">
-                                        <p>Open the secure app with Tailscale connected to receive alerts here.</p>
+                                        <p>
+                                            Open the secure app with Tailscale connected to receive notifications here.
+                                        </p>
                                         <a class="ui-button" href={privateUrl}>
                                             Open private app
                                         </a>
@@ -714,8 +737,8 @@ export function NotificationsView() {
                                 {receiver && selected.includes(receiver) && (
                                     <p class="notification-help">
                                         {status.sources.find((s) => s.id === receiver)?.name} won’t receive its own
-                                        alerts again. Select a different sending iPhone to receive its notifications
-                                        here.
+                                        notifications again. Select a different sending iPhone to receive its
+                                        notifications here.
                                     </p>
                                 )}
                                 <AnimatedDetails
@@ -765,7 +788,7 @@ export function NotificationsView() {
                                             </select>
                                         </label>
                                         <p class="notification-help">
-                                            Prevents this iPhone from receiving its own alerts.
+                                            Prevents this iPhone from receiving its own notifications.
                                         </p>
                                         {subscription && (
                                             <button
@@ -863,7 +886,7 @@ export function NotificationsView() {
                                         a test notification to register it again.
                                     </p>
                                 )}
-                                <AnimatedDetails class="notification-details">
+                                <AnimatedDetails class="notification-details notification-delivery-details">
                                     <summary>Delivery details</summary>
                                     <div class="notification-details-content">
                                         {receivers.length ? (
