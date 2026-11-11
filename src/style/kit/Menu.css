@@ -4,7 +4,7 @@
 /* The one menu. Markup, for code that builds it without Preact:
      .kit-menu[role=menu]
        button.kit-menu-item[role=menuitem]            (add .kit-menu-danger for a removal)
-       button.kit-menu-item[role=menuitemcheckbox][aria-checked]   (or menuitemradio)
+       button.kit-menu-item[role=menuitemcheckbox][aria-checked] > svg.kit-icon   (or menuitemradio)
        .kit-menu-separator[role=separator]
        .kit-menu-title
    `bindMenu` in ui/Menu.tsx places it and gives it its keys. */
@@ -81,21 +81,14 @@
     color: var(--danger-text);
 }
 
-/* The check is a drawn shape, not a character: generated text would join the item's name. */
-.kit-menu-item[aria-checked]::before {
-    content: '';
+/* The check of an item that is on or off: a kit icon (`iconSvg('check', 20)` in markup built
+   without Preact), hidden while the item is off so the label stays in place. */
+.kit-menu-item[aria-checked] > .kit-icon {
     flex: none;
-    box-sizing: border-box;
-    width: 7px;
-    height: 12px;
-    margin: 0 var(--space-4) 3px;
-    border: solid transparent;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
 }
 
-.kit-menu-item[aria-checked='true']::before {
-    border-color: currentColor;
+.kit-menu-item[aria-checked='false'] > .kit-icon {
+    visibility: hidden;
 }
 
 .kit-menu-separator {

@@ -2,6 +2,7 @@ import { ComponentChildren, RefObject } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import '../../style/kit/Menu.css';
 import { stopRemoteInteraction } from './dialogFocus';
+import { Icon } from './Icon';
 import { openOverlay } from './overlayHistory';
 import { usePresence } from './Presence';
 
@@ -225,6 +226,8 @@ export function MenuItem({ onSelect, checked, danger = false, disabled = false, 
             disabled={disabled}
             onClick={onSelect}
         >
+            {/* Always drawn, and hidden while off, so the label does not move. */}
+            {checked !== undefined && <Icon name="check" size={20} />}
             {children}
         </button>
     );

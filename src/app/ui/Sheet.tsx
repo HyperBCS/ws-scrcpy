@@ -4,6 +4,7 @@ import { useId, useLayoutEffect, useRef } from 'preact/hooks';
 import '../../style/kit/Sheet.css';
 import { cancelConfirmPrompt } from './ConfirmAction';
 import { rememberDialogFocus, returnDialogFocus, stopRemoteInteraction, trapDialogTab } from './dialogFocus';
+import { IconButton } from './IconButton';
 import { closeMenusIn, menuButtonOf } from './Menu';
 import { useOverlayHistory } from './overlayHistory';
 import { usePresence } from './Presence';
@@ -235,18 +236,14 @@ export function Sheet({
                             </p>
                         )}
                     </div>
-                    <button
-                        type="button"
+                    <IconButton
+                        icon="close"
+                        variant="bare"
                         class="kit-sheet-close"
+                        label={`Close ${title}`}
                         onClick={dismiss}
                         disabled={!dismissible}
-                        title="Close"
-                        aria-label={`Close ${title}`}
-                    >
-                        <svg aria-hidden="true" viewBox="0 0 24 24">
-                            <path d="M6 6l12 12M18 6L6 18" />
-                        </svg>
-                    </button>
+                    />
                 </header>
                 <div class={`kit-sheet-body ${bodyClassName || ''}`}>{children}</div>
                 {footer && <footer class="kit-sheet-footer">{footer}</footer>}

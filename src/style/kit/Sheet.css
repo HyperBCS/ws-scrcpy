@@ -8,7 +8,7 @@
          header.kit-sheet-header
            .kit-sheet-handle
            .kit-sheet-heading > h2.kit-sheet-title + p.kit-sheet-subtitle
-           button.kit-sheet-close > svg
+           button.kit-icon-button.kit-icon-button-bare.kit-sheet-close > svg.kit-icon
          .kit-sheet-body
          footer.kit-sheet-footer
    The dialog covers the window and is not seen itself. The panel is the sheet: at the bottom
@@ -144,50 +144,6 @@
     line-height: 1.4;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.kit-sheet-close {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
-    box-sizing: border-box;
-    width: var(--control-height);
-    height: var(--control-height);
-    margin: 0;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: var(--radius-md);
-    background: transparent;
-    color: var(--text);
-    cursor: pointer;
-}
-
-.kit-sheet-close svg {
-    flex: none;
-    width: 22px;
-    height: 22px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.8;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-}
-
-.kit-sheet-close:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: var(--focus-ring-offset);
-}
-
-@media (hover: hover) {
-    .kit-sheet-close:hover:not(:disabled) {
-        background: var(--surface-sunken);
-    }
-}
-
-.kit-sheet-close:disabled {
-    opacity: var(--disabled-opacity);
-    cursor: default;
 }
 
 .kit-sheet-body {
