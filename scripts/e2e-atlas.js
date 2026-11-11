@@ -36,6 +36,7 @@ const NOW = Date.UTC(2026, 2, 14, 10, 0, 0);
 const PIXEL = 'ATLAS-PIXEL-0001';
 const PIXEL_2 = 'ATLAS-PIXEL-0002';
 const IPHONE = 'ATLAS-IPHONE-0001';
+const IPHONE_2 = 'ATLAS-IPHONE-0002';
 const android = (udid, model, extra = {}) => ({
     udid, state: 'device', pid: 123, interfaces: [], 'ro.product.model': model, 'ro.product.manufacturer': 'Google',
     'ro.build.version.release': '16', 'ro.build.version.sdk': '36', 'ro.product.cpu.abi': 'arm64-v8a',
@@ -46,11 +47,15 @@ const ANDROIDS = [
     android(PIXEL, 'Pixel 9', { 'keyguard.showing': true, 'keyguard.occluded': false, 'device.locked': true }),
     android(PIXEL_2, 'Pixel 8', { 'battery.level': 35, 'battery.charging': true }),
 ];
-const IPHONES = [{
-    udid: IPHONE, name: 'Bench iPhone', model: 'iPhone 13 Pro Max', version: '27.2', state: 'Connected', paired: true,
-    developerMode: true, session: 'ready', 'screen.power': 'on', 'device.locked': false, 'last.update.timestamp': NOW,
-    unlockSchedule: { enabled: true, time: '03:00', timeZone: 'UTC', serverTimeZone: 'UTC', hasPasscode: true, nextRunAt: NOW + 5 * 3600000, lastUnlockedAt: NOW - 7 * 3600000 },
-}];
+const iphone = (udid, name, unlockSchedule) => ({
+    udid, name, model: 'iPhone 13 Pro Max', version: '27.2', state: 'Connected', paired: true, developerMode: true,
+    session: 'ready', 'screen.power': 'on', 'device.locked': false, 'last.update.timestamp': NOW, unlockSchedule,
+});
+// The second iPhone has a schedule that cannot run, so its card shows the problem line.
+const IPHONES = [
+    iphone(IPHONE, 'Bench iPhone', { enabled: true, time: '03:00', timeZone: 'UTC', serverTimeZone: 'UTC', hasPasscode: true, nextRunAt: NOW + 5 * 3600000, lastUnlockedAt: NOW - 7 * 3600000 }),
+    iphone(IPHONE_2, 'Spare iPhone', { enabled: true, time: '03:00', timeZone: 'UTC', serverTimeZone: 'UTC', hasPasscode: false }),
+];
 const SOURCES = [{ id: IPHONE, name: 'Bench iPhone', address: 'AA:BB:CC:DD:EE:01', apps: [], preview: true }];
 const NOTIFICATIONS = [
     { key: 'chat', source: IPHONE, app: 'com.example.chat', appName: 'Messages', title: 'Coffee at four?', body: 'Meet me outside the station.', received: NOW - 34 * 60000, read: false, dismissed: false, active: true },
@@ -62,7 +67,9 @@ const STREAM_CONFIG = { bitrate: 3500000, maxFps: 60, maxSize: 1280, iFrameInter
 const ROOT = '/data/local/tmp';
 const DIR = 0o40755;
 const FILE = 0o100644;
-const FOLDERS = { [ROOT]: [['photos', DIR], ['notes.txt', FILE], ['report.pdf', FILE]], [`${ROOT}/photos`]: [['holiday.jpg', FILE]] };
+// The phone refuses to list `denied`.
+const DENIED = `${ROOT}/denied`;
+const FOLDERS = { [ROOT]: [['denied', DIR], ['photos', DIR], ['notes.txt', FILE], ['report.pdf', FILE]], [`${ROOT}/photos`]: [['holiday.jpg', FILE]], [DENIED]: [] };
 
 const VIEWPORTS = [
     { name: 'phone', width: 390, height: 844, mobile: true },
@@ -87,6 +94,12 @@ function closeFrame(id, code) {
 function stat(mode) {
     const data = Buffer.alloc(16);
     data.write('STAT'); data.writeUInt32LE(mode, 4); data.writeUInt32LE(1700000000, 12);
+    return data;
+}
+function fail(message) {
+    const text = Buffer.from(message);
+    const data = Buffer.alloc(8 + text.length);
+    data.write('FAIL'); data.writeUInt32LE(text.length, 4); text.copy(data, 8);
     return data;
 }
 function dent(name, mode) {
@@ -153,6 +166,9 @@ async function start(browser, viewport, theme) {
                 if (command === 'STAT') {
                     reply(stat(FOLDERS[target] || ['/', '/data', '/data/local'].includes(target) ? DIR : 0));
                     end(1000);
+                } else if (command === 'LIST' && target === DENIED) {
+                    reply(fail('Permission denied by fixture'));
+                    end(1000);
                 } else if (command === 'LIST') {
                     (FOLDERS[target] || []).forEach(([name, mode]) => reply(dent(name, mode)));
                     end(0);
@@ -197,8 +213,8 @@ async function dismiss(test, shown) {
 }
 
 /**
- * A hash of every computed property of each element of the body and of its ::before and ::after,
- * in document order. With `full`, the properties themselves.
+ * A hash of every computed property, custom properties aside, of each element of the body and of
+ * its ::before and ::after, in document order. With `full`, the properties themselves.
  */
 function computedStyles(full) {
     const digest = (text) => {
@@ -209,8 +225,10 @@ function computedStyles(full) {
     const read = (element, pseudo) => {
         const style = getComputedStyle(element, pseudo);
         if (pseudo && (style.content === 'none' || style.content === 'normal')) return undefined;
-        // Sorted: the browser lists custom properties in an order that changes from run to run.
-        const text = Array.from(style).sort().map((property) => `${property}:${style.getPropertyValue(property)};`).join('');
+        // Custom properties are left out: one shows only through a property that uses it, which
+        // is listed, and a token that is added and not yet used changes nothing on the page.
+        const names = Array.from(style).filter((property) => !property.startsWith('--')).sort();
+        const text = names.map((property) => `${property}:${style.getPropertyValue(property)};`).join('');
         return full ? text : digest(text);
     };
     const rows = [];
@@ -254,6 +272,7 @@ async function listStates(test) {
     await page.goto(BASE);
     await card(page, `android:${PIXEL}`).waitFor();
     await card(page, `ios:${IPHONE}`).waitFor();
+    await card(page, `ios:${IPHONE_2}`).locator('.device-problem .device-unlock-schedule.problem').waitFor();
     await shoot(test, 'list');
 
     await press(test, card(page, `android:${PIXEL_2}`).locator('.device-details > summary'));
@@ -320,18 +339,40 @@ async function androidStates(test) {
     await tab(page, 'Files').click();
     await page.locator('.file-explorer[data-listing="ready"] .fx-row[data-name="notes.txt"]').waitFor();
     await shoot(test, 'android-files');
-    await press(test, page.getByRole('button', { name: test.mobile ? 'Actions' : 'View', exact: true }));
-    await page.locator('.fx-menu:not([hidden])').waitFor();
+    const menu = page.locator('.fx-menu:not([hidden])');
+    const openMenu = async () => {
+        await press(test, page.getByRole('button', { name: test.mobile ? 'Actions' : 'View', exact: true }));
+        await menu.waitFor();
+    };
+    await openMenu();
     await shoot(test, 'android-files-menu');
+    // The layout choices: in the View menu on a desktop, one step further on a phone.
     if (test.mobile) {
+        await press(test, page.getByRole('menuitem', { name: 'View options…', exact: true }));
+        await page.getByRole('menuitemradio', { name: 'Tiles', exact: true }).waitFor();
+        await shoot(test, 'android-files-view-menu');
+    }
+    await press(test, page.getByRole('menuitemradio', { name: 'Tiles', exact: true }));
+    await page.locator('.file-explorer[data-view="tiles"][data-listing="ready"]').waitFor();
+    if (await menu.count()) await dismiss(test, menu);
+    await shoot(test, 'android-files-tiles');
+
+    if (test.mobile) {
+        await openMenu();
         await press(test, page.getByRole('menuitem', { name: 'New folder', exact: true }));
     } else {
-        await dismiss(test, page.locator('.fx-menu:not([hidden])'));
         await press(test, page.locator('.fx-commands').getByRole('button', { name: 'New folder', exact: true }));
     }
     await page.locator('.fx-dialog[open]').waitFor();
     await shoot(test, 'android-files-dialog');
     await dismiss(test, page.locator('.fx-dialog[open]'));
+
+    // A folder the phone refuses to list.
+    const denied = page.locator('.fx-row[data-name="denied"] .entry-name a');
+    if (test.mobile) await denied.click();
+    else await denied.dblclick();
+    await page.locator('.fx-failed-box').waitFor();
+    await shoot(test, 'android-files-failed');
 
     await tab(page, 'Shell').click();
     await page.locator('.tool-view-shell:not([hidden])').waitFor();
