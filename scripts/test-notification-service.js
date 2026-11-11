@@ -114,6 +114,19 @@ test('a collector report does not clear a collector, storage or pairing error', 
     });
 });
 
+test('a collector error stays until the collector started after it has reported for 30 s', () => {
+    const service = new NotificationService();
+    service.handleCollector({ kind: 'error', message: 'Bluetooth collector stopped after an internal error (KeyError)' });
+    // The next collector starts after a minute's restart delay and reports at once.
+    service.collectorErrorAt = Date.now() - 60000;
+    service.collectorStarted = Date.now() - 2000;
+    report(service);
+    assert.equal(service.collectorError, 'Bluetooth collector stopped after an internal error (KeyError)');
+    service.collectorStarted = Date.now() - 30000;
+    report(service);
+    assert.equal(service.collectorError, '');
+});
+
 test('collector restarts back off to one minute and start over after a minute of uptime', () => {
     const service = new NotificationService();
     assert.deepEqual(
@@ -185,6 +198,19 @@ test('a crashing collector is logged with a size cap, counted, and its error sta
     });
 });
 
+test('the error a collector reports about itself is not replaced by its traceback', async (t) => {
+    t.mock.method(console, 'error', () => undefined);
+    const crash = fakeInterpreter(`
+        const message = 'Bluetooth collector stopped after an internal error (KeyError)';
+        process.stdout.write(JSON.stringify({ kind: 'error', message }) + '\\n', () =>
+            setTimeout(() => process.stderr.write('Traceback (most recent call last):\\nKeyError: 7\\n', () => process.exit(0)), 100));
+    `);
+    await withCollector(crash, async ({ service, status }) => {
+        await until(() => !service.child && service.restart, 'the collector to exit');
+        assert.equal((await status()).collectorError, 'Bluetooth collector stopped after an internal error (KeyError)');
+    });
+});
+
 test('a collector that exits without a message is reported, and a restart for changed phones is not', async (t) => {
     t.mock.method(console, 'error', () => undefined);
     const idle = fakeInterpreter(`process.stdin.on('data', () => undefined); setInterval(() => undefined, 1000);`);
@@ -198,6 +224,9 @@ test('a collector that exits without a message is reported, and a restart for ch
         service.restart = undefined;
         service.startCollector();
         assert.notEqual(service.child, first);
+        // An error this collector reported earlier and that has since been cleared.
+        service.handleCollector({ kind: 'error', message: 'Invalid collector command' });
+        service.collectorError = '';
         service.child.kill();
         await until(() => !service.child && service.restart, 'the collector to stop');
         assert.equal(service.collectorRestarts, 1);

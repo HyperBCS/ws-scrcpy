@@ -327,7 +327,10 @@ export class NotificationService implements Service {
         let logged = 0;
         child.stderr.setEncoding('utf8');
         child.stderr.on('data', (chunk: string) => {
-            this.collectorFault('Bluetooth collector failed; check host BlueZ and D-Bus access');
+            // A message this collector reported itself says more. The two pipes are read in no
+            // fixed order, so its traceback can arrive after it.
+            if (this.collectorError && this.collectorErrorAt >= started) this.collectorErrorAt = Date.now();
+            else this.collectorFault('Bluetooth collector failed; check host BlueZ and D-Bus access');
             // The text (a Python traceback, usually) is the only record of what went wrong.
             if (logged >= COLLECTOR_LOG_LIMIT) return;
             const text = chunk.slice(0, COLLECTOR_LOG_LIMIT - logged);
@@ -350,7 +353,8 @@ export class NotificationService implements Service {
             const expected = this.expectedExit === child;
             if (expected) this.expectedExit = undefined;
             if (this.closed) return;
-            if (!expected && this.collectorErrorAt < started) this.collectorFault('Bluetooth collector stopped');
+            if (!expected && (!this.collectorError || this.collectorErrorAt < started))
+                this.collectorFault('Bluetooth collector stopped');
             this.restart = setTimeout(() => this.startCollector(), this.restartDelay(expected, Date.now() - started));
         });
         for (const command of this.startCommands()) child.stdin.write(JSON.stringify(command) + '\n');
@@ -436,7 +440,10 @@ export class NotificationService implements Service {
             case 'devices':
                 this.bluetooth = message.devices as unknown[];
                 this.pairingOpen = !!message.pairingOpen;
-                if (Date.now() - this.collectorErrorAt >= COLLECTOR_ERROR_HOLD_MS) this.collectorError = '';
+                // Counted from the later of the error and this collector's start: after a long
+                // restart delay, the first report of the new collector proves nothing yet.
+                if (Date.now() - Math.max(this.collectorErrorAt, this.collectorStarted) >= COLLECTOR_ERROR_HOLD_MS)
+                    this.collectorError = '';
                 break;
             case 'status': {
                 const source = String(message.source);
