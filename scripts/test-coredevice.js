@@ -396,6 +396,43 @@ test('the debug service commands stop the session and remount the developer imag
     runner.release();
 });
 
+test('Remount developer image mounts only after the stopping serve-web has closed', async (t) => {
+    fs.rmSync(logFile, { force: true });
+    await withEnv({ FAKE_LOG: logFile, FAKE_SHUTDOWN_MS: '400' }, async () => {
+        const { ControlCenter } = require('../src/server/appl-device/services/ControlCenter');
+        const { ControlCenterCommand } = require('../src/common/ControlCenterCommand');
+        const udid = 'iphone-remount-wait';
+        const runner = CoreDeviceRunner.getInstance();
+        t.mock.method(PyMobileDevice, 'runJson', async (args) => {
+            if (args[0] === 'usbmux') return [udid];
+            if (args[0] === 'lockdown') return { DeviceName: 'Dbg', ProductType: 'iPhone14,3', ProductVersion: '27.0' };
+            if (args[0] === 'amfi') return true;
+            throw new Error(`unexpected ${args.join(' ')}`);
+        });
+        const tracker = new ControlCenter();
+        try {
+            await tracker.init();
+            await tick();
+            await tick();
+            const hold = await runner.acquire(udid);
+            runner.release(udid, hold);
+            const reply = await tracker.runCommand(
+                ControlCenterCommand.fromJSON(JSON.stringify({ id: 1, type: ControlCenterCommand.REMOUNT_DDI, data: { udid } })),
+            );
+            assert.match(reply, /mounted/i);
+            const lines = calls();
+            const closed = lines.indexOf(`serve-web shutdown complete ${udid}`);
+            const mounts = lines.flatMap((line, index) => (line.includes('"mounter","auto-mount"') ? [index] : []));
+            assert(closed >= 0, 'serve-web shut down in order');
+            assert.equal(mounts.length, 2, 'one mount for the session, one for the remount');
+            assert(mounts[1] > closed, 'the remount waits for the old serve-web to close');
+        } finally {
+            tracker.release();
+            runner.release();
+        }
+    });
+});
+
 test('restart-session kills serve-web so the next viewer gets a fresh process', async () => {
     fs.rmSync(logFile, { force: true });
     await withEnv({ FAKE_LOG: logFile }, async () => {

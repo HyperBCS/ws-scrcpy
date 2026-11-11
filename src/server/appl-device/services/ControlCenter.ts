@@ -420,6 +420,9 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
                 // The image hosts the display and HID daemons, so a live session is holding it
                 // open: drop that first, then re-run the mount and report what the CLI said.
                 CoreDeviceRunner.getInstance().stopSession(udid, 'Remounting the developer image');
+                // The old serve-web returns the phone's display sessions as it stops. Mount once it
+                // has closed, as a new session does.
+                await CoreDeviceRunner.whenStopped(udid);
                 const result = await PyMobileDevice.runOneShot(
                     ['mounter', 'auto-mount', '--udid', udid],
                     MOUNT_TIMEOUT_MS,

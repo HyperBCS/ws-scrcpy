@@ -1831,7 +1831,8 @@ viewer's session through the per-session hold, so the scheduler cannot start a s
 The driver's `/restart` on a viewer's session now shares the per-phone 30 s spacing with the
 viewers' Restart picture (`CoreDeviceRunner.videoRestartWaitMs` and `noteVideoRestart`): the
 driver waits out a recent restart, because it needs one for input to work, and a Restart picture
-pressed straight after an unlock run is dropped.
+pressed straight after an unlock run is dropped. Remount developer image now waits for the stopping
+serve-web to close before it mounts (`CoreDeviceRunner.whenStopped`), as a new session does.
 
 **Uploads land under a hidden name first.** `FilePushReader` pushes to `.partial-<hex>` in the
 target folder and renames it into place after adb reports success (`mv -nT`, or `mv -fT` when the

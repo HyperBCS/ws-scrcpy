@@ -199,6 +199,22 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         return Promise.all(Array.from(CoreDeviceRunner.children.values(), (info) => info.closed)).then(() => undefined);
     }
 
+    /**
+     * Resolves when every serve-web that was told to stop for this phone has closed, or after the
+     * longest a stop can take. For work on the phone that must not overlap an orderly shutdown.
+     */
+    public static whenStopped(udid: string): Promise<void> {
+        const previous = CoreDeviceRunner.stopping.get(udid);
+        if (!previous) {
+            return Promise.resolve();
+        }
+        let timer: NodeJS.Timeout | undefined;
+        return Promise.race([
+            previous,
+            new Promise<void>((resolve) => (timer = setTimeout(resolve, CoreDeviceRunner.shutdownBudgetMs()))),
+        ]).finally(() => clearTimeout(timer));
+    }
+
     /** The longest a stop can take: the wait for the signal handler, the grace, and a margin. */
     public static shutdownBudgetMs(): number {
         return CoreDeviceRunner.signalReadyTimeoutMs() + SIGKILL_GRACE_MS + 5000;
