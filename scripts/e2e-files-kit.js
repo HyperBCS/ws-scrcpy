@@ -515,6 +515,25 @@ async function run(browser, layout, theme) {
     await folderKept('Back in the second conflict question');
     assert.equal(traffic.starts.length, startsBefore, `${label}: both files were skipped`);
 
+    // The browser may close the dialog itself while a question is leaving: a second Back with
+    // no press in between cannot be refused. The next question then opens at once, and the end
+    // of the exit before it must not close it. `close()` stands in for the browser.
+    await page.keyboard.press('Shift');
+    await pick('notes.txt', 'photo.png');
+    await dialog.getByRole('heading', { name: `Replace “notes.txt” on ${DEVICE}?`, exact: true }).waitFor();
+    await settleMotion(page);
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => document.querySelector('dialog.fx-dialog').close(''));
+    const next = dialog.getByRole('heading', { name: `Replace “photo.png” on ${DEVICE}?`, exact: true });
+    await next.waitFor();
+    await page.waitForTimeout(500);
+    assert.equal(await next.isVisible(), true, `${label}: the next question stays open after the exit of the one before`);
+    assert.equal(await overlay(page), 1, `${label}: and keeps the entry`);
+    await page.keyboard.press('Escape');
+    await dialogGone();
+    await folderKept('Escape in a question after the browser closed the one before');
+    assert.equal(traffic.starts.length, startsBefore, `${label}: both files were skipped again`);
+
     // On a phone the sheet is dragged down by its header to close it.
     if (layout.mobile) {
         await command('New folder');

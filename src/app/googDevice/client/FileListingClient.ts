@@ -2259,6 +2259,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             });
         };
         this.dialog.addEventListener('close', closed);
+        // The panel of the question before may still be leaving, when the browser closed the
+        // dialog itself during that exit (a second Back with no press in between). Its exit
+        // ends here: when it finished, it would close this question.
+        this.stopDialogMotion();
         this.dialogPanel = this.dialog.querySelector<HTMLElement>('.kit-sheet-panel') || undefined;
         this.dialogClosing = false;
         this.dialog.toggleAttribute('data-exiting', false);
