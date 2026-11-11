@@ -2920,6 +2920,78 @@ test('Home and Lock are sent as a held down/up pair, because serve-web\'s own pr
     });
 });
 
+test('a viewer that leaves with a button held down has it released before its session hold is given back', async () => {
+    const posts = [];
+    const order = [];
+    const make = (udid) => {
+        const socket = new FakeSocket();
+        const proxy = new CoreDeviceProxy(socket, udid);
+        proxy.runner = {
+            request: async (_id, _method, path, body) => {
+                posts.push([path, JSON.parse(body)]);
+                order.push(`${path} ${body}`);
+                await tick();
+                return { status: 200, body: '' };
+            },
+            release: () => order.push('hold released'),
+        };
+        proxy.stream = { destroy: () => order.push('stream closed') };
+        proxy.hold = fakeHold(udid);
+        return { socket, proxy };
+    };
+    const button = (viewer, name, state) => viewer.socket.message(JSON.stringify({ type: 'button', name, state }));
+    const settle = async () => {
+        for (let i = 0; i < 20; i++) await tick();
+    };
+
+    // Siri held past 700 ms, then the socket drops: the browser's `up` never arrives.
+    const held = make('held-button-phone');
+    button(held, 'siri', 'down');
+    await held.proxy.inputChain;
+    assert.deepEqual(posts, [['/button', { name: 'siri', state: 'down' }]]);
+    held.socket.close(1006, 'network lost');
+    await settle();
+    assert.deepEqual(posts.at(-1), ['/button', { name: 'siri', state: 'up' }], 'the proxy lifts the button itself');
+    assert.deepEqual(
+        order.slice(-3),
+        ['/button {"name":"siri","state":"up"}', 'stream closed', 'hold released'],
+        'the release reaches the phone before the session can be torn down',
+    );
+
+    // A normal hold that was released leaves nothing to clean up.
+    posts.length = 0;
+    const tidy = make('tidy-button-phone');
+    button(tidy, 'lock', 'down');
+    button(tidy, 'lock', 'up');
+    await tidy.proxy.inputChain;
+    tidy.socket.close(1000, 'bye');
+    await settle();
+    assert.deepEqual(
+        posts.map(([, body]) => body.state),
+        ['down', 'up'],
+        'no second release',
+    );
+
+    // An `up` that was still queued when the socket closed is skipped; the teardown sends it.
+    posts.length = 0;
+    const racing = make('racing-button-phone');
+    button(racing, 'volume-up', 'down');
+    // Let the `down` reach the phone, so that it is in flight when the socket closes.
+    for (let i = 0; i < 5 && !posts.length; i++) await Promise.resolve();
+    assert.equal(posts.length, 1);
+    button(racing, 'volume-up', 'up');
+    racing.socket.close(1006, 'network lost');
+    await settle();
+    assert.deepEqual(
+        posts.map(([, body]) => [body.name, body.state]),
+        [
+            ['volume-up', 'down'],
+            ['volume-up', 'up'],
+        ],
+        'exactly one release reaches the phone',
+    );
+});
+
 test('the lock state is never polled while the phone is awake and unlocked', async () => {
     fs.rmSync(logFile, { force: true });
     const monitor = DeviceStateMonitor.getInstance();

@@ -84,17 +84,25 @@ function element(overrides = {}) {
     };
 }
 
+// Window and document take several listeners per event; `dispatch` calls them like the browser.
 const windowListeners = new Map();
 const documentListeners = new Map();
 const bodyListeners = new Map();
 const listenerApi = (map) => ({
     addEventListener(name, fn) {
-        map.set(name, fn);
+        if (!map.has(name)) map.set(name, new Set());
+        map.get(name).add(fn);
     },
     removeEventListener(name, fn) {
-        if (map.get(name) === fn) map.delete(name);
+        map.get(name)?.delete(fn);
     },
 });
+const dispatch = (map, name, event = {}) => [...(map.get(name) ?? [])].forEach((fn) => fn({ type: name, ...event }));
+// Every element made through document.createElement, so a test can find a button by its title.
+const created = [];
+// What `document.querySelector` finds for an open bottom sheet; a test sets it to open one.
+let openSheet = null;
+global.Element = class Element {};
 global.VideoDecoder = MockDecoder;
 global.EncodedVideoChunk = MockChunk;
 global.requestAnimationFrame = () => 1;
@@ -103,8 +111,11 @@ global.document = {
     ...listenerApi(documentListeners),
     visibilityState: 'visible',
     hidden: false,
-    createElement: () => element(),
-    querySelector: () => element(),
+    createElement: () => {
+        created.push(element());
+        return created.at(-1);
+    },
+    querySelector: (selector) => (selector.includes('.bottom-sheet-root') ? openSheet : element()),
     body: { ...listenerApi(bodyListeners), classList: { add() {}, remove() {} }, clientWidth: 1000, clientHeight: 800 },
 };
 global.window = global;
@@ -434,7 +445,7 @@ function androidClient(t, player) {
     const { EventEmitter } = require('node:events');
     const { StreamClientScrcpy } = require('../src/app/googDevice/client/StreamClientScrcpy');
     const { GoogToolBox } = require('../src/app/googDevice/toolbox/GoogToolBox');
-    const toolbox = { getHolderElement: () => element(), release() {}, releaseHeldButtons() {} };
+    const toolbox = { getHolderElement: () => element(), release() {}, forgetHeldButtons() {} };
     t.mock.method(GoogToolBox, 'createToolBox', () => toolbox);
     t.mock.method(StreamClientScrcpy.prototype, 'setTouchListeners', () => {});
     const sent = [];
@@ -525,7 +536,7 @@ test('the iPhone client asks for a key frame when its decoder reports an error',
     const { CoreDeviceReceiver } = require('../src/app/applDevice/client/CoreDeviceReceiver');
     const { ApplToolBox } = require('../src/app/applDevice/toolbox/ApplToolBox');
     t.mock.method(CoreDeviceReceiver.prototype, 'openNewConnection', () => undefined);
-    t.mock.method(ApplToolBox, 'createToolBox', () => ({ getHolderElement: () => element(), release() {}, releaseHeldButtons() {} }));
+    t.mock.method(ApplToolBox, 'createToolBox', () => ({ getHolderElement: () => element(), release() {}, forgetHeldButtons() {} }));
     const sent = [];
     t.mock.method(CoreDeviceReceiver.prototype, 'send', (message) => sent.push(message));
     MockDecoder.instances.length = 0;
@@ -744,4 +755,162 @@ test('iPhone: a swipe from beside the picture starts on the edge, and a tap ther
     sent.length = 0;
     handler.onInteraction(touches('touchstart', element(), [4, 192, 382]));
     assert.deepEqual(sent, [], 'a touch on another control is not passed on');
+});
+
+// ---------------------------------------------------------------- held keys and buttons
+
+test('iPhone: a key event that lands on a local control releases the keys held on the phone', (t) => {
+    const { StreamClientCoreDevice } = require('../src/app/applDevice/client/StreamClientCoreDevice');
+    const { CoreDeviceReceiver } = require('../src/app/applDevice/client/CoreDeviceReceiver');
+    const { ApplToolBox } = require('../src/app/applDevice/toolbox/ApplToolBox');
+    t.mock.method(CoreDeviceReceiver.prototype, 'openNewConnection', () => undefined);
+    t.mock.method(ApplToolBox, 'createToolBox', () => ({ getHolderElement: () => element(), release() {}, forgetHeldButtons() {} }));
+    const sent = [];
+    t.mock.method(CoreDeviceReceiver.prototype, 'send', (message) => sent.push(message));
+    const client = StreamClientCoreDevice.start({ action: 'stream-coredevice', udid: 'iphone-keys' }, element());
+    t.after(() => {
+        openSheet = null;
+        client.stop();
+    });
+    const key = (type, code, target) => dispatch(windowListeners, type, { code, target, preventDefault() {} });
+    const keyReports = () => sent.filter((message) => message.type === 'key').map((message) => message.usages);
+    const screenTarget = element();
+
+    key('keydown', 'ShiftLeft', screenTarget);
+    key('keydown', 'KeyA', screenTarget);
+    assert.deepEqual(keyReports(), [[0xe1], [0xe1, 0x04]], 'Shift and A are held on the phone');
+
+    // The owner taps Type text with Shift still down: the sheet opens and takes the keyboard.
+    openSheet = element();
+    key('keyup', 'KeyA', element());
+    assert.deepEqual(keyReports().at(-1), [], 'the first local key event lets go of everything');
+    const reports = keyReports().length;
+    key('keyup', 'ShiftLeft', element());
+    key('keydown', 'KeyB', element());
+    assert.equal(keyReports().length, reports, 'local typing sends nothing to the phone');
+
+    // Back on the stream, typing is not shifted.
+    openSheet = null;
+    key('keydown', 'KeyC', screenTarget);
+    assert.deepEqual(keyReports().at(-1), [0x06]);
+});
+
+function buttonByTitle(title, since) {
+    const button = created.slice(since).find((item) => item.title === title);
+    assert.ok(button, `toolbar button ${title}`);
+    return (type, init = {}) => button.listeners.get(type)({ type, button: 0, pointerId: 1, detail: 1, preventDefault() {}, ...init });
+}
+
+test('Android toolbar: a held button is released when the window loses focus or the page is hidden', (t) => {
+    const SvgImage = require('../src/app/ui/SvgImage').default;
+    t.mock.method(SvgImage, 'create', () => element());
+    const { GoogToolBox } = require('../src/app/googDevice/toolbox/GoogToolBox');
+    const sent = [];
+    const client = { sendMessage: (message) => sent.push([message.action, message.keycode]), getDeviceName: () => 'Pixel' };
+    const since = created.length;
+    const toolbox = GoogToolBox.createToolBox('android-held', { supportsScreenshot: false }, client, { captureKeyboard: false });
+    t.after(() => toolbox.release());
+    const power = buttonByTitle('Power', since);
+    const POWER = 26;
+    const [DOWN, UP] = [0, 1];
+
+    power('pointerdown');
+    assert.deepEqual(sent, [[DOWN, POWER]]);
+    dispatch(windowListeners, 'blur');
+    assert.deepEqual(sent, [[DOWN, POWER], [UP, POWER]], 'Power does not stay down while the owner is in another window');
+    power('pointerup');
+    assert.equal(sent.length, 2, 'the late pointer end sends no second release');
+
+    sent.length = 0;
+    power('pointerdown');
+    document.visibilityState = 'hidden';
+    dispatch(documentListeners, 'visibilitychange');
+    document.visibilityState = 'visible';
+    assert.deepEqual(sent, [[DOWN, POWER], [UP, POWER]], 'nor while the page is hidden');
+
+    // After a disconnect the release cannot be delivered. Sending it would queue it for the
+    // next connection, where a lone Power release could act on a different session.
+    sent.length = 0;
+    power('pointerdown');
+    toolbox.forgetHeldButtons();
+    power('pointerup');
+    dispatch(windowListeners, 'blur');
+    assert.deepEqual(sent, [[DOWN, POWER]], 'the server releases the key; the client sends nothing later');
+
+    // An ordinary press is unchanged.
+    sent.length = 0;
+    power('pointerdown');
+    power('pointerup');
+    assert.deepEqual(sent, [[DOWN, POWER], [UP, POWER]]);
+
+    sent.length = 0;
+    power('pointerdown');
+    toolbox.release();
+    assert.deepEqual(sent, [[DOWN, POWER], [UP, POWER]], 'closing the stream lets go as well');
+    dispatch(windowListeners, 'blur');
+    assert.equal(sent.length, 2, 'and stops listening');
+});
+
+test('iPhone toolbar: a held button is released on blur, and a press cut short is not sent', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const SvgImage = require('../src/app/ui/SvgImage').default;
+    t.mock.method(SvgImage, 'create', () => element());
+    const { ApplToolBox } = require('../src/app/applDevice/toolbox/ApplToolBox');
+    const sent = [];
+    const client = { pressButton: (name, state) => sent.push([name, state]), getPlayer: () => undefined, getDeviceName: () => 'iPhone' };
+    const since = created.length;
+    const toolbox = ApplToolBox.createToolBox(client);
+    t.after(() => toolbox.release());
+    const siri = buttonByTitle('Siri', since);
+
+    siri('pointerdown');
+    t.mock.timers.tick(700);
+    assert.deepEqual(sent, [['siri', 'down']]);
+    dispatch(windowListeners, 'blur');
+    assert.deepEqual(sent, [['siri', 'down'], ['siri', 'up']], 'Siri is let go when the window loses focus');
+    siri('pointerup');
+    assert.equal(sent.length, 2);
+
+    sent.length = 0;
+    siri('pointerdown');
+    t.mock.timers.tick(300);
+    dispatch(windowListeners, 'blur');
+    t.mock.timers.tick(1000);
+    siri('pointerup');
+    assert.deepEqual(sent, [], 'a press interrupted before it became a hold does nothing');
+
+    siri('pointerdown');
+    t.mock.timers.tick(700);
+    toolbox.forgetHeldButtons();
+    siri('pointerup');
+    assert.deepEqual(sent, [['siri', 'down']], 'after a disconnect the proxy releases it; the client sends nothing');
+
+    sent.length = 0;
+    siri('pointerdown');
+    t.mock.timers.tick(100);
+    siri('pointerup');
+    assert.deepEqual(sent, [['siri', 'press']], 'an ordinary tap is unchanged');
+});
+
+test('both stream clients drop their toolbar holds when the stream disconnects', (t) => {
+    const forgotten = [];
+    const player = fakePlayer();
+    const { receiver, toolbox } = androidClient(t, player);
+    toolbox.forgetHeldButtons = () => forgotten.push('android');
+    receiver.emit('disconnected', { code: 1006 });
+    assert.deepEqual(forgotten, ['android']);
+
+    const { StreamClientCoreDevice } = require('../src/app/applDevice/client/StreamClientCoreDevice');
+    const { CoreDeviceReceiver } = require('../src/app/applDevice/client/CoreDeviceReceiver');
+    const { ApplToolBox } = require('../src/app/applDevice/toolbox/ApplToolBox');
+    t.mock.method(CoreDeviceReceiver.prototype, 'openNewConnection', () => undefined);
+    t.mock.method(ApplToolBox, 'createToolBox', () => ({
+        getHolderElement: () => element(),
+        release() {},
+        forgetHeldButtons: () => forgotten.push('iphone'),
+    }));
+    const client = StreamClientCoreDevice.start({ action: 'stream-coredevice', udid: 'iphone-drop', captureKeyboard: false }, element());
+    t.after(() => client.stop());
+    client.receiver.emit('disconnected', { code: 1006 });
+    assert.deepEqual(forgotten, ['android', 'iphone']);
 });

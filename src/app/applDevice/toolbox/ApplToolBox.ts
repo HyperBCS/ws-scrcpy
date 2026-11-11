@@ -5,6 +5,7 @@ import SvgImage, { Icon } from '../../ui/SvgImage';
 import { CoreDeviceButton } from '../../../common/CoreDeviceProtocol';
 import { openSheet, streamNotice } from '../../state/stream';
 import { createSoundButton } from '../../toolbox/soundButton';
+import { HeldButtons } from '../../toolbox/heldButtons';
 import type { AudioSession } from '../../state/audio';
 import type { StreamClientCoreDevice } from '../client/StreamClientCoreDevice';
 
@@ -31,12 +32,20 @@ export class ApplToolBox extends ToolBox {
     protected constructor(
         list: ToolBoxElement<any>[],
         private readonly cleanup: (() => void)[] = [],
+        private readonly held?: HeldButtons,
     ) {
         super(list);
     }
 
+    /** The stream disconnected: nothing more can be sent for a button that is still held. */
+    public forgetHeldButtons(): void {
+        this.held?.forgetAll();
+    }
+
     public static createToolBox(client: StreamClientCoreDevice, options: ApplToolBoxOptions = {}): ApplToolBox {
         const cleanup: (() => void)[] = [];
+        const held = new HeldButtons();
+        cleanup.push(() => held.destroy());
         const elements: ToolBoxElement<any>[] = BUTTONS.map((item) => {
             const button = new ToolBoxButton(item.title, item.icon, { name: item.name });
             const target = button.getElement();
@@ -48,7 +57,7 @@ export class ApplToolBox extends ToolBox {
             // Hardware buttons on iOS need their hold time (Lock 0.3 s, Siri ~1 s), which the
             // server applies for a `press`; down/up pairs are only sent for a genuine hold.
             let activePointer: number | undefined;
-            let held = false;
+            let down = false;
             let holdTimer: ReturnType<typeof setTimeout> | undefined;
             const finish = () => {
                 if (activePointer === undefined) {
@@ -59,13 +68,31 @@ export class ApplToolBox extends ToolBox {
                     clearTimeout(holdTimer);
                     holdTimer = undefined;
                 }
-                if (held) {
-                    held = false;
+                if (down) {
+                    down = false;
                     client.pressButton(item.name, 'up');
                 } else {
                     client.pressButton(item.name, 'press');
                 }
             };
+            // The pointer's own end never came (focus lost, page hidden, stream dropped). A
+            // button that is down is let go; a press that had not become a hold is not sent.
+            held.add((notify) => {
+                if (activePointer === undefined) {
+                    return;
+                }
+                activePointer = undefined;
+                if (holdTimer) {
+                    clearTimeout(holdTimer);
+                    holdTimer = undefined;
+                }
+                if (down) {
+                    down = false;
+                    if (notify) {
+                        client.pressButton(item.name, 'up');
+                    }
+                }
+            });
             target.addEventListener('pointerdown', (event) => {
                 if (event.button !== 0 || activePointer !== undefined) {
                     return;
@@ -75,7 +102,7 @@ export class ApplToolBox extends ToolBox {
                 target.setPointerCapture(event.pointerId);
                 holdTimer = setTimeout(() => {
                     holdTimer = undefined;
-                    held = true;
+                    down = true;
                     client.pressButton(item.name, 'down');
                 }, 700);
             });
@@ -116,7 +143,7 @@ export class ApplToolBox extends ToolBox {
         liveText.addEventListener('click', () => openSheet('liveText'));
         elements.push(liveText);
 
-        return new ApplToolBox(elements, cleanup);
+        return new ApplToolBox(elements, cleanup, held);
     }
 
     public release(): void {

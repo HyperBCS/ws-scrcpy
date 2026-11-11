@@ -224,6 +224,8 @@ export class StreamClientScrcpy
         this.clientId = -1;
         // A replacement scrcpy process has no virtual keyboard, even if capture remains on.
         this.uhidKeyboard?.reset();
+        // Nor can a held toolbar button be released any more: the server lifts it on the device.
+        this.toolBox?.forgetHeldButtons();
         this.player?.pause();
     };
 

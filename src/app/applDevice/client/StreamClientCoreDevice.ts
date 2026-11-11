@@ -320,6 +320,9 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
 
     private onKey = (event: KeyboardEvent): void => {
         if (isLocalKeyboardTarget(event.target)) {
+            // Typing moved into our own UI (the Type text sheet, a settings field). The keyup
+            // of a key held on the phone now lands here, so let go of everything instead.
+            this.releaseAllKeys();
             return;
         }
         const usage = hidUsageForCode(event.code);
@@ -367,6 +370,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.player?.pause();
         this.touchHandler?.releaseActiveTouch();
         this.releaseAllKeys();
+        this.toolBox.forgetHeldButtons();
     };
 
     private onStatus = (status: { state: CoreDeviceSessionState; message?: string; retrying?: boolean }): void => {

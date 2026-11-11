@@ -216,3 +216,43 @@ test('viewers wait for the first session packet, and video without one ends the 
     assert.equal(teardowns, 1, 'a stream without session packets is refused, not guessed at');
     assert.equal(await legacy.whenReady(), false);
 });
+
+test('a viewer that goes away with a key down has it released on the device', async (t) => {
+    const { broadcast } = fixture(t);
+    const control = broadcast.getControlSocket();
+    // No device is needed to see what reaches the control socket.
+    Object.defineProperty(control, 'readyState', { value: 'open' });
+    const writes = [];
+    t.mock.method(control, 'write', (data) => {
+        writes.push(Buffer.from(data));
+        return true;
+    });
+    // scrcpy INJECT_KEYCODE: type 0, action, keycode, repeat, meta state.
+    const keycode = (action, code) => {
+        const message = Buffer.alloc(14);
+        message[1] = action;
+        message.writeInt32BE(code, 2);
+        return message;
+    };
+    const [DOWN, UP, POWER, VOLUME_UP, HOME] = [0, 1, 26, 24, 3];
+    const first = await viewer(t);
+    const second = await viewer(t);
+    const send = (socket, data) => socket.emit('message', { data, type: 'message' });
+
+    // A toolbar button sends its down and its up as separate messages.
+    send(first, keycode(DOWN, VOLUME_UP));
+    send(first, keycode(UP, VOLUME_UP));
+    send(first, keycode(DOWN, POWER));
+    send(second, keycode(DOWN, HOME));
+    // Typed text arrives as complete down/up pairs in one frame and leaves nothing held.
+    send(first, Buffer.concat([keycode(DOWN, 7), keycode(UP, 7)]));
+    assert.equal(writes.length, 5, 'everything is passed on unchanged');
+
+    // The network drops while Power is held: the browser's release never arrives.
+    first.close();
+    assert.deepEqual(writes.slice(5), [keycode(UP, POWER)], 'the key this viewer held is released, and only that one');
+    second.close();
+    assert.deepEqual(writes.slice(6), [keycode(UP, HOME)]);
+    first.emit('close');
+    assert.equal(writes.length, 7, 'a second close releases nothing twice');
+});
