@@ -193,7 +193,9 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
 
     private onKeyframeOverdue = (): void => {
         this.recoveryTimer = undefined;
-        if (this.hadIDR || this.getState() === WebCodecsPlayer.STATE.STOPPED) {
+        // A paused player has lost its connection. The next one starts with parameter sets and a
+        // keyframe, and a decoder notice would give the wrong reason for the missing picture.
+        if (this.hadIDR || this.getState() !== WebCodecsPlayer.STATE.PLAYING) {
             return;
         }
         this.emit('keyframe-request', undefined);
@@ -201,7 +203,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         // keyframe either, report it instead of leaving a frozen picture unexplained.
         this.recoveryTimer = setTimeout(() => {
             this.recoveryTimer = undefined;
-            if (!this.hadIDR && this.getState() !== WebCodecsPlayer.STATE.STOPPED) {
+            if (!this.hadIDR && this.getState() === WebCodecsPlayer.STATE.PLAYING) {
                 this.emit('decoder-error', { message: 'No keyframe after a decoder reset', recovering: false });
             }
         }, WebCodecsPlayer.KEYFRAME_WAIT_MS * 2);

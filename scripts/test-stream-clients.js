@@ -367,6 +367,23 @@ test('the WebCodecs player asks for a keyframe when none arrives, then reports t
     assert.equal(decoders[1].chunks.length, 1);
 });
 
+test('a decoder error followed by a lost connection neither restarts the encoder nor blames the decoder', (t) => {
+    const { player, decoders, events } = webCodecsPlayer(t);
+    decoders[0].fail();
+    // StreamClientScrcpy.onDisconnected pauses the player.
+    player.pause();
+    t.mock.timers.tick(10_000);
+    assert.deepEqual(events, ['recovering'], 'no request that cannot be delivered, and no decoder notice');
+
+    // The next connection starts with the parameter sets and a keyframe.
+    player.play();
+    player.pushFrame(packet(CONFIG));
+    player.pushFrame(packet(IDR));
+    assert.equal(decoders.at(-1).chunks.length, 1);
+    t.mock.timers.tick(10_000);
+    assert.deepEqual(events, ['recovering']);
+});
+
 test('a decoder that keeps failing is paused with a report, then tried again instead of stopped for good', (t) => {
     const { player, decoders, events, STATE } = webCodecsPlayer(t);
     for (let i = 0; i < 4; i++) {
