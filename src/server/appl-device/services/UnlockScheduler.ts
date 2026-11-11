@@ -180,7 +180,10 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             this.onState = (event) => this.handleState(event);
             this.monitor.on('state', this.onState);
             this.armTick();
-            this.firstTick = setTimeout(() => this.tick(), FIRST_TICK_MS);
+            this.firstTick = setTimeout(() => {
+                this.firstTick = undefined;
+                this.tick();
+            }, FIRST_TICK_MS);
             this.firstTick.unref();
         } catch (error) {
             this.stop();
@@ -193,12 +196,16 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
      * The next tick, on the next whole minute of the clock. Slots are whole minutes, so a run
      * starts within about a second of its slot whatever second the process started at, and a
      * restart does not move it. A timer that fires a moment early is armed again for the rest.
+     * A minute that falls in the first 5 s after start is left to the first tick: the tracker
+     * has not listed the phones yet, and a run would end as `skipped-disconnected`.
      */
     private armTick(): void {
         this.timer = setTimeout(
             () => {
                 this.armTick();
-                this.tick();
+                if (!this.firstTick) {
+                    this.tick();
+                }
             },
             TICK_MS - (this.now() % TICK_MS),
         );

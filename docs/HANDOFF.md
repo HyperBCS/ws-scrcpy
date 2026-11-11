@@ -2052,7 +2052,10 @@ moment, half an hour off. The interval is `UNLOCK_INTERVAL_MS`, a constant.
 **Start by the clock.** `UnlockScheduler.armTick` arms one timer for the next whole minute of
 the clock and re-arms it each time, so a run starts within a second of its slot whatever second
 the process started at. A timer that fires early leaves a short remainder and is armed again
-for it. The tick five seconds after start stays.
+for it. The tick five seconds after start stays, and a minute that falls inside those five
+seconds is left to it: the tracker has not listed the phones yet, and a run would end as
+`skipped-disconnected`. So a server restarted within five seconds of a slot starts that run up
+to five seconds late; any earlier restart does not move it.
 
 **A slot owes a run until it is settled** (`tickDevice`, `settleSlot`). When a slot arrives,
 `lastSlotAt` is written and `retryAt` is set to the slot: "a run is owed, not before this time".

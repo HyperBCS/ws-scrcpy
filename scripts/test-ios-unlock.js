@@ -1095,8 +1095,10 @@ test('scheduler: both daily slots run once each, and a slot the server was down 
 test('scheduler: a run starts on the minute of its slot, whatever second the server started at', async () => {
     const slot = Date.UTC(2026, 10, 12, 15, 0);
     const udid = 'iphone-clock';
-    // Started 47.3 s, 12 s and 2 min 0.4 s before the slot, and once after a restart seconds before it.
-    for (const lead of [47300, 12000, 120400, 900]) {
+    // Started 47.3 s, 12 s, 2 min 0.4 s and 5.1 s before the slot. The last one was started 0.9 s
+    // before it: nothing runs in the first 5 s, while the tracker has not listed the phones yet.
+    for (const lead of [47300, 12000, 120400, 5100, 900]) {
+        const expected = lead < 5000 ? slot + 5000 - lead : slot;
         mock.timers.enable({ apis: ['setTimeout', 'Date'], now: slot - lead });
         const started = [];
         const store = new MemoryStore(() => Date.now());
@@ -1119,12 +1121,15 @@ test('scheduler: a run starts on the minute of its slot, whatever second the ser
             store.setRunState(udid, { lastSlotAt: slot - HALF_DAY });
             monitor.set(udid, true);
             // In steps of 100 ms, so the moment the run starts is seen to that precision.
-            for (let elapsed = 0; elapsed < lead + 1500 && !started.length; elapsed += 100) {
+            for (let elapsed = 0; elapsed < lead + 6000 && !started.length; elapsed += 100) {
                 mock.timers.tick(100);
                 await scheduler.chain;
             }
             assert.equal(started.length, 1, `one run (started ${lead} ms before the slot)`);
-            assert(started[0] >= slot && started[0] - slot < 1000, `within a second of the slot: ${started[0] - slot} ms`);
+            assert(
+                started[0] >= expected && started[0] - expected < 1000,
+                `started ${lead} ms before the slot: the run began ${started[0] - slot} ms after it`,
+            );
             mock.timers.tick(5 * MINUTE);
             await scheduler.chain;
             assert.equal(started.length, 1, 'and only once');
