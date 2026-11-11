@@ -336,6 +336,52 @@ async function streamPage(browser, viewport, platform) {
     }
 }
 
+/**
+ * Type text leaves the controls button in reach when the owner has moved it above the bar. The
+ * panel opened from it while typing is on top: Back closes the panel first, then Type text.
+ */
+async function panelOverTyping(browser, platform) {
+    const test = await start(browser, VIEWPORTS[0]);
+    const { page } = test;
+    const label = `phone ${platform} stream`;
+    const udid = platform === 'android' ? PIXEL : IPHONE;
+    try {
+        // Where the owner left the button, kept by this browser.
+        await test.context.addInitScript(() => localStorage.setItem('floating_toolbar_position', JSON.stringify({ x: 318, y: 300 })));
+        await page.reload();
+        await card(page, `${platform}:${udid}`).getByRole('link', { name: 'Open screen', exact: true }).click();
+        await page.locator('.stream-view').waitFor();
+        await connected(page);
+        const home = await at(page);
+        const typing = page.locator('.live-text-overlay');
+        const panel = page.locator('.floating-toolbar-panel');
+        await control(test, 'Type text');
+        await typing.waitFor();
+        await settleMotion(page);
+        await untilAt(page, home.index + 1, 1);
+        await press(test, page.locator('.floating-toolbar-fab'));
+        await page.locator('.floating-toolbar.open').waitFor();
+        await settleMotion(page);
+        await untilAt(page, home.index + 2, 2);
+        await page.goBack();
+        await panel.waitFor({ state: 'hidden' });
+        await settleMotion(page);
+        assert.deepEqual(await at(page), { ...home, index: home.index + 1, overlay: 1 }, `${label}: Back closes the panel opened over Type text first`);
+        assert.equal(await typing.count(), 1, `${label}: Type text is still open`);
+        await page.goBack();
+        await typing.waitFor({ state: 'hidden' });
+        await settleMotion(page);
+        assert.deepEqual(await at(page), home, `${label}: the next Back closes Type text`);
+        assert.equal(await page.locator('.stream-view').count(), 1);
+        assert.deepEqual(test.streams, [udid]);
+        assert.equal(test.closed, 0);
+        assert.deepEqual(test.errors, []);
+        console.log(`PASS ${label}: the controls panel opened over Type text closes first on Back`);
+    } finally {
+        await test.context.close();
+    }
+}
+
 async function listPage(browser, viewport) {
     const test = await start(browser, viewport);
     const { page } = test;
@@ -518,6 +564,8 @@ async function main() {
                     await notificationsPage(browser, viewport);
                 }
                 await stepNeverReported(browser);
+                await panelOverTyping(browser, 'android');
+                await panelOverTyping(browser, 'ios');
             })(),
         ]);
     } finally {

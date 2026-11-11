@@ -98,6 +98,7 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
     );
     const fabRef = useRef<HTMLButtonElement>(null);
     const suppressClick = useRef(false);
+    const openedOverSheet = useRef(false);
     const dragState = useRef<{ dx: number; dy: number; start: Position; moved: boolean; id: number }>();
     const sheetOpen =
         toolsSheetOpen.value ||
@@ -184,7 +185,12 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
     // open. A sheet opened from it takes its place. `sheetOpen` is read here, and not only in
     // the effect above, so the panel gives its history entry up in the same pass in which the
     // sheet asks for one: the sheet takes that entry over and no step through history is made.
-    useOverlayHistory(mobile && open && !sheetOpen, () => setOpen(false));
+    // The panel can also open while Type text is open, which leaves the button in reach. It is
+    // then on top and keeps an entry of its own, so Back closes it first.
+    if (!sheetOpen) {
+        openedOverSheet.current = false;
+    }
+    useOverlayHistory(mobile && open && (!sheetOpen || openedOverSheet.current), () => setOpen(false));
 
     useEffect(() => {
         const resize = () => setPos((p) => clamp(p));
@@ -396,6 +402,9 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
                             if (suppressClick.current && event.detail !== 0) {
                                 suppressClick.current = false;
                                 return;
+                            }
+                            if (!open) {
+                                openedOverSheet.current = sheetOpen;
                             }
                             setOpen((v) => !v);
                             if (event.detail === 0 && !open) {
