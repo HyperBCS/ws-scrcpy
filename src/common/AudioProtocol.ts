@@ -12,7 +12,9 @@ export enum AudioPacketKind {
 }
 
 export type AudioCodec = 'raw' | 'opus';
-export type AudioSource = 'output' | 'voice-call-downlink';
+// `output` takes the phone's sound away from its speaker while it is captured. `playback`
+// (Android 13 and later) captures the same sound and lets the phone keep playing it.
+export type AudioSource = 'output' | 'playback' | 'voice-call-downlink';
 
 export interface AudioMetadata {
     status: 'pending' | 'ready' | 'disabled' | 'error';

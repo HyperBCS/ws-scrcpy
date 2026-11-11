@@ -3,7 +3,6 @@
 const assert = require('node:assert/strict');
 const { test, after } = require('node:test');
 const { EventEmitter, once } = require('node:events');
-const { createServer } = require('node:net');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -34,7 +33,7 @@ const { broadcastManager } = require('../src/common/BroadcastManager');
 const { STREAM_SERVICE_STOPPED } = require('../src/common/StreamCloseCode');
 const { ControlCenterCommand } = require('../src/common/ControlCenterCommand');
 const { wakeDevice } = require('../src/app/googDevice/client/wake');
-const { streamConfig } = require('../src/server/goog-device/StreamConfig');
+const { streamConfig, validateStreamConfigPatch } = require('../src/server/goog-device/StreamConfig');
 const { StreamReceiver } = require('../src/app/client/StreamReceiver');
 
 // Nothing in this file may reach a real adb server. Every Device and ControlCenter built here
@@ -60,16 +59,6 @@ after(() => {
     if (previousDataDir === undefined) delete process.env.WS_NOTIFICATION_DATA;
     else process.env.WS_NOTIFICATION_DATA = previousDataDir;
 });
-
-function deferred() {
-    let resolve;
-    let reject;
-    const promise = new Promise((done, fail) => {
-        resolve = done;
-        reject = fail;
-    });
-    return { promise, resolve, reject };
-}
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -594,63 +583,51 @@ test('starting waits for the launch itself and never polls for a PID file', asyn
     await assert.rejects(ScrcpyServer.run(device), /did not start in time/);
 });
 
-const streamHeader = () => {
-    const header = Buffer.alloc(16);
-    header.writeUInt32BE(0x68323634, 0);
-    header.writeUInt32BE(720, 8);
-    header.writeUInt32BE(1280, 12);
-    return header;
-};
-
-test('a slow start is not given up on: the stream connects once scrcpy listens', { timeout: 10000 }, async (t) => {
+test('a slow start is not given up on: the stream is retried until scrcpy listens', async (t) => {
     const { device, children } = deviceFixture(t, 'slow-phone');
-    withTimings(t, { STREAM_CONNECT_DELAY_MS: 5, STREAM_RETRY_DELAY_MS: 5 });
-    // The adb forward port. Until scrcpy listens on the phone, adb accepts and closes at once.
-    let listening = false;
-    let refused = 0;
-    const peers = [];
-    const server = createServer((socket) => {
-        socket.on('error', () => {});
-        if (!listening) {
-            refused++;
-            socket.destroy();
-            return;
-        }
-        peers.push(socket);
-        if (peers.length === 1) socket.write(streamHeader());
-    });
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    t.after(() => {
-        broadcastManager.stopBroadcast('slow-phone');
-        peers.forEach((socket) => socket.destroy());
-        server.close();
-    });
+    withTimings(t, { STREAM_CONNECT_DELAY_MS: 2, STREAM_RETRY_DELAY_MS: 2 });
     const forwards = [];
     t.mock.method(AdbUtils, 'forward', async (serial, remote) => {
         forwards.push(`${serial} ${remote}`);
-        return server.address().port;
+        return 18999;
+    });
+    // The stream sockets. Until scrcpy listens on the phone, adb accepts a connection and
+    // closes it again: the broadcast comes up and ends before it has a header. Here scrcpy
+    // listens from the third attempt on.
+    const attempts = [];
+    const stopped = [];
+    let registered;
+    let ready = false;
+    t.mock.method(broadcastManager, 'startBroadcast', async (udid, port, audio) => {
+        const listening = attempts.length >= 2;
+        registered = { whenReady: async () => listening };
+        attempts.push({ udid, port, audio, ready, signals: children[0].signals.length, broadcast: registered });
+    });
+    t.mock.method(broadcastManager, 'getBroadcast', () => registered);
+    t.mock.method(broadcastManager, 'stopBroadcast', (_udid, only) => {
+        stopped.push(only);
+        if (!only || only === registered) registered = undefined;
     });
 
-    let ready = false;
     const starting = device.launchServer('scrcpy fixture', false).then(() => (ready = true));
     assert.deepEqual(children[0].args, ['-s', 'slow-phone', 'shell', 'scrcpy fixture']);
     children[0].stdout.emit('data', Buffer.from('[server] INFO: Device: fixture\n'));
-    await wait(80);
-    assert.ok(refused >= 2, 'the stream was tried while scrcpy was not listening yet');
-    assert.equal(ready, false, 'the start is still in progress');
-    assert.deepEqual(children[0].signals, [], 'and the server is not stopped for being slow');
-    assert.equal(broadcastManager.hasBroadcast('slow-phone'), false);
-
-    listening = true;
     await starting;
+
     assert.deepEqual(forwards, [`slow-phone ${ScrcpyInstance.socketName()}`], 'the socket is this server’s own');
-    assert.equal(await broadcastManager.getBroadcast('slow-phone').whenReady(), true);
+    assert.equal(attempts.length, 3, 'the stream was tried until scrcpy listened');
+    assert.ok(
+        attempts.every((attempt) => attempt.port === 18999 && attempt.audio === false && !attempt.ready),
+        'the start stayed in progress in the meantime',
+    );
+    assert.deepEqual(children[0].signals, [], 'and the server was not stopped for being slow');
+    assert.deepEqual(stopped, [attempts[0].broadcast, attempts[1].broadcast], 'each dead attempt was cleared');
+    assert.equal(registered, attempts[2].broadcast);
     assert.equal(device.launch.child, children[0], 'the adb child is kept for shutdown');
 
     // The server ends by itself later: its stream goes with it.
     children[0].emit('close', 0);
-    assert.equal(broadcastManager.hasBroadcast('slow-phone'), false);
+    assert.equal(registered, undefined);
     assert.equal(device.launch, undefined);
 });
 
@@ -975,4 +952,24 @@ test('the card’s Wake request resolves on its own reply and reports a refusal 
     t.mock.timers.tick(8000);
     assert.match(await silent, /did not answer/);
     assert.equal(tracker.listenerCount('wake_device'), 0);
+});
+
+test('the playback source keeps the phone playing and is launched only on Android 13 or later', (t) => {
+    const { buildScrcpyArgs, DEFAULT_SCRCPY_SERVER_CONFIG } = require('../src/common/Constants');
+    const playback = { ...DEFAULT_SCRCPY_SERVER_CONFIG, audioSource: 'playback' };
+    assert.match(buildScrcpyArgs(playback), /audio_source=playback audio_dup=true$/);
+    assert.doesNotMatch(buildScrcpyArgs(DEFAULT_SCRCPY_SERVER_CONFIG), /audio_dup/, 'the default is unchanged');
+    assert.doesNotMatch(buildScrcpyArgs({ ...playback, audio: false }), /audio_dup|audio_source/);
+    assert.deepEqual(validateStreamConfigPatch({ audioSource: 'playback' }), { audioSource: 'playback' });
+    assert.throws(() => validateStreamConfigPatch({ audioSource: 'mic' }), /Invalid audio source/);
+
+    const { device } = deviceFixture(t, 'audio-phone');
+    streamConfig.set('audio-phone', { audio: true, audioSource: 'playback' });
+    device.descriptor['ro.build.version.sdk'] = '36';
+    assert.equal(device.getLaunchStreamConfig().audioSource, 'playback');
+    device.descriptor['ro.build.version.sdk'] = '31';
+    assert.equal(device.getLaunchStreamConfig().audioSource, 'output', 'Android 12 cannot duplicate playback');
+    assert.equal(streamConfig.get('audio-phone').audioSource, 'playback', 'the saved choice is kept');
+    device.descriptor['ro.build.version.sdk'] = '';
+    assert.equal(device.getLaunchStreamConfig().audioSource, 'playback', 'an unknown version is not a reason');
 });

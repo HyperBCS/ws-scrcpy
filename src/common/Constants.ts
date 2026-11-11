@@ -78,6 +78,10 @@ export function buildScrcpyArgs(cfg: ScrcpyServerConfig): string {
     if (cfg.audio) {
         args.push(`audio_codec=${cfg.audioCodec ?? 'raw'}`);
         args.push(`audio_source=${cfg.audioSource ?? 'output'}`);
+        if (cfg.audioSource === 'playback') {
+            // Without this, playback capture mutes the phone just as `output` does.
+            args.push('audio_dup=true');
+        }
     }
 
     return args.join(' ');

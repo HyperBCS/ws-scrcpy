@@ -1211,7 +1211,12 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     /** A fatal audio source failure must not create an endless reconnect/relaunch loop. */
     public getLaunchStreamConfig(): StreamConfigData {
-        const config = streamConfig.get(this.udid);
+        let config = streamConfig.get(this.udid);
+        if (config.audioSource === 'playback' && parseInt(this.descriptor['ro.build.version.sdk'], 10) < 33) {
+            // Capturing playback while the phone keeps playing needs Android 13. Below that
+            // the launch uses the plain output source; the saved choice is left alone.
+            config = { ...config, audioSource: 'output' };
+        }
         return this.audioFailure ? { ...config, audio: false } : config;
     }
 

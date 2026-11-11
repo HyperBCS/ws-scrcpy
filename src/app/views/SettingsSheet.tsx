@@ -554,7 +554,8 @@ export function SettingsSheet() {
                             <span>
                                 Audio source
                                 <small>
-                                    Device media is what the device plays. Call audio is the far side of a phone call.
+                                    Device media is what the device plays; the phone itself goes quiet unless you choose
+                                    the option that keeps it playing. Call audio is the far side of a phone call.
                                 </small>
                             </span>
                             <select
@@ -567,6 +568,11 @@ export function SettingsSheet() {
                                 }
                             >
                                 <option value="output">Device media</option>
+                                {/* Needs Android 13. An unknown version is offered it; the server
+                                    falls back to plain device media where it cannot be used. */}
+                                {(isNaN(sdkInt) || sdkInt >= 33 || shown.audioSource === 'playback') && (
+                                    <option value="playback">Device media, phone keeps playing</option>
+                                )}
                                 <option value="voice-call-downlink">Call audio</option>
                             </select>
                         </label>
