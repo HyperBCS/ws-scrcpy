@@ -35,6 +35,7 @@ const FULL_STYLES = process.env.ATLAS_STYLES === 'full';
 const NOW = Date.UTC(2026, 2, 14, 10, 0, 0);
 const PIXEL = 'ATLAS-PIXEL-0001';
 const PIXEL_2 = 'ATLAS-PIXEL-0002';
+const PIXEL_3 = 'ATLAS-PIXEL-0003';
 const IPHONE = 'ATLAS-IPHONE-0001';
 const IPHONE_2 = 'ATLAS-IPHONE-0002';
 const android = (udid, model, extra = {}) => ({
@@ -42,10 +43,12 @@ const android = (udid, model, extra = {}) => ({
     'ro.build.version.release': '16', 'ro.build.version.sdk': '36', 'ro.product.cpu.abi': 'arm64-v8a',
     'screen.power': 'on', 'device.awake': true, 'battery.level': 80, 'battery.charging': false, ...extra,
 });
-// The first Android phone shows its lock screen, so its page offers the Unlock sheet.
+// The first Android phone shows its lock screen, so its page offers the Unlock sheet. The third
+// has its screen off, so its card shows the asleep banner.
 const ANDROIDS = [
     android(PIXEL, 'Pixel 9', { 'keyguard.showing': true, 'keyguard.occluded': false, 'device.locked': true }),
     android(PIXEL_2, 'Pixel 8', { 'battery.level': 35, 'battery.charging': true }),
+    android(PIXEL_3, 'Pixel 7', { 'screen.power': 'off', 'device.awake': false }),
 ];
 const iphone = (udid, name, unlockSchedule) => ({
     udid, name, model: 'iPhone 13 Pro Max', version: '27.2', state: 'Connected', paired: true, developerMode: true,
@@ -213,6 +216,20 @@ async function dismiss(test, shown) {
 }
 
 /**
+ * Takes the confirm prompt inside `container` as the state `name`, then cancels it. The prompt
+ * holds its action back for a moment after it opens; the picture is taken once it is ready.
+ */
+async function shootPrompt(test, container, name) {
+    const prompt = container.locator('.confirm-prompt');
+    await prompt.waitFor();
+    await prompt.locator('.confirm-prompt-button:not([aria-disabled])').nth(1).waitFor();
+    await shoot(test, name);
+    await test.page.keyboard.press('Escape');
+    await prompt.waitFor({ state: 'detached' });
+    await settleMotion(test.page);
+}
+
+/**
  * A hash of every computed property, custom properties aside, of each element of the body and of
  * its ::before and ::after, in document order. With `full`, the properties themselves.
  */
@@ -273,12 +290,17 @@ async function listStates(test) {
     await card(page, `android:${PIXEL}`).waitFor();
     await card(page, `ios:${IPHONE}`).waitFor();
     await card(page, `ios:${IPHONE_2}`).locator('.device-problem .device-unlock-schedule.problem').waitFor();
+    await card(page, `android:${PIXEL_3}`).locator('.device-asleep-banner .wake-button').waitFor();
     await shoot(test, 'list');
 
     await press(test, card(page, `android:${PIXEL_2}`).locator('.device-details > summary'));
     await press(test, card(page, `ios:${IPHONE}`).locator('.device-details > summary'));
     await card(page, `ios:${IPHONE}`).locator('.device-trouble-heading').waitFor();
     await shoot(test, 'list-details');
+
+    // A question on a card before an action that ends the stream.
+    await press(test, card(page, `android:${PIXEL_2}`).getByRole('button', { name: 'Stop stream service', exact: true }));
+    await shootPrompt(test, card(page, `android:${PIXEL_2}`), 'list-confirm');
 
     await press(test, card(page, `android:${PIXEL_2}`).locator('button.stream-settings-button'));
     await sheetTitled(page, /^Stream settings$/).waitFor();
@@ -401,7 +423,27 @@ async function notificationStates(test) {
         await press(test, page.getByRole('button', { name, exact: true }));
         await dialog.waitFor();
         await shoot(test, state);
+        if (state === 'notifications-card-actions') {
+            // An action on the phone asks first, inside the sheet.
+            await press(test, dialog.getByRole('button', { name: 'Decline on iPhone', exact: true }));
+            await shootPrompt(test, dialog, 'notifications-confirm');
+        }
         await dismiss(test, dialog);
+    }
+
+    // Archive answers with a notice at the foot of the page. It is closed before the next state:
+    // it would leave by itself after a time that no picture should depend on.
+    await press(test, page.getByRole('button', { name: 'Actions for Design review', exact: true }));
+    await dialog.waitFor();
+    await settleMotion(page);
+    await press(test, dialog.getByRole('button', { name: 'Archive', exact: true }));
+    const toast = page.locator('.app-toast');
+    await toast.first().waitFor();
+    await dialog.waitFor({ state: 'hidden' });
+    await shoot(test, 'notifications-toast');
+    while (await toast.count()) {
+        await press(test, toast.first().locator('.toast-close'));
+        await settleMotion(page);
     }
 
     await press(test, page.getByRole('button', { name: 'Setup & delivery', exact: true }));
@@ -410,6 +452,8 @@ async function notificationStates(test) {
     await press(test, page.locator('summary').filter({ hasText: 'Settings for Bench iPhone' }));
     await page.getByText('Comma-separated. Leave empty for all apps.').waitFor({ state: 'attached' });
     await shoot(test, 'notifications-setup-details');
+    await press(test, page.getByRole('button', { name: 'Remove iPhone', exact: true }));
+    await shootPrompt(test, page.locator('.notifications-page'), 'notifications-setup-confirm');
 }
 
 /** A PNG as rows of RGBA pixels. Playwright writes 8-bit RGB or RGBA without interlacing. */
