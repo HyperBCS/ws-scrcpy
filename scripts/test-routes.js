@@ -3,7 +3,7 @@
 // rewrite of the older form, the push links that are already delivered, the three verbs (open
 // pushes, switch replaces, up goes back to the list or replaces with it), the earlier exports
 // as shims, and the history entries of overlays. scripts/e2e-navigation.js covers the same in a
-// browser, with stream sockets counted.
+// browser, with stream sockets counted, and scripts/e2e-overlay-back.js drives the sheets.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const path = require('node:path');
@@ -19,22 +19,27 @@ const SOCKET = 'ws://phones.test:8000/?action=proxy-adb&remote=tcp%3A8886&udid=P
  * Forward and `go` act in a later task and then fire `popstate` and, when the fragment changed,
  * `hashchange`, as browsers do. `settle()` runs the tasks that are due.
  */
-function fakeBrowser(address, state = null) {
+function fakeBrowser(address, state = null, session = { entries: [{ url: new URL(address, ORIGIN), state }], index: 0 }) {
     const listeners = { popstate: new Set(), hashchange: new Set() };
     const tasks = [];
-    const entries = [{ url: new URL(address, ORIGIN), state }];
-    let index = 0;
-    const fire = (type) => [...listeners[type]].forEach((listener) => listener({ type }));
+    const entries = session.entries;
+    let index = session.index;
+    let steps = 0;
+    const fire = (type, event = {}) => [...(listeners[type] || [])].forEach((listener) => listener({ type, ...event }));
     const resolve = (url) => (url === undefined || url === null ? entries[index].url : new URL(url, entries[index].url));
-    const traverse = (delta) =>
+    const traverse = (delta) => {
+        steps++;
         tasks.push(() => {
             const to = index + delta;
             if (to < 0 || to >= entries.length) return;
-            const from = entries[index].url.hash;
+            // Decided between the two entries as they are before the events: a popstate
+            // handler that rewrites the address does not take the hashchange back.
+            const changed = entries[to].url.hash !== entries[index].url.hash;
             index = to;
             fire('popstate');
-            if (entries[index].url.hash !== from) fire('hashchange');
+            if (changed) fire('hashchange');
         });
+    };
     const location = {
         get hash() {
             return entries[index].url.hash;
@@ -96,7 +101,7 @@ function fakeBrowser(address, state = null) {
         forward: () => traverse(1),
     };
     const window = {
-        addEventListener: (type, listener) => listeners[type]?.add(listener),
+        addEventListener: (type, listener) => (listeners[type] ||= new Set()).add(listener),
         removeEventListener: (type, listener) => listeners[type]?.delete(listener),
     };
     return {
@@ -106,6 +111,16 @@ function fakeBrowser(address, state = null) {
         settle() {
             while (tasks.length) tasks.shift()();
         },
+        /** The owner presses something: a tap, or the key named. */
+        press(key, isTrusted = true) {
+            fire(key ? 'keydown' : 'pointerup', { key, isTrusted });
+        },
+        /** How many times `history.go`, `back` or `forward` was called. */
+        get steps() {
+            return steps;
+        },
+        /** The same tab after a reload: a new document on the same entries. */
+        reloaded: () => fakeBrowser(undefined, undefined, { entries: entries.map((entry) => ({ ...entry })), index }),
         /** The fragment of every entry, oldest first. */
         hashes: () => entries.map((entry) => entry.url.hash),
         get index() {
@@ -129,8 +144,7 @@ function fakeStorage(values = {}) {
 }
 
 /** Loads the app's route modules into a new tab that was opened on `address`. */
-function open(address = '', { state = null, storage = fakeStorage() } = {}) {
-    const browser = fakeBrowser(address, state);
+function open(address = '', { state = null, storage = fakeStorage(), browser = fakeBrowser(address, state) } = {}) {
     global.window = browser.window;
     global.location = browser.location;
     global.history = browser.history;
@@ -146,6 +160,16 @@ function open(address = '', { state = null, storage = fakeStorage() } = {}) {
 }
 
 const usp = (value) => new URLSearchParams(value);
+/**
+ * Lets the router finish what it puts off until the running code is done: the history entries
+ * of overlays are made, and stepped back over, once per task.
+ */
+const tick = () => Promise.resolve();
+/** The same, then the browser's tasks. */
+async function settled(browser) {
+    await tick();
+    browser.settle();
+}
 const isStream = (hash) => /action=(device|stream)/.test(hash) && !/view=(files|shell)/.test(hash);
 
 test('every older phone address is rewritten to the phone and its view, and both forms are read alike', () => {
@@ -524,14 +548,16 @@ test('uploads in progress: the owner is asked before a verb or the browser leave
     assert.deepEqual(tab.browser.behind(), ['#!action=list-files&udid=PIXEL&path=%2Fsdcard', '#!']);
 });
 
-test('an overlay has a history entry: Back closes it and leaves the page alone', () => {
+test('an overlay has a history entry: Back closes it and leaves the page alone', async () => {
     const { browser, router, shown } = open('#!');
     router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
     const page = browser.location.hash;
     const closed = [];
     router.pushOverlay(() => closed.push('actions'));
+    await tick();
     assert.deepEqual(browser.hashes(), ['#!', page, page], 'the entry has the address of the page');
     router.pushOverlay(() => closed.push('confirm'));
+    await tick();
     assert.equal(browser.hashes().length, 4);
     const routes = shown.length;
 
@@ -551,59 +577,319 @@ test('an overlay has a history entry: Back closes it and leaves the page alone',
     assert.deepEqual(closed, ['confirm', 'actions']);
 });
 
-test('an overlay that closes by itself steps back over its entry', () => {
+test('an overlay that closes by itself steps back over its entry', async () => {
     const { browser, router } = open('#!');
     const closed = [];
     const sheet = router.pushOverlay(() => closed.push('settings'));
+    assert.equal(browser.index, 0, 'the entry is made when the running code is done');
+    await tick();
     assert.equal(browser.index, 1);
     sheet.release();
     sheet.release();
-    browser.settle();
+    await settled(browser);
     assert.equal(browser.index, 0, 'the close button, the backdrop and Escape end where history.back() would');
     assert.deepEqual(closed, [], 'the overlay was closed already; it is not told again');
+    assert.equal(browser.steps, 1);
 
-    // One sheet replaces another in the same task: the second entry waits for the first to be left.
+    // One sheet takes the place of another in the same task (Actions to Unlock). The entry is
+    // kept: no step back, and no new entry made after one, which a browser could take for an
+    // entry added without a press.
     const first = router.pushOverlay(() => closed.push('first'));
+    await tick();
+    const entry = browser.history.state;
     first.release();
-    router.pushOverlay(() => closed.push('second'));
-    browser.settle();
+    const second = router.pushOverlay(() => closed.push('second'));
+    await settled(browser);
     assert.deepEqual(browser.hashes(), ['#!', '#!'], 'one overlay entry, not two');
     assert.equal(browser.index, 1);
+    // The other order: the router hears of the new one first.
+    const third = router.pushOverlay(() => closed.push('third'));
+    second.release();
+    await settled(browser);
+    assert.equal(browser.index, 1, 'one entry is left');
+    assert.equal(browser.history.state, entry, 'the same entry: none was added in its place');
+    assert.equal(browser.steps, 1, 'and no step through history was made');
+    assert.deepEqual(closed, [], 'the newer overlay is not told to close');
     browser.history.back();
     browser.settle();
-    assert.deepEqual(closed, ['second']);
+    assert.deepEqual(closed, ['third']);
     assert.equal(browser.index, 0);
+    third.release();
+    await settled(browser);
+    assert.equal(browser.index, 0, 'an overlay that Back closed has no entry left to step over');
 });
 
-test('an overlay that closes by itself takes the overlays opened from it along', () => {
-    // A sheet with a confirm on top: the sheet closes by its own button.
+test('overlays stack: one that closes under another leaves the other open, with an entry', async () => {
+    // The controls panel with a sheet opened from it: the panel closes, the sheet stays.
     const { browser, router, shown } = open('#!');
     router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
     const closed = [];
-    const sheet = router.pushOverlay(() => closed.push('sheet'));
+    const panel = router.pushOverlay(() => closed.push('panel'));
+    router.pushOverlay(() => closed.push('sheet'));
     const confirm = router.pushOverlay(() => closed.push('confirm'));
-    assert.equal(browser.index, 3);
-    sheet.release();
-    assert.deepEqual(closed, ['confirm'], 'the confirm has lost its entry, so it is told to close');
-    confirm.release();
-    browser.settle();
-    assert.equal(browser.index, 1, 'both entries are stepped back over');
-    assert.deepEqual(closed, ['confirm']);
+    await tick();
+    assert.equal(browser.index, 4);
+    assert.equal(browser.history.state.nav.overlay, 3, 'the entries count up from the page');
+    panel.release();
+    await settled(browser);
+    assert.deepEqual(closed, [], 'the two above it stay open');
+    assert.equal(browser.index, 3, 'one entry fewer');
 
-    // Neither is still open when the page changes, and Back from the page is the list.
+    // Back closes the top one, then the next: last opened, first closed.
+    browser.history.back();
+    browser.settle();
+    assert.deepEqual(closed, ['confirm']);
+    confirm.release();
+    await settled(browser);
+    assert.equal(browser.index, 2, 'releasing an overlay that Back closed changes nothing');
+    browser.history.back();
+    browser.settle();
+    assert.deepEqual(closed, ['confirm', 'sheet']);
+    assert.equal(browser.index, 1, 'the page is the entry that is shown');
+    assert.equal(shown.at(-1), 'action=device&udid=PIXEL&view=screen');
+
+    // Released from the top down, as a sheet with a dialog in it unmounts.
+    const one = router.pushOverlay(() => closed.push('one'));
+    const two = router.pushOverlay(() => closed.push('two'));
+    await tick();
+    assert.equal(browser.index, 3);
+    two.release();
+    one.release();
+    await settled(browser);
+    assert.equal(browser.index, 1);
+    assert.deepEqual(closed, ['confirm', 'sheet']);
+
+    // None is open when the page changes, and Back from the page is the list.
     router.switchRoute({ action: 'device', udid: 'IPHONE', view: 'screen' });
     browser.settle();
-    assert.deepEqual(closed, ['confirm']);
+    assert.deepEqual(closed, ['confirm', 'sheet']);
     assert.deepEqual(browser.behind(), ['#!']);
     assert.equal(shown.at(-1), 'action=device&udid=IPHONE&view=screen');
 });
 
-test('a route change closes every overlay, and the new address is written on the page entry', () => {
+test('a change within the page made while an overlay is open keeps it open and ends up on the page entry', async () => {
+    const sdcard = 'action=list-files&udid=PIXEL&path=%2Fsdcard';
+    const corrected = 'action=list-files&udid=PIXEL&path=%2Fsdcard%2F';
+    const { browser, router, shown } = open('#!');
+    router.openRoute(usp(sdcard));
+    const closed = [];
+    router.pushOverlay(() => closed.push('dialog'));
+    await tick();
+    // A listing arrives and corrects the path, and Files tags the entry with its own state.
+    router.replaceRoute(usp(corrected), { ...browser.history.state, files: { id: 'run', index: 0 } });
+    assert.deepEqual(closed, [], 'the dialog stays open');
+    assert.equal(browser.steps, 0, 'and no step through history is made');
+    assert.equal(browser.index, 2);
+    assert.equal(shown.at(-1), corrected, 'the route has the new address at once');
+    assert.equal(browser.history.state.nav.overlay, 1, 'the tab is still on the overlay entry');
+    // The same address with other state, as Files writes when a listing is shown.
+    router.replaceRoute(usp(corrected), { ...browser.history.state, files: { id: 'run', index: 1 } });
+    assert.deepEqual(closed, []);
+    const routes = shown.length;
+
+    // Back closes the dialog. The page entry now has the corrected path and the state.
+    browser.history.back();
+    browser.settle();
+    assert.deepEqual(closed, ['dialog']);
+    assert.equal(browser.index, 1);
+    assert.deepEqual(browser.hashes().slice(0, 2), ['#!', `#!${corrected}`], 'the address is on the entry of the page');
+    assert.deepEqual(browser.history.state, { nav: { index: 1, below: 0 }, files: { id: 'run', index: 1 } });
+    assert.equal(shown.length, routes, 'the route is not set again, so the page is not mounted again');
+    assert.deepEqual(browser.behind(), ['#!'], 'Back from the page is the list, not the path before');
+
+    // Two overlays, a filter written from the top one, and both closed by their own buttons.
+    const inbox = open('#!');
+    inbox.router.openRoute({ action: 'notifications', source: 'IPHONE' });
+    const sheet = inbox.router.pushOverlay(() => closed.push('sheet'));
+    const menu = inbox.router.pushOverlay(() => closed.push('menu'));
+    await tick();
+    inbox.router.switchRoute({ action: 'notifications', source: 'IPHONE', filter: 'unread' });
+    assert.equal(inbox.browser.steps, 0);
+    assert.equal(inbox.shown.at(-1), 'action=notifications&source=IPHONE&filter=unread');
+    menu.release();
+    await settled(inbox.browser);
+    assert.equal(inbox.browser.index, 2);
+    assert.equal(inbox.browser.location.hash, '#!action=notifications&source=IPHONE&filter=unread', 'the entry of the sheet below takes it');
+    sheet.release();
+    await settled(inbox.browser);
+    assert.equal(inbox.browser.index, 1);
+    assert.deepEqual(inbox.browser.hashes().slice(0, 2), ['#!', '#!action=notifications&source=IPHONE&filter=unread']);
+    assert.deepEqual(inbox.browser.history.state.nav, { index: 1, below: 0 });
+    assert.deepEqual(closed, ['dialog'], 'neither was told to close');
+    assert.equal(inbox.shown.filter((value) => value.includes('filter=unread')).length, 1);
+
+    // Another page from under an overlay with such a change: the page entry takes the change
+    // first, so Back from the new page shows the filter that was chosen.
+    inbox.router.pushOverlay(() => closed.push('actions'));
+    await tick();
+    inbox.router.switchRoute({ action: 'notifications', source: 'IPHONE', filter: 'all' });
+    inbox.router.openRoute({ action: 'device', udid: 'IPHONE', view: 'screen' });
+    assert.deepEqual(closed, ['dialog', 'actions'], 'another page closes the overlay');
+    inbox.browser.settle();
+    assert.deepEqual(inbox.browser.hashes(), ['#!', '#!action=notifications&source=IPHONE&filter=all', '#!action=device&udid=IPHONE&view=screen']);
+
+    // A step within the page that adds an entry (a Files folder) still closes the overlays.
+    const files = open(`#!${sdcard}`);
+    files.router.pushOverlay(() => closed.push('menu'));
+    await tick();
+    files.router.pushRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM'));
+    files.browser.settle();
+    assert.deepEqual(closed, ['dialog', 'actions', 'menu']);
+    assert.deepEqual(files.browser.hashes(), [`#!${sdcard}`, '#!action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM']);
+
+    // A reload while the change is still on the overlay's entry: the page entry takes it then.
+    const tab = open('#!');
+    tab.router.openRoute(usp(sdcard));
+    tab.router.pushOverlay(() => {});
+    await tick();
+    tab.router.replaceRoute(usp(corrected));
+    const again = open('', { browser: tab.browser.reloaded() });
+    again.browser.settle();
+    assert.equal(again.browser.index, 1);
+    assert.deepEqual(again.browser.hashes().slice(0, 2), ['#!', `#!${corrected}`]);
+    assert.deepEqual(again.shown, [corrected], 'the reloaded page is shown once, under the corrected address');
+});
+
+test('a sheet that code opens without a press adds no entry, and still closes with its page', async () => {
+    const { browser, router } = open('#!');
+    const { openOverlay } = require('../src/app/ui/overlayHistory');
+    router.openRoute({ action: 'device', udid: 'IPHONE', view: 'screen' });
+    const closed = [];
+    // Nothing has been pressed since the page loaded. Chrome would skip such an entry on Back,
+    // and the stream page with it.
+    openOverlay(() => closed.push('by code'));
+    await tick();
+    assert.equal(browser.hashes().length, 2, 'no entry');
+    browser.history.back();
+    browser.settle();
+    assert.equal(browser.index, 0, 'Back leaves the page');
+    assert.deepEqual(closed, ['by code'], 'and the sheet closes with it');
+
+    // After a press an overlay has an entry. Escape is no press to a browser, and neither is
+    // an event a script made.
+    const presses = [
+        [() => browser.press('Escape'), 0],
+        [() => browser.press(undefined, false), 0],
+        [() => browser.press(), 1],
+        [() => browser.press('k'), 1],
+    ];
+    for (const [press, entries] of presses) {
+        press();
+        const sheet = openOverlay(() => closed.push('sheet'));
+        await tick();
+        assert.equal(browser.index, entries);
+        sheet.release();
+        await settled(browser);
+        assert.equal(browser.index, 0);
+    }
+
+    // A press made before the last Back does not count, as it does not to Chrome.
+    browser.press();
+    openOverlay(() => closed.push('first'));
+    await tick();
+    assert.equal(browser.index, 1);
+    browser.history.back();
+    browser.settle();
+    assert.deepEqual(closed, ['by code', 'first']);
+    const late = openOverlay(() => closed.push('late'));
+    await tick();
+    assert.equal(browser.index, 0, 'no entry for a sheet opened after Back without a press');
+    late.release();
+    // Nor one made before a step the router took itself (a sheet closed by its button).
+    browser.press();
+    const second = openOverlay(() => closed.push('second'));
+    await tick();
+    assert.equal(browser.index, 1);
+    second.release();
+    await settled(browser);
+    const after = openOverlay(() => closed.push('after a step'));
+    await tick();
+    assert.equal(browser.index, 0);
+    after.release();
+
+    // A caller can say so itself, either way.
+    const forced = openOverlay(() => closed.push('forced'), { entry: true });
+    await tick();
+    assert.equal(browser.index, 1);
+    forced.release();
+    await settled(browser);
+    browser.press();
+    const plain = openOverlay(() => closed.push('plain'), { entry: false });
+    await tick();
+    assert.equal(browser.index, 0);
+
+    // One without an entry on top of one with: Back closes both, the top one first.
+    const steps = browser.steps;
+    const under = router.pushOverlay(() => closed.push('under'));
+    router.pushOverlay(() => closed.push('over'), { entry: false });
+    await tick();
+    assert.equal(browser.index, 1);
+    closed.length = 0;
+    browser.history.back();
+    browser.settle();
+    assert.deepEqual(closed, ['over', 'under'], 'what was opened on top of it goes with it');
+    assert.equal(browser.index, 0);
+    under.release();
+    // The one opened before them has no entry and is still open. A change within the page
+    // leaves it open; another page closes it.
+    router.switchRoute({ action: '' });
+    assert.deepEqual(closed, ['over', 'under']);
+    router.openRoute({ action: 'notifications' });
+    assert.deepEqual(closed, ['over', 'under', 'plain']);
+    plain.release();
+    await settled(browser);
+    assert.equal(browser.steps, steps + 1, 'releasing an overlay without an entry makes no step');
+});
+
+test('an overlay that may not close now stays open on Back, and closes with its page', async () => {
+    // Stream settings while a change is being applied, and a sheet with a confirm prompt in it.
+    const { browser, router, shown } = open('#!');
+    router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
+    const closed = [];
+    let busy = true;
+    let asked = 0;
+    router.pushOverlay(() => closed.push('settings'), { stays: () => (asked++, busy) });
+    await tick();
+    const entries = browser.hashes().length;
+    browser.history.back();
+    browser.settle();
+    assert.equal(asked, 1);
+    assert.deepEqual(closed, [], 'the sheet is not closed');
+    assert.equal(browser.index, 2, 'the tab is on the entry of the sheet again');
+    assert.equal(browser.hashes().length, entries, 'by a step forward: no entry is added');
+    assert.equal(shown.at(-1), 'action=device&udid=PIXEL&view=screen', 'the page under it is not left');
+    // Back closes it once it may close.
+    busy = false;
+    browser.history.back();
+    browser.settle();
+    assert.deepEqual(closed, ['settings']);
+    assert.equal(browser.index, 1);
+
+    // Another page closes it whatever it says: a sheet never shows over another page.
+    busy = true;
+    router.pushOverlay(() => closed.push('applying'), { stays: () => busy });
+    await tick();
+    router.goUp();
+    browser.settle();
+    assert.deepEqual(closed, ['settings', 'applying']);
+    assert.equal(browser.location.hash, '#!');
+    // Also when the browser goes there in one step, past the page.
+    router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
+    router.pushOverlay(() => closed.push('held'), { stays: () => true });
+    await tick();
+    browser.history.go(-2);
+    browser.settle();
+    assert.deepEqual(closed, ['settings', 'applying', 'held']);
+    assert.equal(browser.index, 0);
+});
+
+test('a route change closes every overlay, and the new address is written on the page entry', async () => {
     // Switch phone is a sheet: choosing a phone replaces the page under the sheet, not the sheet's entry.
     const { browser, router, shown } = open('#!');
     router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
     const closed = [];
     router.pushOverlay(() => closed.push('switcher'));
+    await tick();
     router.switchRoute({ action: 'device', udid: 'IPHONE', view: 'screen' });
     assert.deepEqual(closed, ['switcher'], 'the overlay closes at once');
     browser.settle();
@@ -614,10 +900,12 @@ test('a route change closes every overlay, and the new address is written on the
 
     // Open from inside an overlay, and up from inside an overlay.
     router.pushOverlay(() => closed.push('menu'));
+    await tick();
     router.openRoute({ action: 'notifications', source: 'IPHONE' });
     browser.settle();
     assert.deepEqual(browser.hashes(), ['#!', '#!action=device&udid=IPHONE&view=screen', '#!action=notifications&source=IPHONE']);
     router.pushOverlay(() => closed.push('card menu'));
+    await tick();
     router.goUp();
     browser.settle();
     assert.deepEqual(closed, ['switcher', 'menu', 'card menu']);
@@ -626,6 +914,7 @@ test('a route change closes every overlay, and the new address is written on the
 
     // An address that arrives from outside the router (a link, a typed address) closes them too.
     router.pushOverlay(() => closed.push('settings'));
+    await tick();
     browser.location.hash = '#!action=notifications';
     browser.settle();
     assert.deepEqual(closed, ['switcher', 'menu', 'card menu', 'settings']);
@@ -635,22 +924,22 @@ test('a route change closes every overlay, and the new address is written on the
     assert.equal(browser.index, 0);
 });
 
-test('a page reloaded with an overlay open goes back to the page entry', () => {
+test('a page reloaded with an overlay open goes back to the page entry', async () => {
     const first = open('#!');
     first.router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
     first.router.pushOverlay(() => {});
+    await tick();
     assert.equal(first.browser.history.state.nav.overlay, 1);
     // The reloaded document starts on the overlay's entry, with the page entry below it.
-    const browser = fakeBrowser('#!');
-    browser.history.pushState({ nav: { index: 1, below: 0 } }, '', '#!action=device&udid=PIXEL&view=screen');
-    browser.history.pushState(first.browser.history.state, '');
-    global.window = browser.window;
-    global.location = browser.location;
-    global.history = browser.history;
-    for (const key of Object.keys(require.cache)) if (key.includes(`${path.sep}src${path.sep}app${path.sep}`)) delete require.cache[key];
-    require('../src/app/state/router');
+    const { browser, shown } = open('', { browser: first.browser.reloaded() });
     browser.settle();
     assert.equal(browser.index, 1, 'Back is not spent on an overlay that is no longer open');
+    assert.deepEqual(shown, ['action=device&udid=PIXEL&view=screen'], 'the page is shown once');
+    // Forward from there is the entry of an overlay that is gone. It is stepped back over.
+    browser.history.forward();
+    browser.settle();
+    assert.equal(browser.index, 1);
+    assert.deepEqual(browser.behind(), ['#!'], 'and Back leaves the page in one step');
 });
 
 test('links: a phone link names the phone and the view only, and following one goes through the router', () => {
