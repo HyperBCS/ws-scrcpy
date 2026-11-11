@@ -142,3 +142,58 @@ test('a folder listing ends its adb connection when the phone sends something un
     assert.match(broken.result.message, /connection lost/);
     assert.equal(broken.connection.ended, 1);
 });
+
+// Stands in for `adb shell`: records each command and answers with the status marker.
+function shellFixture(t, answer = () => 0) {
+    const commands = [];
+    const client = {
+        shell: async (_serial, command) => {
+            commands.push(command);
+            return { command, destroy() {} };
+        },
+    };
+    t.mock.method(AdbExtended, 'createClient', () => client);
+    t.mock.method(AdbExtended.util, 'readAll', async (stream) => {
+        const code = answer(stream.command, commands.length);
+        return Buffer.from(code === 0 ? '__rc=0\n' : `rm: refused\n__rc=${code}\n`);
+    });
+    return commands;
+}
+
+test('a large selection is deleted in batches that each fit in one adb request', async (t) => {
+    const commands = shellFixture(t);
+    // 1,200 Camera paths: one command would be about 69,600 bytes, and adb would cut it short.
+    const paths = Array.from({ length: 1200 }, (_, index) => {
+        return `/sdcard/DCIM/Camera/IMG_20261110_${String(index).padStart(6, '0')}_HDR_portrait.jpg`;
+    });
+    await AdbUtils.remove('serial', paths);
+    assert.ok(commands.length > 1, 'more than one command is sent');
+    const deleted = [];
+    for (const command of commands) {
+        assert.ok(Buffer.byteLength(command) < 33 * 1024, `a batch of ${Buffer.byteLength(command)} bytes`);
+        const match = command.match(/^rm -rf -- (.*) 2>&1; echo "__rc=\$\?"$/);
+        assert.ok(match, 'each batch is a complete rm command');
+        deleted.push(...match[1].split(' ').map((item) => item.slice(1, -1)));
+    }
+    assert.deepEqual(deleted, paths, 'every path is deleted once, in order');
+});
+
+test('deleting stops at the first batch the device refuses', async (t) => {
+    const commands = shellFixture(t, (_command, count) => (count === 2 ? 1 : 0));
+    const paths = Array.from({ length: 1200 }, (_, index) => `/sdcard/DCIM/Camera/${'x'.repeat(40)}${index}.jpg`);
+    await assert.rejects(AdbUtils.remove('serial', paths), /rm: refused/);
+    assert.equal(commands.length, 2, 'no batch is sent after the failure');
+});
+
+test('a small selection is still one command, and names with quotes stay quoted', async (t) => {
+    const commands = shellFixture(t);
+    await AdbUtils.remove('serial', ['/sdcard/a b.txt', "/sdcard/it's.txt"]);
+    assert.deepEqual(commands, [`rm -rf -- '/sdcard/a b.txt' '/sdcard/it'\\''s.txt' 2>&1; echo "__rc=$?"`]);
+});
+
+test('a shell command too long for one adb request is refused, not cut short', async (t) => {
+    const commands = shellFixture(t);
+    await assert.rejects(AdbUtils.shellExec('serial', `echo ${'x'.repeat(65001)}`), /too long/);
+    assert.equal(commands.length, 0);
+    assert.equal((await AdbUtils.shellExec('serial', `echo ${'x'.repeat(60000)}`)).code, 0);
+});
