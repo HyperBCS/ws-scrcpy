@@ -950,3 +950,84 @@ test('stopping during an in-flight failed push cannot create a new retry timer',
     service.receive(event); service.release(); reject({ statusCode: 500 }); await tick();
     assert.equal(service.push.pending, 0); assert.equal(service.push.waiting.size, 0);
 });
+
+test('delivery is counted per receiving device and a success elsewhere hides no failure', async () => {
+    await historyApi(async ({ service, api }) => {
+        const other = { ...sub, id: 'other-receiver', subscription: { ...subscription, endpoint: 'https://fcm.googleapis.com/fcm/send/other' } };
+        service.store.subscriptions = [sub, other];
+        webpush.sendNotification = async receiver => {
+            if (receiver.endpoint === subscription.endpoint) throw { statusCode: 401, body: 'private provider detail' };
+        };
+        service.receive(event); await tick(); await tick();
+        const status = await (await api('/status')).json();
+        assert.deepEqual(status.receivers, [
+            { id: 'sub', provider: 'Apple', sent: 0, failed: 1, lastError: 'Push provider rejected delivery (401)' },
+            { id: 'other-receiver', provider: 'Google', sent: 1, failed: 0, lastError: '' },
+        ]);
+        assert.deepEqual(status.delivery, { sent: 1, failed: 1, lastError: 'Push provider rejected delivery (401)' });
+        assert.equal(JSON.stringify(status).includes('fcm/send/other'), false, 'endpoints stay on the server');
+        assert.equal(service.store.subscriptions.length, 2, 'a 401 is the sender being refused; the subscription is kept');
+        // Removing a device keeps its counts in the totals and drops its row and its error.
+        assert.equal((await api('/subscriptions', { endpoint: subscription.endpoint }, 'DELETE')).status, 200);
+        const after = await (await api('/status')).json();
+        assert.deepEqual(after.receivers.map(r => r.id), ['other-receiver']);
+        assert.deepEqual(after.delivery, { sent: 1, failed: 1, lastError: '' });
+    });
+});
+
+test('a subscription the provider keeps refusing is removed after three replies in a row', async () => {
+    await withPushEnv({ WS_PUBLIC_URL: 'https://phone.example', WS_PUSH_SUBJECT: undefined }, async () => {
+        for (const statusCode of [400, 403]) {
+            const service = freshService(); service.load();
+            service.store.sources = [source]; service.store.subscriptions = [{ ...sub }];
+            let outcome = () => { throw { statusCode, body: JSON.stringify({ reason: 'VapidPkHashMismatch' }) }; };
+            webpush.sendNotification = async () => outcome();
+            const deliver = async uid => { service.receive({ ...event, uid, date: `d${uid}` }); await tick(); await tick(); };
+            try {
+                await deliver(1); await deliver(2);
+                assert.equal(service.store.subscriptions.length, 1, `two ${statusCode} replies keep the subscription`);
+                // A send that is accepted starts the count again.
+                outcome = () => undefined; await deliver(3);
+                outcome = () => { throw { statusCode, body: '' }; };
+                await deliver(4); await deliver(5);
+                assert.equal(service.store.subscriptions.length, 1, 'the count restarts after a success');
+                assert.deepEqual(service.push.statsFor('sub'), { sent: 1, failed: 4, lastError: `Push provider rejected delivery (${statusCode})` });
+                await deliver(6);
+                assert.deepEqual(service.store.subscriptions, [], `the third ${statusCode} in a row removes it`);
+                assert.deepEqual(service.delivery, { sent: 1, failed: 5, lastError: '' }, 'its counts stay in the totals; its error leaves with it');
+            } finally { service.release(); }
+        }
+        // The server's own credentials being refused says nothing about the subscription.
+        const service = freshService(); service.load();
+        service.store.sources = [source]; service.store.subscriptions = [{ ...sub }];
+        webpush.sendNotification = async () => { throw { statusCode: 403, body: JSON.stringify({ reason: 'BadJwtToken' }) }; };
+        try {
+            for (let uid = 1; uid <= 5; uid++) { service.receive({ ...event, uid, date: `d${uid}` }); await tick(); await tick(); }
+            assert.equal(service.store.subscriptions.length, 1);
+            assert.equal(service.delivery.failed, 5);
+        } finally { service.release(); }
+    });
+});
+
+test('a replaced push subscription keeps the choices saved for the old endpoint', async () => {
+    await historyApi(async ({ service, api }) => {
+        await api('/sources', { ...source, id: 'ipad', name: 'iPad', address: 'AA:BB:CC:DD:EE:01' });
+        assert.equal((await api('/subscriptions', { subscription, sources: ['iphone'], receiverSource: 'ipad' })).status, 200);
+        const fresh = { ...subscription, endpoint: subscription.endpoint + '-rotated' };
+        // Without the old endpoint, or with one the server does not hold, there are no choices to keep.
+        assert.equal((await api('/subscriptions', { subscription: fresh })).status, 400);
+        assert.equal((await api('/subscriptions', { subscription: fresh, replaces: 'https://web.push.apple.com/unknown' })).status, 400);
+        assert.equal(service.store.subscriptions.length, 1);
+        const reply = await api('/subscriptions', { subscription: fresh, replaces: subscription.endpoint });
+        assert.equal(reply.status, 200);
+        assert.equal(service.store.subscriptions.length, 1, 'the old record is replaced, not kept beside the new one');
+        const stored = service.store.subscriptions[0];
+        assert.equal(stored.subscription.endpoint, fresh.endpoint);
+        assert.deepEqual(stored.sources, ['iphone']);
+        assert.equal(stored.receiverSource, 'ipad');
+        assert.equal((await reply.json()).id, stored.id);
+        // The page's own save is an upsert by endpoint and still sets the choices.
+        assert.equal((await api('/subscriptions', { subscription: fresh, sources: ['ipad'], receiverSource: '' })).status, 200);
+        assert.deepEqual(service.store.subscriptions.map(s => [s.subscription.endpoint, s.sources, s.receiverSource]), [[fresh.endpoint, ['ipad'], '']]);
+    });
+});

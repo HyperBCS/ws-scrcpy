@@ -288,6 +288,19 @@
     padding-top: 16px;
     border-top: 1px solid var(--device-border-color);
 }
+.notification-receivers {
+    margin: 0 0 10px;
+    padding: 0;
+    list-style: none;
+    font-size: 14px;
+}
+.notification-receivers li + li {
+    margin-top: 8px;
+}
+.notifications-page .notification-receivers p {
+    margin: 2px 0 0;
+    font-size: 13px;
+}
 .notification-pairing-code {
     display: block;
     margin: 10px 0 14px;

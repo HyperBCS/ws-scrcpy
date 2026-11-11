@@ -6,6 +6,12 @@ const { test } = require('node:test');
 
 const source = fs.readFileSync(path.join(__dirname, '../src/public/sw.js'), 'utf8');
 
+const subscriptionOf = (endpoint, key) => ({
+    endpoint,
+    options: { applicationServerKey: key },
+    toJSON: () => ({ endpoint, keys: { p256dh: 'p', auth: 'a' } }),
+});
+
 function worker(options = {}) {
     const listeners = new Map();
     const shown = [];
@@ -16,6 +22,7 @@ function worker(options = {}) {
     const focused = [];
     const fetched = [];
     const order = [];
+    const subscribed = [];
     let closed = 0;
     const windows = (options.windows || []).map((url) => ({
         url,
@@ -54,6 +61,13 @@ function worker(options = {}) {
             showNotification: async (title, notification) => {
                 order.push('notification');
                 shown.push({ title, ...notification });
+            },
+            pushManager: {
+                subscribe: async (settings) => {
+                    subscribed.push(settings);
+                    if (options.subscribeFailure) throw Error('Permission was withdrawn');
+                    return subscriptionOf('https://web.push.apple.com/resubscribed');
+                },
             },
         },
         clients: {
@@ -95,6 +109,8 @@ function worker(options = {}) {
         focused,
         fetched,
         order,
+        subscribed,
+        change: (event) => dispatch('pushsubscriptionchange', event),
         get closed() {
             return closed;
         },
@@ -187,6 +203,48 @@ test('push URLs only set an app route, and cannot replace the origin or scope', 
     for (const target of ['https://outside.test/', '//outside.test/', '/elsewhere/']) {
         await context.push({ url: target });
         assert.equal(context.shown.at(-1).data.url, 'https://example.test/app/#!action=notifications');
+    }
+});
+
+test('a replaced push subscription is sent to the server under its old endpoint', async () => {
+    const key = new Uint8Array([4, 1, 2, 3]).buffer;
+    const old = subscriptionOf('https://web.push.apple.com/old', key);
+    const posted = (context) =>
+        context.fetched.map(({ url, settings }) => ({ url, method: settings.method, body: JSON.parse(settings.body) }));
+
+    // The browser already made the new subscription.
+    const given = worker({ windows: ['https://example.test/app/'] });
+    await given.change({ oldSubscription: old, newSubscription: subscriptionOf('https://web.push.apple.com/new', key) });
+    assert.deepEqual(given.subscribed, [], 'no second subscription is made');
+    assert.deepEqual(posted(given), [
+        {
+            url: 'https://example.test/app/api/notifications/subscriptions',
+            method: 'POST',
+            body: { subscription: { endpoint: 'https://web.push.apple.com/new', keys: { p256dh: 'p', auth: 'a' } }, replaces: 'https://web.push.apple.com/old' },
+        },
+    ]);
+    assert.deepEqual(given.messages.map((message) => message.type), ['notifications-changed'], 'an open page is told to refresh');
+
+    // The browser only reports the loss: subscribe again with the same server key.
+    const lost = worker();
+    await lost.change({ oldSubscription: old, newSubscription: null });
+    assert.equal(lost.subscribed.length, 1);
+    assert.equal(lost.subscribed[0].userVisibleOnly, true);
+    assert.equal(lost.subscribed[0].applicationServerKey, key);
+    assert.equal(posted(lost)[0].body.subscription.endpoint, 'https://web.push.apple.com/resubscribed');
+    assert.equal(posted(lost)[0].body.replaces, 'https://web.push.apple.com/old');
+
+    // Nothing identifies the server's record, or the browser refuses: left for the app to repair.
+    for (const [options, event] of [
+        [{}, { oldSubscription: null, newSubscription: null }],
+        [{}, {}],
+        [{ subscribeFailure: true }, { oldSubscription: old, newSubscription: null }],
+        [{ fetchFailure: true }, { oldSubscription: old, newSubscription: subscriptionOf('https://web.push.apple.com/new', key) }],
+    ]) {
+        const context = worker({ ...options, windows: ['https://example.test/app/'] });
+        await context.change(event);
+        assert.equal(context.fetched.filter(({ settings }) => !options.fetchFailure && settings.method === 'POST').length, 0);
+        assert.equal(context.messages.length, 1, 'the page is still told');
     }
 });
 

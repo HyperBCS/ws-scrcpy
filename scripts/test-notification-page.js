@@ -3,6 +3,24 @@ const assert = require('node:assert/strict');
 const { test, mock } = require('node:test');
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
 const { requestJson, REQUEST_TIMEOUT_MS } = require('../src/app/client/request');
+const { madeForServerKey, serverKeyBytes } = require('../src/common/pushKey');
+
+test('a push subscription made for other server keys is recognised', () => {
+    const bytes = Buffer.from(Array.from({ length: 65 }, (_, index) => (index * 7 + 250) % 256));
+    const publicKey = bytes.toString('base64url');
+    assert.match(publicKey, /[-_]/, 'the fixture covers the URL-safe alphabet');
+    assert.deepEqual([...serverKeyBytes(publicKey)], [...bytes]);
+    const held = (buffer) => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.length);
+    assert.equal(madeForServerKey(held(bytes), publicKey), true);
+    const other = Buffer.from(bytes);
+    other[64] ^= 1;
+    assert.equal(madeForServerKey(held(other), publicKey), false, 'one differing byte is another key');
+    assert.equal(madeForServerKey(held(bytes.subarray(0, 64)), publicKey), false);
+    // A browser that does not report the key, or a server with none, gives no reason to resubscribe.
+    for (const unknown of [null, undefined]) assert.equal(madeForServerKey(unknown, publicKey), true);
+    assert.equal(madeForServerKey(held(bytes), ''), true);
+    assert.equal(madeForServerKey(held(bytes), 'not base64 !'), true);
+});
 
 /** A server that answers after `delay` ms unless the request is aborted first. */
 function slowServer(delay, reply = { ok: true }) {

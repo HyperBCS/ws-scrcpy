@@ -1,6 +1,7 @@
 import { signal } from '@preact/signals';
 import { route } from './router';
 import { requestJson } from '../client/request';
+import { madeForServerKey, serverKeyBytes } from '../../common/pushKey';
 
 const base = new URL('.', window.location.href);
 export const notificationApi = new URL('api/notifications/', base).href;
@@ -36,6 +37,95 @@ export function registerNotificationWorker(): Promise<ServiceWorkerRegistration>
     if (!window.isSecureContext || !('serviceWorker' in navigator))
         return Promise.reject(Error('Open the app using trusted HTTPS.'));
     return navigator.serviceWorker.register(new URL('sw.js', base).href, { scope: base.pathname });
+}
+
+/** The iPhones this device chose to receive from, as last saved to the server. */
+export function savedNotificationSources(): string[] | null {
+    try {
+        const saved: unknown = JSON.parse(localStorage.getItem('notification-sources') || 'null');
+        return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string') : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The browser's push subscription for this server's key. One made for other keys is replaced,
+ * because the push service refuses every send to it. `create` also makes the first one.
+ */
+export async function pushSubscriptionFor(
+    registration: ServiceWorkerRegistration,
+    publicKey: string,
+    create: boolean,
+): Promise<PushSubscription | null> {
+    const existing = await registration.pushManager.getSubscription();
+    if (existing && madeForServerKey(existing.options?.applicationServerKey, publicKey)) return existing;
+    if (existing) {
+        await existing.unsubscribe();
+        // The server would also drop the old endpoint itself, after the push service refuses it.
+        void notificationRequest('subscriptions', 'DELETE', { endpoint: existing.endpoint }).catch(() => undefined);
+    } else if (!create) return null;
+    return registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: serverKeyBytes(publicKey),
+    });
+}
+
+/** The server's id for a subscription: the SHA-256 of its endpoint. */
+export async function pushReceiverId(endpoint: string): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export interface PushSync {
+    // Set when the subscription was sent to the server.
+    subscription?: PushSubscription;
+    error?: string;
+}
+let pushSync: Promise<PushSync> | undefined;
+let pushSyncFailed = false;
+
+/**
+ * Once per app load, send this device's push subscription to the server again with the choices
+ * it last saved. The browser can replace a subscription and the server can drop one (after the
+ * push service reports it gone, or after a data reset); without this the page would go on
+ * showing notifications as enabled while nothing can be delivered. A device that never enabled
+ * notifications is left alone. `retry` runs it again after a failure.
+ */
+export function syncPushSubscription(retry = false): Promise<PushSync> {
+    if (pushSync && !(retry && pushSyncFailed)) return pushSync;
+    pushSyncFailed = false;
+    pushSync = (async (): Promise<PushSync> => {
+        const sources = savedNotificationSources();
+        if (
+            !sources ||
+            !window.isSecureContext ||
+            !('serviceWorker' in navigator) ||
+            !('PushManager' in window) ||
+            !('Notification' in window) ||
+            Notification.permission !== 'granted'
+        )
+            return {};
+        try {
+            const registration = await navigator.serviceWorker.getRegistration(base.href);
+            if (!registration || !(await registration.pushManager.getSubscription())) return {};
+            const status = await notificationRequest<{ publicKey: string; sources: Array<{ id: string }> }>('status');
+            const subscription = await pushSubscriptionFor(registration, status.publicKey, false);
+            if (!subscription) return {};
+            const linked = new Set(status.sources.map((source) => source.id));
+            const receiver = localStorage.getItem('notification-receiver-source') || '';
+            await notificationRequest('subscriptions', 'POST', {
+                subscription: subscription.toJSON(),
+                sources: sources.filter((id) => linked.has(id)),
+                receiverSource: linked.has(receiver) ? receiver : '',
+            });
+            return { subscription };
+        } catch (error) {
+            pushSyncFailed = true;
+            return { error: (error as Error).message };
+        }
+    })();
+    return pushSync;
 }
 
 import type { NotificationSummary } from '../../common/Notification';
@@ -82,6 +172,7 @@ export function startNotificationSummary(): () => void {
         }
     };
     void refresh();
+    void syncPushSubscription();
     const timer = window.setInterval(refresh, 15000);
     window.addEventListener('hashchange', refresh);
     document.addEventListener('visibilitychange', refresh);

@@ -8,6 +8,10 @@ import {
     notificationRequest as api,
     registerNotificationWorker,
     applyNotificationSummary,
+    savedNotificationSources as savedSources,
+    pushSubscriptionFor,
+    pushReceiverId,
+    syncPushSubscription,
 } from '../state/notifications';
 import { NotificationHistory, UnreadBadge } from './NotificationHistory';
 import { route } from '../state/router';
@@ -18,15 +22,6 @@ import type {
     NotificationStatus as Status,
 } from '../../common/Notification';
 import '../../style/views/Notifications.css';
-
-function savedSources(): string[] | null {
-    try {
-        const saved: unknown = JSON.parse(localStorage.getItem('notification-sources') || 'null');
-        return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string') : null;
-    } catch {
-        return null;
-    }
-}
 
 function choicesKey(sources: string[], receiver: string): string {
     return JSON.stringify({ sources: [...sources].sort(), receiver });
@@ -161,6 +156,20 @@ export function NotificationsView() {
     const busy = running > 0;
     const [panel, setPanel] = useState<'history' | 'setup'>();
     const [subscription, setSubscription] = useState<PushSubscription | null>(null);
+    const [receiverId, setReceiverId] = useState('');
+    useEffect(() => {
+        let alive = true;
+        setReceiverId('');
+        if (subscription)
+            void pushReceiverId(subscription.endpoint)
+                .then((id) => {
+                    if (alive) setReceiverId(id);
+                })
+                .catch(() => undefined);
+        return () => {
+            alive = false;
+        };
+    }, [subscription?.endpoint]);
     const [workerLoaded, setWorkerLoaded] = useState(false);
     const [selected, setSelected] = useState<string[]>([]);
     const [receiverChoice, setReceiver] = useState(localStorage.getItem('notification-receiver-source') || '');
@@ -199,6 +208,10 @@ export function NotificationsView() {
     const blockedPermission = supported && Notification.permission === 'denied';
     const enabled = !!subscription && !blockedPermission;
     const canEnable = supported && (!ios || installed) && workerLoaded && initialized && effectiveSources.length > 0;
+    // Delivery is reported per receiving device; this device is found by its subscription id.
+    const receivers = status?.receivers || [];
+    const ownIndex = receivers.findIndex((r) => r.id === receiverId);
+    const unregistered = enabled && !!confirmed && !!receiverId && !!status?.receivers && ownIndex < 0 && !busy;
     const privateApp = new URL(status?.publicUrl || 'https://mini-nuc.tailea1801.ts.net/');
     privateApp.hash = '!action=notifications';
     const privateUrl = privateApp.href;
@@ -266,6 +279,13 @@ export function NotificationsView() {
                     if (alive) setWorkerLoaded(true);
                 });
         else setWorkerLoaded(true);
+        // The app sends this device's subscription to the server again when it loads. Show a
+        // subscription it had to replace, and say so when the server could not be told.
+        void syncPushSubscription(true).then((result) => {
+            if (!alive) return;
+            if (result.subscription) setSubscription(result.subscription);
+            if (result.error) setError(`This device could not be registered with the server: ${result.error}`);
+        });
         return () => {
             alive = false;
             mounted.current = false;
@@ -317,13 +337,7 @@ export function NotificationsView() {
                 throw Error('Allow notifications for this app in this device’s settings, then try again.');
             const registration = await registerNotificationWorker();
             await navigator.serviceWorker.ready;
-            const existing = await registration.pushManager.getSubscription();
-            const bytes = Uint8Array.from(atob(status!.publicKey.replace(/-/g, '+').replace(/_/g, '/')), (c) =>
-                c.charCodeAt(0),
-            );
-            const sub =
-                existing ||
-                (await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes }));
+            const sub = (await pushSubscriptionFor(registration, status!.publicKey, true))!;
             await saveSubscription(sub);
             setSubscription(sub);
             setMessage('Notifications enabled on this device.');
@@ -828,18 +842,48 @@ export function NotificationsView() {
                                         Some notifications could not be sent. See delivery details below.
                                     </p>
                                 )}
+                                {unregistered && (
+                                    <p role="alert" class="notification-error">
+                                        The server has no record of this device, so nothing can be delivered to it. Send
+                                        a test notification to register it again.
+                                    </p>
+                                )}
                                 <AnimatedDetails class="notification-details">
                                     <summary>Delivery details</summary>
                                     <div class="notification-details-content">
-                                        <p class="notification-help">
-                                            Across all receiving devices since the server started:{' '}
-                                            {status.delivery.sent} accepted by the push service
-                                            {status.delivery.failed ? `, ${status.delivery.failed} failed` : ''}.
-                                            Acceptance doesn’t confirm a banner appeared.
-                                        </p>
-                                        {status.delivery.lastError && (
-                                            <p class="notification-error">{status.delivery.lastError}</p>
+                                        {receivers.length ? (
+                                            <ul class="notification-receivers">
+                                                {receivers.map((r, index) => (
+                                                    <li key={r.id}>
+                                                        <strong>
+                                                            {index === ownIndex
+                                                                ? 'This device'
+                                                                : `Other device ${index + (ownIndex >= 0 && ownIndex < index ? 0 : 1)}`}
+                                                        </strong>{' '}
+                                                        <span class="notification-help">
+                                                            {r.provider} push service · {r.sent} accepted
+                                                            {r.failed ? `, ${r.failed} failed` : ''}
+                                                        </span>
+                                                        {r.lastError && <p class="notification-error">{r.lastError}</p>}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        ) : (
+                                            <p class="notification-help">
+                                                No device is registered to receive notifications.
+                                            </p>
                                         )}
+                                        {status.delivery.lastError &&
+                                            !receivers.some((r) => r.lastError === status.delivery.lastError) && (
+                                                <p class="notification-error">{status.delivery.lastError}</p>
+                                            )}
+                                        <p class="notification-help">
+                                            Counted since the server started
+                                            {status.delivery.sent || status.delivery.failed
+                                                ? `: ${status.delivery.sent} accepted${status.delivery.failed ? `, ${status.delivery.failed} failed` : ''} in total`
+                                                : ''}
+                                            . Acceptance by the push service doesn’t confirm a banner appeared.
+                                        </p>
                                     </div>
                                 </AnimatedDetails>
                             </section>

@@ -31,6 +31,16 @@ const PAIRING_WINDOW_MS = 120000;
 const PAIRING_REJECTED_NOTICE_MS = 10 * 60000;
 const gzip = promisify(zlib.gzip);
 
+/** Names the push service of a subscription, so the page can tell receiving devices apart. */
+function pushProvider(endpoint: string): string {
+    const host = new URL(endpoint).hostname;
+    if (host.endsWith('push.apple.com')) return 'Apple';
+    if (host === 'fcm.googleapis.com') return 'Google';
+    if (host.endsWith('mozilla.com')) return 'Mozilla';
+    if (host.endsWith('notify.windows.com')) return 'Windows';
+    return 'Other';
+}
+
 /**
  * Identifies one state of the history. It is a hash of what the page is sent, so it changes with
  * every visible change (a new item, a read mark, a lost Bluetooth session) wherever that change
@@ -666,6 +676,12 @@ export class NotificationService implements Service {
                 pairingRejected: Date.now() - this.pairingRejectedAt < PAIRING_REJECTED_NOTICE_MS,
                 error: this.disabled || this.error,
                 delivery: this.delivery,
+                // One row per receiving device. The id is a hash, never the push endpoint.
+                receivers: this.store.subscriptions.map((s) => ({
+                    id: s.id,
+                    provider: pushProvider(s.subscription.endpoint),
+                    ...this.push.statsFor(s.id),
+                })),
                 historyRevision: historyRevision(JSON.stringify(this.history())),
                 storedBySource,
                 ...this.counts(),
@@ -986,23 +1002,30 @@ export class NotificationService implements Service {
         });
         route('post', '/subscriptions', (req, res) => {
             const subscription = validateSubscription(req.body.subscription);
-            const sources = req.body.sources;
+            // The browser replaced its subscription while the app was closed. The service worker
+            // names the old endpoint and the record keeps its choices, which only the page knows.
+            const replaced =
+                typeof req.body.replaces === 'string'
+                    ? this.store.subscriptions.find((s) => s.subscription.endpoint === req.body.replaces)
+                    : undefined;
+            const sources =
+                req.body.sources ?? replaced?.sources.filter((id) => this.store.sources.some((s) => s.id === id));
             if (!Array.isArray(sources) || sources.some((id) => !this.store.sources.some((s) => s.id === id)))
                 throw Error('Select valid source devices');
-            const receiverSource = req.body.receiverSource || '';
+            const receiverSource = req.body.receiverSource ?? replaced?.receiverSource ?? '';
             if (receiverSource && !this.store.sources.some((s) => s.id === receiverSource))
                 throw Error('Invalid receiver device');
             const id = crypto.createHash('sha256').update(subscription.endpoint).digest('hex');
-            if (this.store.subscriptions.length >= 100 && !this.store.subscriptions.some((s) => s.id === id))
-                throw Error('Subscription limit reached');
-            this.store.subscriptions = [
-                ...this.store.subscriptions.filter((s) => s.id !== id),
-                { id, subscription, sources, receiverSource, updated: Date.now() },
-            ];
+            const kept = this.store.subscriptions.filter((s) => s.id !== id && s !== replaced);
+            if (kept.length >= 100) throw Error('Subscription limit reached');
+            if (replaced && replaced.id !== id) this.push.forget(replaced.id);
+            this.store.subscriptions = [...kept, { id, subscription, sources, receiverSource, updated: Date.now() }];
             this.save();
             res.json({ id });
         });
         route('delete', '/subscriptions', (req, res) => {
+            for (const s of this.store.subscriptions)
+                if (s.subscription.endpoint === req.body.endpoint) this.push.forget(s.id);
             this.store.subscriptions = this.store.subscriptions.filter(
                 (s) => s.subscription.endpoint !== req.body.endpoint,
             );

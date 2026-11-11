@@ -47,7 +47,10 @@ export interface NotificationStatus extends NotificationSummary {
     // An iPhone asked to pair in the last 10 minutes while no pairing window was open.
     pairingRejected?: boolean;
     error: string;
+    // Totals for all receiving devices since the server started.
     delivery: { sent: number; failed: number; lastError: string };
+    // The same per receiving device. `id` is the SHA-256 of the push endpoint.
+    receivers?: Array<{ id: string; provider: string; sent: number; failed: number; lastError: string }>;
     // Changes whenever the stored notifications change; the page then fetches /history.
     historyRevision: string;
     // How many notifications the server holds for each iPhone.

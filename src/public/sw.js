@@ -44,6 +44,28 @@ self.addEventListener('push', event => {
         clients.forEach(client => client.postMessage({ type: 'notifications-changed' }));
     })());
 });
+// The browser replaced or dropped this device's push subscription while the app was closed.
+// Subscribe again with the same server key and hand the server the new endpoint; it keeps the
+// choices stored for the old one. Whatever cannot be done here is repaired when the app next opens.
+self.addEventListener('pushsubscriptionchange', event => {
+    event.waitUntil((async () => {
+        try {
+            const old = event.oldSubscription;
+            const key = old?.options?.applicationServerKey;
+            const fresh = event.newSubscription
+                || (key ? await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }) : null);
+            if (fresh && old?.endpoint) {
+                await fetch(new URL('api/notifications/subscriptions', self.registration.scope), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ subscription: fresh.toJSON(), replaces: old.endpoint }),
+                });
+            }
+        } catch (_) { /* Left for the app to repair. */ }
+        const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        clients.forEach(client => client.postMessage({ type: 'notifications-changed' }));
+    })());
+});
 // What the app shows in a window, read from its `#!key=value` route.
 function windowRoute(client) {
     try { return new URLSearchParams(new URL(client.url).hash.replace(/^#!/, '')); } catch (_) { return new URLSearchParams(); }
