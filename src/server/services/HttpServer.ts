@@ -9,6 +9,7 @@ import { Config } from '../Config';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import * as process from 'process';
 import { EnvName } from '../EnvName';
+import { knownHost, securityHeaders } from '../requestOrigin';
 /// #if INCLUDE_GOOG && INCLUDE_FILE_LISTING
 import { mountFileDownloads } from '../goog-device/filePush/HttpDownload';
 /// #endif
@@ -80,6 +81,9 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
 
     public async start(): Promise<void> {
         this.mainApp = express();
+        // Before any route: refuse names that are not this server's, and limit framing and
+        // connections on every response, including downloads and the API.
+        this.mainApp.use(knownHost, securityHeaders);
         try {
             NotificationService.getInstance().mount(this.mainApp, PATHNAME);
         } catch (error) {
@@ -131,6 +135,7 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                 }
                 if (doRedirect) {
                     currentApp = express();
+                    currentApp.use(knownHost, securityHeaders);
                     currentApp.use(function (req, res) {
                         const url = new URL(`https://${host ? host : req.headers.host}${req.url}`);
                         if (port && port !== 443) {
