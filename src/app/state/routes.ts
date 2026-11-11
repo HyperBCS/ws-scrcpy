@@ -53,12 +53,6 @@ const OLD_ACTIONS: Record<string, { view: DeviceView; platform: Platform }> = {
     [ACTION.SHELL]: { view: 'shell', platform: 'android' },
 };
 
-/**
- * Views whose address stays in the older form. None does now: `FileListingClient` was the last
- * to read its own action from `location.hash`, and it reads the route instead.
- */
-const KEEPS_OLD_ADDRESS: Partial<Record<DeviceView, string>> = {};
-
 /** Reads an address in either form. Anything that is not a phone or Notifications is the list. */
 export function parseRoute(params: URLSearchParams): Route {
     const action = params.get('action') || '';
@@ -111,10 +105,7 @@ export function canonicalRoute(params: URLSearchParams): URLSearchParams {
     if (route.page !== 'device') {
         return params;
     }
-    const kept = KEEPS_OLD_ADDRESS[route.view];
-    const result = kept
-        ? withHead(params, { action: kept, udid: route.udid })
-        : withHead(params, { action: DEVICE_ACTION, udid: route.udid, view: route.view });
+    const result = withHead(params, { action: DEVICE_ACTION, udid: route.udid, view: route.view });
     return result.toString() === params.toString() ? params : result;
 }
 

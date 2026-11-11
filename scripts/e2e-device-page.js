@@ -185,22 +185,10 @@ async function until(condition, label, timeout = 5000) {
     }
 }
 
-/** The view an address shows, whichever of the two forms of the Files address is current. */
+/** The phone and the view an address shows. */
 function viewOf(address) {
     const params = new URLSearchParams(address.replace(/^#!/, ''));
-    if (params.get('action') === 'device') return { udid: params.get('udid'), view: params.get('view') };
-    return params.get('action') === 'list-files' ? { udid: params.get('udid'), view: 'files' } : { udid: params.get('udid'), view: undefined };
-}
-
-// The Files address keeps `action=list-files` until Files reads the new form (`KEEPS_OLD_ADDRESS`
-// in routes.ts). Whether it does is asked of the app, so this suite holds before and after.
-let filesKeepsOldAddress = true;
-async function probeFilesAddress(browser) {
-    const test = await start(browser, { hash: `action=device&udid=${PIXEL}&view=files` });
-    try {
-        await test.page.locator('.tool-view-list-files').waitFor();
-        filesKeepsOldAddress = (await hash(test.page)).startsWith('#!action=list-files');
-    } finally { await test.context.close(); }
+    return { udid: params.get('udid'), view: params.get('action') === 'device' ? params.get('view') : undefined };
 }
 
 /**
@@ -214,7 +202,7 @@ async function checkLinks(page, label, { allowPlayer = false } = {}) {
             .filter((element) => element.matches('a, area') && !element.closest('.tool-mount'))
             .map((element) => ({ text: element.textContent.trim(), href: element.getAttribute('href'), hash: element.hash })),
     );
-    const older = filesKeepsOldAddress ? /action=(stream|stream-coredevice|shell)(&|$)/ : /action=(stream|stream-coredevice|shell|list-files)(&|$)/;
+    const older = /action=(stream|stream-coredevice|shell|list-files)(&|$)/;
     for (const link of [...links, { text: 'the address', href: await hash(page), hash: await hash(page) }]) {
         for (const value of [link.href, link.hash]) {
             assert.doesNotMatch(value, older, `${label}: "${link.text}" names no older action (${value})`);
@@ -733,7 +721,6 @@ async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch();
     try {
-        await probeFilesAddress(browser);
         for (const viewport of [PHONE, DESKTOP]) {
             for (const colorScheme of ['light', 'dark']) {
                 await androidTabs(browser, viewport, colorScheme);
