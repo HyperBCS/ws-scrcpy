@@ -1341,3 +1341,48 @@ test('iOS tracking: unplugging stops the screen session and releasing stops poll
     assert.equal(polls, 0, 'a released tracker never spawns another pymobiledevice3 process');
     CoreDeviceRunner.getInstance().release();
 });
+
+test('iOS device list: a socket that closes while the tracker starts leaves no listener behind', async (t) => {
+    const { DeviceTracker: IosDeviceTracker } = require('../src/server/appl-device/mw/DeviceTracker');
+    const center = IosControlCenter.getInstance();
+    const ready = deferred();
+    t.mock.method(center, 'init', () => ready.promise);
+    t.mock.method(center, 'getDevices', () => []);
+    const socket = () => {
+        const ws = new EventEmitter();
+        const sent = [];
+        return Object.assign(ws, {
+            OPEN: 1,
+            CLOSING: 2,
+            CLOSED: 3,
+            readyState: 1,
+            sent,
+            addEventListener: (type, listener) => ws.on(type, listener),
+            send: (data) => sent.push(JSON.parse(data)),
+            close() {
+                if (ws.readyState !== 3) {
+                    ws.readyState = 3;
+                    ws.emit('close');
+                }
+            },
+        });
+    };
+    try {
+        const early = socket();
+        new IosDeviceTracker(early);
+        const open = socket();
+        new IosDeviceTracker(open);
+        // The first connection at startup: closed before the first poll has finished.
+        early.close();
+        ready.resolve();
+        await tick();
+        await tick();
+        assert.equal(center.listenerCount('device'), 1, 'only the open socket listens for device updates');
+        assert.deepEqual(early.sent, []);
+        assert.equal(open.sent[0].type, 'devicelist');
+        open.close();
+        assert.equal(center.listenerCount('device'), 0);
+    } finally {
+        center.release();
+    }
+});
