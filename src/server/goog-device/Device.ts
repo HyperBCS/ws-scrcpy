@@ -183,7 +183,11 @@ export class Device extends TypedEmitter<DeviceEvents> {
         return this.connected;
     }
 
-    /** Stop descriptor polling when the tracker service shuts down; no device input is sent. */
+    /**
+     * The tracker service is shutting down: stop polling and let go of the stream. No device
+     * input is sent. The adb child and the stream sockets would otherwise keep Node running
+     * until Docker kills it; scrcpy on the phone exits when they close.
+     */
     public release(): void {
         this.released = true;
         this.connected = false;
@@ -193,6 +197,8 @@ export class Device extends TypedEmitter<DeviceEvents> {
         this.stopLockStateUpdates();
         this.clearIdleStop();
         this.viewers.clear();
+        broadcastManager.stopBroadcast(this.udid);
+        this.launch?.child.kill('SIGTERM');
         if (this.updateTimeoutId) {
             clearTimeout(this.updateTimeoutId);
             this.updateTimeoutId = undefined;

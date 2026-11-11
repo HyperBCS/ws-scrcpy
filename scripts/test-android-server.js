@@ -865,3 +865,46 @@ test('a viewer closed by Stop stays closed, and any other close reconnects', (t)
     assert.equal(sockets.length, 2, 'Stop is not: reconnecting would start the service again');
     assert.deepEqual(seen, [4007, 4012]);
 });
+
+test('shutdown stops the stream and the adb child of every phone', async (t) => {
+    const { device, children } = deviceFixture(t, 'shutdown-phone');
+    const stopped = [];
+    t.mock.method(broadcastManager, 'stopBroadcast', (udid) => stopped.push(udid));
+    const launching = device.launchServer('scrcpy fixture', false).catch((error) => error);
+    device.addViewer({ close() {} })();
+    assert.ok(device.idleStopTimeoutId, 'an idle stop is pending');
+
+    const center = new AndroidControlCenter();
+    center.deviceMap.set('shutdown-phone', device);
+    center.release();
+    assert.deepEqual(children[0].signals, ['SIGTERM'], 'the adb child is told to stop');
+    assert.deepEqual(stopped, ['shutdown-phone'], 'the stream sockets are closed');
+    assert.equal(device.idleStopTimeoutId, undefined);
+    children[0].emit('close', null);
+    assert.match((await launching).message, /exited before it was ready/);
+});
+
+test('Node exits soon after shutdown even when something was left open', { timeout: 20000 }, async () => {
+    const child = childProcess.spawn(process.execPath, [path.join(__dirname, 'fixtures', 'shutdown-open-handle.js')], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let signalled = 0;
+    child.stdout.on('data', (data) => {
+        stdout += data;
+        if (!signalled && stdout.includes('harness ready')) {
+            signalled = Date.now();
+            child.kill('SIGTERM');
+        }
+    });
+    child.stderr.on('data', (data) => (stderr += data));
+    // Without the backstop the process never exits. A second SIGTERM is its "force exit".
+    const stuck = setTimeout(() => child.kill('SIGTERM'), 8000);
+    const [code] = await once(child, 'exit');
+    clearTimeout(stuck);
+    assert.equal(code, 0, stderr);
+    assert.match(stdout, /Stopping fixture service/);
+    assert.match(stderr, /Still running after shutdown; exiting/);
+    assert.ok(Date.now() - signalled < 6000, 'it did not wait for a second signal');
+});
