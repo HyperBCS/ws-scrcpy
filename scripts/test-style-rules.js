@@ -21,7 +21,6 @@ const ORDER = `@layer ${LAYERS.join(', ')};`;
 // not its own: a rule kept next to the rules it belongs with, in the layer it has to act in.
 const ALLOWED = {
     'app.css': { colours: 3, fontSizes: 3, radii: 1, important: 5 },
-    'filelisting.css': { colours: 7, fontSizes: 19, radii: 6, zIndex: 4 },
     'morebox.css': { zIndex: 1, important: 1 },
     'ui/AppBar.css': { fontSizes: 2, radii: 2, important: 1 },
     'ui/BottomSheet.css': { colours: 2, fontSizes: 7, radii: 6, zIndex: 1 },

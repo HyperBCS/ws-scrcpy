@@ -1,4 +1,5 @@
 import { Entry } from '../Entry';
+import { IconName, iconSvg } from '../../ui/icons';
 
 export type FileKind =
     | 'folder'
@@ -143,22 +144,26 @@ export function formatMode(mode: number): string {
     return `${rwx((bits >> 6) & 7)}${rwx((bits >> 3) & 7)}${rwx(bits & 7)} (${bits.toString(8).padStart(4, '0')})`;
 }
 
-// 24x24 line icons, drawn with `currentColor` so both themes and the selected row work.
-const ICONS: Record<FileKind, string> = {
-    folder: '<path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 3 17z"/>',
-    apk: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9.5v5m6-5v5M9 12h6"/>',
-    image: '<rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m4.5 17 4.2-4 3.3 3 2.8-2.6 4.7 4.2"/>',
-    video: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="m10.5 9.5 4.5 2.5-4.5 2.5z"/>',
-    audio: '<path d="M9 16.5V7.5l8-2v9"/><circle cx="7" cy="16.5" r="2"/><circle cx="15" cy="14.5" r="2"/>',
-    archive: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v4m4-4v4m-4 4v4m4-4v4m-4 4h4"/>',
-    code: '<path d="m9 9-3 3 3 3m6-6 3 3-3 3m-2-8-2 10"/>',
-    text: '<path d="M6 3.5h7l5 5v12H6z"/><path d="M13 3.5v5h5M9 13h6M9 16.5h4"/>',
-    document: '<path d="M6 3.5h7l5 5v12H6z"/><path d="M13 3.5v5h5"/>',
-    link: '<path d="M10 14a3.5 3.5 0 0 1 0-5l2-2a3.5 3.5 0 0 1 5 5l-1 1"/><path d="M14 10a3.5 3.5 0 0 1 0 5l-2 2a3.5 3.5 0 0 1-5-5l1-1"/>',
-    special: '<circle cx="12" cy="12" r="7.5"/><path d="M12 8.5v4l3 2"/>',
-    file: '<path d="M6 3.5h7l5 5v12H6z"/><path d="M13 3.5v5h5"/>',
+// The icon of each kind, from the kit's one set (`ui/icons.ts`).
+const KIND_ICON: Record<FileKind, IconName> = {
+    folder: 'folder',
+    apk: 'package',
+    image: 'image',
+    video: 'video',
+    audio: 'audio',
+    archive: 'zip',
+    code: 'code',
+    text: 'document',
+    document: 'file',
+    link: 'link',
+    special: 'clock',
+    file: 'file',
 };
 
+/**
+ * The kit's icon for a kind of file, as markup. It also carries `fx-icon` and the kind, which
+ * the explorer sizes and tints it by.
+ */
 export function iconMarkup(kind: FileKind): string {
-    return `<svg class="fx-icon fx-icon-${kind}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[kind]}</svg>`;
+    return iconSvg(KIND_ICON[kind], 20).replace('class="kit-icon"', `class="kit-icon fx-icon fx-icon-${kind}"`);
 }

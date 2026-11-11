@@ -48,8 +48,16 @@ export function finished(animation?: Animation): Promise<void> {
 
 const transitions = new WeakMap<HTMLElement, { animation?: Animation }>();
 
-/** Imperative counterpart of Presence, used by the file browser's existing DOM. */
-export function transitionVisibility(element: HTMLElement, visible: boolean, onHidden?: () => void): void {
+/**
+ * Imperative counterpart of Presence, used by the file browser's existing DOM. `away` is where
+ * the element is while hidden: the default suits a menu, and a sheet passes its own.
+ */
+export function transitionVisibility(
+    element: HTMLElement,
+    visible: boolean,
+    onHidden?: () => void,
+    away = 'translateY(6px) scale(0.97)',
+): void {
     const previous = transitions.get(element);
     const style = getComputedStyle(element);
     const current = { opacity: style.opacity, transform: style.transform };
@@ -57,7 +65,7 @@ export function transitionVisibility(element: HTMLElement, visible: boolean, onH
     element.hidden = false;
     element.inert = !visible;
     element.toggleAttribute('data-exiting', !visible);
-    const hidden = { opacity: 0, transform: 'translateY(6px) scale(0.97)' };
+    const hidden = { opacity: 0, transform: away };
     const shown = { opacity: 1, transform: 'none' };
     const record = {
         animation: animate(element, [previous || !visible ? current : hidden, visible ? shown : hidden], {
