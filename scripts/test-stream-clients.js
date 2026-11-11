@@ -956,7 +956,7 @@ test('both stream clients drop their toolbar holds when the stream disconnects',
 test('stream settings resolve the device through the stream socket when two hosts share a serial', (t) => {
     const { devices } = require('../src/app/state/devices');
     const { findDeviceForSettings } = require('../src/app/state/streamDevice');
-    const { buildInterfaceOptions } = require('../src/app/googDevice/client/deviceInterfaces');
+    const { streamSocketUrl } = require('../src/app/googDevice/client/deviceInterfaces');
     const previous = devices.value;
     t.after(() => (devices.value = previous));
     const entry = (trackerId, hostname, udid) => ({
@@ -975,7 +975,7 @@ test('stream settings resolve the device through the stream socket when two host
         action: 'stream',
         udid: item.descriptor.udid,
         player: 'webcodecs',
-        ws: buildInterfaceOptions(item.descriptor, item.params).find((option) => option.name === 'proxy').url,
+        ws: streamSocketUrl(item.descriptor.udid, item.params),
     });
 
     // The toolbar and the Actions sheet open the sheet with the serial alone.
