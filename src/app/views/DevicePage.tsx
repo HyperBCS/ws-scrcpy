@@ -58,7 +58,8 @@ function androidStream(params: URLSearchParams) {
 /** A screen link for a phone that is not in the list and that this browser has never opened. */
 function PhoneNotListed({ udid }: { udid: string }) {
     useLayoutEffect(() => {
-        document.body.className = 'tool-page';
+        // Clears the class the list or a stream left on the body.
+        document.body.className = '';
     }, []);
     return (
         <main class="tool-unavailable">
