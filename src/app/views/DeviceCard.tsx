@@ -466,16 +466,16 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         {descriptor.state === 'unauthorized' ? 'Waiting for trust' : 'Device unavailable'}
                     </button>
                 )}
-                {isActive && (
-                    <button
-                        class="action-button stream-settings-button"
-                        title="iPhone settings"
-                        aria-label={`Settings for ${deviceName(entry)}`}
-                        onClick={() => openApplSettingsSheet(descriptor.udid, entry.key)}
-                    >
-                        Settings
-                    </button>
-                )}
+                {/* Shown for a disconnected phone too: the schedule is kept on the server, and its
+                    last run matters most when the phone has dropped off. */}
+                <button
+                    class="action-button stream-settings-button"
+                    title="iPhone settings"
+                    aria-label={`Settings for ${deviceName(entry)}`}
+                    onClick={() => openApplSettingsSheet(descriptor.udid, entry.key)}
+                >
+                    Settings
+                </button>
                 <a
                     class="ui-button device-notification-history"
                     href={`#!${new URLSearchParams({ action: 'notifications', source: descriptor.udid })}`}

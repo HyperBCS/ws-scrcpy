@@ -58,18 +58,27 @@ async function start(browser, { width = 390, height = 844, mobile = true, colorS
     // Everything the page sends to the phone's stream socket: must stay free of keys and touches.
     const streamMessages = [];
     // `onCommand(command)` returns the reply body (`{ result }` or `{ error }`), a promise of one, or nothing.
-    const handlers = { onCommand: undefined };
+    // `onStream(message)` returns what the stream socket answers with, or nothing.
+    const handlers = { onCommand: undefined, onStream: undefined };
+    // The latest of each, so a flow can close one the way a dropped connection would.
+    const sockets = { stream: undefined, tracker: undefined };
     let trackerReply;
     page.on('pageerror', (error) => errors.push(error.message));
     await page.route('**/api/notifications/**', (route) => route.fulfill({ status: 200, json: { sources: [], unread: 0, unreadBySource: {} } }));
     await page.routeWebSocket('**', (socket) => {
         if (new URL(socket.url()).searchParams.get('action') === 'proxy-coredevice') {
+            sockets.stream = socket;
             socket.onMessage((data) => {
-                if (typeof data === 'string') streamMessages.push(JSON.parse(data));
+                if (typeof data !== 'string') return;
+                const message = JSON.parse(data);
+                streamMessages.push(message);
+                const answer = handlers.onStream?.(message);
+                if (answer) socket.send(JSON.stringify(answer));
             });
             setTimeout(() => socket.send(JSON.stringify({ type: 'status', state: 'ready' })), 50);
             return;
         }
+        sockets.tracker = socket;
         socket.onMessage((data) => {
             const frame = Buffer.from(data);
             if (frame.length < 5) return;
@@ -101,7 +110,7 @@ async function start(browser, { width = 390, height = 844, mobile = true, colorS
         await page.locator(`[data-device-key="ios:${UDID}"]`).waitFor();
     }
     const sendDevice = (device) => trackerReply({ id: -1, type: 'device', data: { id: 'ios', name: 'Devices', device } });
-    return { context, page, errors, commands, handlers, sendDevice, streamMessages };
+    return { context, page, errors, commands, handlers, sendDevice, streamMessages, sockets };
 }
 
 const ofType = (commands, type) => commands.filter((command) => command.type === type);
@@ -109,7 +118,7 @@ const colorOf = (locator) => locator.evaluate((el) => getComputedStyle(el).color
 
 async function openPanel(page) {
     await page.locator(`[data-device-key="ios:${UDID}"]`).getByRole('button', { name: 'Settings for iPhone fixture', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+    const dialog = page.getByRole('dialog', { name: 'iPhone settings', exact: true });
     await dialog.waitFor();
     await settleMotion(page);
     return dialog;
@@ -300,7 +309,7 @@ async function panelFlow(browser) {
         // The passcode left the browser exactly once.
         assert.equal(commands.filter((command) => JSON.stringify(command).includes(PASSCODE)).length, 1);
 
-        await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
+        await page.getByRole('button', { name: 'Close iPhone settings', exact: true }).click();
         await dialog.waitFor({ state: 'hidden' });
         assert.deepEqual(test.errors, []);
         console.log('PASS iOS settings panel: summary row, passcode asked twice, zone, toggle, run now and its refusal, failure tone, paused state, error alert, remove');
@@ -392,7 +401,7 @@ async function narrowFlow(browser) {
         }
         await page.screenshot({ path: path.join(OUT, 'device-list-320.png') });
         await button.click();
-        const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+        const dialog = page.getByRole('dialog', { name: 'iPhone settings', exact: true });
         await dialog.waitFor();
         await settleMotion(page);
         assert.equal(await dialog.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false, 'the panel does not overflow at 320px');
@@ -517,7 +526,7 @@ async function streamUnlockFlow(browser) {
             await openUnlock(page);
             assert.match(await state.textContent(), /^No passcode is stored on the server for this phone\./);
             await settings.click();
-            await page.getByRole('dialog', { name: 'Settings', exact: true }).waitFor();
+            await page.getByRole('dialog', { name: 'iPhone settings', exact: true }).waitFor();
             await settleMotion(page);
             await page.getByLabel('Passcode for scheduled unlock').waitFor();
             assert.equal(await page.getByRole('dialog', { name: 'Unlock device', exact: true }).count(), 0, 'one sheet at a time');
@@ -533,10 +542,220 @@ async function streamUnlockFlow(browser) {
     }
 }
 
+// C-client-ui-7: a phone that dropped off USB stays in the list with its schedule line, and the
+// panel is where the owner looks for the last run and turns the schedule off.
+async function disconnectedFlow(browser) {
+    const status = {
+        enabled: true, time: '03:00', hasPasscode: true, timeZone: ZONE, nextRunAt: Date.UTC(2026, 10, 12, 8, 0),
+        lastRun: { at: Date.UTC(2026, 10, 11, 8, 0, 20), trigger: 'schedule', outcome: 'skipped-disconnected', message: 'The phone is not connected' },
+    };
+    const gone = { state: 'disconnected', session: 'stopped', 'screen.power': 'unknown', 'device.locked': 'unknown' };
+    for (const [width, height, mobile] of [[390, 844, true], [1280, 800, false]]) {
+        for (const colorScheme of ['light', 'dark']) {
+            const test = await start(browser, { width, height, mobile, colorScheme, status, device: gone });
+            const { page, commands, handlers } = test;
+            const label = `${width} ${colorScheme}`;
+            try {
+                const card = page.locator(`[data-device-key="ios:${UDID}"]`);
+                await card.locator('.device-unlock-schedule').waitFor();
+                assert.equal(await card.getByRole('button', { name: 'Device unavailable', exact: true }).isDisabled(), true);
+                const settings = card.getByRole('button', { name: 'Settings for iPhone fixture', exact: true });
+                assert.ok(await settings.isVisible(), `${label}: Settings stays on a disconnected iPhone's card`);
+                assert.ok(await settings.isEnabled());
+                const row = await card.locator('.device-primary-actions').evaluate((el) => ({
+                    overflow: el.scrollWidth > el.clientWidth + 1,
+                    page: document.documentElement.scrollWidth > innerWidth + 1,
+                }));
+                assert.deepEqual(row, { overflow: false, page: false }, `${label}: the action row fits`);
+                await settleMotion(page);
+                await page.screenshot({ path: path.join(OUT, `device-list-disconnected-${width}-${colorScheme}.png`) });
+
+                const dialog = await openPanel(page);
+                await dialog.getByText('The phone is not connected. Changes are kept on the server and apply when it is back.').waitFor();
+                assert.match(await dialog.locator('[data-outcome="skipped-disconnected"]').textContent(), /Last run/);
+                const run = dialog.locator('[data-unlock-run]');
+                assert.equal(await run.getAttribute('data-unlock-run'), 'unavailable');
+                assert.equal(await run.locator('.sheet-row-desc').textContent(), 'Not available while the phone is not connected.');
+                assert.equal(await run.getByRole('button', { name: 'Run now', exact: true }).isDisabled(), true, `${label}: no run without a phone`);
+                assert.equal(await dialog.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false, `${label}: no horizontal overflow`);
+                await run.scrollIntoViewIfNeeded();
+                await page.screenshot({ path: path.join(OUT, `panel-disconnected-${width}-${colorScheme}.png`) });
+
+                // The schedule can still be turned off: the command needs the server, not the phone.
+                handlers.onCommand = (command) =>
+                    command.type === 'update_unlock_schedule' ? { result: JSON.stringify({ ...status, enabled: false, nextRunAt: undefined }) } : undefined;
+                await dialog.getByRole('checkbox', { name: 'Unlock every day' }).click();
+                await dialog.getByText('Scheduled unlock is off.').waitFor();
+                assert.deepEqual(ofType(commands, 'update_unlock_schedule').map((command) => command.data.schedule), [{ enabled: false }]);
+                assert.equal(ofType(commands, 'run_unlock_now').length, 0);
+
+                // Back on USB: Run now is offered again without reopening the panel.
+                test.sendDevice(iphone({ ...status, enabled: false }, { state: 'Connected' }));
+                await dialog.locator('[data-unlock-run="ready"]').waitFor();
+                assert.equal(await run.getByRole('button', { name: 'Run now', exact: true }).isEnabled(), true);
+                assert.deepEqual(test.errors, []);
+            } finally {
+                await test.context.close();
+            }
+        }
+    }
+    console.log('PASS iOS settings for a disconnected phone at 390 and 1280, light and dark');
+}
+
+// C-ios-unlock-11: the reply to Run now never arrives (the tracker socket dropped during the run).
+// The device update that reports the finished run ends the wait.
+async function lostRunReplyFlow(browser) {
+    const status = { enabled: true, time: '03:00', hasPasscode: true, timeZone: ZONE, lastRun: { at: 1000, trigger: 'schedule', outcome: 'unlocked' } };
+    const test = await start(browser, { status });
+    const { page, commands } = test;
+    try {
+        // The two sheets are titled by what they hold (U-flows-7): the Android one is stream quality.
+        const androidCard = page.locator(`[data-device-key="android:${ANDROID_UDID}"]`);
+        await androidCard.getByRole('button', { name: 'Settings for Fixture Pixel fixture', exact: true }).click();
+        await page.getByRole('dialog', { name: 'Stream settings', exact: true }).waitFor();
+        await settleMotion(page);
+        await page.getByRole('button', { name: 'Close Stream settings' }).click();
+        await page.getByRole('dialog', { name: 'Stream settings', exact: true }).waitFor({ state: 'hidden' });
+
+        const dialog = await openPanel(page);
+        const button = dialog.locator('[data-unlock-run]').getByRole('button');
+        await button.click();
+        await dialog.getByRole('button', { name: 'Running…', exact: true }).waitFor();
+        assert.equal(ofType(commands, 'run_unlock_now').length, 1);
+        // The run is reported as started: still running, the old result does not end it.
+        test.sendDevice(iphone({ ...status, running: true }));
+        await page.waitForTimeout(300);
+        assert.equal(await button.textContent(), 'Running…');
+        // The run ended. No reply to the command was ever sent.
+        const finished = { at: Date.now(), trigger: 'manual', outcome: 'failed-wake', message: 'The screen stayed dark' };
+        test.sendDevice(iphone({ ...status, lastRun: finished }));
+        await dialog.getByRole('button', { name: 'Run now', exact: true }).waitFor();
+        assert.equal(await button.isEnabled(), true, 'the button is not left on Running for three minutes');
+        assert.match(await dialog.locator('.sheet-status').last().textContent(), /Failed: the screen did not wake\. The screen stayed dark/);
+        // The other controls are released with it.
+        assert.equal(await dialog.getByRole('checkbox', { name: 'Unlock every day' }).isEnabled(), true);
+        assert.deepEqual(test.errors, []);
+        console.log('PASS iOS Run now ends with the device update when its reply is lost');
+    } finally {
+        await test.context.close();
+    }
+}
+
+// U-flows-7, C-client-ui-9 and the Restart picture reply: the iPhone stream page.
+async function streamSheetsFlow(browser) {
+    const stored = { enabled: true, time: '03:00', hasPasscode: true, timeZone: ZONE, nextRunAt: Date.UTC(2026, 10, 11, 8, 0) };
+    for (const [width, height, mobile] of [[390, 844, true], [1280, 800, false]]) {
+        const test = await start(browser, { width, height, mobile, status: stored, device: { session: 'ready', 'screen.power': 'on', 'device.locked': false }, stream: true });
+        const { page, commands, handlers, sockets } = test;
+        const label = mobile ? 'phone' : 'desktop';
+        const settingsDialog = page.getByRole('dialog', { name: 'iPhone settings', exact: true });
+        const actionsDialog = page.getByRole('dialog', { name: 'Actions', exact: true });
+        const control = async (title, shot) => {
+            if (mobile) {
+                await page.locator('.floating-toolbar-fab').click();
+                await settleMotion(page);
+            }
+            const button = page.locator(`button.control-button[title="${title}"]`);
+            if (shot) {
+                const box = await button.boundingBox();
+                assert.ok(box.x >= 0 && box.x + box.width <= width && box.y >= 0 && box.y + box.height <= height, `${label}: ${title} is inside the viewport`);
+                await page.screenshot({ path: path.join(OUT, shot) });
+            }
+            await button.click();
+            await settleMotion(page);
+        };
+        try {
+            // Settings is one of the stream controls and opens the iPhone's own panel.
+            await control('Settings', `stream-controls-${width}.png`);
+            await settingsDialog.waitFor();
+            await settingsDialog.getByRole('heading', { name: 'Scheduled unlock', exact: true }).waitFor();
+            await page.screenshot({ path: path.join(OUT, `stream-settings-${width}.png`) });
+            await page.getByRole('button', { name: 'Close iPhone settings' }).click();
+            await settingsDialog.waitFor({ state: 'hidden' });
+
+            // The Actions sheet leads there too, and one sheet replaces the other.
+            await control('Actions');
+            await actionsDialog.waitFor();
+            const scheduled = actionsDialog.locator('.sheet-row', { hasText: 'Scheduled unlock' });
+            await scheduled.scrollIntoViewIfNeeded();
+            await page.screenshot({ path: path.join(OUT, `stream-actions-settings-row-${width}.png`) });
+            await scheduled.getByRole('button', { name: 'Open', exact: true }).click();
+            await settingsDialog.waitFor();
+            await actionsDialog.waitFor({ state: 'hidden' });
+            await page.getByRole('button', { name: 'Close iPhone settings' }).click();
+            await settingsDialog.waitFor({ state: 'hidden' });
+
+            // Restart picture: the server answers, also when it refuses a second restart.
+            await control('Actions');
+            await actionsDialog.waitFor();
+            const restart = actionsDialog.locator('.sheet-row', { hasText: 'Restart picture' }).getByRole('button', { name: 'Restart', exact: true });
+            handlers.onStream = (message) => (message.type === 'restart' ? { type: 'result', id: message.id, ok: true } : undefined);
+            await restart.click();
+            await actionsDialog.getByText('The picture was restarted.', { exact: true }).waitFor();
+            handlers.onStream = (message) =>
+                message.type === 'restart'
+                    ? { type: 'result', id: message.id, ok: false, error: 'The picture was restarted a moment ago. Try again in 27 s.' }
+                    : undefined;
+            await restart.click();
+            await actionsDialog.getByText('The picture was restarted a moment ago. Try again in 27 s.', { exact: true }).waitFor();
+            assert.equal(await actionsDialog.getByText('Restarting the picture…').count(), 0, `${label}: the sheet does not stay on Restarting`);
+            const restarts = test.streamMessages.filter((message) => message.type === 'restart');
+            assert.equal(restarts.length, 2);
+            assert.ok(restarts.every((message) => Number.isInteger(message.id)), 'each restart carries an id to answer');
+
+            // Send to phone with no answer: the stream socket drops and comes back, and the button is usable again.
+            handlers.onStream = undefined;
+            const draft = actionsDialog.getByLabel('Text for the device clipboard');
+            await draft.fill('note for the phone');
+            const send = actionsDialog.getByRole('button', { name: 'Send to phone', exact: true });
+            await send.click();
+            await actionsDialog.getByText('Sending to the phone clipboard…').waitFor();
+            assert.equal(await send.isDisabled(), true);
+            const before = sockets.stream;
+            before.close({ code: 4007, reason: 'Session stopped' });
+            await actionsDialog.getByText('The connection dropped before the phone answered. Try again once the stream is back.').waitFor();
+            await page.waitForFunction(() => document.querySelector('.stream-header-status')?.textContent.includes('Connected'), undefined, { timeout: 10000 });
+            assert.notEqual(sockets.stream, before, 'the stream reconnected');
+            await page.waitForFunction(() => {
+                const button = Array.from(document.querySelectorAll('.bottom-sheet-root.open button')).find((el) => el.textContent.trim() === 'Send to phone');
+                return button && !button.disabled;
+            });
+
+            // Remount with no answer: the tracker socket drops, and Troubleshooting is not left disabled.
+            await actionsDialog.getByText('Troubleshooting').click();
+            await settleMotion(page);
+            const remount = actionsDialog.getByRole('button', { name: 'Remount developer image', exact: true });
+            await remount.click();
+            await actionsDialog.getByRole('button', { name: 'Remount', exact: true }).click();
+            await actionsDialog.getByText('Remounting the developer image…').waitFor();
+            assert.equal(await remount.isDisabled(), true);
+            assert.equal(ofType(commands, 'remount_ddi').length, 1);
+            sockets.tracker.close();
+            await actionsDialog.getByText('The connection to the server dropped before it answered. Check the result once it is back.').waitFor();
+            for (const name of ['Restart services', 'Remount developer image']) {
+                assert.equal(await actionsDialog.getByRole('button', { name, exact: true }).isEnabled(), true, `${label}: ${name} is usable again`);
+            }
+            assert.equal(await actionsDialog.locator('.sheet-row', { hasText: 'Refresh info' }).getByRole('button').isEnabled(), true);
+
+            // With the tracker back, a command is answered by request id and its text is shown.
+            await page.waitForFunction((udid) => !!document.querySelector('.stream-header-device strong')?.textContent.includes('iPhone fixture'), UDID, { timeout: 10000 });
+            handlers.onCommand = (command) => (command.type === 'refresh_device' ? { result: null } : undefined);
+            const refresh = actionsDialog.locator('.sheet-row', { hasText: 'Refresh info' }).getByRole('button');
+            await page.waitForTimeout(2500);
+            await refresh.click();
+            await actionsDialog.getByText('Device info refreshed.', { exact: true }).waitFor({ timeout: 10000 });
+            assert.deepEqual(test.errors, []);
+            console.log('PASS iOS stream sheets', label, 'Settings from the controls and Actions, restart reply, requests end when a socket drops');
+        } finally {
+            await test.context.close();
+        }
+    }
+}
+
 (async () => {
     const browser = await chromium.launch({ headless: true });
     try {
-        for (const run of [panelFlow, timeTypingFlow, narrowFlow, themeFlow, streamUnlockFlow]) await run(browser);
+        for (const run of [panelFlow, timeTypingFlow, narrowFlow, themeFlow, streamUnlockFlow, disconnectedFlow, lostRunReplyFlow, streamSheetsFlow]) await run(browser);
     } finally {
         await browser.close();
     }

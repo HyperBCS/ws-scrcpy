@@ -4,7 +4,15 @@ import { BottomSheet } from '../ui/BottomSheet';
 import { SheetGroup, SheetRow, SheetStatus, SheetToggleRow, SoundRows } from '../ui/SheetControls';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
-import { deviceClipboard, deviceClipboardError, openSheet, streamConnected, toolsSheetOpen } from '../state/stream';
+import {
+    closeAllSheets,
+    deviceClipboard,
+    deviceClipboardError,
+    openSheet,
+    streamConnected,
+    toolsSheetOpen,
+} from '../state/stream';
+import { openApplSettingsSheet } from '../state/settingsSheet';
 import { replyText, sendServiceCommand, TrackerCommandAborted } from '../client/trackerCommand';
 import { activeAudioSession, audioAvailability } from '../state/audio';
 import { goToDeviceList } from '../state/router';
@@ -360,6 +368,21 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             disabled={!connected}
                         >
                             Unlock
+                        </button>
+                    </SheetRow>
+                </SheetGroup>
+
+                <SheetGroup title="iPhone settings">
+                    <SheetRow title="Scheduled unlock" description="The daily unlock, its passcode and the last run.">
+                        <button
+                            type="button"
+                            class="sheet-button"
+                            onClick={() => {
+                                closeAllSheets();
+                                openApplSettingsSheet(client.getDeviceUdid());
+                            }}
+                        >
+                            Open
                         </button>
                     </SheetRow>
                 </SheetGroup>

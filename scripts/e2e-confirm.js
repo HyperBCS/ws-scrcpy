@@ -414,7 +414,7 @@ async function removePasscode(browser, mobile) {
         const settings = page.locator(`[data-device-key="ios:${UDID}"]`).getByRole('button', { name: `Settings for ${NAME}`, exact: true });
         const open = async () => {
             await settings.click();
-            const sheet = page.getByRole('dialog', { name: 'Settings', exact: true });
+            const sheet = page.getByRole('dialog', { name: 'iPhone settings', exact: true });
             await sheet.waitFor();
             await settleMotion(page);
             return sheet;
@@ -436,7 +436,7 @@ async function removePasscode(browser, mobile) {
 
         // Closing the sheet disarms it.
         if (!(await dialog.count())) await remove.click();
-        await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
+        await page.getByRole('button', { name: 'Close iPhone settings', exact: true }).click();
         await sheet.waitFor({ state: 'hidden' });
         sheet = await open();
         assert.equal(await sheet.getByRole('alertdialog').count(), 0, 'closing the sheet disarms Remove');

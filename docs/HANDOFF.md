@@ -1776,6 +1776,31 @@ get-state brought up a userspace tunnel beside serve-web's. Two changes:
 `ControlCenter.refreshDetails` also re-checks after each read that the tracker is still running
 and the phone still attached, so a release during a read no longer recreates the monitor.
 
+**iPhone client requests and failure states (2026-11-11, phase 2).**
+
+- Every tracker command from the iPhone card, the Actions sheet and the settings panel goes
+  through `sendTrackerCommand` (`src/app/client/trackerCommand.ts`). It matches the reply on udid
+  and request id and always settles: refused at once when the tracker socket is closed
+  (`BaseDeviceTracker.sendCommand` sends nothing then and does not throw), when the socket closes
+  while waiting (`onceClosed`; the server answers only on the socket the command came in on),
+  after a per-command limit (`serviceCommandTimeoutMs`), or when the view goes away. Before, a
+  server restart during Remount left all three Troubleshooting buttons disabled.
+- Run now also ends when a device update shows a run that finished after the click (`lastRun.at`
+  differs and `running` is false). The reply is lost when the tracker reconnects mid-run.
+- Stream-socket requests (rotate, Send to phone, Restart picture) carry an id, have a time limit
+  and end when the stream socket drops. `restart` is now answered: done, or "restarted a moment
+  ago, try again in N s" when the 30 s limit refuses it.
+- `streamConnected` means the socket is open, the session is `ready` and this browser has a
+  decoder. It used to mean "socket open", so the header said Connected and the hardware buttons
+  were live over a stopped session or a stream the browser could not decode. Failed, stopped and
+  no-decoder are one card on the stage (`.stream-start-error`, the card "Unable to start this
+  stream" already used) with the reason, Retry where it can help, and Back to devices. The card
+  stays up between automatic retries and says "Trying again". The progress notice is only for a
+  first start.
+- The iPhone settings panel opens from the stream controls and the Actions sheet as well as the
+  card, and from the card of a disconnected phone. The sheets are titled "iPhone settings" and
+  "Stream settings".
+
 ### Scheduled unlock and passcode handling after the 2026-11-10 review (fixture-tested only)
 
 Findings C-ios-unlock-1 to -10, C-client-ui-1/-4/-5 and U-settings-3/-5. Nothing below has run

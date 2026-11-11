@@ -3,7 +3,8 @@ import { ToolBoxButton } from '../../toolbox/ToolBoxButton';
 import { ToolBoxElement } from '../../toolbox/ToolBoxElement';
 import SvgImage, { Icon } from '../../ui/SvgImage';
 import { CoreDeviceButton } from '../../../common/CoreDeviceProtocol';
-import { openSheet, streamNotice } from '../../state/stream';
+import { closeAllSheets, openSheet, streamNotice } from '../../state/stream';
+import { openApplSettingsSheet } from '../../state/settingsSheet';
 import { createSoundButton } from '../../toolbox/soundButton';
 import type { AudioSession } from '../../state/audio';
 import type { StreamClientCoreDevice } from '../client/StreamClientCoreDevice';
@@ -90,8 +91,8 @@ export class ApplToolBox extends ToolBox {
             return button;
         });
 
-        // Sound controls this browser's playback of the phone's audio; there is no Settings sheet
-        // on this path, so an unavailable state is explained in the stream notice.
+        // Sound controls this browser's playback of the phone's audio; the iPhone has no stream
+        // settings sheet, so an unavailable state is explained in the stream notice.
         elements.push(
             createSoundButton(
                 options.audioSession,
@@ -111,6 +112,14 @@ export class ApplToolBox extends ToolBox {
         const actions = new ToolBoxButton('Actions', SvgImage.Icon.MORE);
         actions.addEventListener('click', () => openSheet('tools'));
         elements.push(actions);
+
+        // The scheduled unlock and its stored passcode. The Devices card was the only way in.
+        const settings = new ToolBoxButton('Settings', SvgImage.Icon.SETTINGS);
+        settings.addEventListener('click', () => {
+            closeAllSheets();
+            openApplSettingsSheet(client.getDeviceUdid());
+        });
+        elements.push(settings);
 
         const liveText = new ToolBoxButton('Type text', SvgImage.Icon.KEYBOARD);
         liveText.addEventListener('click', () => openSheet('liveText'));

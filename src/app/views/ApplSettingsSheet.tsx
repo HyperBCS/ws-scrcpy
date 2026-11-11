@@ -118,7 +118,7 @@ function commitsOnChange(): boolean {
 }
 
 /**
- * The iPhone "Settings" sheet: the scheduled unlock and read-only phone facts. Everything shown
+ * The "iPhone settings" sheet: the scheduled unlock and read-only phone facts. Everything shown
  * comes from `descriptor.unlockSchedule`, which the server keeps current through the normal
  * device broadcast; a command reply is used only until the next broadcast arrives. The passcode
  * lives in this component's state until Save and goes nowhere else in the browser.
@@ -388,7 +388,7 @@ export function ApplSettingsSheet() {
 
     if (!renderTarget) {
         return (
-            <BottomSheet open={false} onClose={closeApplSettingsSheet} title="Settings">
+            <BottomSheet open={false} onClose={closeApplSettingsSheet} title="iPhone settings">
                 {null}
             </BottomSheet>
         );
@@ -410,7 +410,7 @@ export function ApplSettingsSheet() {
     const stopKeys = (event: KeyboardEvent) => event.stopPropagation();
 
     return (
-        <BottomSheet open={!!target} onClose={closeApplSettingsSheet} title="Settings">
+        <BottomSheet open={!!target} onClose={closeApplSettingsSheet} title="iPhone settings">
             <div class="appl-settings-sheet">
                 <div class="settings-device-context" title={renderTarget.udid}>
                     <span class="settings-device-dot" aria-hidden="true" />
@@ -624,9 +624,19 @@ export function ApplSettingsSheet() {
                     />
                     <SheetRow
                         title="Run now"
-                        description="Opens a screen session, unlocks, then locks. Takes about 30 seconds."
+                        description={
+                            connected || !tracker
+                                ? 'Opens a screen session, unlocks, then locks. Takes about 30 seconds.'
+                                : 'Not available while the phone is not connected.'
+                        }
+                        attributes={{ 'data-unlock-run': connected ? 'ready' : 'unavailable' }}
                     >
-                        <button type="button" class="sheet-button" disabled={locked || running} onClick={onRunNow}>
+                        <button
+                            type="button"
+                            class="sheet-button"
+                            disabled={locked || running || !connected}
+                            onClick={onRunNow}
+                        >
                             {running ? 'Running…' : 'Run now'}
                         </button>
                     </SheetRow>

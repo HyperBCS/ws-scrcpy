@@ -199,7 +199,7 @@ export function SettingsSheet() {
 
     if (!renderTarget) {
         return (
-            <BottomSheet open={false} onClose={closeSettingsSheet} title="Settings">
+            <BottomSheet open={false} onClose={closeSettingsSheet} title="Stream settings">
                 {null}
             </BottomSheet>
         );
@@ -316,7 +316,7 @@ export function SettingsSheet() {
                     closeSettingsSheet();
                 }
             }}
-            title="Settings"
+            title="Stream settings"
         >
             <div class="settings-sheet-content">
                 <div class="settings-device-context" title={renderTarget.udid}>
