@@ -1745,7 +1745,8 @@ not cached, so patching is noticed without a server restart. A check that cannot
 next to the CLI, the script missing, `IOS_PATCH_CHECK=0`, a Python error) allows the session.
 `python/patches/test_check_patches.py` fails when `python/venv` is behind `python/patches`, and
 ties the marker list to the patch scripts. A patch that changes an already patched file needs a new
-marker in both places. `npm run dev` runs `patch:ios` first when the venv exists. The same phase
+marker in both places. `npm run dev` runs `patch:ios` first when the venv exists; if that fails
+it says so and starts anyway, so Android keeps working and iPhone sessions are refused. The same phase
 added a patch step ("ws-scrcpy input queue bound": `/touch` and `/key` answer 503 once 512 reports
 are queued), so a venv patched before it needs `npm run patch:ios` again. Dependencies of
 pymobiledevice3 are still not pinned.
