@@ -6,7 +6,10 @@ import {
     PHONE_ACTION_TIMEOUT_MS,
     BULK_PHONE_ACTION_TIMEOUT_MS,
 } from '../state/notifications';
-import { route, pushRoute, navigate } from '../state/router';
+import { route } from '../state/router';
+import { deviceHref } from '../state/links';
+import { NotificationFilter, readNotificationPage } from '../state/notificationPage';
+import { changeNotificationPage, openScreenFromNotifications, takeNotificationScroll } from '../state/notificationNav';
 import { findDeviceByUdid, isDeviceAvailable } from '../state/devices';
 import { Toast } from '../ui/Toast';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
@@ -43,14 +46,12 @@ export function FeedBadge({ state }: { state: FeedState }) {
     return <span class={`notification-badge ${state === 'connected' ? 'ready' : state}`}>{FEED_LABELS[state]}</span>;
 }
 
-/** Where an iPhone's screen opens, and why it cannot be opened now. */
-function screenLink(source: NotificationSource): { params: Record<string, string>; unavailable?: string } {
+/** The link to an iPhone's screen, or why it cannot be opened now. */
+function screenLink(source: NotificationSource): { href?: string; unavailable?: string } {
     const entry = findDeviceByUdid(source.id);
-    return {
-        params: { action: 'stream-coredevice', udid: source.id },
-        unavailable:
-            entry && isDeviceAvailable(entry) ? undefined : `${source.name} is not connected to the NUC by USB.`,
-    };
+    return entry && isDeviceAvailable(entry)
+        ? { href: deviceHref(source.id, 'screen', entry.params) }
+        : { unavailable: `${source.name} is not connected to the NUC by USB.` };
 }
 
 function sentence(text: string): string {
@@ -71,12 +72,17 @@ function receivedAt(time: number): string {
 /** A highlighted notification (opened from a push) keeps its outline this long. */
 export const HIGHLIGHT_MS = 4000;
 
+/**
+ * The search text goes into the address after this pause in typing. Safari refuses more than
+ * 100 history writes in 30 seconds, which a write for every key can reach.
+ */
+const QUERY_WRITE_MS = 400;
+
 // Undo puts back what one action changed. `source` keeps it from being offered for another iPhone.
 type UndoAction = { source: string; label: string; revert: () => Promise<unknown> };
 // `retry` is offered only for actions that need no confirmation.
 type Failure = { message: string; retry?: () => void };
-type Filter = 'inbox' | 'unread' | 'archive';
-const FILTER_LABELS: Record<Filter, string> = { inbox: 'All', unread: 'Unread', archive: 'Archive' };
+const FILTER_LABELS: Record<NotificationFilter, string> = { inbox: 'All', unread: 'Unread', archive: 'Archive' };
 
 function searchText(value: string): string {
     return value.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase();
@@ -122,17 +128,62 @@ export function NotificationHistory({
     run: (fn: () => Promise<void>, onError?: (message: string) => void) => Promise<void>;
     refresh: () => Promise<unknown>;
 }) {
-    const requestedSource = route.value.get('source') || '';
+    // The iPhone, the filter, the app and the search text are in the address, so a reload, a
+    // link and a return with Back show the same inbox; see `state/notificationPage.ts`.
+    const page = readNotificationPage(route.value);
+    const { filter, app: appFilter } = page;
     // An iPhone that is not linked has no inbox of its own: the first linked one is shown.
-    const source = sources.find((s) => s.id === requestedSource) || sources[0];
+    const source = sources.find((s) => s.id === page.source) || sources[0];
     const currentSource = useRef(source?.id);
     currentSource.current = source?.id;
-    const highlighted = route.value.get('notification') || '';
+    // The notification a push banner opened. The address names it only until it is found.
+    const [highlighted, setHighlighted] = useState('');
     const [highlightOn, setHighlightOn] = useState(false);
-    const [filter, setFilter] = useState<Filter>('inbox');
-    const [limit, setLimit] = useState(25);
-    const [query, setQuery] = useState('');
-    const [appFilter, setAppFilter] = useState('');
+    // Where the list was when a screen was opened from it, on the return with Back.
+    const [kept] = useState(takeNotificationScroll);
+    const [limit, setLimit] = useState(kept?.limit ?? 25);
+    // The field shows what is typed at once; the address follows after a pause.
+    const [query, setQuery] = useState(page.q);
+    const typed = useRef(page.q);
+    const queryInAddress = useRef(page.q);
+    const queryTimer = useRef<number>();
+    /** Changes the view. Search text that is still waiting for its pause is written with it. */
+    const show = (change: Parameters<typeof changeNotificationPage>[0] = {}) => {
+        clearTimeout(queryTimer.current);
+        queryTimer.current = undefined;
+        const q = change.q ?? typed.current;
+        typed.current = q;
+        queryInAddress.current = q;
+        setQuery(q);
+        changeNotificationPage({ ...change, q });
+    };
+    const typeQuery = (value: string) => {
+        typed.current = value;
+        setQuery(value);
+        clearTimeout(queryTimer.current);
+        queryTimer.current = window.setTimeout(show, QUERY_WRITE_MS);
+    };
+    /** Shows the search text of the address. Text typed and not yet written is dropped. */
+    const adoptQuery = () => {
+        clearTimeout(queryTimer.current);
+        queryTimer.current = undefined;
+        typed.current = page.q;
+        queryInAddress.current = page.q;
+        setQuery(page.q);
+    };
+    // Search text the address got some other way: a link, or a filter reset.
+    useEffect(() => {
+        if (page.q !== queryInAddress.current) adoptQuery();
+    }, [page.q]);
+    // Leaving for Setup keeps text typed a moment ago. After another page is shown this writes nothing.
+    useEffect(
+        () => () => {
+            if (queryTimer.current === undefined) return;
+            clearTimeout(queryTimer.current);
+            changeNotificationPage({ q: typed.current });
+        },
+        [],
+    );
     const [menu, setMenu] = useState<'filters' | 'bulk' | null>(null);
     const [menuKey, setMenuKey] = useState('');
     const [undo, setUndo] = useState<UndoAction | null>(null);
@@ -144,9 +195,9 @@ export function NotificationHistory({
     const [confirmation, setConfirmation] = useState<PhoneClear | null>(null);
     // Clearing on the iPhone is confirmed in the bulk sheet itself. Closing that sheet disarms it.
     const bulkConfirm = useArmedAction<'phone'>(menu === 'bulk');
-    const clicked = useRef('');
     const scrolled = useRef('');
     const list = useRef<HTMLElement>(null);
+    const scroller = () => list.current?.closest<HTMLElement>('.notifications-page');
     const positions = useRef(new Map<string, number>());
     const reasonId = useId();
     useLayoutEffect(() => {
@@ -242,20 +293,39 @@ export function NotificationHistory({
             setUndo(null);
             setPhoneResult('');
             setFailure({ message: screen.unavailable });
-        } else navigate(screen.params);
+        } else if (screen.href) {
+            // A router call, not a plain link: one row that opens the screen is inside a sheet,
+            // and the router leaves the sheet's history entry before it adds the screen's.
+            clearTimeout(queryTimer.current);
+            queryTimer.current = undefined;
+            queryInAddress.current = typed.current;
+            openScreenFromNotifications(screen.href, typed.current, {
+                top: scroller()?.scrollTop ?? 0,
+                limit,
+            });
+        }
+    };
+    const followScreenLink = (event: MouseEvent) => {
+        // A click that asks for a new tab or window is left to the browser.
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        openScreen();
     };
     const markRead = async (keys: string[], read = true) => {
         await api('history/read', 'POST', { keys, read });
         if (read) closeReadNotifications(keys);
         await refresh();
     };
+    const shownBefore = useRef(false);
     useEffect(() => {
-        setLimit(25);
+        // Not on the first run: a return with Back lists as many as were listed before.
+        if (shownBefore.current) setLimit(25);
     }, [filter, source?.id, query, appFilter]);
     useEffect(() => {
-        setQuery('');
-        setAppFilter('');
-        setFilter('inbox');
+        // The filters of another iPhone are the ones the address has: the iPhone select clears
+        // them when it changes the iPhone. Text typed for the first one does not follow.
+        adoptQuery();
+        shownBefore.current = true;
         setMenu(null);
         setMenuKey('');
         setUndo(null);
@@ -264,15 +334,16 @@ export function NotificationHistory({
         setPhoneResult('');
     }, [source?.id]);
     useEffect(() => {
-        if (!highlighted || clicked.current === highlighted) return;
-        const item = phoneItems.find((n) => n.key === highlighted);
+        if (!page.notification) return;
+        const item = phoneItems.find((n) => n.key === page.notification);
         if (!item) return;
-        clicked.current = highlighted;
-        setQuery('');
-        setAppFilter('');
-        setFilter(item.dismissed ? 'archive' : 'inbox');
+        // Opened once: the name leaves the address here, so a reload, a return with Back or a
+        // later filter does not open it again. The same banner tapped again does.
+        scrolled.current = '';
+        setHighlighted(item.key);
+        show({ notification: '', filter: item.dismissed ? 'archive' : 'inbox', app: '', q: '' });
         if (!item.read) attempt(() => markRead([item.key]));
-    }, [highlighted, items, source?.id]);
+    }, [page.notification, items, source?.id]);
     useEffect(() => {
         if (highlighted && !query && !appFilter) {
             const index = filtered.findIndex((n) => n.key === highlighted);
@@ -288,6 +359,11 @@ export function NotificationHistory({
         node.scrollIntoView({ block: 'center' });
         setHighlightOn(true);
     });
+    // The stored notifications arrive with the status, so the list is complete on the first run.
+    useLayoutEffect(() => {
+        const node = scroller();
+        if (kept && node) node.scrollTop = kept.top;
+    }, []);
     useEffect(() => {
         if (!highlightOn) return;
         const timer = setTimeout(() => setHighlightOn(false), HIGHLIGHT_MS);
@@ -469,12 +545,15 @@ export function NotificationHistory({
                                 <select
                                     disabled={busy}
                                     value={source.id}
-                                    onChange={(event) => {
-                                        const params = new URLSearchParams(route.value);
-                                        params.set('source', event.currentTarget.value);
-                                        params.delete('notification');
-                                        pushRoute(params);
-                                    }}
+                                    onChange={(event) =>
+                                        show({
+                                            source: event.currentTarget.value,
+                                            notification: '',
+                                            filter: 'inbox',
+                                            app: '',
+                                            q: '',
+                                        })
+                                    }
                                 >
                                     {sources.map((s) => (
                                         <option key={s.id} value={s.id}>
@@ -494,7 +573,8 @@ export function NotificationHistory({
                         ) : (
                             <a
                                 class="ui-button notification-open-screen"
-                                href={`#!${new URLSearchParams(screen?.params)}`}
+                                href={screen?.href}
+                                onClick={followScreenLink}
                             >
                                 Open screen
                             </a>
@@ -540,7 +620,7 @@ export function NotificationHistory({
                         aria-label="Search notifications"
                         placeholder="Search notifications"
                         value={query}
-                        onInput={(event) => setQuery(event.currentTarget.value)}
+                        onInput={(event) => typeQuery(event.currentTarget.value)}
                         onKeyDown={(event) => {
                             if (event.key === 'Enter') event.currentTarget.blur();
                         }}
@@ -564,7 +644,7 @@ export function NotificationHistory({
                         aria-label="Notification view"
                     >
                         {(['inbox', 'unread', 'archive'] as const).map((value) => (
-                            <button key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>
+                            <button key={value} aria-pressed={filter === value} onClick={() => show({ filter: value })}>
                                 {FILTER_LABELS[value]}
                             </button>
                         ))}
@@ -585,14 +665,7 @@ export function NotificationHistory({
                             {filtered.length} result{filtered.length === 1 ? '' : 's'}
                             {appFilter ? ` · ${apps.find(([id]) => id === appFilter)?.[1] || appFilter}` : ''}
                         </span>
-                        <button
-                            onClick={() => {
-                                setQuery('');
-                                setAppFilter('');
-                            }}
-                        >
-                            Clear filters
-                        </button>
+                        <button onClick={() => show({ app: '', q: '' })}>Clear filters</button>
                     </div>
                 ) : null}
                 {bulkBusy && (
@@ -688,7 +761,7 @@ export function NotificationHistory({
                     <select
                         aria-label="App"
                         value={appFilter}
-                        onChange={(event) => setAppFilter(event.currentTarget.value)}
+                        onChange={(event) => show({ app: event.currentTarget.value })}
                     >
                         <option value="">All apps</option>
                         {appFilter && !apps.some(([id]) => id === appFilter) && (
@@ -701,13 +774,7 @@ export function NotificationHistory({
                         ))}
                     </select>
                 </label>
-                <button
-                    disabled={!narrowed}
-                    onClick={() => {
-                        setAppFilter('');
-                        setQuery('');
-                    }}
-                >
+                <button disabled={!narrowed} onClick={() => show({ app: '', q: '' })}>
                     Clear filters
                 </button>
                 <button onClick={() => setMenu(null)}>Done</button>
@@ -755,7 +822,9 @@ export function NotificationHistory({
                             <small class="notification-action-reason">{screen.unavailable}</small>
                         </button>
                     ) : (
-                        <a href={`#!${new URLSearchParams(screen?.params)}`}>Open iPhone screen</a>
+                        <a href={screen?.href} onClick={followScreenLink}>
+                            Open iPhone screen
+                        </a>
                     )}
                     {!menuItem.dismissed && (
                         <button disabled={busy} onClick={() => localAction(menuItem, 'read')}>

@@ -14,7 +14,10 @@ import {
     syncPushSubscription,
 } from '../state/notifications';
 import { FeedBadge, NotificationHistory, UnreadBadge, feedState } from './NotificationHistory';
-import { route, pushRoute } from '../state/router';
+import { route } from '../state/router';
+import { readNotificationPage } from '../state/notificationPage';
+import { changeNotificationPage } from '../state/notificationNav';
+import { AppBar } from '../ui/AppBar';
 import { privateAppUrl } from '../state/privateApp';
 import type {
     NotificationHistoryItem,
@@ -156,7 +159,8 @@ export function NotificationsView() {
     const [message, setMessage] = useState('');
     const [running, setRunning] = useState(0);
     const busy = running > 0;
-    const [panel, setPanel] = useState<'history' | 'setup'>();
+    // The iPhone, the panel and the inbox filters are in the address; see `state/notificationPage.ts`.
+    const page = readNotificationPage(route.value);
     const [subscription, setSubscription] = useState<PushSubscription | null>(null);
     const [receiverId, setReceiverId] = useState('');
     useEffect(() => {
@@ -176,7 +180,7 @@ export function NotificationsView() {
     const [selected, setSelected] = useState<string[]>([]);
     const [receiverChoice, setReceiver] = useState(readStorage('notification-receiver-source') || '');
     const [savedChoices, setSavedChoices] = useState<string | null>(null);
-    const [phone, setPhone] = useState(route.value.get('source') || '');
+    const [phone, setPhone] = useState(page.source);
     const [address, setAddress] = useState('');
     const [initialized, setInitialized] = useState(false);
     const statusRequest = useRef(0);
@@ -357,7 +361,7 @@ export function NotificationsView() {
             setMessage('Notifications enabled on this device.');
         });
     };
-    const requestedSource = route.value.get('source') || '';
+    const requestedSource = page.source;
     const linkedRequest = status?.sources.find((source) => source.id === requestedSource);
     // A device card links every iPhone here, linked or not. One that is not linked opens the
     // steps to link it; the inbox stays open for the others.
@@ -366,580 +370,585 @@ export function NotificationsView() {
     const unlinkedName = unlinkedEntry ? deviceName(unlinkedEntry) : 'This iPhone';
     const historySource = linkedRequest || status?.sources[0];
     useEffect(() => {
-        if (requestedSource && status) {
-            setPanel(status.sources.some((source) => source.id === requestedSource) ? 'history' : 'setup');
-            setPhone(requestedSource);
-        }
+        if (requestedSource && status) setPhone(requestedSource);
     }, [requestedSource, !!status]);
-    // Inbox drops the unlinked iPhone from the route, so Setup is shown until then.
-    const activePanel = !historySource || unlinkedRequest ? 'setup' : panel || 'history';
-    const openInbox = () => {
-        if (unlinkedRequest) {
-            const params = new URLSearchParams(route.value);
-            params.delete('source');
-            params.delete('notification');
-            pushRoute(params);
-        }
-        setPanel('history');
-    };
+    // Inbox drops the unlinked iPhone from the address, so Setup is shown until then.
+    const activePanel = !historySource || unlinkedRequest ? 'setup' : page.panel;
+    const openInbox = () =>
+        changeNotificationPage(
+            unlinkedRequest
+                ? // The inbox of another iPhone: nothing asked of the unlinked one applies to it.
+                  { source: '', notification: '', panel: 'history', filter: 'inbox', app: '', q: '' }
+                : { panel: 'history' },
+        );
     const updateSource = async (source: NotificationSource) => {
         await api('sources', 'POST', source);
         await refresh();
     };
 
     return (
-        <main class="notifications-page">
-            <header class="notification-page-header">
-                <a class="ui-button" href="#!">
-                    ← Devices
-                </a>
-                <h1>
-                    Notifications{' '}
-                    <UnreadBadge
-                        count={historySource && !unlinkedRequest ? status?.unreadBySource?.[historySource.id] || 0 : 0}
-                    />
-                </h1>
-                {status && !status.sources.length && <p>Connect an iPhone to receive its notifications.</p>}
-            </header>
-            {/* The inbox shows this inside its search bar, which stays on screen while scrolling. */}
-            {connectionError && status && activePanel === 'setup' && (
-                <p role="alert" class="notification-notice notification-error">
-                    Connection interrupted. {connectionError}
-                </p>
-            )}
-            <Presence
-                show={!!error}
-                kind="collapse"
-                role="alert"
-                // Sticky on Setup only: in the inbox the search bar would cover it. The inbox
-                // reports its own failures at the bottom of the screen.
-                class={`notification-notice notification-error ${activePanel === 'setup' ? 'notification-feedback' : ''}`}
-            >
-                {error}
-            </Presence>
-            <Toast message={message} identity={message} onDismiss={() => setMessage('')} />
-            {!status && !connectionError && (
-                <p role="status" class="notification-empty">
-                    Loading…
-                </p>
-            )}
-            {!status && connectionError && (
-                <section class="notification-card">
-                    <h2>Can't reach the server</h2>
-                    <button
-                        class="notification-primary"
-                        disabled={busy}
-                        onClick={() =>
-                            void run(async () => {
-                                await refresh();
-                            })
-                        }
-                    >
-                        Try again
-                    </button>
-                    <AnimatedDetails class="notification-details">
-                        <summary>Connection details</summary>
-                        <p class="notification-help">{connectionError}</p>
-                    </AnimatedDetails>
-                </section>
-            )}
-            {status && (
-                <>
-                    <nav
-                        class="notification-page-tabs"
-                        style={{ '--segment-index': activePanel === 'setup' ? 1 : 0 }}
-                        aria-label="Notification pages"
-                    >
-                        <button disabled={!historySource} aria-pressed={activePanel === 'history'} onClick={openInbox}>
-                            Inbox
+        <div class="notifications-view">
+            <AppBar title="Notifications">
+                <UnreadBadge
+                    count={historySource && !unlinkedRequest ? status?.unreadBySource?.[historySource.id] || 0 : 0}
+                />
+            </AppBar>
+            <main class="notifications-page">
+                <div class="notification-page-header">
+                    {status && !status.sources.length && <p>Connect an iPhone to receive its notifications.</p>}
+                </div>
+                {/* The inbox shows this inside its search bar, which stays on screen while scrolling. */}
+                {connectionError && status && activePanel === 'setup' && (
+                    <p role="alert" class="notification-notice notification-error">
+                        Connection interrupted. {connectionError}
+                    </p>
+                )}
+                <Presence
+                    show={!!error}
+                    kind="collapse"
+                    role="alert"
+                    // Sticky on Setup only: in the inbox the search bar would cover it. The inbox
+                    // reports its own failures at the bottom of the screen.
+                    class={`notification-notice notification-error ${activePanel === 'setup' ? 'notification-feedback' : ''}`}
+                >
+                    {error}
+                </Presence>
+                <Toast message={message} identity={message} onDismiss={() => setMessage('')} />
+                {!status && !connectionError && (
+                    <p role="status" class="notification-empty">
+                        Loading…
+                    </p>
+                )}
+                {!status && connectionError && (
+                    <section class="notification-card">
+                        <h2>Can't reach the server</h2>
+                        <button
+                            class="notification-primary"
+                            disabled={busy}
+                            onClick={() =>
+                                void run(async () => {
+                                    await refresh();
+                                })
+                            }
+                        >
+                            Try again
                         </button>
-                        <button aria-pressed={activePanel === 'setup'} onClick={() => setPanel('setup')}>
-                            Setup &amp; delivery
-                        </button>
-                    </nav>
-                    <div class="notification-panels">
-                        <Presence show={activePanel === 'history'} class="notification-panel">
-                            <NotificationHistory
-                                sources={status.sources}
-                                items={history}
-                                unreadBySource={status.unreadBySource || {}}
-                                statuses={status.statuses}
-                                feedError={status.error}
-                                connectionError={connectionError}
-                                busy={busy}
-                                run={run}
-                                refresh={refresh}
-                            />
-                        </Presence>
-                        <Presence show={activePanel === 'setup'} class="notification-panel" keepMounted>
-                            <section class="notification-card" aria-labelledby="notification-sender-heading">
-                                <div class="notification-section-heading">
-                                    <h2 id="notification-sender-heading">Send from an iPhone</h2>
-                                </div>
-                                <p class="notification-help">Keep the iPhone within Bluetooth range of the NUC.</p>
-                                {status.error && (
-                                    <p role="alert" class="notification-notice notification-error">
-                                        {status.error}
-                                    </p>
-                                )}
-                                {status.sources.map((s) => {
-                                    const state = feedState(status.statuses[s.id]);
-                                    return (
-                                        <article class="notification-source" key={s.id}>
-                                            <div class="notification-source-heading">
-                                                <h3>{s.name}</h3>
-                                                <FeedBadge state={state} />
-                                            </div>
-                                            {state !== 'connected' && (
-                                                <p
-                                                    class={`notification-help ${state === 'attention' ? 'notification-error' : ''}`}
-                                                >
-                                                    {status.statuses[s.id] ||
-                                                        'Waiting for Bluetooth. Keep the iPhone near the NUC.'}
-                                                </p>
-                                            )}
-                                            <SourceSettings
-                                                source={s}
-                                                stored={status.storedBySource?.[s.id] || 0}
-                                                busy={busy}
-                                                update={(source) =>
-                                                    void run(async () => {
-                                                        await updateSource(source);
-                                                        setMessage('iPhone settings saved.');
-                                                    })
-                                                }
-                                                remove={() =>
-                                                    void run(async () => {
-                                                        await api(`sources/${encodeURIComponent(s.id)}`, 'DELETE');
-                                                        await refresh();
-                                                        setMessage(`${s.name} removed from notification sharing.`);
-                                                    })
-                                                }
-                                            />
-                                        </article>
-                                    );
-                                })}
-                                <AnimatedDetails
-                                    class="notification-details notification-pairing"
-                                    open={
-                                        !status.sources.length ||
-                                        unlinkedRequest ||
-                                        status.pairingOpen ||
-                                        !!status.pairing ||
-                                        !!status.pairingRejected
-                                    }
-                                >
-                                    <summary>
-                                        {status.sources.length ? 'Add another iPhone' : 'Connect your first iPhone'}
-                                    </summary>
-                                    <div class="notification-details-content">
-                                        {unlinkedRequest && (
-                                            <p class="notification-notice" role="status">
-                                                {unlinkedName} is not linked yet. Follow these steps to receive its
-                                                notifications.
-                                            </p>
-                                        )}
-                                        <p>Use the iPhone whose notifications you want to forward.</p>
-                                        <ol class="notification-setup-steps">
-                                            <li>Connect that iPhone to the NUC by USB.</li>
-                                            <li>
-                                                Tap <strong>Start Bluetooth pairing</strong>, then on that iPhone open{' '}
-                                                <strong>Settings → Bluetooth → ws-scrcpy</strong>.
-                                            </li>
-                                            <li>
-                                                Confirm the matching code and allow{' '}
-                                                <strong>Share System Notifications</strong>.
-                                            </li>
-                                        </ol>
-                                        {status.pairingRejected && (
-                                            <p role="alert" class="notification-notice notification-error">
-                                                An iPhone tried to pair while pairing was not open. Tap{' '}
-                                                <strong>Start Bluetooth pairing</strong>, then choose ws-scrcpy on the
-                                                iPhone again.
-                                            </p>
-                                        )}
-                                        <button
-                                            disabled={busy || status.pairingOpen}
-                                            onClick={() =>
-                                                void run(async () => {
-                                                    await api('pair', 'POST');
-                                                    setMessage(
-                                                        'On the sending iPhone, open Settings → Bluetooth and choose ws-scrcpy.',
-                                                    );
-                                                    await refresh();
-                                                })
-                                            }
-                                        >
-                                            {status.pairingOpen
-                                                ? 'Waiting for your iPhone…'
-                                                : 'Start Bluetooth pairing'}
-                                        </button>
-                                        {status.pairingOpen && (
-                                            <p role="status" class="notification-help">
-                                                The NUC is discoverable for two minutes.
-                                            </p>
-                                        )}
-                                        {status.pairing && (
-                                            <div class="notification-notice">
-                                                <p>Does this code match the one on the sending iPhone?</p>
-                                                <strong class="notification-pairing-code">{status.pairing.code}</strong>
-                                                <button
-                                                    class="notification-primary"
-                                                    disabled={busy}
-                                                    onClick={() =>
+                        <AnimatedDetails class="notification-details">
+                            <summary>Connection details</summary>
+                            <p class="notification-help">{connectionError}</p>
+                        </AnimatedDetails>
+                    </section>
+                )}
+                {status && (
+                    <>
+                        <nav
+                            class="notification-page-tabs"
+                            style={{ '--segment-index': activePanel === 'setup' ? 1 : 0 }}
+                            aria-label="Notification pages"
+                        >
+                            <button
+                                disabled={!historySource}
+                                aria-pressed={activePanel === 'history'}
+                                onClick={openInbox}
+                            >
+                                Inbox
+                            </button>
+                            <button
+                                aria-pressed={activePanel === 'setup'}
+                                onClick={() => changeNotificationPage({ panel: 'setup' })}
+                            >
+                                Setup &amp; delivery
+                            </button>
+                        </nav>
+                        <div class="notification-panels">
+                            <Presence show={activePanel === 'history'} class="notification-panel">
+                                <NotificationHistory
+                                    sources={status.sources}
+                                    items={history}
+                                    unreadBySource={status.unreadBySource || {}}
+                                    statuses={status.statuses}
+                                    feedError={status.error}
+                                    connectionError={connectionError}
+                                    busy={busy}
+                                    run={run}
+                                    refresh={refresh}
+                                />
+                            </Presence>
+                            <Presence show={activePanel === 'setup'} class="notification-panel" keepMounted>
+                                <section class="notification-card" aria-labelledby="notification-sender-heading">
+                                    <div class="notification-section-heading">
+                                        <h2 id="notification-sender-heading">Send from an iPhone</h2>
+                                    </div>
+                                    <p class="notification-help">Keep the iPhone within Bluetooth range of the NUC.</p>
+                                    {status.error && (
+                                        <p role="alert" class="notification-notice notification-error">
+                                            {status.error}
+                                        </p>
+                                    )}
+                                    {status.sources.map((s) => {
+                                        const state = feedState(status.statuses[s.id]);
+                                        return (
+                                            <article class="notification-source" key={s.id}>
+                                                <div class="notification-source-heading">
+                                                    <h3>{s.name}</h3>
+                                                    <FeedBadge state={state} />
+                                                </div>
+                                                {state !== 'connected' && (
+                                                    <p
+                                                        class={`notification-help ${state === 'attention' ? 'notification-error' : ''}`}
+                                                    >
+                                                        {status.statuses[s.id] ||
+                                                            'Waiting for Bluetooth. Keep the iPhone near the NUC.'}
+                                                    </p>
+                                                )}
+                                                <SourceSettings
+                                                    source={s}
+                                                    stored={status.storedBySource?.[s.id] || 0}
+                                                    busy={busy}
+                                                    update={(source) =>
                                                         void run(async () => {
-                                                            await api('confirm', 'POST', status.pairing);
-                                                            await refresh();
+                                                            await updateSource(source);
+                                                            setMessage('iPhone settings saved.');
                                                         })
                                                     }
-                                                >
-                                                    Codes match
-                                                </button>
-                                            </div>
-                                        )}
-                                        <div class="notification-link-phones">
-                                            <h3>Match the two connections</h3>
-                                            <p class="notification-help">
-                                                Choose the same iPhone in both lists. This connects its screen controls
-                                                with its Bluetooth notifications.
-                                            </p>
-                                            <label>
-                                                iPhone connected to the NUC by USB
-                                                <select
-                                                    value={chosenPhone}
-                                                    disabled={busy}
-                                                    onChange={(e) => setPhone(e.currentTarget.value)}
-                                                >
-                                                    <option value="">
-                                                        {unlinkedPhones.length
-                                                            ? 'Choose an iPhone'
-                                                            : 'No new iPhone connected by USB'}
-                                                    </option>
-                                                    {unlinkedPhones.map((p) => (
-                                                        <option key={p.key} value={p.descriptor.udid}>
-                                                            {deviceName(p)}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </label>
-                                            <label>
-                                                The same iPhone in Bluetooth
-                                                <select
-                                                    value={chosenAddress}
-                                                    disabled={busy}
-                                                    onChange={(e) => setAddress(e.currentTarget.value)}
-                                                >
-                                                    <option value="">
-                                                        {pairings.length
-                                                            ? 'Choose its Bluetooth name'
-                                                            : 'Complete Bluetooth pairing first'}
-                                                    </option>
-                                                    {pairings.map((b) => (
-                                                        <option key={b.address} value={b.address}>
-                                                            {b.name} · {b.address}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </label>
+                                                    remove={() =>
+                                                        void run(async () => {
+                                                            await api(`sources/${encodeURIComponent(s.id)}`, 'DELETE');
+                                                            await refresh();
+                                                            setMessage(`${s.name} removed from notification sharing.`);
+                                                        })
+                                                    }
+                                                />
+                                            </article>
+                                        );
+                                    })}
+                                    <AnimatedDetails
+                                        class="notification-details notification-pairing"
+                                        open={
+                                            !status.sources.length ||
+                                            unlinkedRequest ||
+                                            status.pairingOpen ||
+                                            !!status.pairing ||
+                                            !!status.pairingRejected
+                                        }
+                                    >
+                                        <summary>
+                                            {status.sources.length ? 'Add another iPhone' : 'Connect your first iPhone'}
+                                        </summary>
+                                        <div class="notification-details-content">
+                                            {unlinkedRequest && (
+                                                <p class="notification-notice" role="status">
+                                                    {unlinkedName} is not linked yet. Follow these steps to receive its
+                                                    notifications.
+                                                </p>
+                                            )}
+                                            <p>Use the iPhone whose notifications you want to forward.</p>
+                                            <ol class="notification-setup-steps">
+                                                <li>Connect that iPhone to the NUC by USB.</li>
+                                                <li>
+                                                    Tap <strong>Start Bluetooth pairing</strong>, then on that iPhone
+                                                    open <strong>Settings → Bluetooth → ws-scrcpy</strong>.
+                                                </li>
+                                                <li>
+                                                    Confirm the matching code and allow{' '}
+                                                    <strong>Share System Notifications</strong>.
+                                                </li>
+                                            </ol>
+                                            {status.pairingRejected && (
+                                                <p role="alert" class="notification-notice notification-error">
+                                                    An iPhone tried to pair while pairing was not open. Tap{' '}
+                                                    <strong>Start Bluetooth pairing</strong>, then choose ws-scrcpy on
+                                                    the iPhone again.
+                                                </p>
+                                            )}
                                             <button
-                                                class="notification-primary"
-                                                disabled={busy || !chosenPhone || !chosenAddress}
+                                                disabled={busy || status.pairingOpen}
                                                 onClick={() =>
                                                     void run(async () => {
-                                                        const entry = unlinkedPhones.find(
-                                                            (p) => p.descriptor.udid === chosenPhone,
-                                                        )!;
-                                                        await updateSource({
-                                                            id: chosenPhone,
-                                                            address: chosenAddress,
-                                                            name: deviceName(entry),
-                                                            apps: [],
-                                                            preview: true,
-                                                        });
-                                                        setSelected((current) => [
-                                                            ...new Set([...current, chosenPhone]),
-                                                        ]);
-                                                        setPhone('');
-                                                        setAddress('');
+                                                        await api('pair', 'POST');
                                                         setMessage(
-                                                            'iPhone connected. Now enable notifications on the device receiving them.',
+                                                            'On the sending iPhone, open Settings → Bluetooth and choose ws-scrcpy.',
                                                         );
+                                                        await refresh();
                                                     })
                                                 }
                                             >
-                                                Use this iPhone
+                                                {status.pairingOpen
+                                                    ? 'Waiting for your iPhone…'
+                                                    : 'Start Bluetooth pairing'}
                                             </button>
+                                            {status.pairingOpen && (
+                                                <p role="status" class="notification-help">
+                                                    The NUC is discoverable for two minutes.
+                                                </p>
+                                            )}
+                                            {status.pairing && (
+                                                <div class="notification-notice">
+                                                    <p>Does this code match the one on the sending iPhone?</p>
+                                                    <strong class="notification-pairing-code">
+                                                        {status.pairing.code}
+                                                    </strong>
+                                                    <button
+                                                        class="notification-primary"
+                                                        disabled={busy}
+                                                        onClick={() =>
+                                                            void run(async () => {
+                                                                await api('confirm', 'POST', status.pairing);
+                                                                await refresh();
+                                                            })
+                                                        }
+                                                    >
+                                                        Codes match
+                                                    </button>
+                                                </div>
+                                            )}
+                                            <div class="notification-link-phones">
+                                                <h3>Match the two connections</h3>
+                                                <p class="notification-help">
+                                                    Choose the same iPhone in both lists. This connects its screen
+                                                    controls with its Bluetooth notifications.
+                                                </p>
+                                                <label>
+                                                    iPhone connected to the NUC by USB
+                                                    <select
+                                                        value={chosenPhone}
+                                                        disabled={busy}
+                                                        onChange={(e) => setPhone(e.currentTarget.value)}
+                                                    >
+                                                        <option value="">
+                                                            {unlinkedPhones.length
+                                                                ? 'Choose an iPhone'
+                                                                : 'No new iPhone connected by USB'}
+                                                        </option>
+                                                        {unlinkedPhones.map((p) => (
+                                                            <option key={p.key} value={p.descriptor.udid}>
+                                                                {deviceName(p)}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </label>
+                                                <label>
+                                                    The same iPhone in Bluetooth
+                                                    <select
+                                                        value={chosenAddress}
+                                                        disabled={busy}
+                                                        onChange={(e) => setAddress(e.currentTarget.value)}
+                                                    >
+                                                        <option value="">
+                                                            {pairings.length
+                                                                ? 'Choose its Bluetooth name'
+                                                                : 'Complete Bluetooth pairing first'}
+                                                        </option>
+                                                        {pairings.map((b) => (
+                                                            <option key={b.address} value={b.address}>
+                                                                {b.name} · {b.address}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </label>
+                                                <button
+                                                    class="notification-primary"
+                                                    disabled={busy || !chosenPhone || !chosenAddress}
+                                                    onClick={() =>
+                                                        void run(async () => {
+                                                            const entry = unlinkedPhones.find(
+                                                                (p) => p.descriptor.udid === chosenPhone,
+                                                            )!;
+                                                            await updateSource({
+                                                                id: chosenPhone,
+                                                                address: chosenAddress,
+                                                                name: deviceName(entry),
+                                                                apps: [],
+                                                                preview: true,
+                                                            });
+                                                            setSelected((current) => [
+                                                                ...new Set([...current, chosenPhone]),
+                                                            ]);
+                                                            setPhone('');
+                                                            setAddress('');
+                                                            setMessage(
+                                                                'iPhone connected. Now enable notifications on the device receiving them.',
+                                                            );
+                                                        })
+                                                    }
+                                                >
+                                                    Use this iPhone
+                                                </button>
+                                            </div>
                                         </div>
-                                    </div>
-                                </AnimatedDetails>
-                            </section>
+                                    </AnimatedDetails>
+                                </section>
 
-                            <section
-                                class="notification-card notification-receiver"
-                                aria-labelledby="notification-receiver-heading"
-                            >
-                                <div class="notification-section-heading">
-                                    <h2 id="notification-receiver-heading">Receive on this device</h2>
-                                </div>
-                                <div class="notification-receiver-state">
-                                    <span class={`notification-badge ${enabled ? 'ready' : ''}`}>
-                                        {!workerLoaded
-                                            ? 'Checking…'
-                                            : enabled
-                                              ? 'Notifications on'
-                                              : 'Notifications off'}
-                                    </span>
-                                    {enabled && (
-                                        <p>
-                                            {!confirmed
-                                                ? 'Review and save your choices below.'
-                                                : activeSources.length
-                                                  ? `From ${activeSources.map((s) => s.name).join(', ')}`
-                                                  : 'No other iPhones selected'}
+                                <section
+                                    class="notification-card notification-receiver"
+                                    aria-labelledby="notification-receiver-heading"
+                                >
+                                    <div class="notification-section-heading">
+                                        <h2 id="notification-receiver-heading">Receive on this device</h2>
+                                    </div>
+                                    <div class="notification-receiver-state">
+                                        <span class={`notification-badge ${enabled ? 'ready' : ''}`}>
+                                            {!workerLoaded
+                                                ? 'Checking…'
+                                                : enabled
+                                                  ? 'Notifications on'
+                                                  : 'Notifications off'}
+                                        </span>
+                                        {enabled && (
+                                            <p>
+                                                {!confirmed
+                                                    ? 'Review and save your choices below.'
+                                                    : activeSources.length
+                                                      ? `From ${activeSources.map((s) => s.name).join(', ')}`
+                                                      : 'No other iPhones selected'}
+                                            </p>
+                                        )}
+                                    </div>
+                                    {!window.isSecureContext ? (
+                                        <div class="notification-notice">
+                                            {privateUrl ? (
+                                                <>
+                                                    <p>
+                                                        Open the secure app with Tailscale connected to receive
+                                                        notifications here.
+                                                    </p>
+                                                    <a class="ui-button" href={privateUrl}>
+                                                        Open private app
+                                                    </a>
+                                                </>
+                                            ) : (
+                                                <p>
+                                                    Notifications need this app's secure (HTTPS) address.
+                                                    {status &&
+                                                        ' Set WS_PUBLIC_URL on the server to link to it from here.'}
+                                                </p>
+                                            )}
+                                        </div>
+                                    ) : ios && !installed ? (
+                                        <div class="notification-notice">
+                                            <strong>Add this app to your Home Screen</strong>
+                                            <ol class="notification-setup-steps">
+                                                <li>
+                                                    In Safari, tap <strong>Share → Add to Home Screen</strong>.
+                                                </li>
+                                                <li>Open the new icon, then return to Notifications.</li>
+                                                <li>
+                                                    Tap <strong>Enable on this device</strong>.
+                                                </li>
+                                            </ol>
+                                        </div>
+                                    ) : !supported ? (
+                                        <p class="notification-notice">
+                                            This browser doesn’t support background notifications. Open the app in a
+                                            browser that supports Web Push.
+                                        </p>
+                                    ) : blockedPermission ? (
+                                        <p class="notification-notice">
+                                            Notifications are blocked in this device’s settings. Allow notifications for
+                                            ws-scrcpy, then return here.
+                                        </p>
+                                    ) : null}
+                                    {!status.sources.length && (
+                                        <p class="notification-help">Connect an iPhone above first.</p>
+                                    )}
+                                    {receiver && selected.includes(receiver) && (
+                                        <p class="notification-help">
+                                            {status.sources.find((s) => s.id === receiver)?.name} won’t receive its own
+                                            notifications again. Select a different sending iPhone to receive its
+                                            notifications here.
                                         </p>
                                     )}
-                                </div>
-                                {!window.isSecureContext ? (
-                                    <div class="notification-notice">
-                                        {privateUrl ? (
+                                    <AnimatedDetails
+                                        class="notification-details"
+                                        open={!enabled && !!status.sources.length}
+                                    >
+                                        <summary>Choose phones and delivery options</summary>
+                                        <div class="notification-details-content">
+                                            <fieldset disabled={busy}>
+                                                <legend>Get notifications from</legend>
+                                                {status.sources.length ? (
+                                                    status.sources.map((s) => (
+                                                        <label class="notification-check" key={s.id}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selected.includes(s.id)}
+                                                                onChange={(e) =>
+                                                                    setSelected(
+                                                                        e.currentTarget.checked
+                                                                            ? [...selected, s.id]
+                                                                            : selected.filter((id) => id !== s.id),
+                                                                    )
+                                                                }
+                                                            />
+                                                            <span>{s.name}</span>
+                                                        </label>
+                                                    ))
+                                                ) : (
+                                                    <p class="notification-help">
+                                                        Your connected iPhones will appear here.
+                                                    </p>
+                                                )}
+                                            </fieldset>
+                                            <label>
+                                                This app is open on
+                                                <select
+                                                    value={receiver}
+                                                    disabled={busy}
+                                                    onChange={(e) => setReceiver(e.currentTarget.value)}
+                                                >
+                                                    <option value="">A different phone, tablet or computer</option>
+                                                    {status.sources.map((s) => (
+                                                        <option key={s.id} value={s.id}>
+                                                            {s.name} itself
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </label>
+                                            <p class="notification-help">
+                                                Prevents this iPhone from receiving its own notifications.
+                                            </p>
+                                            {subscription && (
+                                                <button
+                                                    disabled={busy}
+                                                    class="notification-turn-off"
+                                                    onClick={() =>
+                                                        void run(async () => {
+                                                            await api('subscriptions', 'DELETE', {
+                                                                endpoint: subscription.endpoint,
+                                                            });
+                                                            await subscription.unsubscribe();
+                                                            setSubscription(null);
+                                                            setMessage('Notifications turned off on this device.');
+                                                        })
+                                                    }
+                                                >
+                                                    Turn off on this device
+                                                </button>
+                                            )}
+                                        </div>
+                                    </AnimatedDetails>
+                                    <div class="notification-actions">
+                                        {subscription && !blockedPermission ? (
                                             <>
-                                                <p>
-                                                    Open the secure app with Tailscale connected to receive
-                                                    notifications here.
-                                                </p>
-                                                <a class="ui-button" href={privateUrl}>
-                                                    Open private app
-                                                </a>
+                                                {changed && (
+                                                    <button
+                                                        class="notification-primary"
+                                                        disabled={busy || !initialized}
+                                                        onClick={() =>
+                                                            void run(async () => {
+                                                                await saveSubscription(subscription);
+                                                                setMessage('Notification choices saved.');
+                                                            })
+                                                        }
+                                                    >
+                                                        Save changes
+                                                    </button>
+                                                )}
+                                                <button
+                                                    class={changed ? '' : 'notification-primary'}
+                                                    disabled={busy || changed}
+                                                    onClick={() =>
+                                                        void run(async () => {
+                                                            try {
+                                                                await api('test', 'POST', {
+                                                                    endpoint: subscription.endpoint,
+                                                                });
+                                                            } catch (e) {
+                                                                if (
+                                                                    (e as Error).message !==
+                                                                    'Enable notifications on this device first'
+                                                                )
+                                                                    throw e;
+                                                                // The browser can retain a subscription after the server removed it.
+                                                                await saveSubscription(subscription);
+                                                                await api('test', 'POST', {
+                                                                    endpoint: subscription.endpoint,
+                                                                });
+                                                            }
+                                                            setMessage(
+                                                                'Test notification queued. It should arrive on this device shortly.',
+                                                            );
+                                                        })
+                                                    }
+                                                >
+                                                    Send test notification
+                                                </button>
                                             </>
                                         ) : (
-                                            <p>
-                                                Notifications need this app's secure (HTTPS) address.
-                                                {status && ' Set WS_PUBLIC_URL on the server to link to it from here.'}
-                                            </p>
+                                            <button
+                                                class="notification-primary"
+                                                disabled={busy || !canEnable || blockedPermission}
+                                                onClick={enable}
+                                            >
+                                                Enable on this device
+                                            </button>
                                         )}
                                     </div>
-                                ) : ios && !installed ? (
-                                    <div class="notification-notice">
-                                        <strong>Add this app to your Home Screen</strong>
-                                        <ol class="notification-setup-steps">
-                                            <li>
-                                                In Safari, tap <strong>Share → Add to Home Screen</strong>.
-                                            </li>
-                                            <li>Open the new icon, then return to Notifications.</li>
-                                            <li>
-                                                Tap <strong>Enable on this device</strong>.
-                                            </li>
-                                        </ol>
-                                    </div>
-                                ) : !supported ? (
-                                    <p class="notification-notice">
-                                        This browser doesn’t support background notifications. Open the app in a browser
-                                        that supports Web Push.
-                                    </p>
-                                ) : blockedPermission ? (
-                                    <p class="notification-notice">
-                                        Notifications are blocked in this device’s settings. Allow notifications for
-                                        ws-scrcpy, then return here.
-                                    </p>
-                                ) : null}
-                                {!status.sources.length && (
-                                    <p class="notification-help">Connect an iPhone above first.</p>
-                                )}
-                                {receiver && selected.includes(receiver) && (
-                                    <p class="notification-help">
-                                        {status.sources.find((s) => s.id === receiver)?.name} won’t receive its own
-                                        notifications again. Select a different sending iPhone to receive its
-                                        notifications here.
-                                    </p>
-                                )}
-                                <AnimatedDetails
-                                    class="notification-details"
-                                    open={!enabled && !!status.sources.length}
-                                >
-                                    <summary>Choose phones and delivery options</summary>
-                                    <div class="notification-details-content">
-                                        <fieldset disabled={busy}>
-                                            <legend>Get notifications from</legend>
-                                            {status.sources.length ? (
-                                                status.sources.map((s) => (
-                                                    <label class="notification-check" key={s.id}>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={selected.includes(s.id)}
-                                                            onChange={(e) =>
-                                                                setSelected(
-                                                                    e.currentTarget.checked
-                                                                        ? [...selected, s.id]
-                                                                        : selected.filter((id) => id !== s.id),
-                                                                )
-                                                            }
-                                                        />
-                                                        <span>{s.name}</span>
-                                                    </label>
-                                                ))
+                                    {changed && subscription && (
+                                        <p class="notification-help">Save your changes before sending a test.</p>
+                                    )}
+                                    {!effectiveSources.length && !!status.sources.length && !subscription && (
+                                        <p class="notification-help">
+                                            Select at least one other iPhone to enable notifications here.
+                                        </p>
+                                    )}
+                                    {!!status.delivery.lastError && (
+                                        <p role="alert" class="notification-error">
+                                            Some notifications could not be sent. See delivery details below.
+                                        </p>
+                                    )}
+                                    {unregistered && (
+                                        <p role="alert" class="notification-error">
+                                            The server has no record of this device, so nothing can be delivered to it.
+                                            Send a test notification to register it again.
+                                        </p>
+                                    )}
+                                    <AnimatedDetails class="notification-details notification-delivery-details">
+                                        <summary>Delivery details</summary>
+                                        <div class="notification-details-content">
+                                            {receivers.length ? (
+                                                <ul class="notification-receivers">
+                                                    {receivers.map((r, index) => (
+                                                        <li key={r.id}>
+                                                            <strong>
+                                                                {index === ownIndex
+                                                                    ? 'This device'
+                                                                    : `Other device ${index + (ownIndex >= 0 && ownIndex < index ? 0 : 1)}`}
+                                                            </strong>{' '}
+                                                            <span class="notification-help">
+                                                                {r.provider} push service · {r.sent} accepted
+                                                                {r.failed ? `, ${r.failed} failed` : ''}
+                                                            </span>
+                                                            {r.lastError && (
+                                                                <p class="notification-error">{r.lastError}</p>
+                                                            )}
+                                                        </li>
+                                                    ))}
+                                                </ul>
                                             ) : (
                                                 <p class="notification-help">
-                                                    Your connected iPhones will appear here.
+                                                    No device is registered to receive notifications.
                                                 </p>
                                             )}
-                                        </fieldset>
-                                        <label>
-                                            This app is open on
-                                            <select
-                                                value={receiver}
-                                                disabled={busy}
-                                                onChange={(e) => setReceiver(e.currentTarget.value)}
-                                            >
-                                                <option value="">A different phone, tablet or computer</option>
-                                                {status.sources.map((s) => (
-                                                    <option key={s.id} value={s.id}>
-                                                        {s.name} itself
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        </label>
-                                        <p class="notification-help">
-                                            Prevents this iPhone from receiving its own notifications.
-                                        </p>
-                                        {subscription && (
-                                            <button
-                                                disabled={busy}
-                                                class="notification-turn-off"
-                                                onClick={() =>
-                                                    void run(async () => {
-                                                        await api('subscriptions', 'DELETE', {
-                                                            endpoint: subscription.endpoint,
-                                                        });
-                                                        await subscription.unsubscribe();
-                                                        setSubscription(null);
-                                                        setMessage('Notifications turned off on this device.');
-                                                    })
-                                                }
-                                            >
-                                                Turn off on this device
-                                            </button>
-                                        )}
-                                    </div>
-                                </AnimatedDetails>
-                                <div class="notification-actions">
-                                    {subscription && !blockedPermission ? (
-                                        <>
-                                            {changed && (
-                                                <button
-                                                    class="notification-primary"
-                                                    disabled={busy || !initialized}
-                                                    onClick={() =>
-                                                        void run(async () => {
-                                                            await saveSubscription(subscription);
-                                                            setMessage('Notification choices saved.');
-                                                        })
-                                                    }
-                                                >
-                                                    Save changes
-                                                </button>
-                                            )}
-                                            <button
-                                                class={changed ? '' : 'notification-primary'}
-                                                disabled={busy || changed}
-                                                onClick={() =>
-                                                    void run(async () => {
-                                                        try {
-                                                            await api('test', 'POST', {
-                                                                endpoint: subscription.endpoint,
-                                                            });
-                                                        } catch (e) {
-                                                            if (
-                                                                (e as Error).message !==
-                                                                'Enable notifications on this device first'
-                                                            )
-                                                                throw e;
-                                                            // The browser can retain a subscription after the server removed it.
-                                                            await saveSubscription(subscription);
-                                                            await api('test', 'POST', {
-                                                                endpoint: subscription.endpoint,
-                                                            });
-                                                        }
-                                                        setMessage(
-                                                            'Test notification queued. It should arrive on this device shortly.',
-                                                        );
-                                                    })
-                                                }
-                                            >
-                                                Send test notification
-                                            </button>
-                                        </>
-                                    ) : (
-                                        <button
-                                            class="notification-primary"
-                                            disabled={busy || !canEnable || blockedPermission}
-                                            onClick={enable}
-                                        >
-                                            Enable on this device
-                                        </button>
-                                    )}
-                                </div>
-                                {changed && subscription && (
-                                    <p class="notification-help">Save your changes before sending a test.</p>
-                                )}
-                                {!effectiveSources.length && !!status.sources.length && !subscription && (
-                                    <p class="notification-help">
-                                        Select at least one other iPhone to enable notifications here.
-                                    </p>
-                                )}
-                                {!!status.delivery.lastError && (
-                                    <p role="alert" class="notification-error">
-                                        Some notifications could not be sent. See delivery details below.
-                                    </p>
-                                )}
-                                {unregistered && (
-                                    <p role="alert" class="notification-error">
-                                        The server has no record of this device, so nothing can be delivered to it. Send
-                                        a test notification to register it again.
-                                    </p>
-                                )}
-                                <AnimatedDetails class="notification-details notification-delivery-details">
-                                    <summary>Delivery details</summary>
-                                    <div class="notification-details-content">
-                                        {receivers.length ? (
-                                            <ul class="notification-receivers">
-                                                {receivers.map((r, index) => (
-                                                    <li key={r.id}>
-                                                        <strong>
-                                                            {index === ownIndex
-                                                                ? 'This device'
-                                                                : `Other device ${index + (ownIndex >= 0 && ownIndex < index ? 0 : 1)}`}
-                                                        </strong>{' '}
-                                                        <span class="notification-help">
-                                                            {r.provider} push service · {r.sent} accepted
-                                                            {r.failed ? `, ${r.failed} failed` : ''}
-                                                        </span>
-                                                        {r.lastError && <p class="notification-error">{r.lastError}</p>}
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        ) : (
+                                            {status.delivery.lastError &&
+                                                !receivers.some((r) => r.lastError === status.delivery.lastError) && (
+                                                    <p class="notification-error">{status.delivery.lastError}</p>
+                                                )}
                                             <p class="notification-help">
-                                                No device is registered to receive notifications.
+                                                Counted since the server started
+                                                {status.delivery.sent || status.delivery.failed
+                                                    ? `: ${status.delivery.sent} accepted${status.delivery.failed ? `, ${status.delivery.failed} failed` : ''} in total`
+                                                    : ''}
+                                                . Acceptance by the push service doesn’t confirm a banner appeared.
                                             </p>
-                                        )}
-                                        {status.delivery.lastError &&
-                                            !receivers.some((r) => r.lastError === status.delivery.lastError) && (
-                                                <p class="notification-error">{status.delivery.lastError}</p>
-                                            )}
-                                        <p class="notification-help">
-                                            Counted since the server started
-                                            {status.delivery.sent || status.delivery.failed
-                                                ? `: ${status.delivery.sent} accepted${status.delivery.failed ? `, ${status.delivery.failed} failed` : ''} in total`
-                                                : ''}
-                                            . Acceptance by the push service doesn’t confirm a banner appeared.
-                                        </p>
-                                    </div>
-                                </AnimatedDetails>
-                            </section>
-                        </Presence>
-                    </div>
-                </>
-            )}
-        </main>
+                                        </div>
+                                    </AnimatedDetails>
+                                </section>
+                            </Presence>
+                        </div>
+                    </>
+                )}
+            </main>
+        </div>
     );
 }

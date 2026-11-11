@@ -345,9 +345,9 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         // Notifications and back. The header has scrolled away with the list; the link still works.
         before = await list.evaluate((el) => el.scrollTop);
         await page.locator('.device-list-header .notifications-link').evaluate((el) => el.click());
-        await page.getByRole('link', { name: '← Devices', exact: true }).waitFor();
+        await page.locator('.notifications-view').getByRole('button', { name: 'Phones', exact: true }).waitFor();
         await page.waitForFunction(() => document.title === 'Notifications · ws-scrcpy');
-        await page.getByRole('link', { name: '← Devices', exact: true }).click();
+        await page.locator('.notifications-view').getByRole('button', { name: 'Phones', exact: true }).click();
         await check('Notifications');
         await page.waitForFunction(() => document.title === 'Devices · ws-scrcpy');
 
@@ -356,7 +356,7 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await settleMotion(page);
         await page.waitForFunction(() => !document.querySelector('[data-device-key="android:HOME-EXTRA-15"] .device-details').open);
         await page.locator('.device-list-header .notifications-link').evaluate((el) => el.click());
-        await page.getByRole('link', { name: '← Devices', exact: true }).click();
+        await page.locator('.notifications-view').getByRole('button', { name: 'Phones', exact: true }).click();
         await card(page, 'android:HOME-EXTRA-15').waitFor();
         assert.deepEqual(await openBefore(), ['android:HOME-PIXEL-0001']);
 
@@ -540,7 +540,7 @@ async function installedApp(browser) {
         await page.route('**/api/notifications/**', (route) => route.fulfill({ json: { sources: [], notifications: [], bluetooth: [], statuses: {}, pairing: null, pairingOpen: false, error: '', delivery: { sent: 0, failed: 0, lastError: '' }, unread: 0, unreadBySource: {}, publicKey: '', publicUrl: 'https://example.test' } }));
         // The shortcut opens Notifications in the served app.
         await page.goto(new URL(shortcut.url, new URL('manifest.json', BASE)).href);
-        await page.getByRole('heading', { name: /^Notifications/ }).waitFor();
+        await page.locator('.notifications-view .stream-header-device > strong').getByText('Notifications', { exact: true }).waitFor();
         assert.equal(await page.title(), 'Notifications · ws-scrcpy');
         // The browser bar is the colour of the page in both themes.
         for (const scheme of ['light', 'dark']) {
@@ -560,7 +560,7 @@ async function installedApp(browser) {
         await page.goto(BASE);
         await page.getByRole('heading', { name: 'No devices connected', exact: true }).or(page.getByRole('heading', { name: 'Connection lost', exact: true })).waitFor();
         await page.locator('.device-list-header').getByRole('link', { name: 'Notifications', exact: true }).click();
-        await page.getByRole('heading', { name: /^Notifications/ }).waitFor();
+        await page.locator('.notifications-view .stream-header-device > strong').getByText('Notifications', { exact: true }).waitFor();
         console.log('PASS installed app: one name, a Notifications shortcut, page-coloured browser bar, inbox reachable with no devices');
     } finally {
         await context.close();
