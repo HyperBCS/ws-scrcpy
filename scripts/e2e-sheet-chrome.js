@@ -239,9 +239,12 @@ async function escapeCancelsPrompt(browser) {
         const prompt = actions.getByRole('alertdialog');
         await reboot.click();
         await prompt.waitFor();
+        // Open, not just still on screen: a closing sheet stays visible while it animates out.
+        const stillOpen = () => page.locator('.bottom-sheet-root.open:not([data-exiting]) [role="dialog"][aria-label="Actions"]').count();
         await page.keyboard.press('Escape');
         await prompt.waitFor({ state: 'detached' });
-        assert.equal(await actions.isVisible(), true, 'the first Escape cancels the prompt and leaves the sheet open');
+        await pause(400);
+        assert.equal(await stillOpen(), 1, 'the first Escape cancels the prompt and leaves the sheet open');
         assert.equal(await reboot.evaluate((el) => el === document.activeElement), true, 'focus returns to the button that armed it');
         // Focus outside the prompt: a second press on the armed button keeps the prompt up.
         await reboot.click();
@@ -251,7 +254,8 @@ async function escapeCancelsPrompt(browser) {
         assert.equal(await reboot.evaluate((el) => el === document.activeElement), true);
         await page.keyboard.press('Escape');
         await prompt.waitFor({ state: 'detached' });
-        assert.equal(await actions.isVisible(), true, 'Escape cancels the prompt wherever focus is');
+        await pause(400);
+        assert.equal(await stillOpen(), 1, 'Escape cancels the prompt wherever focus is');
         await page.keyboard.press('Escape');
         await actions.waitFor({ state: 'hidden' });
         assert.equal(test.commands.filter((command) => command.type === 'reboot_device').length, 0, 'nothing was sent');
