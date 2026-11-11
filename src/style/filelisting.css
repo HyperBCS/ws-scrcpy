@@ -417,13 +417,30 @@ body.file-listing-page {
     color: var(--text-color);
 }
 
-.fx-col-size,
+/* Size and Modified are as wide as their longest text ("1023 KB", "2026-09-21 14:05") at any
+   window width; Name takes the rest. A share of the table cut the time off below 1180px. */
+.fx-col-size {
+    width: calc(8ch + 20px);
+}
+
 .fx-col-time {
-    width: 12%;
+    width: calc(16ch + 20px);
 }
 
 .fx-col-type {
-    width: 14%;
+    width: 124px;
+}
+
+/* Type is the first column to go when the list itself is narrow. */
+.fx-main {
+    container: fx-main / inline-size;
+}
+
+@container fx-main (max-width: 720px) {
+    .file-explorer[data-view='details'] .fx-col-type,
+    .file-explorer[data-view='details'] .entry-type {
+        display: none;
+    }
 }
 
 .fx-cell-select,

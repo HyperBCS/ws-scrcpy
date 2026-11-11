@@ -235,6 +235,53 @@ async function keyboardFocus(browser) {
     await finish();
 }
 
+// The details table: dates and sizes are whole at every width, and Type gives way first.
+async function columns(browser) {
+    const { page, finish } = await start(browser, DESKTOP, ROOT, 'light');
+    const measure = () =>
+        page.evaluate(() => {
+            const cut = (selector) =>
+                Array.from(document.querySelectorAll(selector)).filter(
+                    (cell) => cell.getClientRects().length && cell.scrollWidth > cell.clientWidth,
+                ).length;
+            return {
+                times: cut('.entry-time'),
+                sizes: cut('.entry-size'),
+                types: cut('.entry-type'),
+                typeShown: !!document.querySelector('.entry-type')?.getClientRects().length,
+                name: Math.round(document.querySelector('.fx-col-name').getBoundingClientRect().width),
+                headers: Array.from(document.querySelectorAll('.fx-table thead .fx-sort')).filter(
+                    (button) => button.getClientRects().length && button.scrollWidth > button.clientWidth,
+                ).length,
+            };
+        });
+    for (const [width, touch] of [[720, false], [760, false], [820, false], [1024, false], [1100, false], [1280, false]]) {
+        await page.setViewportSize({ width, height: 800 });
+        await page.waitForTimeout(50);
+        const result = await measure();
+        assert.equal(result.times, 0, `no Modified date is cut off at ${width}px`);
+        assert.equal(result.sizes, 0, `no Size is cut off at ${width}px`);
+        assert.equal(result.types, 0, `no Type is cut off at ${width}px`);
+        assert.equal(result.headers, 0, `no column heading is cut off at ${width}px`);
+        assert(result.name >= 280, `Name keeps room at ${width}px (${result.name}px)`);
+        assert.equal(result.typeShown, width >= 760, `Type is shown from 760px, and gives way below (${width}px)`);
+        if (width === 820) await page.screenshot({ path: path.join(OUT, 'flows-columns-820.png') });
+    }
+    await finish();
+    // A tablet has larger text and 44px controls.
+    const tablet = await start(browser, { width: 820, height: 1180, touch: true }, ROOT, 'light');
+    const result = await tablet.page.evaluate(() => {
+        const cut = (selector) =>
+            Array.from(document.querySelectorAll(selector)).filter(
+                (cell) => cell.getClientRects().length && cell.scrollWidth > cell.clientWidth,
+            ).length;
+        return { times: cut('.entry-time'), sizes: cut('.entry-size'), types: cut('.entry-type') };
+    });
+    assert.deepEqual(result, { times: 0, sizes: 0, types: 0 }, 'a tablet shows whole dates, sizes and types');
+    await tablet.page.screenshot({ path: path.join(OUT, 'flows-columns-tablet.png') });
+    await tablet.finish();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -244,6 +291,7 @@ async function main() {
         ['history phone', () => history(browser, PHONE)],
         ['menus on short screens', () => menus(browser)],
         ['keyboard focus', () => keyboardFocus(browser)],
+        ['columns', () => columns(browser)],
     ];
     try {
         for (const [name, run] of scenarios) {
