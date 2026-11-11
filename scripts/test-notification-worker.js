@@ -19,8 +19,15 @@ function worker(options = {}) {
     let closed = 0;
     const windows = (options.windows || []).map((url) => ({
         url,
-        navigate: async (target) => navigated.push(target),
-        focus: async () => focused.push(url),
+        navigate: async (target) => {
+            order.push('navigate');
+            if (options.uncontrolled) throw new TypeError("This service worker is not the client's active service worker.");
+            navigated.push({ window: url, target });
+        },
+        focus: async () => {
+            order.push('focus');
+            focused.push(url);
+        },
         postMessage: (message) => messages.push(message),
     }));
     const navigator = options.noBadges
@@ -59,6 +66,7 @@ function worker(options = {}) {
         self,
         navigator,
         URL,
+        URLSearchParams,
         AbortController,
         setTimeout: (callback, duration) => setTimeout(callback, options.fastTimeout ? 0 : duration),
         clearTimeout,
@@ -182,14 +190,59 @@ test('push URLs only set an app route, and cannot replace the origin or scope', 
     }
 });
 
-test('notification clicks navigate and focus an existing app window', async () => {
+test('notification clicks focus, then navigate, an existing app window', async () => {
     const context = worker({ windows: ['https://example.test/app/#!action=devices'] });
     const target = 'https://example.test/app/#!action=notifications&notification=history-key';
     await context.click(target);
     assert.equal(context.closed, 1);
-    assert.deepEqual(context.navigated, [target]);
-    assert.equal(context.focused.length, 1);
+    assert.deepEqual(context.navigated, [{ window: 'https://example.test/app/#!action=devices', target }]);
+    assert.deepEqual(context.order, ['focus', 'navigate'], 'focus is requested while the tap still counts as a gesture');
     assert.deepEqual(context.opened, []);
+});
+
+test('notification clicks prefer the window already on Notifications and leave device sessions alone', async () => {
+    const target = 'https://example.test/app/#!action=notifications&source=phone&notification=history-key';
+    const stream = 'https://example.test/app/#!action=stream-coredevice&udid=phone';
+    const inbox = 'https://example.test/app/#!action=notifications&source=other';
+    const list = 'https://example.test/app/';
+    const preferred = worker({ windows: [stream, list, inbox] });
+    await preferred.click(target);
+    assert.deepEqual(preferred.navigated, [{ window: inbox, target }]);
+    assert.deepEqual(preferred.focused, [inbox]);
+    assert.deepEqual(preferred.opened, []);
+
+    const idle = worker({ windows: [stream, list] });
+    await idle.click(target);
+    assert.deepEqual(idle.navigated, [{ window: list, target }], 'the device list may be navigated');
+
+    for (const busy of [
+        stream,
+        'https://example.test/app/#!action=stream&udid=android&player=mse',
+        'https://example.test/app/#!action=shell&udid=android',
+        'https://example.test/app/#!action=list-files&udid=android&path=%2Fsdcard',
+    ]) {
+        const context = worker({ windows: [busy] });
+        await context.click(target);
+        assert.deepEqual(context.navigated, [], `${busy} keeps its session`);
+        assert.deepEqual(context.focused, []);
+        assert.deepEqual(context.opened, [target], 'the notification opens in a window of its own');
+    }
+});
+
+test('a window this worker does not control falls back to a new window', async () => {
+    const context = worker({ windows: ['https://example.test/app/#!action=notifications'], uncontrolled: true });
+    const target = 'https://example.test/app/#!action=notifications&notification=history-key';
+    await context.click(target);
+    assert.deepEqual(context.navigated, []);
+    assert.deepEqual(context.opened, [target], 'the tap never does nothing');
+});
+
+test('windows of another app on the same origin are not reused', async () => {
+    const context = worker({ windows: ['https://example.test/other/#!action=notifications'] });
+    const target = 'https://example.test/app/#!action=notifications';
+    await context.click(target);
+    assert.deepEqual(context.navigated, []);
+    assert.deepEqual(context.opened, [target]);
 });
 
 test('notification clicks open a new app window if needed and reject unsafe destinations', async () => {
