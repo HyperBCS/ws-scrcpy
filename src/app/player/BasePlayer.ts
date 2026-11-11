@@ -59,6 +59,8 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         STOPPED: 3,
     };
     private static STATS_HEIGHT = 12;
+    /** Quality stats cover the last second; records older than this are dropped. */
+    protected static readonly STATS_WINDOW_MS = 1000;
     protected screenInfo?: ScreenInfo;
     protected videoSettings: VideoSettings;
     protected parentElement?: HTMLElement;
@@ -330,10 +332,24 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
                 this.qualityAnimationId = requestAnimationFrame(this.updateQualityStats);
             }
         }
+        const now = Date.now();
+        // Only the last second is ever read. The stats loop also prunes, but it does not run for
+        // every player and gets no animation frames in a hidden tab, so the list is bounded here.
+        BasePlayer.dropOlderThan(this.inputBytes, now - BasePlayer.STATS_WINDOW_MS);
         this.inputBytes.push({
-            timestamp: Date.now(),
+            timestamp: now,
             bytes: frame.byteLength,
         });
+    }
+
+    protected static dropOlderThan(records: { timestamp: number }[], cutoff: number): void {
+        let stale = 0;
+        while (stale < records.length && records[stale].timestamp < cutoff) {
+            stale++;
+        }
+        if (stale) {
+            records.splice(0, stale);
+        }
     }
 
     public abstract getPreferredVideoSetting(): VideoSettings;

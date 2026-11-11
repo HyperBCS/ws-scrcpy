@@ -151,7 +151,8 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
         if (this.getState() === BaseCanvasBasedPlayer.STATE.PAUSED) {
             this.play();
         }
-        this.inputBytes.push({ bytes: frame.byteLength, timestamp: Date.now() });
+        // No input accounting: this player has no stats overlay, and a record per frame that
+        // nothing prunes grew for the whole session.
         this.decode(frame);
     }
 

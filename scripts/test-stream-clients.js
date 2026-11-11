@@ -227,3 +227,43 @@ test('a mouse wheel notch scrolls one notch, and trackpad steps add up between m
     const [page] = wheel({ deltaY: 5, deltaMode: 2 });
     assert.equal(page.vScroll, -16, 'a large jump is capped at what one message can carry');
 });
+
+// ---------------------------------------------------------------- player statistics
+
+test('players keep about one second of frame statistics however long the stream runs', (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: 2_000_000 });
+    // No animation frame ever runs here, as in a hidden tab or a player without a stats loop.
+    const { WebCodecsHevcPlayer } = require('../src/app/player/WebCodecsHevcPlayer');
+    const { MseHevcPlayer } = require('../src/app/player/MseHevcPlayer');
+    const { MsePlayer } = require('../src/app/player/MsePlayer');
+
+    MockDecoder.instances.length = 0;
+    const hevc = new WebCodecsHevcPlayer('iphone-stats');
+    hevc.configure('hev1', new Uint8Array([1]));
+    hevc.play();
+    const frame = { displayWidth: 100, displayHeight: 200, close() {} };
+    // Ten minutes at 60 fps.
+    for (let i = 0; i < 36_000; i++) {
+        hevc.pushFrame(new Uint8Array([i === 0 ? 0 : 1, 0xaa]));
+        MockDecoder.instances[0].init.output(frame);
+        hevc.decodedFrames.length = 0;
+        t.mock.timers.tick(16);
+    }
+    assert.equal(MockDecoder.instances[0].chunks.length, 36_000, 'every frame still reaches the decoder');
+    assert.equal(hevc.inputBytes.length, 0, 'the WebCodecs HEVC player records no input it never reads');
+    assert.ok(hevc.videoStats.length <= 64, `decoded-frame records are bounded, got ${hevc.videoStats.length}`);
+    hevc.stop();
+
+    for (const player of [new MseHevcPlayer('iphone-stats-mse'), new MsePlayer('android-stats')]) {
+        // Neither has a source to feed in this test; only the accounting in BasePlayer runs.
+        for (let i = 0; i < 36_000; i++) {
+            player.pushFrame(new Uint8Array([1, 0xaa, 0xbb, 0xcc, 0xdd]));
+            t.mock.timers.tick(16);
+        }
+        assert.ok(
+            player.inputBytes.length <= 64,
+            `${player.getName()} input records are bounded, got ${player.inputBytes.length}`,
+        );
+        assert.equal(player.inputBytes.at(-1).bytes, 5);
+    }
+});
