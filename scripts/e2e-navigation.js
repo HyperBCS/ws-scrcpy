@@ -185,7 +185,9 @@ async function backAfterSwitching(browser, viewport) {
     try {
         await card(page, `android:${PIXEL}`).getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.getByText('Connected', { exact: true }).first().waitFor();
-        const opened = await page.evaluate(() => history.length);
+        // The back stack, not `history.length`: the switcher's entry stays ahead of the page
+        // once it has closed, and `history.length` counts it.
+        const opened = await page.evaluate(() => history.state.nav.index);
         const pick = async (name) => {
             await page.getByRole('button', { name: 'Switch', exact: true }).click();
             const sheet = page.locator('.bottom-sheet-root.open');
@@ -202,7 +204,7 @@ async function backAfterSwitching(browser, viewport) {
         await page.waitForFunction(() => document.title === 'Google Pixel 8 · Screen · ws-scrcpy');
         await quiet(page);
         assert.deepEqual(test.streams.map((stream) => stream.udid), [PIXEL, IPHONE, PIXEL_2], `${label}: one stream socket per phone opened`);
-        assert.equal(await page.evaluate(() => history.length), opened, `${label}: Switch adds no entry`);
+        assert.equal(await page.evaluate(() => history.state.nav.index), opened, `${label}: Switch adds no entry`);
         await backControl(page).click();
         await page.locator('#devices').waitFor();
         assert.equal(await page.evaluate(() => history.state.nav.index), 0, `${label}: the back control goes to the list entry, past the phones between`);
@@ -225,7 +227,7 @@ async function backAfterSwitching(browser, viewport) {
             assert.equal(await tool.evaluate(() => history.length), inTool, `${viewport.name}: a tab change adds no entry`);
             await tool.locator('.stream-header .notifications-link').click();
             await tool.locator('.notifications-page').waitFor();
-            // "Open screen" in the inbox is a link in the older form.
+            // A link in the older form, as a bookmark or an earlier build has it.
             await tool.evaluate((udid) => { location.hash = `#!action=stream-coredevice&udid=${udid}`; }, IPHONE);
             await tool.locator('.stream-view').waitFor();
             await tool.waitForFunction((udid) => location.hash === `#!action=device&udid=${udid}&view=screen`, IPHONE);

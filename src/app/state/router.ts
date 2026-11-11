@@ -224,10 +224,16 @@ function accept(): void {
 let landing: number | undefined;
 let landingTimer: ReturnType<typeof setTimeout> | undefined;
 const waiting: Array<() => void> = [];
+/**
+ * The index of an overlay's entry that is being stepped over on the way back to the entry that
+ * is shown. Its address is not shown on the way; see the `popstate` listener.
+ */
+let passing: number | undefined;
 
 function landed(): void {
     clearTimeout(landingTimer);
     landing = undefined;
+    passing = undefined;
     while (waiting.length && landing === undefined) {
         waiting.shift()?.();
     }
@@ -524,12 +530,22 @@ window.addEventListener('popstate', () => {
     }
     // An overlay's entry without its overlay (after a reload, or reached by Forward) is skipped.
     if (have > keep) {
+        // Forward from a page that took the place of the one an overlay was opened on (another
+        // phone from the switcher) reaches that overlay's entry, which still has the earlier
+        // address. The step leads back to the page that is shown, so the `hashchange` for the
+        // entry passed over is ignored: shown for a moment, the earlier phone's stream would
+        // start and stop again.
+        const to = here.index + keep - have;
+        passing = to === readNav(shown.state)?.index && location.hash !== shown.hash ? here.index : undefined;
         travel(keep - have);
     }
 });
 
 window.addEventListener('hashchange', () => {
     if (location.hash === shown.hash) {
+        return;
+    }
+    if (passing !== undefined && landing !== undefined && readNav(history.state)?.index === passing) {
         return;
     }
     const made = !readNav(history.state);

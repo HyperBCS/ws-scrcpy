@@ -2065,7 +2065,9 @@ async function viewStateInAddress(browser) {
     const { page } = f;
     try {
         const hashIs = expected => page.waitForFunction(value => location.hash === value, expected);
-        const entries = () => page.evaluate(() => history.length);
+        // The back stack, not `history.length`: the entry the Filters sheet had stays ahead of the
+        // page once the sheet has closed, and `history.length` counts it.
+        const entries = () => page.evaluate(() => history.state.nav.index);
         const shown = () => page.locator('article.notification-history-item').count();
         const select = page.getByRole('combobox', { name: 'Device', exact: true });
         const search = page.getByRole('searchbox', { name: 'Search notifications', exact: true });

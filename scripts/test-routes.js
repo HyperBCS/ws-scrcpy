@@ -676,8 +676,8 @@ test('overlays stack: one that closes under another leaves the other open, with 
 });
 
 test('a change within the page made while an overlay is open keeps it open and ends up on the page entry', async () => {
-    const sdcard = 'action=list-files&udid=PIXEL&path=%2Fsdcard';
-    const corrected = 'action=list-files&udid=PIXEL&path=%2Fsdcard%2F';
+    const sdcard = 'action=device&udid=PIXEL&view=files&path=%2Fsdcard';
+    const corrected = 'action=device&udid=PIXEL&view=files&path=%2Fsdcard%2F';
     const { browser, router, shown } = open('#!');
     router.openRoute(usp(sdcard));
     const closed = [];
@@ -740,10 +740,10 @@ test('a change within the page made while an overlay is open keeps it open and e
     const files = open(`#!${sdcard}`);
     files.router.pushOverlay(() => closed.push('menu'));
     await tick();
-    files.router.pushRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM'));
+    files.router.pushRoute(usp('action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM'));
     files.browser.settle();
     assert.deepEqual(closed, ['dialog', 'actions', 'menu']);
-    assert.deepEqual(files.browser.hashes(), [`#!${sdcard}`, '#!action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM']);
+    assert.deepEqual(files.browser.hashes(), [`#!${sdcard}`, '#!action=device&udid=PIXEL&view=files&path=%2Fsdcard%2FDCIM']);
 
     // A reload while the change is still on the overlay's entry: the page entry takes it then.
     const tab = open('#!');
@@ -905,6 +905,16 @@ test('a route change closes every overlay, and the new address is written on the
     assert.equal(browser.index, 1);
     assert.deepEqual(browser.behind(), ['#!'], 'Back from the new phone is the list, not the phone before');
     assert.deepEqual(shown.slice(-2), ['action=device&udid=PIXEL&view=screen', 'action=device&udid=IPHONE&view=screen']);
+    // Forward reaches the switcher's entry, which still has the address of the phone before. It
+    // is stepped back over, and the phone before is not shown on the way: its stream would start.
+    assert.equal(browser.hashes()[2], '#!action=device&udid=PIXEL&view=screen', 'the entry of the switcher is ahead');
+    const routes = shown.length;
+    browser.history.forward();
+    browser.settle();
+    assert.equal(browser.index, 1);
+    assert.equal(browser.location.hash, '#!action=device&udid=IPHONE&view=screen');
+    assert.equal(shown.length, routes, 'nothing else is shown');
+    assert.deepEqual(browser.behind(), ['#!']);
 
     // Open from inside an overlay, and up from inside an overlay.
     router.pushOverlay(() => closed.push('menu'));

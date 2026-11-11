@@ -164,6 +164,11 @@ async function start(browser, { viewport = PHONE, colorScheme = 'light', hash = 
 const card = (page, key) => page.locator(`article.device[data-device-key="${key}"]`);
 const hash = (page) => page.evaluate(() => location.hash);
 const entries = (page) => page.evaluate(() => history.length);
+/**
+ * Where the tab is in its history. A sheet's entry stays ahead of the page once the sheet has
+ * closed, so `history.length` counts it; the back stack does not.
+ */
+const place = (page) => page.evaluate(() => history.state?.nav?.index);
 const quiet = (page, ms = 350) => page.waitForTimeout(ms);
 const streamsOf = (test, udid) => test.streams.filter((stream) => stream.udid === udid).length;
 const count = (list, value) => list.filter((item) => item === value).length;
@@ -334,10 +339,16 @@ async function androidTabs(browser, viewport, colorScheme) {
         await until(async () => (await terminalText(page)).includes('$ kept'), 'typed input is echoed');
         await shot('shell');
 
-        // Back to Files: the same client, in the folder it was left in.
+        // Back to Files: the same client, in the folder it was left in. The tab link names no
+        // folder, so Files writes the one it shows into the address, in the same entry.
         await tab(page, 'Files').click();
         await crumb(page, 'photos').waitFor();
         await page.locator('.fx-row[data-name="holiday.jpg"]').waitFor();
+        await page.waitForFunction(
+            (expected) => location.hash === expected,
+            `#!action=device&udid=${PIXEL}&view=files&path=${encodeURIComponent(`${ROOT}/photos`)}`,
+        );
+        assert.equal(await entries(page), afterFolder, 'Files writes its folder without a new entry');
         assert.equal(count(test.opened, 'FSLS'), 1, 'Files is not connected a second time');
         assert.equal(await page.locator('.terminal-container').isVisible(), false, 'the shell is hidden behind Files');
         assert.equal(await page.evaluate(() => document.body.className), 'file-listing');
@@ -449,7 +460,7 @@ async function switchReplaces(browser, viewport) {
     try {
         await card(page, `android:${PIXEL}`).getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.getByText('Connected', { exact: true }).first().waitFor();
-        const opened = await entries(page);
+        const opened = await place(page);
 
         await pick(/Pixel 8/);
         await page.waitForFunction((udid) => location.hash === `#!action=device&udid=${udid}&view=screen`, PIXEL_2);
@@ -457,7 +468,15 @@ async function switchReplaces(browser, viewport) {
         await quiet(page);
         assert.deepEqual(test.streams.map((stream) => stream.udid), [PIXEL, PIXEL_2], `${label}: one stream socket per phone`);
         assert.deepEqual(test.streamsClosed, [PIXEL]);
-        assert.equal(await entries(page), opened, `${label}: Switch adds no entry`);
+        assert.equal(await place(page), opened, `${label}: Switch adds no entry`);
+        // Forward reaches the entry the switcher had, which still has the address of the phone
+        // before. It is stepped back over without showing that phone, so no stream starts for it.
+        await page.goForward();
+        await quiet(page, 500);
+        assert.equal(await hash(page), `#!action=device&udid=${PIXEL_2}&view=screen`, `${label}: Forward stays on this phone`);
+        assert.equal(await place(page), opened);
+        assert.deepEqual(test.streams.map((stream) => stream.udid), [PIXEL, PIXEL_2], `${label}: Forward starts no stream`);
+        assert.deepEqual(test.streamsClosed, [PIXEL]);
 
         // Files of this phone, in a folder; then the same tool on the other phone.
         await tab(page, 'Files').click();
@@ -466,13 +485,13 @@ async function switchReplaces(browser, viewport) {
         if (viewport.mobile) await folder.click();
         else await folder.dblclick();
         await crumb(page, 'photos').waitFor();
-        const inFolder = await entries(page);
+        const inFolder = await place(page);
         await pick(/Pixel 9/);
         await page.waitForFunction((udid) => location.hash.includes(udid), PIXEL);
         await page.waitForFunction(() => document.title === 'Google Pixel 9 · Files · ws-scrcpy');
         await crumb(page, 'tmp').waitFor();
         assert.deepEqual(viewOf(await hash(page)), { udid: PIXEL, view: 'files' });
-        assert.equal(await entries(page), inFolder, `${label}: Switch from a tool adds no entry`);
+        assert.equal(await place(page), inFolder, `${label}: Switch from a tool adds no entry`);
         await until(() => count(test.closed, 'FSLS') === 1, 'the Files of the phone before is closed');
         assert.equal(count(test.opened, 'FSLS'), 2);
         assert.equal(await page.locator('.tool-view').count(), 1, 'only this phone has a tool mounted');
@@ -486,7 +505,7 @@ async function switchReplaces(browser, viewport) {
         await page.locator('.stream-view').waitFor();
         await until(() => count(test.closed, 'FSLS') === 2, 'the tools of the Android phone stop when an iPhone is shown');
         assert.equal(await page.locator('.tool-navigation, .tool-view').count(), 0, `${label}: an iPhone has no tabs`);
-        assert.equal(await entries(page), inFolder);
+        assert.equal(await place(page), inFolder);
         await quiet(page);
         assert.deepEqual(test.streams.map((stream) => stream.udid), [PIXEL, PIXEL_2, PIXEL, IPHONE]);
         assert.deepEqual(test.errors, []);
@@ -577,7 +596,7 @@ async function playerChangeReplaces(browser) {
     try {
         await card(page, `android:${PIXEL}`).getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.getByText('Connected', { exact: true }).first().waitFor();
-        const opened = await entries(page);
+        const opened = await place(page);
         await page.locator('.control-buttons-list [title="Settings"]').click();
         const sheet = page.locator('.bottom-sheet-root.open');
         await sheet.waitFor();
@@ -589,7 +608,7 @@ async function playerChangeReplaces(browser) {
         await sheet.waitFor({ state: 'hidden' });
         await page.getByText('Connected', { exact: true }).first().waitFor();
         await quiet(page, 500);
-        assert.equal(await entries(page), opened, 'a player change adds no entry');
+        assert.equal(await place(page), opened, 'a player change adds no entry');
         assert.equal(streamsOf(test, PIXEL), 2, 'one new stream socket for the new player');
         assert.doesNotMatch(await hash(page), /[&!]ws=/, 'the address still names no socket');
 
