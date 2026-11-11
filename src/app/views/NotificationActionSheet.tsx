@@ -1,4 +1,5 @@
 import { trapDialogTab, restoreDialogFocus } from '../ui/dialogFocus';
+import { cancelConfirmPrompt } from '../ui/ConfirmAction';
 import type { ComponentChildren } from 'preact';
 import { useId, useLayoutEffect, useRef } from 'preact/hooks';
 import '../../style/views/NotificationActionSheet.css';
@@ -33,8 +34,11 @@ export function NotificationActionSheet({ open, title, description, onClose, chi
         closing.current = true;
         callback.current();
     };
-    // The browser's Back closes the sheet and leaves Notifications open.
-    useOverlayHistory(open, close);
+    // The browser's Back closes the sheet and leaves Notifications open. As with Escape, the
+    // first one cancels a confirm prompt and the sheet stays.
+    useOverlayHistory(open, close, {
+        stays: () => !!dialog.current && cancelConfirmPrompt(dialog.current),
+    });
 
     useLayoutEffect(() => {
         const node = dialog.current;

@@ -42,7 +42,8 @@ const IPHONES = [{
 const SOURCES = [{ id: IPHONE, name: 'Bench iPhone', address: 'AA:BB:CC:DD:EE:01', apps: [], preview: true }];
 const NOTIFICATIONS = [
     { key: 'chat', source: IPHONE, app: 'com.example.chat', appName: 'Messages', title: 'Coffee at four?', body: 'Meet me outside the station.', received: NOW, read: false, dismissed: false, active: true },
-    { key: 'calendar', source: IPHONE, app: 'com.example.calendar', appName: 'Calendar', title: 'Design review', body: 'Starts in ten minutes.', received: NOW - 60000, read: false, dismissed: false, active: true },
+    // An action on the phone that asks before it runs.
+    { key: 'calendar', source: IPHONE, app: 'com.example.calendar', appName: 'Calendar', title: 'Design review', body: 'Starts in ten minutes.', received: NOW - 60000, read: false, dismissed: false, active: true, canDismiss: true, negativeActionLabel: 'Decline' },
 ];
 const VIEWPORTS = [
     { name: 'phone', width: 390, height: 844, mobile: true, colorScheme: 'light' },
@@ -66,10 +67,11 @@ async function start(browser, viewport) {
         colorScheme: viewport.colorScheme, serviceWorkers: 'block',
     });
     const page = await context.newPage();
-    const test = { context, page, viewport, mobile: viewport.mobile, errors: [], streams: [], closed: 0 };
+    const test = { context, page, viewport, mobile: viewport.mobile, errors: [], streams: [], closed: 0, posted: [] };
     page.on('pageerror', (error) => test.errors.push(error.message));
     await page.route('**/api/notifications/**', (route) => {
         const pathname = new URL(route.request().url()).pathname;
+        if (route.request().method() !== 'GET') test.posted.push(pathname);
         const unread = { unread: NOTIFICATIONS.length, unreadBySource: { [IPHONE]: NOTIFICATIONS.length } };
         if (pathname.endsWith('/summary')) return route.fulfill({ json: { sources: SOURCES, ...unread } });
         if (pathname.endsWith('/history')) return route.fulfill({ json: { revision: 'fixture', notifications: NOTIFICATIONS } });
@@ -291,6 +293,24 @@ async function streamPage(browser, viewport, platform) {
         assert.equal(await page.locator('.bottom-sheet-root.open, .live-text-overlay').count(), 0, `${label}: Forward does not open a sheet again`);
         assert.deepEqual(test.streams, [udid, udid], `${label}: Forward opened the page once`);
 
+        // An address from outside the app (a push alert that is opened) while a sheet is open.
+        // Back from there passes the entry the sheet had and shows the page, once, without it.
+        await control(test, 'Actions');
+        await title(/^Actions$/).waitFor();
+        await settleMotion(page);
+        await page.evaluate(() => { location.hash = '#!action=notifications'; });
+        await page.locator('.notifications-page').waitFor();
+        await sheet(page).waitFor({ state: 'hidden' });
+        assert.equal(await page.locator('.bottom-sheet-root.open, .live-text-overlay').count(), 0, `${label}: the sheet does not show over Notifications`);
+        assert.deepEqual(test.streams, [udid, udid], `${label}: leaving for another page started no stream`);
+        await page.goBack();
+        await stream.waitFor();
+        await connected(page);
+        await untilAt(page, home.index, 0);
+        await page.waitForTimeout(300);
+        assert.equal(await page.locator('.bottom-sheet-root.open, .live-text-overlay').count(), 0, `${label}: Back to the page does not open the sheet again`);
+        assert.deepEqual(test.streams, [udid, udid, udid], `${label}: Back to the page opened it once`);
+
         // A reload with a sheet open: the page without the sheet, and Back leaves it in one step.
         await press(test, page.locator('.stream-header-switch'));
         await sheet(page).waitFor();
@@ -302,17 +322,13 @@ async function streamPage(browser, viewport, platform) {
         await untilAt(page, home.index, 0);
         await page.waitForTimeout(300);
         assert.equal(await sheet(page).count(), 0, `${label}: no sheet after a reload`);
-        assert.deepEqual(test.streams, [udid, udid, udid], `${label}: the reloaded page started one stream`);
-
-        // An address from outside the app (a push alert that is opened) while a sheet is open.
-        await control(test, 'Actions');
-        await title(/^Actions$/).waitFor();
-        await settleMotion(page);
-        await page.evaluate(() => { location.hash = '#!action=notifications'; });
-        await page.locator('.notifications-page').waitFor();
-        await sheet(page).waitFor({ state: 'hidden' });
-        assert.equal(await page.locator('.bottom-sheet-root.open, .live-text-overlay').count(), 0, `${label}: the sheet does not show over Notifications`);
-        assert.deepEqual(test.streams, [udid, udid, udid], `${label}: leaving for another page started no stream`);
+        assert.deepEqual(test.streams, [udid, udid, udid, udid], `${label}: the reloaded page started one stream`);
+        await page.goBack();
+        await page.locator('#devices').waitFor();
+        assert.equal(await stream.count(), 0, `${label}: one Back after the reload leaves the page`);
+        assert.equal((await at(page)).index, home.index - 1);
+        await page.waitForTimeout(300);
+        assert.equal(test.streams.length, 4, `${label}: leaving started no stream`);
         assert.deepEqual(test.errors, []);
         console.log(`PASS ${label}: Back closes ${overlays.map((overlay) => overlay.name).join(', ')}; the page and its socket stay; swaps, Forward, reload and another page`);
     } finally {
@@ -374,6 +390,23 @@ async function notificationsPage(browser, viewport) {
         ];
         const home = await backClosesEach(test, label, overlays, page.locator('.notifications-page'));
         assert.equal(home.index, 1);
+
+        // A confirm prompt in the sheet: the first Back cancels it, as Escape does, the next
+        // one closes the sheet. Nothing is sent to the phone.
+        await press(test, page.getByRole('button', { name: 'Actions for Design review', exact: true }));
+        await dialog().waitFor();
+        await settleMotion(page);
+        await press(test, dialog().getByRole('button', { name: 'Decline on iPhone', exact: true }));
+        await dialog().locator('.confirm-prompt').waitFor();
+        await page.goBack();
+        await dialog().locator('.confirm-prompt').waitFor({ state: 'detached' });
+        await untilAt(page, home.index + 1, 1);
+        await page.waitForTimeout(150);
+        assert.equal(await dialog().isVisible(), true, `${label}: Back with a prompt open leaves the sheet open`);
+        await page.goBack();
+        await dialog().waitFor({ state: 'hidden' });
+        assert.deepEqual(await at(page), home);
+        assert.deepEqual(test.posted, [], `${label}: Back sent nothing to the phone`);
 
         // Another page while the sheet is open: it does not show there.
         await overlays[0].open();
