@@ -24,10 +24,19 @@ export class FeaturedInteractionHandler extends InteractionHandler {
         'wheel',
     ];
     private static readonly keyEventsNames: KeyEventNames[] = ['keydown', 'keyup'];
-    public static SCROLL_EVENT_THROTTLING_TIME = 30; // one event per 50ms
+    /** At most one scroll message per this many ms; a trackpad reports far more often. */
+    public static SCROLL_EVENT_THROTTLING_TIME = 30;
+    /** A pause this long ends a scroll. What was not yet sent from it is dropped. */
+    private static readonly SCROLL_IDLE_RESET_TIME = 200;
+    // What one notch of a mouse wheel reports. Chrome and Safari use pixels (about 100 per
+    // notch), Firefox uses lines (3 per notch), and a page is treated as ten notches.
+    private static readonly WHEEL_PIXELS_PER_NOTCH = 100;
+    private static readonly WHEEL_LINES_PER_NOTCH = 3;
+    private static readonly WHEEL_NOTCHES_PER_PAGE = 10;
     private readonly storedFromMouseEvent = new Map<number, TouchControlMessage>();
     private readonly storedFromTouchEvent = new Map<number, TouchControlMessage>();
-    private lastScrollEvent?: { time: number; hScroll: number; vScroll: number };
+    private pendingScroll = { hScroll: 0, vScroll: 0, time: 0 };
+    private lastScrollSentAt = 0;
 
     constructor(
         player: BasePlayer,
@@ -38,24 +47,49 @@ export class FeaturedInteractionHandler extends InteractionHandler {
         this.tag.addEventListener('mouseenter', this.onMouseEnter);
     }
 
-    public buildScrollEvent(event: WheelEvent, screenInfo: ScreenInfo): ScrollControlMessage[] {
-        const messages: ScrollControlMessage[] = [];
-        const touchOnClient = InteractionHandler.buildTouchOnClient(event, screenInfo);
-        if (touchOnClient) {
-            const hScroll = event.deltaX > 0 ? -1 : event.deltaX < 0 ? 1 : 0;
-            const vScroll = event.deltaY > 0 ? -1 : event.deltaY < 0 ? 1 : 0;
-            const time = Date.now();
-            if (
-                !this.lastScrollEvent ||
-                time - this.lastScrollEvent.time > FeaturedInteractionHandler.SCROLL_EVENT_THROTTLING_TIME ||
-                this.lastScrollEvent.vScroll !== vScroll ||
-                this.lastScrollEvent.hScroll !== hScroll
-            ) {
-                this.lastScrollEvent = { time, hScroll, vScroll };
-                messages.push(new ScrollControlMessage(touchOnClient.touch.position, hScroll, vScroll));
-            }
+    /** A wheel delta in mouse wheel notches. `deltaMode` is 0 for pixels, 1 for lines, 2 for pages. */
+    public static wheelNotches(delta: number, deltaMode: number): number {
+        if (deltaMode === 1) {
+            return delta / FeaturedInteractionHandler.WHEEL_LINES_PER_NOTCH;
         }
-        return messages;
+        if (deltaMode === 2) {
+            return delta * FeaturedInteractionHandler.WHEEL_NOTCHES_PER_PAGE;
+        }
+        return delta / FeaturedInteractionHandler.WHEEL_PIXELS_PER_NOTCH;
+    }
+
+    /**
+     * One wheel notch is one scrcpy notch. Deltas between two messages are added up, so a
+     * trackpad's many small steps scroll by their total and not by one full notch each.
+     */
+    public buildScrollEvent(event: WheelEvent, screenInfo: ScreenInfo): ScrollControlMessage[] {
+        const touchOnClient = InteractionHandler.buildTouchOnClient(event, screenInfo);
+        if (!touchOnClient) {
+            return [];
+        }
+        const time = Date.now();
+        const pending = this.pendingScroll;
+        if (time - pending.time > FeaturedInteractionHandler.SCROLL_IDLE_RESET_TIME) {
+            pending.hScroll = 0;
+            pending.vScroll = 0;
+        }
+        // A positive delta moves the content up or left, which Android reads as a negative axis.
+        pending.hScroll -= FeaturedInteractionHandler.wheelNotches(event.deltaX, event.deltaMode);
+        pending.vScroll -= FeaturedInteractionHandler.wheelNotches(event.deltaY, event.deltaMode);
+        pending.time = time;
+        if (time - this.lastScrollSentAt <= FeaturedInteractionHandler.SCROLL_EVENT_THROTTLING_TIME) {
+            return [];
+        }
+        const max = ScrollControlMessage.MAX_NOTCHES;
+        const hScroll = Math.max(-max, Math.min(max, pending.hScroll));
+        const vScroll = Math.max(-max, Math.min(max, pending.vScroll));
+        if (!hScroll && !vScroll) {
+            return [];
+        }
+        pending.hScroll = 0;
+        pending.vScroll = 0;
+        this.lastScrollSentAt = time;
+        return [new ScrollControlMessage(touchOnClient.touch.position, hScroll, vScroll)];
     }
 
     protected onInteraction(event: MouseEvent | TouchEvent): void {
