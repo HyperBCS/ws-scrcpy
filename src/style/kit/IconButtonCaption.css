@@ -1,0 +1,28 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* An icon button with a caption under its icon, for a grid or a column of phone controls where
+   the icon alone would not be told apart. On plain markup: `kit-icon-button`, usually
+   `kit-icon-button-bare`, plus `kit-icon-button-captioned`, with a `kit-icon-button-caption`
+   span after the icon. It takes the width of its cell and is at least 56px high. The button
+   still needs an `aria-label`; the caption is hidden from assistive technology. */
+.kit-icon-button.kit-icon-button-captioned {
+    flex-direction: column;
+    gap: var(--space-4);
+    width: 100%;
+    min-width: var(--control-height);
+    height: auto;
+    min-height: 56px;
+    padding: var(--space-4);
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+}
+.kit-icon-button-caption {
+    max-width: 100%;
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.25;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+}

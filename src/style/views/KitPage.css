@@ -68,6 +68,12 @@
     gap: var(--space-8);
     min-width: 0;
 }
+/* Captioned icon buttons take the width of their cell: three cells, as in the controls panel. */
+.kit-demo-controls {
+    display: grid;
+    grid-template-columns: repeat(3, 88px);
+    gap: var(--space-4);
+}
 .kit-demo-specimen > .kit-field-group,
 .kit-demo-specimen > .kit-range,
 .kit-demo-specimen > .kit-status,

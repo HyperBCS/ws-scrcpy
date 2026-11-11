@@ -101,7 +101,15 @@ function audit({ mobile, tokens }) {
     const coarse = matchMedia('(pointer: coarse)').matches;
     if (coarse !== mobile) faults.push(`(pointer: coarse) is ${coarse} in a ${mobile ? 'touch' : 'mouse'} context`);
     const height = (element) => Math.round(element.getBoundingClientRect().height * 100) / 100;
-    for (const element of all('.kit-button, .kit-icon-button')) {
+    // An icon button with a caption takes the width of its cell and grows with its caption.
+    const captioned = all('.kit-icon-button-captioned');
+    if (captioned.length < 3) faults.push(`${captioned.length} icon buttons with a caption shown`);
+    for (const element of captioned) {
+        const box = element.getBoundingClientRect();
+        if (box.height < 56 || box.width < 44) faults.push(`${box.width} by ${box.height}px, under 44 by 56px: ${name(element)}`);
+        if (!element.matches('.kit-icon-button') || element.querySelectorAll('svg.kit-icon, .kit-icon-button-caption[aria-hidden="true"]').length !== 2) faults.push(`not an icon and a caption: ${name(element)}`);
+    }
+    for (const element of all('.kit-button, .kit-icon-button:not(.kit-icon-button-captioned)')) {
         const compact = element.matches('.kit-button-compact, .kit-icon-button-compact');
         const expected = compact && !mobile ? 32 : 44;
         if (height(element) !== expected) faults.push(`${height(element)}px high, not ${expected}px: ${name(element)}`);
