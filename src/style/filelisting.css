@@ -872,6 +872,17 @@ body.file-listing-page {
     font-size: 16px;
 }
 
+.fx-dialog-error {
+    margin: -4px 0 0;
+    color: var(--status-unauthorized-color);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.fx-dialog-field input[aria-invalid] {
+    border-color: var(--status-unauthorized-color);
+}
+
 .fx-dialog-actions {
     display: flex;
     justify-content: flex-end;

@@ -12,6 +12,8 @@ const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-files';
 const UDID = 'files-fixture';
 const ROOT = '/data/local/tmp';
 const LARGE = '/data/local/large';
+// The name the page header shows for the fixture phone; destructive questions repeat it.
+const DEVICE = 'Fixture Files test phone';
 function frame(type, id, payload = Buffer.alloc(0)) {
     const buffer = Buffer.alloc(5 + payload.length);
     buffer[0] = type;
@@ -339,7 +341,9 @@ async function select(page, ...names) {
 }
 
 // The name-conflict dialog: its title, the answers on offer, and where the keyboard starts.
-async function conflict(page, title, answers) {
+async function conflict(page, question, answers) {
+    // "Replace “a”?" is asked as "Replace “a” on <device>?".
+    const title = question.endsWith('?') ? `${question.slice(0, -1)} on ${DEVICE}?` : `${question} on ${DEVICE}`;
     const dialog = page.locator('.fx-dialog[open]');
     await dialog.getByRole('heading', { name: title, exact: true }).waitFor();
     assert.deepEqual(await dialog.locator('.fx-dialog-actions button').allInnerTexts(), answers);
@@ -753,6 +757,10 @@ async function main() {
             await select(page, 'notes.txt');
             await command(page, 'Delete');
             await page.getByText('This cannot be undone.', { exact: false }).waitFor();
+            await page
+                .locator('.fx-dialog[open]')
+                .getByRole('heading', { name: `Delete “notes.txt” from ${DEVICE}?`, exact: true })
+                .waitFor();
             // Cancel is the default, and the red button ignores presses for the first 500 ms.
             assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Cancel', 'Cancel is focused');
             assert.equal(await page.locator('.fx-dialog [value="confirm"]').isDisabled(), true, 'Delete starts guarded');
@@ -1056,4 +1064,4 @@ if (require.main === module)
         process.exitCode = 1;
     });
 
-module.exports = { fixture };
+module.exports = { fixture, DEVICE };

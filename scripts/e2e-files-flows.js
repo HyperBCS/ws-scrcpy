@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const { settleMotion } = require('./ui-motion');
-const { fixture } = require('./e2e-files');
+const { fixture, DEVICE } = require('./e2e-files');
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-files';
 const UDID = 'files-fixture';
@@ -282,6 +282,87 @@ async function columns(browser) {
     await tablet.finish();
 }
 
+// Dialogs: Escape belongs to the dialog, the question names the item and the device, and a
+// bad name is explained inside the dialog.
+async function dialogs(browser) {
+    const { page, finish, traffic } = await start(browser, DESKTOP, ROOT);
+    const dialog = page.locator('.fx-dialog[open]');
+    const closed = () => page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+    const selected = () => page.locator('.fx-row.selected').evaluateAll((rows) => rows.map((item) => item.dataset.name));
+
+    await row(page, 'notes.txt').locator('.entry-name a').click();
+    await page.keyboard.press('Delete');
+    await dialog.getByRole('heading', { name: `Delete “notes.txt” from ${DEVICE}?`, exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Cancel', 'Cancel has the focus');
+    await settleMotion(page);
+    await page.screenshot({ path: path.join(OUT, 'flows-dialog-delete.png') });
+    // One Escape closes the dialog and leaves the selection as it was.
+    await page.keyboard.press('Escape');
+    await closed();
+    assert.deepEqual(await selected(), ['notes.txt'], 'Escape in the dialog does not clear the selection');
+    assert.equal(traffic.operations.length, 0, 'nothing was deleted');
+
+    // The same in Rename, where Escape used to be taken by the list first.
+    await page.keyboard.press('F2');
+    const field = dialog.locator('input[name="value"]');
+    await field.waitFor();
+    await page.keyboard.press('Escape');
+    await closed();
+    assert.deepEqual(await selected(), ['notes.txt']);
+
+    // A name the device cannot take is explained under the field, and the text is kept.
+    await page.keyboard.press('F2');
+    await field.fill('a/b');
+    await page.keyboard.press('Enter');
+    const problem = dialog.locator('.fx-dialog-error');
+    await problem.waitFor();
+    assert.equal(await problem.innerText(), 'A name cannot contain “/”.');
+    assert.equal(await field.inputValue(), 'a/b', 'the typed name is still there');
+    assert.equal(await field.getAttribute('aria-invalid'), '', 'the field is marked invalid');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('name')), 'value');
+    await settleMotion(page);
+    await page.screenshot({ path: path.join(OUT, 'flows-dialog-invalid-name.png') });
+    await field.fill('photo.png');
+    assert.equal(await problem.isVisible(), false, 'typing clears the message');
+    await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
+    await problem.waitFor();
+    assert.equal(await problem.innerText(), '“photo.png” already exists in this folder.');
+    assert.equal(traffic.operations.length, 0, 'a refused name sends nothing');
+    await field.fill('renamed.txt');
+    await page.keyboard.press('Enter');
+    await closed();
+    await row(page, 'renamed.txt').waitFor();
+    assert.deepEqual(traffic.operations.at(-1), { cmd: 'MOVE', paths: [ROOT + '/notes.txt', ROOT + '/renamed.txt'] });
+
+    // New folder validates the same way.
+    await ready(page);
+    await page.locator('.fx-commands').getByRole('button', { name: 'New folder', exact: true }).click();
+    await field.fill('  ');
+    await page.keyboard.press('Enter');
+    await problem.waitFor();
+    assert.equal(await problem.innerText(), 'Enter a name.');
+    await field.fill('archive');
+    await page.keyboard.press('Enter');
+    assert.equal(await problem.innerText(), '“archive” already exists in this folder.');
+    await page.keyboard.press('Escape');
+    await closed();
+    assert.equal(traffic.operations.length, 1, 'no folder was created');
+
+    // Several items, one of them a folder.
+    await row(page, 'archive').locator('.entry-name a').click();
+    await row(page, 'photo.png').locator('.entry-name a').click({ modifiers: ['Control'] });
+    await page.keyboard.press('Delete');
+    await dialog.getByRole('heading', { name: `Delete 2 items from ${DEVICE}?`, exact: true }).waitFor();
+    assert.equal(
+        await dialog.locator('.fx-dialog-message').innerText(),
+        'Folders are deleted with everything inside them. This cannot be undone.',
+    );
+    await page.keyboard.press('Escape');
+    await closed();
+    assert.equal((await selected()).length, 2);
+    await finish();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -292,6 +373,7 @@ async function main() {
         ['menus on short screens', () => menus(browser)],
         ['keyboard focus', () => keyboardFocus(browser)],
         ['columns', () => columns(browser)],
+        ['dialogs', () => dialogs(browser)],
     ];
     try {
         for (const [name, run] of scenarios) {

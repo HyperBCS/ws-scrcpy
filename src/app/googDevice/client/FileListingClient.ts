@@ -21,6 +21,8 @@ import { ConflictAnswer, ConflictChoice, Resolution, resolveNameConflicts } from
 import { DEFAULT_FILES_PATH, fileListingTool } from './deviceTools';
 import { pushRoute, replaceRoute } from '../../state/router';
 import { formatMode, formatModified, formatSize, iconMarkup, kindOf, typeLabel } from './fileTypes';
+import { deviceName } from '../../state/devices';
+import { findDeviceForTool } from '../../state/toolDevice';
 
 type Request = {
     kind: 'stat' | 'list' | 'mutate' | 'sizes';
@@ -196,6 +198,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private path: string;
     private pendingPath?: string;
     private closeMenuListener?: (event: Event) => void;
+    /** Checks the open dialog's field. A message keeps the dialog open and is shown under the field. */
+    private dialogCheck?: () => string;
     /**
      * A refused folder operation still refreshes the listing, and that refresh would otherwise
      * replace the device's own explanation with an item count. Hold the message and report it
@@ -601,7 +605,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 : undefined;
         const list = this.visible();
         const cut = this.clipboard?.mode === 'cut' && this.clipboard.dir === this.path ? this.clipboard.names : [];
-        const shown = (name?: string) => (name !== undefined && list.some((entry) => entry.name === name) ? name : undefined);
+        const shown = (name?: string) =>
+            name !== undefined && list.some((entry) => entry.name === name) ? name : undefined;
         this.rovingName = shown(focusedName) ?? shown(this.rovingName) ?? list[0]?.name;
         // With rows to stop on, the container itself is reached by script only.
         this.items.tabIndex = list.length ? -1 : 0;
@@ -914,6 +919,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     };
 
     private onKeyDown = (event: KeyboardEvent): void => {
+        // Keys pressed in a dialog bubble up to here. They belong to the dialog: Escape must
+        // close it, not clear the selection behind it.
+        if (this.dialog.open) {
+            return;
+        }
         if (!this.menu.hidden && !this.menu.inert && this.onMenuKeyDown(event)) {
             return;
         }
@@ -1486,13 +1496,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             label: 'Folder name',
             value: 'New folder',
             confirm: 'Create',
+            check: (value) => this.checkName(value),
         });
         if (!name) {
-            return;
-        }
-        const problem = this.checkName(name);
-        if (problem) {
-            this.report(problem, true);
             return;
         }
         const destination = path.join(this.path, name);
@@ -1510,13 +1516,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             value: entry.name,
             confirm: 'Rename',
             selectBase: entry.isFile(),
+            // Keeping the name is not an error; it just renames nothing.
+            check: (value) => (value === entry.name ? '' : this.checkName(value)),
         });
         if (!name || name === entry.name) {
-            return;
-        }
-        const problem = this.checkName(name);
-        if (problem) {
-            this.report(problem, true);
             return;
         }
         this.mutate(
@@ -1533,11 +1536,16 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         const label = selected.length === 1 ? `“${selected[0].name}”` : `${selected.length} items`;
         const folders = selected.filter((entry) => entry.isDirectory()).length;
+        // The question names the item and the device, as the app's other destructive prompts do.
         const confirmed = await this.confirm({
-            title: 'Delete',
-            message: `Delete ${label} from the device?${
-                folders ? ' Folders are deleted with everything inside them.' : ''
-            } This cannot be undone.`,
+            title: `Delete ${label} from ${this.deviceLabel()}?`,
+            message: `${
+                folders
+                    ? selected.length === 1
+                        ? 'The folder is deleted with everything inside it. '
+                        : 'Folders are deleted with everything inside them. '
+                    : ''
+            }This cannot be undone.`,
             confirm: 'Delete',
             danger: true,
         });
@@ -1664,7 +1672,16 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         return plan;
     };
 
+    /** The device's name as the page header shows it. */
+    private deviceLabel(): string {
+        const entry = findDeviceForTool(this.params);
+        return entry ? deviceName(entry) : this.serial;
+    }
+
     private checkName(name: string): string {
+        if (!name) {
+            return 'Enter a name.';
+        }
         if (name.includes('/')) {
             return 'A name cannot contain “/”.';
         }
@@ -1719,20 +1736,38 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         value: string;
         confirm: string;
         selectBase?: boolean;
+        /** Returns what is wrong with the name, or nothing. The dialog stays open on a problem. */
+        check?: (value: string) => string;
     }): Promise<string | undefined> {
-        this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form">
+        this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form" novalidate>
             <h2>${esc(options.title)}</h2>
             <label class="fx-dialog-field">
                 <span>${esc(options.label)}</span>
-                <input type="text" name="value" spellcheck="false" autocapitalize="off" autocomplete="off" required />
+                <input type="text" name="value" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="fx-dialog-error" />
             </label>
+            <p class="fx-dialog-error" id="fx-dialog-error" role="alert" hidden></p>
             <div class="fx-dialog-actions">
                 <button type="button" class="fx-button" data-dialog="cancel">Cancel</button>
                 <button type="submit" class="fx-button fx-primary" value="confirm">${esc(options.confirm)}</button>
             </div>
         </form>`;
         const input = this.dialog.querySelector('input[name="value"]') as HTMLInputElement;
+        const error = this.dialog.querySelector('.fx-dialog-error') as HTMLElement;
         input.value = options.value;
+        input.addEventListener('input', () => {
+            error.hidden = true;
+            input.removeAttribute('aria-invalid');
+        });
+        this.dialogCheck = () => {
+            const problem = options.check?.(input.value.trim()) || '';
+            error.textContent = problem;
+            error.hidden = !problem;
+            input.toggleAttribute('aria-invalid', !!problem);
+            if (problem) {
+                input.focus();
+            }
+            return problem;
+        };
         return this.showDialog(() => {
             const dot = options.selectBase ? options.value.lastIndexOf('.') : -1;
             input.focus();
@@ -1757,14 +1792,21 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 confirm?.focus();
                 return;
             }
-            // The same rule as the app's other destructive actions: Cancel is the default, and the
-            // red button waits out a double tap or a repeated key on whatever opened the dialog.
+            // The same rule as the app's other destructive actions: Cancel is the default.
             this.dialog.querySelector<HTMLButtonElement>('[data-dialog="cancel"]')?.focus();
-            if (confirm) {
-                confirm.disabled = true;
-                setTimeout(() => (confirm.disabled = false), CONFIRM_GUARD_MS);
-            }
+            this.guard(confirm);
         }).then((result) => result === 'confirm');
+    }
+
+    /**
+     * The red answer ignores presses for `CONFIRM_GUARD_MS`, like `ConfirmPrompt`'s button, so a
+     * double tap or a repeated key on whatever opened the dialog cannot also answer it.
+     */
+    private guard(button: HTMLButtonElement | null): void {
+        if (button) {
+            button.disabled = true;
+            setTimeout(() => (button.disabled = false), CONFIRM_GUARD_MS);
+        }
     }
 
     /**
@@ -1778,7 +1820,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         canReplace: boolean,
         remaining: number,
     ): Promise<ConflictAnswer> {
-        const title = canReplace ? `Replace “${name}”?` : `“${name}” already exists`;
+        const device = this.deviceLabel();
+        const title = canReplace ? `Replace “${name}” on ${device}?` : `“${name}” already exists on ${device}`;
         const message = canReplace
             ? 'This folder already has a file with this name. Replacing it cannot be undone.'
             : folder
@@ -1806,12 +1849,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const all = this.dialog.querySelector<HTMLInputElement>('input[name="all"]');
         return this.showDialog(() => {
             this.dialog.querySelector<HTMLButtonElement>('[value="keep"]')?.focus();
-            // Replace waits out a double tap on whatever opened the dialog, as Delete does.
-            const replace = this.dialog.querySelector<HTMLButtonElement>('[value="replace"]');
-            if (replace) {
-                replace.disabled = true;
-                setTimeout(() => (replace.disabled = false), CONFIRM_GUARD_MS);
-            }
+            this.guard(this.dialog.querySelector<HTMLButtonElement>('[value="replace"]'));
         }).then((result) => ({
             choice: (result === 'replace' || result === 'keep' ? result : 'skip') as ConflictChoice,
             // Closing the dialog answers for this one item only.
@@ -1839,13 +1877,19 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private onDialogSubmit = (event: SubmitEvent): void => {
         event.preventDefault();
         const submitter = event.submitter;
-        this.closeDialog(submitter instanceof HTMLButtonElement ? submitter.value : '');
+        // Enter in the field submits without a submitter; it means the same as the main button.
+        const value = submitter instanceof HTMLButtonElement ? submitter.value : this.dialogCheck ? 'confirm' : '';
+        if (value === 'confirm' && this.dialogCheck?.()) {
+            return;
+        }
+        this.closeDialog(value);
     };
 
     private showDialog(onOpen: () => void): Promise<string> {
         return new Promise((resolve) => {
             const finish = () => {
                 this.dialog.removeEventListener('close', finish);
+                this.dialogCheck = undefined;
                 resolve(this.dialog.returnValue);
             };
             this.dialog.returnValue = '';
