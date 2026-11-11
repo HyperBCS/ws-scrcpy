@@ -1257,7 +1257,14 @@ test('scheduler: a phone in use at the slot is left alone, and the run happens w
         await ctx.settle();
         assert.equal(ctx.driver.calls.length, 3);
         assert.equal(record.lastRun.outcome, 'unlocked');
-        assert.equal(ctx.pushes.length, 0);
+        // The phone was in use for the whole slot after the last typed unlock, 20 hours before.
+        assert.deepEqual(
+            ctx.pushes.map((push) => push.body),
+            [
+                'The passcode was last entered 20 hours ago. The iPhone stops accepting connections in about 4 hours unless it is entered again. Scheduled unlock runs when the phone is next locked.',
+            ],
+            'only the 20-hour warning',
+        );
     } finally {
         ctx.scheduler.release();
     }
@@ -2036,9 +2043,11 @@ test('scheduler: one push when the passcode was last entered 20 hours ago, with 
             lastTypedUnlockAt: ctx.now() - 21 * HOUR,
             passcodeRejectedAt: ctx.now() - 20 * HOUR,
         });
-        // A phone that is in use, and one that already refuses connections, get no warning.
-        add('iphone-warning-open', { lastTypedUnlockAt: ctx.now() - 21 * HOUR });
+        // A phone in use gets the warning too: a Face ID unlock does not restart the 24 hours.
+        // Its slot is waiting for it to be locked, and the push says so.
+        add('iphone-warning-open', { lastTypedUnlockAt: ctx.now() - 21 * HOUR, retryAt: slot });
         ctx.monitor.states.set('iphone-warning-open', { 'screen.power': 'on', 'device.locked': false });
+        // One that already refuses connections gets none.
         const refused = add('iphone-warning-refused', { lastTypedUnlockAt: ctx.now() - 25 * HOUR, lockedOutAt: ctx.now() });
         await tickAt(ctx.now());
         assert.equal(
@@ -2049,7 +2058,10 @@ test('scheduler: one push when the passcode was last entered 20 hours ago, with 
             pushesFor('iphone-warning-paused')[0].body,
             'The passcode was last entered 21 hours ago. The iPhone stops accepting connections in about 3 hours unless it is entered again. Scheduled unlock is paused until the passcode is saved again.',
         );
-        assert.equal(pushesFor('iphone-warning-open').length, 0);
+        assert.equal(
+            pushesFor('iphone-warning-open')[0].body,
+            'The passcode was last entered 21 hours ago. The iPhone stops accepting connections in about 3 hours unless it is entered again. Scheduled unlock runs when the phone is next locked.',
+        );
         assert.equal(pushesFor('iphone-warning-refused').length, 0);
         // The owner enters the passcode on the phone: the warning for the old entry stays unsent.
         ctx.monitor.set('iphone-warning-refused', false);
@@ -2057,8 +2069,8 @@ test('scheduler: one push when the passcode was last entered 20 hours ago, with 
         ctx.monitor.set('iphone-warning-refused', true);
         await tickAt(ctx.now() + MINUTE);
         assert.equal(pushesFor('iphone-warning-refused').length, 0);
-        assert.equal(ctx.pushes.length, 4);
-        assert.equal(ctx.driver.calls.length, 0);
+        assert.equal(ctx.pushes.length, 5);
+        assert.equal(ctx.driver.calls.length, 0, 'and the phone in use gets no run');
     } finally {
         ctx.scheduler.release();
     }

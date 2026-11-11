@@ -475,9 +475,10 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
      * With the schedule on: one push when the passcode was last entered 20 hours ago, with the
      * hours left before the phone stops accepting connections. The time is the server's last
      * typed unlock, which a run that works replaces, or the last unlock seen when the store has
-     * nothing else. Not sent while the phone already refuses connections (that was pushed), or
-     * while it reads unlocked. iOS also restarts a phone that has not been unlocked for 72 hours;
-     * the 24-hour limit comes first, so nothing here waits for that.
+     * nothing else. Not sent while the phone already refuses connections (that was pushed). It
+     * is sent while the phone reads unlocked: a Face ID unlock does not restart the 24 hours,
+     * and a phone in use holds back the run that would. iOS also restarts a phone that has not
+     * been unlocked for 72 hours; the 24-hour limit comes first, so nothing here waits for that.
      */
     private checkWarning(udid: string, schedule: UnlockScheduleStatus, state: UnlockRunState, now: number): void {
         const entered = state.lastTypedUnlockAt ?? state.lastUnlockedAt;
@@ -485,8 +486,7 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             entered === undefined ||
             state.warnedFor === entered ||
             state.lockedOutAt !== undefined ||
-            now - entered < UNLOCK_WARN_MS ||
-            this.monitor.getState(udid)['device.locked'] === false
+            now - entered < UNLOCK_WARN_MS
         ) {
             return;
         }
@@ -502,6 +502,8 @@ export class UnlockScheduler extends TypedEmitter<UnlockSchedulerEvents> {
             parts.push('Scheduled unlock has no usable passcode');
         } else if (schedule.passcodeRejected) {
             parts.push(PAUSED_NOTE);
+        } else if (left > 0 && this.waiting.has(udid)) {
+            parts.push('Scheduled unlock runs when the phone is next locked');
         }
         this.notify({
             title: PUSH_TITLE,

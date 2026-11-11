@@ -2130,8 +2130,10 @@ leaves only the Last run row.
 **Warning.** `checkWarning` replaces `checkDeadline`: with the schedule on, one push (tag
 `ios-unlock-deadline-<udid>`) when `lastTypedUnlockAt` is 20 hours old (`UNLOCK_WARN_MS`), or
 `lastUnlockedAt` when the store has no typed time, with the hours left to 24. It is sent once
-per value (`warnedFor`), not while the phone reads unlocked and not while `lockedOutAt` is set.
-Past 24 hours it says the phone has probably stopped accepting connections. The runs outside the
+per value (`warnedFor`), and not while `lockedOutAt` is set. It is sent while the phone reads
+unlocked: a Face ID unlock does not restart the 24 hours, and a phone in use holds back the run
+that would; when a slot is waiting for the phone to be locked, the push says so. Past 24 hours
+it says the phone has probably stopped accepting connections. The runs outside the
 slot window past 48 hours are gone, with `lastTimerRunAt`.
 
 **Existing data.** `sanitizeUnlock` reads a stored `lastRun` of `failed-session` whose message
