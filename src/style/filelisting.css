@@ -368,10 +368,47 @@ body.file-listing-page {
     border-bottom: 1px solid var(--device-border-color);
 }
 
+/* "Uploading 3 of 40, 45%" and Cancel all stay in view above the rows. */
+.fx-transfer-summary {
+    position: sticky;
+    top: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--fx-gap);
+    padding: 2px 0;
+    background: var(--main-bg-color);
+    font-weight: 650;
+}
+
+.fx-transfer-total {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 .file-listing-upload-progress {
-    padding: 3px 0;
+    display: flex;
+    align-items: center;
+    gap: var(--fx-gap);
+    padding: 2px 0;
     color: var(--text-color-light);
-    overflow-wrap: anywhere;
+}
+
+.fx-upload-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-color);
+}
+
+.fx-upload-state {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.file-listing-upload-progress.error .fx-upload-state {
+    color: var(--status-unauthorized-color);
 }
 
 .fx-items {

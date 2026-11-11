@@ -624,6 +624,119 @@ async function phoneSelection(browser, layout, name, scheme) {
     await finish();
 }
 
+async function until(page, check, what) {
+    for (let attempt = 0; attempt < 250; attempt++) {
+        if (check()) return;
+        await page.waitForTimeout(20);
+    }
+    assert.fail(`Timed out waiting for ${what}`);
+}
+
+// Uploads: two at a time, the rest wait; each can be cancelled; leaving asks first.
+async function uploads(browser, layout, name) {
+    const { page, finish, traffic, files } = await start(browser, layout);
+    const card = page.locator('.device').filter({ hasText: 'Files test phone' });
+    await card.locator('summary').click();
+    await card.getByRole('link', { name: 'Files', exact: true }).click();
+    await ready(page);
+    await row(page, 'notes.txt').waitFor();
+    const rows = page.locator('.file-listing-upload-progress');
+    const rowFor = (file) => rows.filter({ has: page.locator('.fx-upload-name', { hasText: file }) });
+    const summary = page.locator('.fx-transfer-total');
+    const toastText = page.locator('.app-toast:not([data-exiting]) .toast-message');
+
+    traffic.holdAppends = true;
+    const size = 1024 * 1024;
+    await page.locator('.file-explorer input[type=file]').setInputFiles(
+        [1, 2, 3, 4, 5, 6].map((index) => ({
+            name: `clip-${index}.bin`,
+            mimeType: 'application/octet-stream',
+            buffer: Buffer.alloc(size, index),
+        })),
+    );
+    await rows.nth(5).waitFor();
+    await until(page, () => traffic.sending.size === 2, 'two uploads to start');
+    await until(page, () => traffic.heldAppends.length > 2, 'several chunks in flight');
+    assert.equal(await rows.filter({ hasText: 'Waiting' }).count(), 4, 'the other four wait their turn');
+    assert.equal(await summary.innerText(), 'Uploading 1 of 6, 0%');
+    assert.equal(traffic.starts.length, 2, 'a waiting upload has not started');
+    await settleMotion(page);
+    await page.screenshot({ path: path.join(OUT, `flows-uploads-${name}.png`) });
+
+    // A waiting upload is cancelled before it starts; a running one is cancelled on the device.
+    await rowFor('clip-5.bin').getByRole('button', { name: 'Cancel the upload of clip-5.bin', exact: true }).click();
+    await rowFor('clip-5.bin').waitFor({ state: 'detached' });
+    await rowFor('clip-1.bin').getByRole('button', { name: 'Cancel the upload of clip-1.bin', exact: true }).click();
+    await rowFor('clip-1.bin').waitFor({ state: 'detached' });
+    await until(page, () => traffic.cancels.includes(ROOT + '/clip-1.bin'), 'the CANCEL');
+    await until(page, () => traffic.sending.size === 2, 'the next upload to take the free place');
+    traffic.holdAppends = false;
+    traffic.releaseAppends();
+    await toastText.filter({ hasText: 'Uploaded 4 files. Cancelled 2 uploads.' }).waitFor();
+    await ready(page);
+    assert.equal(traffic.mostSending, 2, 'never more than two at once');
+    for (const index of [2, 3, 4, 6]) assert.equal(files.get(`${ROOT}/clip-${index}.bin`)?.length, size);
+    assert.equal(files.has(ROOT + '/clip-1.bin'), false, 'a cancelled upload saves nothing');
+    assert.equal(traffic.starts.some((start) => start.path.endsWith('/clip-5.bin')), false);
+    assert.equal(await page.locator('.fx-transfers').isVisible(), false);
+    assert.equal(
+        await page.evaluate(() => !window.dispatchEvent(new Event('beforeunload', { cancelable: true }))),
+        false,
+        'with nothing uploading, closing the page does not ask',
+    );
+
+    // Leaving while a file uploads asks first. Keep uploading stays, whatever the way out.
+    traffic.holdAppends = true;
+    await page.locator('.file-explorer input[type=file]').setInputFiles({
+        name: 'leave.bin',
+        mimeType: 'application/octet-stream',
+        buffer: Buffer.alloc(size, 9),
+    });
+    await rowFor('leave.bin').waitFor();
+    await until(page, () => traffic.heldAppends.length > 0, 'the upload to send');
+    assert.equal(
+        await page.evaluate(() => !window.dispatchEvent(new Event('beforeunload', { cancelable: true }))),
+        true,
+        'closing the page asks first',
+    );
+    const leave = page.locator('.fx-dialog[open]');
+    const question = leave.getByRole('heading', { name: `Stop the upload to ${DEVICE}?`, exact: true });
+    const files0 = await page.evaluate(() => location.hash);
+    for (const way of ['Shell tab', 'browser Back', 'Back to devices']) {
+        if (way === 'Shell tab') await page.locator('.tool-tabs').getByRole('button', { name: 'Shell', exact: true }).click();
+        if (way === 'browser Back') await page.goBack();
+        if (way === 'Back to devices') await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+        await question.waitFor();
+        assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Keep uploading');
+        await settleMotion(page);
+        if (way === 'Shell tab') await page.screenshot({ path: path.join(OUT, `flows-leave-${name}.png`) });
+        await leave.getByRole('button', { name: 'Keep uploading', exact: true }).click();
+        await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+        assert.equal(await page.evaluate(() => location.hash), files0, `${way}: the address is still Files`);
+        assert.equal(await page.locator('.file-listing-client').count(), 1, `${way}: Files stays open`);
+        assert.equal(await rowFor('leave.bin').count(), 1, `${way}: the upload goes on`);
+    }
+    assert.equal(traffic.cancels.length, 1, 'nothing more was cancelled');
+
+    // Stop and leave cancels the upload and goes where the owner asked.
+    await page.goBack();
+    await question.waitFor();
+    await page.waitForTimeout(550);
+    await leave.getByRole('button', { name: 'Stop and leave', exact: true }).click();
+    await page.locator('.file-listing-client').waitFor({ state: 'detached' });
+    await card.waitFor();
+    await until(page, () => traffic.cancels.includes(ROOT + '/leave.bin'), 'the CANCEL');
+    assert.equal(files.has(ROOT + '/leave.bin'), false);
+    // The device list is not guarded: the next navigation goes straight through.
+    const filesLink = card.getByRole('link', { name: 'Files', exact: true });
+    if (!(await filesLink.isVisible())) await card.locator('summary').click();
+    await filesLink.click();
+    await ready(page);
+    await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+    await card.waitFor();
+    await finish();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -640,6 +753,8 @@ async function main() {
         ['errors desktop', () => errors(browser, DESKTOP, 'desktop')],
         ['selection on a phone', () => phoneSelection(browser, PHONE, 'phone', 'light')],
         ['selection on a small phone', () => phoneSelection(browser, { width: 320, height: 640, touch: true }, 'phone320', 'dark')],
+        ['uploads phone', () => uploads(browser, PHONE, 'phone')],
+        ['uploads desktop', () => uploads(browser, DESKTOP, 'desktop')],
     ];
     try {
         for (const [name, run] of scenarios) {

@@ -30,6 +30,11 @@ export class ScrcpyFilePushStream extends FilePushStream {
         this.streamReceiver.sendEvent(CommandControlMessage.createPushFileCommand(finishParams));
     }
 
+    public sendEventCancel({ id }: { id: number }): void {
+        const cancelParams = { id, state: FilePushState.CANCEL };
+        this.streamReceiver.sendEvent(CommandControlMessage.createPushFileCommand(cancelParams));
+    }
+
     public sendEventNew({ id }: { id: number }): void {
         const newParams = { id, state: FilePushState.NEW };
         this.streamReceiver.sendEvent(CommandControlMessage.createPushFileCommand(newParams));

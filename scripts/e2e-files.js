@@ -86,6 +86,14 @@ async function fixture(page) {
     const traffic = {
         requests: [], operations: [], closed: [], fsChannels: 0, uploads: [], starts: [], hold: false, pending: null,
         holdList: false, releaseList: null, holdStat: false, releaseStat: null,
+        // Uploads between START and their end, the most there ever were at once, and CANCELs.
+        sending: new Set(), mostSending: 0, cancels: [],
+        // While set, APPEND acknowledgements wait in `heldAppends` until `releaseAppends()`.
+        holdAppends: false, heldAppends: [],
+        releaseAppends() {
+            const held = traffic.heldAppends.splice(0);
+            held.forEach((release) => release());
+        },
     };
     await page.routeWebSocket('**', (socket) => {
         const fileRoots = new Set();
@@ -136,6 +144,7 @@ async function fixture(page) {
                 const end = (code = 1000) => socket.send(frame(64, id, close(channel, code)));
                 if (innerType === 8) {
                     traffic.closed.push({ root: id, channel });
+                    traffic.sending.delete(channel);
                     return;
                 }
                 if (innerType === 4) {
@@ -288,17 +297,25 @@ async function fixture(page) {
                             );
                             return;
                         }
+                        traffic.sending.add(channel);
+                        traffic.mostSending = Math.max(traffic.mostSending, traffic.sending.size);
                         reply(0);
                     } else if (state === 2) {
                         upload.chunks.push(data.subarray(8, 8 + data.readUInt32BE(4)));
-                        reply(0);
+                        if (traffic.holdAppends) traffic.heldAppends.push(() => reply(0));
+                        else reply(0);
                     } else if (state === 3) {
                         // A replace removes the file that held the name, however it was spelled.
                         const replaced = taken(upload.path)?.file;
                         if (replaced) files.delete(replaced);
                         files.set(upload.path, Buffer.concat(upload.chunks));
+                        traffic.sending.delete(channel);
                         reply(0);
                         end();
+                    } else if (state === 4) {
+                        // Like the server: a cancelled upload is dropped, and nothing is saved.
+                        traffic.cancels.push(upload.path);
+                        traffic.sending.delete(channel);
                     }
                 }
             }
@@ -1042,7 +1059,12 @@ async function main() {
             await page.waitForFunction(() =>
                 document.querySelector('.file-listing-upload-progress')?.textContent.includes('pending-upload'),
             );
+            // Leaving with an upload in progress asks first, and stops it only when told to.
             await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+            const leave = page.locator('.fx-dialog[open]');
+            await leave.getByRole('heading', { name: `Stop the upload to ${DEVICE}?`, exact: true }).waitFor();
+            await page.waitForTimeout(550);
+            await leave.getByRole('button', { name: 'Stop and leave', exact: true }).click();
             await page.locator('.file-listing-client').waitFor({ state: 'detached' });
             assert(traffic.pending, 'fixture left allocation pending');
             assert(

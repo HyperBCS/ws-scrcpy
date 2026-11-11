@@ -26,7 +26,7 @@ import {
     resolveNameConflicts,
 } from '../filePush/nameConflicts';
 import { DEFAULT_FILES_PATH, fileListingTool } from './deviceTools';
-import { pushRoute, replaceRoute } from '../../state/router';
+import { clearLeaveGuard, LeaveGuard, pushRoute, replaceRoute, setLeaveGuard } from '../../state/router';
 import { formatMode, formatModified, formatSize, iconMarkup, kindOf, typeLabel } from './fileTypes';
 import { h, render } from 'preact';
 import { Toast } from '../../ui/Toast';
@@ -180,11 +180,22 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     private filePushHandler?: FilePushHandler;
     private readonly requests = new Map<Multiplexer, Request>();
-    /** Progress rows by upload key: two uploads may carry the same file name. */
-    private readonly uploads = new Map<number, HTMLElement>();
+    /** Uploads that have not ended, by key: two uploads may carry the same file name. */
+    private readonly uploads = new Map<number, { row: HTMLElement; name: string; sent: number; size: number }>();
     /** Failures in the current batch of uploads, shown together when the last one ends. */
     private uploadErrors: string[] = [];
     private uploadsDone: string[] = [];
+    /** The batch so far, for "Uploading 3 of 40, 45%". */
+    private uploadBatch = { total: 0, ended: 0, cancelled: 0, bytes: 0, endedBytes: 0 };
+    private readonly transferSummary: HTMLElement;
+    /** Which tool page this explorer belongs to; any other address leaves it. */
+    private readonly identity: string;
+    /** The open "Stop uploading?" question, so a second Back does not ask twice. */
+    private leaving?: Promise<boolean>;
+    private readonly leaveGuard: LeaveGuard = {
+        blocks: (next) => this.uploads.size > 0 && FileListingClient.identityOf(next) !== this.identity,
+        ask: () => this.confirmLeave(),
+    };
     /** Results of the folder operations in flight, reported together when the last one answers. */
     private batch: { done: string[]; failed: string[]; many?: (count: number) => string } = { done: [], failed: [] };
     /** Set while the list shows a folder that could not be opened, in place of its rows. */
@@ -238,6 +249,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.serial = params.udid;
         this.path = path.resolve('/', params.path);
         this.historyKey = `ws-scrcpy.files.history.${this.serial}`;
+        this.identity = FileListingClient.identityOf(new URLSearchParams(location.hash.replace(/^#!/, '')));
         this.adoptHistory();
         const fragment = html`<section class="file-listing-client file-explorer" aria-label="Device files">
             <div class="fx-chrome">
@@ -423,7 +435,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             <div class="fx-body">
                 <nav class="fx-places" aria-label="Quick access"></nav>
                 <div class="fx-main">
-                    <div class="fx-transfers" aria-label="Transfers" hidden></div>
+                    <div class="fx-transfers" role="group" aria-label="Uploads" hidden>
+                        <div class="fx-transfer-summary">
+                            <span class="fx-transfer-total"></span>
+                            <button type="button" class="fx-button" data-upload-cancel="all">Cancel all</button>
+                        </div>
+                    </div>
                     <div class="fx-items" tabindex="0" role="group" aria-label="Folder contents">
                         <table class="fx-table file-listing-table">
                             <thead>
@@ -485,6 +502,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.status = this.wrapper.querySelector('.fx-status') as HTMLElement;
         this.counts = this.wrapper.querySelector('.fx-counts') as HTMLElement;
         this.transfers = this.wrapper.querySelector('.fx-transfers') as HTMLElement;
+        this.transferSummary = this.wrapper.querySelector('.fx-transfer-total') as HTMLElement;
         this.menu = this.wrapper.querySelector('.fx-menu') as HTMLElement;
         this.toastHost = this.wrapper.querySelector('.fx-toast-host') as HTMLElement;
         this.dialog = this.wrapper.querySelector('.fx-dialog') as HTMLDialogElement;
@@ -921,6 +939,17 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (menuItem) {
             event.preventDefault();
             this.runMenuItem(menuItem);
+            return;
+        }
+        const cancelUpload = target.closest<HTMLElement>('[data-upload-cancel]');
+        if (cancelUpload) {
+            event.preventDefault();
+            const key = cancelUpload.dataset.uploadCancel;
+            if (key === 'all') {
+                this.filePushHandler?.cancelAll();
+            } else {
+                this.filePushHandler?.cancel(Number(key));
+            }
             return;
         }
         const place = target.closest<HTMLElement>('[data-place]');
@@ -1979,12 +2008,18 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }).then((result) => (result === 'confirm' ? input.value.trim() : undefined));
     }
 
-    private confirm(options: { title: string; message: string; confirm: string; danger?: boolean }): Promise<boolean> {
+    private confirm(options: {
+        title: string;
+        message: string;
+        confirm: string;
+        cancel?: string;
+        danger?: boolean;
+    }): Promise<boolean> {
         this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form">
             <h2>${esc(options.title)}</h2>
             <p class="fx-dialog-message">${esc(options.message)}</p>
             <div class="fx-dialog-actions">
-                <button type="button" class="fx-button" data-dialog="cancel">Cancel</button>
+                <button type="button" class="fx-button" data-dialog="cancel">${esc(options.cancel || 'Cancel')}</button>
                 <button type="submit" class="fx-button ${
                     options.danger ? 'fx-danger-solid' : 'fx-primary'
                 }" value="confirm">${esc(options.confirm)}</button>
@@ -2573,49 +2608,152 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (this.stopped) {
             return;
         }
-        let row = this.uploads.get(data.key);
-        if (!row) {
-            row = document.createElement('div');
+        let upload = this.uploads.get(data.key);
+        if (!upload) {
+            if (data.finished && data.size === undefined) {
+                // Refused before it was queued (an unsupported type): there is no row to end.
+                this.uploadErrors.push(`${data.fileName}: ${data.message}`);
+                this.endBatchIfDone();
+                return;
+            }
+            const row = document.createElement('div');
             row.className = 'file-listing-upload-progress';
+            row.innerHTML = `<span class="fx-upload-name">${esc(data.fileName)}</span><span class="fx-upload-state"></span><button type="button" class="fx-button fx-upload-cancel" data-upload-cancel="${
+                data.key
+            }" aria-label="${esc(`Cancel the upload of ${data.fileName}`)}">Cancel</button>`;
             this.transfers.appendChild(row);
+            upload = { row, name: data.fileName, sent: 0, size: data.size || 0 };
+            this.uploads.set(data.key, upload);
+            if (!this.uploadBatch.total) {
+                // The first upload of a batch: leaving the tool or the page now asks first.
+                setLeaveGuard(this.leaveGuard);
+                window.addEventListener('beforeunload', this.onBeforeUnload);
+            }
+            this.uploadBatch.total++;
+            this.uploadBatch.bytes += upload.size;
             this.transfers.hidden = false;
-            this.uploads.set(data.key, row);
         }
-        row.textContent = `${data.fileName} · ${data.message}`;
-        row.classList.toggle('error', data.error);
+        upload.sent = data.sent ?? upload.sent;
+        (upload.row.querySelector('.fx-upload-state') as HTMLElement).textContent = data.message;
+        upload.row.classList.toggle('error', data.error);
+        (upload.row.querySelector('.fx-upload-cancel') as HTMLElement).hidden = data.cancellable === false;
         if (data.finished) {
-            row.remove();
+            upload.row.remove();
             this.uploads.delete(data.key);
-            this.transfers.hidden = !this.transfers.childElementCount;
-            if (data.error) {
+            this.uploadBatch.ended++;
+            this.uploadBatch.endedBytes += upload.size;
+            if (data.cancelled) {
+                this.uploadBatch.cancelled++;
+            } else if (data.error) {
                 this.uploadErrors.push(`${data.fileName}: ${data.message}`);
             } else {
                 this.uploadsDone.push(data.fileName);
             }
-            if (!this.uploads.size) {
-                // One toast for the batch, so a later success does not hide an earlier failure.
-                // The folder is listed even after a failure: a refused name means the listing
-                // was out of date, and a second try must see it.
-                const failures = this.uploadErrors;
-                const done = this.uploadsDone;
-                this.uploadErrors = [];
-                this.uploadsDone = [];
-                if (failures.length) {
-                    this.toast(
-                        failures.length === 1 ? failures[0] : `${failures.length} uploads failed. ${failures[0]}`,
-                        true,
-                    );
-                } else if (done.length) {
-                    this.toast(done.length === 1 ? `Uploaded ${done[0]}.` : `Uploaded ${done.length} files.`);
-                }
-                if (this.pendingPath) {
-                    this.load(this.pendingPath);
-                } else {
-                    this.reload();
-                }
-            }
+            this.endBatchIfDone();
         }
+        this.renderTransferSummary();
         this.updateControls();
+    }
+
+    /** "Uploading 3 of 40, 45%": the file the batch is on and how much of all of it is sent. */
+    private renderTransferSummary(): void {
+        const { total, ended, bytes, endedBytes } = this.uploadBatch;
+        this.transfers.hidden = !this.uploads.size;
+        if (!this.uploads.size) {
+            return;
+        }
+        let sent = endedBytes;
+        this.uploads.forEach((upload) => (sent += upload.sent));
+        const percent = bytes ? Math.floor((sent * 100) / bytes) : 0;
+        this.transferSummary.textContent =
+            total === 1 ? `Uploading 1 file, ${percent}%` : `Uploading ${ended + 1} of ${total}, ${percent}%`;
+    }
+
+    /** When the last upload of a batch ends: one toast for all of it, then the folder again. */
+    private endBatchIfDone(): void {
+        if (this.uploads.size) {
+            return;
+        }
+        // One toast for the batch, so a later success does not hide an earlier failure. The
+        // folder is listed even after a failure: a refused name means the listing was out of
+        // date, and a second try must see it.
+        const failures = this.uploadErrors;
+        const done = this.uploadsDone;
+        const { cancelled } = this.uploadBatch;
+        this.uploadErrors = [];
+        this.uploadsDone = [];
+        this.uploadBatch = { total: 0, ended: 0, cancelled: 0, bytes: 0, endedBytes: 0 };
+        this.releaseLeaveGuard();
+        const stopped = cancelled ? `Cancelled ${cancelled} upload${cancelled === 1 ? '' : 's'}.` : '';
+        if (failures.length) {
+            this.toast(failures.length === 1 ? failures[0] : `${failures.length} uploads failed. ${failures[0]}`, true);
+        } else if (done.length) {
+            const uploaded = done.length === 1 ? `Uploaded ${done[0]}.` : `Uploaded ${done.length} files.`;
+            this.toast(stopped ? `${uploaded} ${stopped}` : uploaded);
+        } else if (stopped) {
+            this.toast(stopped);
+        }
+        if (this.pendingPath) {
+            this.load(this.pendingPath);
+        } else {
+            this.reload();
+        }
+    }
+
+    private releaseLeaveGuard(): void {
+        clearLeaveGuard(this.leaveGuard);
+        window.removeEventListener('beforeunload', this.onBeforeUnload);
+    }
+
+    /** Closing or reloading the page while files upload asks first; the browser words the question. */
+    private onBeforeUnload = (event: BeforeUnloadEvent): void => {
+        if (this.uploads.size) {
+            event.preventDefault();
+            event.returnValue = '';
+        }
+    };
+
+    /**
+     * Asked before anything takes the owner away from Files while files upload: a tool tab,
+     * the device switcher, Back. Leaving stops the uploads that have not finished.
+     */
+    private confirmLeave(): Promise<boolean> {
+        if (!this.uploads.size || this.stopped) {
+            return Promise.resolve(true);
+        }
+        if (this.leaving) {
+            // The question is already on screen.
+            return Promise.resolve(false);
+        }
+        if (this.dialog.open) {
+            cancelVisibility(this.dialog);
+            this.dialog.close('');
+        }
+        const count = this.uploads.size;
+        this.leaving = this.confirm({
+            title: `Stop ${count === 1 ? 'the upload' : `${count} uploads`} to ${this.deviceLabel()}?`,
+            message:
+                count === 1
+                    ? 'Leaving Files stops the upload, and the file is not saved on the device.'
+                    : 'Leaving Files stops the uploads that have not finished, and those files are not saved on the device.',
+            confirm: 'Stop and leave',
+            cancel: 'Keep uploading',
+            danger: true,
+        }).then((leave) => {
+            this.leaving = undefined;
+            if (leave) {
+                this.filePushHandler?.cancelAll();
+            }
+            return leave;
+        });
+        return this.leaving;
+    }
+
+    /** The parts of an address that pick the tool page; the folder is not one of them. */
+    private static identityOf(params: URLSearchParams): string {
+        return ['action', 'udid', 'hostname', 'port', 'pathname', 'secure', 'useProxy']
+            .map((key) => params.get(key))
+            .join('\n');
     }
     public onError(error: string | Error): void {
         this.toast(typeof error === 'string' ? error : error.message, true);
@@ -2649,6 +2787,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         this.requests.clear();
         this.uploads.clear();
+        this.releaseLeaveGuard();
         render(null, this.toastHost);
         this.picker.value = '';
         this.wrapper.removeEventListener('click', this.onClick);
@@ -2692,6 +2831,18 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         this.filePushHandler?.release();
+        // The uploads ended with the connection; say so instead of leaving their rows behind.
+        this.uploads.forEach((upload, key) =>
+            this.onFilePushUpdate({
+                key,
+                pushId: 0,
+                fileName: upload.name,
+                message: 'The connection to the device was lost.',
+                progress: -1,
+                error: true,
+                finished: true,
+            }),
+        );
         this.loading = false;
         this.updateControls();
         this.report('Connection lost. Return to your devices and open Files again.', true);

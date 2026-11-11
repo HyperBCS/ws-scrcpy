@@ -58,6 +58,14 @@ export class FilePushReader {
     private createStreamPromiseMap: Map<number, Promise<void>> = new Map();
     private disposed = false;
     private transferComplete = false;
+    /**
+     * APPEND chunks not yet acknowledged. Each chunk gets one NO_ERROR, sent as soon as fewer
+     * than `BUFFER_BYTES` wait for adb. A client may therefore keep several chunks in flight
+     * and lose no time to round trips, while a client that waits for every acknowledgement
+     * before sending the next chunk works as before.
+     */
+    private unacknowledged = 0;
+    private static readonly BUFFER_BYTES = 1024 * 1024;
     private static readonly ignoreTransferError = (): void => {};
 
     constructor(
@@ -185,6 +193,7 @@ export class FilePushReader {
                     }
                     if (this.state === State.START) {
                         this.state = State.APPEND;
+                        this.unacknowledged++;
                         const promise = this.createStream(chunk);
                         this.createStreamPromiseMap.set(id, promise);
                         await promise;
@@ -194,7 +203,9 @@ export class FilePushReader {
                         this.closeWithError(FilePushResponseStatus.ERROR_INVALID_STATE);
                         return;
                     }
+                    this.unacknowledged++;
                     this.readStream?.push(chunk);
+                    this.acknowledge();
                     break;
                 }
                 case FilePushState.FINISH: {
@@ -255,8 +266,25 @@ export class FilePushReader {
         }
     };
 
+    /** Acknowledges the chunks that fit in the buffer adb reads from. */
+    private acknowledge(): void {
+        while (
+            this.unacknowledged > 0 &&
+            this.readStream &&
+            this.readStream.readableLength < FilePushReader.BUFFER_BYTES &&
+            !this.disposed &&
+            this.state === State.APPEND
+        ) {
+            this.unacknowledged--;
+            this.sendResponse(FilePushResponseStatus.NO_ERROR);
+        }
+    }
+
     private async createStream(chunk?: Buffer): Promise<void> {
         const opts: ReadableOptions = {
+            // adb asks for more whenever less than this is buffered, which is also when the
+            // chunks still waiting for their acknowledgement get it.
+            highWaterMark: FilePushReader.BUFFER_BYTES,
             construct: (callback: (error?: Error | null) => void) => {
                 callback(null);
             },
@@ -267,11 +295,17 @@ export class FilePushReader {
                 if (this.readStream.bytesRead > this.fileSize) {
                     console.error(`bytesRead (${this.readStream.bytesRead}) > fileSize (${this.fileSize})`);
                 }
-                this.sendResponse(FilePushResponseStatus.NO_ERROR);
+                // Called from inside `read()`, before the bytes it returns leave the buffer, and
+                // not called again until the next chunk arrives. Counting now would find the
+                // buffer still full and owe the client an acknowledgement it waits for forever.
+                process.nextTick(() => this.acknowledge());
             },
         };
         this.readStream = new ReadStream(this.fileName, opts);
-        if (chunk) this.readStream.push(chunk);
+        if (chunk) {
+            this.readStream.push(chunk);
+            this.acknowledge();
+        }
         const client = AdbExtended.createClient();
         client.on('error', (error: Error) => {
             if (this.disposed) return;

@@ -217,3 +217,80 @@ test('name conflicts follow the storage: case is ignored on shared storage only'
     );
     assert.deepEqual(plain, [{ name: 'Notes.txt', target: 'Notes.txt', replace: false }]);
 });
+
+test('the server acknowledges every upload chunk while its buffer has room, so chunks can be in flight', async (t) => {
+    const { EventEmitter } = require('node:events');
+    const { AdbExtended } = require('../src/server/goog-device/adb');
+    const { FilePushResponseStatus } = require('../src/app/googDevice/filePush/FilePushResponseStatus');
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+    const channel = new EventEmitter();
+    Object.assign(channel, {
+        OPEN: 1,
+        CLOSING: 2,
+        CLOSED: 3,
+        readyState: 1,
+        responses: [],
+        closes: [],
+        addEventListener: (name, listener) => channel.on(name, listener),
+        removeEventListener: (name, listener) => channel.off(name, listener),
+        send: (data) => channel.responses.push(Buffer.from(data)),
+        close: (code = 1000) => {
+            channel.closes.push(code);
+            channel.readyState = 3;
+            channel.emit('close');
+        },
+    });
+    const transfer = new EventEmitter();
+    transfer.cancel = () => assert.fail('A finished upload is not cancelled');
+    let input;
+    const client = new EventEmitter();
+    client.push = async (_serial, stream) => {
+        input = stream;
+        return transfer;
+    };
+    t.mock.method(AdbExtended, 'createClient', () => client);
+    t.mock.method(AdbUtils, 'targetKind', async () => 'missing');
+    const moves = [];
+    t.mock.method(AdbUtils, 'move', async (_serial, _from, to) => moves.push(to));
+    t.mock.method(AdbUtils, 'remove', async () => undefined);
+
+    const reader = new FilePushReader('upload-fixture', channel);
+    const send = (state, fields = {}) =>
+        reader.onMessage({
+            data: CommandControlMessage.createPushFileCommand({ id: reader.pushId, state, ...fields }).toBuffer(),
+        });
+    const acks = () =>
+        channel.responses.filter((response) => response.readInt8(2) === FilePushResponseStatus.NO_ERROR).length;
+    const chunk = Buffer.alloc(64 * 1024, 7);
+    const count = 24; // 1.5 MiB: more than the server buffers.
+    await send(FilePushState.NEW);
+    await send(FilePushState.START, { fileName: '/sdcard/clip.mp4', fileSize: chunk.length * count });
+    const afterStart = acks();
+    // The client sends every chunk without waiting; adb has not read anything yet.
+    for (let index = 0; index < count; index++) {
+        await send(FilePushState.APPEND, { chunk });
+    }
+    await tick();
+    const early = acks() - afterStart;
+    assert(early >= 4, `chunks are acknowledged before adb reads them (${early})`);
+    assert(early < count, `no more than the buffer holds is acknowledged (${early} of ${count})`);
+    // adb reads the way adbkit's sync push does; the remaining chunks are acknowledged as the
+    // buffer empties.
+    const received = [];
+    const drain = () => {
+        let data;
+        while ((data = input.read(64 * 1024) || input.read())) received.push(data);
+    };
+    input.on('readable', drain);
+    drain();
+    for (let round = 0; round < 5; round++) await tick();
+    assert.equal(acks() - afterStart, count, 'every chunk gets exactly one acknowledgement');
+    await send(FilePushState.FINISH);
+    await tick();
+    assert.equal(Buffer.concat(received).length, chunk.length * count);
+    transfer.emit('end');
+    await tick();
+    assert.deepEqual(moves, ['/sdcard/clip.mp4']);
+    assert.equal(acks() - afterStart, count + 1, 'and one more once the file is saved');
+    assert.deepEqual(channel.closes, [1000]);
+});

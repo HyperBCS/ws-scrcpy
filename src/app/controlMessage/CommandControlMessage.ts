@@ -203,9 +203,8 @@ export class CommandControlMessage extends ControlMessage {
         offset += stateField;
         buffer.writeUInt32BE(chunkLength, offset);
         offset += chunkLengthField;
-        Array.from(chunk).forEach((byte, index) => {
-            buffer.writeUInt8(byte, index + offset);
-        });
+        // One copy. Writing byte by byte cost more time per chunk than sending it.
+        buffer.set(chunk, offset);
         event.buffer = buffer;
         return event;
     }
