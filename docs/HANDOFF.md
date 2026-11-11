@@ -2546,3 +2546,169 @@ compared.
 is never imported; both are for 4d. Element selectors under page classes, `!important`,
 breakpoints and duplicate button classes are counted, not changed, and are adoption work in 4b
 and 4c.
+
+### Redesign step 4b: the kit's controls, sheet and menu (2026-11-11, tested without a phone)
+
+Packages p4-kit-controls and p4-kit-sheet, merged into `redesign` from their `review/` branches,
+then joined. The design kit now exists and no existing page uses it: nothing a person can see on
+a page of the app changed. The step is not deployed on its own: the live container still runs
+2f17e28, and `redesign` also carries the undeployed server change of step 6s.
+
+**Proof that nothing changed.** The atlas of the base (45e94c8, built from an export) and the
+atlas of the merged head matched on 292 of 292 files, with no tolerance. The style test passes
+with no entry of `ALLOWED` raised; the entry for `app.css` went down from 6 to 5 `!important`.
+
+**The parts.** Each is a thin Preact wrapper over `kit-` classes, so Files and the toolbox can
+write the same classes into HTML strings. All are in `src/app/ui`:
+- `icons.ts`: 62 icons, each one stroke path on a 24 by 24 grid. `Icon` draws one at 16, 20 or
+  24; `iconSvg(name, size)` returns the same markup as a string. Sound has `headphones`, apart
+  from `volUp`, `volDown` and `volMute`.
+- `Button`: primary, secondary, quiet and danger (danger text on the raised fill, as the
+  mockup's `.btn.risk`); `size="compact"` is 32px under a fine pointer and 44px on a touch
+  screen; `busy`, `disabled`, `pressed`, `icon`, `full`; with `href` it is a link.
+  `buttonClass()` gives the class string. A busy button stays enabled so it keeps focus
+  (`aria-busy`, `aria-disabled`), and its press is cancelled, so a busy submit button does not
+  send its form again.
+- `IconButton`: outlined or bare, compact, danger, pressed, link. It throws at render when its
+  label is empty: never build a label from data alone, because the throw blanks the view
+  through the ErrorBoundary, and in a stream view that ends the session.
+  `iconButtonClass()` gives the class string.
+- `Field.tsx`: `TextField`, `TextAreaField` and `SelectField` (44px, radius 12, raised fill,
+  border-strong edge, 16px text so iOS does not zoom), each with label, hint and error. They set
+  `id`, `aria-label`, `aria-describedby` and `aria-invalid` themselves; values passed for these
+  are replaced. `kit-range` is the slider.
+- `Switch`: a checkbox with `role="switch"`. `SegmentedControl`: a radio group for two to four
+  options. Keyboard use and state come from the browser, so both work on plain markup.
+- Messages, three forms only: `InlineStatus` under the control that caused it (neutral,
+  success, warning, error), `Banner` at the top of a page or sheet (warning, info, error) with
+  one action, and `Toast` with `kit`.
+- Sheet parts in `SheetControls.tsx`: `SheetGroup`, `SheetRow`, `SheetToggleRow`,
+  `SheetStatus`, `VolumeSlider` and `SoundRows` take `kit`; `SheetSelectRow`, `SheetMessageRow`
+  and `SheetFooter` are new and exist in the kit look only. `Disclosure` (in
+  `AnimatedDetails.tsx`) is the kit disclosure, and its marker is one rule in
+  `style/kit/Disclosure.css`, without `!important`.
+- `AppBar` and `AppBarStatus` take `kit` (and `root`, and `onTitle` with `titleLabel` for the
+  phone switcher). The kit bar's title is an `h1` unless it is a button. `TabStrip` takes `kit`.
+- `ConfirmPrompt` takes `kit`: the classes `kit-confirm`, `-question`, `-consequence` and
+  `-actions`, with the kit's buttons; a removal is confirmed on the solid danger fill.
+- `Sheet.tsx` and `Menu.tsx`, described below.
+
+New tokens in `tokens.css`: `--accent-pressed`, `--surface-inverse` (the toast; `#3a3f49` in
+the dark theme), `--on-inverse` and `--shadow-control`. `--z-header` (5) and `--z-overlay` (10)
+are confirmed: the kit bar uses `--z-header`, the menu's fallback `--z-overlay` and the kit
+toast `--z-toast`.
+
+**The side-by-side rule.** A new kit class starts with `kit-` and lives in a stylesheet under
+`src/style/kit/`, in the components layer; `scripts/test-style-rules.js` reads that folder as
+components and allows it no raw colour, font size, radius, z-index or `!important`. A shared
+component that pages already use (AppBar, AppBarStatus, TabStrip, Toast, the sheet group and
+rows, VolumeSlider, SoundRows, ConfirmPrompt) keeps its markup and classes by default and takes
+the kit look only when an instance passes `kit`. Without `kit` each renders exactly as before.
+
+**How a view adopts the kit (step 4c).** Pass `kit` to the shared components the view uses,
+replace its own buttons, fields, switches and messages with the kit parts (or the class
+strings, in code that builds HTML), move BottomSheet users to `Sheet`, and then delete the
+view's old rules and lower its numbers in `ALLOWED`. The class names and test selectors that
+change:
+- `.stream-header`, `-back`, `-device`, `-status`, `-status-dot` become `.kit-bar`,
+  `.kit-bar-back`, `.kit-bar-title`, `.kit-bar-name` and `.kit-bar-status` (no dot, no
+  `connected` class).
+- `nav.tool-navigation`, `.tool-tabs` and its buttons become `nav.kit-tabs`, `.kit-tabs-list`
+  and `.kit-tab`; `aria-current` stays.
+- `.app-toast`, `.toast-message`, `.toast-action`, `.toast-close` become `.kit-toast` and
+  `.kit-toast-message`, `-action`, `-close` (no `.toast-error`, no tick for success).
+- `.sheet-group`, `-title`, `-hint`, `-card` become `.kit-group`, `.kit-group-title`,
+  `.kit-group-hint` (now under the card) and `.kit-card.kit-list`. `.sheet-row` inline, stack
+  and pair become `.kit-row`, `.kit-row-stack`, `.kit-row-pair`, with `.kit-row-text`, `-title`,
+  `-desc` and `-control`. `input.sheet-switch` becomes `input.kit-switch[role=switch]` inside
+  `label.kit-row-toggle`. `.sheet-status.<tone>` becomes `.kit-status.kit-status-<tone>`.
+  `.sheet-volume` becomes `.kit-volume` with `input.kit-range`. `.sheet-details` becomes
+  `.kit-disclosure`.
+- `.confirm-prompt`, `-question`, `-consequence`, `-actions`, `-button` become `.kit-confirm`
+  and its parts, with `.kit-button` buttons (`.kit-confirm-go`, `.kit-confirm-cancel`).
+- `.bottom-sheet-root.open` becomes `dialog.kit-sheet[open]`; `.bottom-sheet` becomes
+  `.kit-sheet-panel`; `-backdrop`, `-handle`, `-heading`, `-title`, `-subtitle`, `-close` and
+  `-body` keep their names under `kit-sheet-`; `.bottom-sheet-drag-region` and
+  `.bottom-sheet-header` become `.kit-sheet-header`. The role and the name move from the panel
+  (`aria-label`) to the dialog (`aria-labelledby`).
+- `.fx-menu` and its items become `.kit-menu` and `.kit-menu-item`, placed by `bindMenu`.
+About 20 browser scripts select `.stream-header`, eight select the tab names, four the toast
+names, five the sheet group names and about 85 lines the BottomSheet names; each adoption
+package updates the suites for the screens it moves.
+
+**Sheet, on the native dialog.** `Sheet` has BottomSheet's props plus `footer`. It is a
+`<dialog>` opened with `showModal()`: below 600px a bottom sheet, from 600px a dialog 560px wide
+and centred across the window, whatever the pointer. The top edge of the dialog is fixed (as in
+988a9db), not centred vertically as in the mockup. The `<dialog>` covers the window and is
+transparent; inside it are `.kit-sheet-backdrop`, a real element so a press on it closes the
+sheet in every browser (`::backdrop` is left transparent), and `.kit-sheet-panel`, which is what
+moves. The close control is the kit `IconButton` with the class `kit-sheet-close`. The dialog
+stays mounted while closed, so the children keep their state, as in BottomSheet. What it carries
+over from BottomSheet: the history entry through `useOverlayHistory` with its `stays` option,
+Escape cancelling a confirm prompt first, the stop of touch, mouse and wheel events at the sheet
+so a gesture in it never reaches the listeners that drive the phone, the list scroll lock and
+`body.sheet-open` (counted, so a stacked sheet keeps it), focus on the dialog itself so opening
+a sheet does not raise the phone keyboard, focus kept inside, the header drag on a bottom sheet,
+the visual-viewport variables for an on-screen keyboard, and focus returned to the opener or to
+the floating controls button. What the native dialog changed:
+- Escape is answered at keydown, so the browser raises no close request of its own.
+- The dialog's `cancel` event (what Chrome on Android sends for Back on a modal dialog) runs
+  the same close request: a confirm prompt first, then a menu inside the sheet, then the sheet
+  if it may close.
+- When the browser closes the dialog itself (a second close request with no press in between
+  cannot be cancelled), the `close` handler shows it again, so only `open` decides.
+- A modal dialog makes everything outside it inert and draws it behind. `AboveSheet` renders
+  its children inside the top open sheet; `Toast` uses it, so a toast raised while a sheet is
+  open shows above it and can be pressed. The toast mounts again, and plays its entry, when a
+  sheet opens or closes under it.
+- A sheet opened from inside another stays open while the outer one is open; a sheet that
+  takes the place of another must be its sibling, because a dialog inside a closed dialog is
+  not drawn. A closing sheet stays modal for its exit (about 220 ms).
+- `sheetDrag.ts` and `Presence.tsx` take the media query under which a sheet is a dialog; the
+  default is BottomSheet's.
+
+**Menu.** `bindMenu(menu, anchor, onClose)` works on any markup with `.kit-menu` and
+`.kit-menu-item` (roles `menu` and `menuitem`, `menuitemcheckbox` with the kit check icon), and
+`<Menu>`, `<MenuItem>` and `<MenuSeparator>` wrap it. The menu sits in the top layer through the
+Popover API (Chrome 114, Safari 17, Firefox 125), above any sheet; without that API it is a fixed
+box. It opens under its button, or above it when there is no room, takes the arrow keys, Home and
+End, has one history entry through `openOverlay`, and closes on Escape, Tab, a press outside,
+Back and a scroll that moves its button; a scroll elsewhere leaves it open. Focus goes back to
+the button, and a sheet opened from a menu item returns focus to the menu's button when it
+closes (`menuButtonOf`, and the second argument of `rememberDialogFocus`). Items are 44px high
+everywhere.
+
+**The kit page.** `#!action=kit` (`src/app/views/KitPage.tsx`) shows every part in every
+variant and state with its name beside it, then a section of sheet examples and a menu. The
+separate page `#!action=kit-sheets` was folded into it. Nothing in the app links to it and no
+route writes that action; it ships in the main bundle. `KitPage` is imported last in `App.tsx`
+so it moves no stylesheet of the views earlier in the bundle.
+
+**Tests.** `scripts/test-kit.js` (in `npm test`) checks the icon paths, the button's classes
+and states (a busy press is cancelled), the refused icon button, the switch, the messages and
+the sheet parts with and without `kit`. Browser suite `kit` (default list) measures the kit
+page at 390x844 touch and 1440x900 mouse in both themes: heights, type sizes, radii, that every
+colour is a role token, contrast, one accent fill, the focus ring on all of about 85 stops, the
+switch and segments by keyboard, and the kit toast; it leaves the contents of a closed sheet
+out. Browser suite `kit-sheet` (default list) runs on the same page: the width rule, the header
+and footer, history and Back, the confirm-first order, a busy sheet, focus, stacking, the toast
+above a sheet, the event stop, the visual viewport, and the menu. Both take screenshots when
+`E2E_OUT` is set. With reduced motion every property still has a 0.01ms transition (`app.css`),
+so a test waits a frame before it reads a computed style after a change.
+
+**Not verified on a phone.** The on-screen keyboard in a sheet on iOS Safari, Back on Android
+reaching the dialog as a `cancel` event, and the installed app. The suite simulates the first
+two with a stubbed `visualViewport` and dispatched `cancel` and `close` events. Nothing ran in
+WebKit or Firefox.
+
+**Left for 4c and 4d.** `src/app/googDevice/localKeyboardTarget.ts:4` checks
+`.bottom-sheet-root.open`: add `dialog.kit-sheet[open]` when the first stream sheet moves to
+`Sheet`. While both containers exist, BottomSheet removes `body.sheet-open` on close even when a
+Sheet is still open, so do not open one over the other. `SheetFooter` (actions after the last
+group, scrolling with the body) and the Sheet's `footer` slot (kept in view under the body)
+overlap; p4-adopt-sheets picks one. A status chip and an unread badge on an icon button are not
+built. The old tab rules stay in `src/style/views/ToolView.css` until 4d, because they share a
+declaration block with other tool-page buttons. In 4d the `:where()` list of the marker rule in
+`kit/Disclosure.css`, the summary hover rule in `app.css`, `DESKTOP_DIALOG` in `sheetDrag.ts`
+and its copy in `Presence.tsx`, and `.bottom-sheet-drag-region` in the no-select rule of
+`app.css` go with the older containers.
