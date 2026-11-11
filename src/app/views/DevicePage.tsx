@@ -1,15 +1,20 @@
-import { useEffect, useMemo, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import { BaseClient } from '../client/BaseClient';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import { streamSocketUrl } from '../googDevice/client/deviceInterfaces';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
 import { deviceName, findDeviceByUdid } from '../state/devices';
-import { clientParams, parseRoute, Platform, rememberedPhone, rememberPhone } from '../state/routes';
+import { goUp } from '../state/router';
+import { clientParams, LIST_PAGE_NAME, parseRoute, Platform, rememberedPhone, rememberPhone } from '../state/routes';
+import { AppBar } from '../ui/AppBar';
 import { StreamView } from './StreamView';
 import { CoreDeviceStreamView } from './CoreDeviceStreamView';
 import { ToolRoute } from './ToolRoute';
 import '../../style/views/ToolUnavailable.css';
+
+/** How long a screen link for a phone this browser has not seen waits for the list. */
+const IDENTIFY_MS = 1500;
 
 /**
  * The server a phone's link points at, as its tracker describes it. A link names another host
@@ -50,6 +55,27 @@ function androidStream(params: URLSearchParams) {
     return StreamClientScrcpy.parseParameters(query);
 }
 
+/** A screen link for a phone that is not in the list and that this browser has never opened. */
+function PhoneNotListed({ udid }: { udid: string }) {
+    useLayoutEffect(() => {
+        document.body.className = 'tool-page';
+    }, []);
+    return (
+        <main class="tool-unavailable">
+            <AppBar title={udid} />
+            <section class="tool-unavailable-body" role="status">
+                <h2>This phone is not connected</h2>
+                <p>It is not in the list of phones. This page shows its screen when it is connected.</p>
+                <div class="tool-unavailable-actions">
+                    <button type="button" class="ui-button" onClick={goUp}>
+                        {LIST_PAGE_NAME}
+                    </button>
+                </div>
+            </section>
+        </main>
+    );
+}
+
 /**
  * One phone's page: its screen, its files or its shell. Exactly one of the three is mounted, so
  * leaving the screen for another view stops the stream at once.
@@ -81,6 +107,16 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
         }
     }, [udid, listed, name]);
 
+    const identified = view !== 'screen' || !!platform;
+    const [waitedFor, setWaitedFor] = useState('');
+    useEffect(() => {
+        if (identified) {
+            return;
+        }
+        const timer = setTimeout(() => setWaitedFor(udid), IDENTIFY_MS);
+        return () => clearTimeout(timer);
+    }, [udid, identified]);
+
     // The same objects until the address changes: the views compare the fields they start a
     // stream or a tool from, and a list update re-renders this page many times a minute.
     const android = useMemo(
@@ -104,6 +140,9 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
     }
     if (ios) {
         return <CoreDeviceStreamView params={ios} />;
+    }
+    if (waitedFor === udid) {
+        return <PhoneNotListed udid={udid} />;
     }
     return <main class="tool-unavailable" aria-busy="true" />;
 }

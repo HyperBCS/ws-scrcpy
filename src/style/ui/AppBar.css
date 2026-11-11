@@ -1,0 +1,75 @@
+/* The header of every page below the list (`ui/AppBar.tsx`): back, title, one status line,
+   actions. These are the stream header's rules, moved here unchanged with the component. The
+   stream and tool views still write the same markup themselves, and `views/StreamView.css`
+   imports this file in the place the rules had there, so nothing changes in the cascade. */
+.stream-header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 48px;
+    padding: env(safe-area-inset-top, 0px) max(8px, env(safe-area-inset-right, 0px)) 0
+        max(6px, env(safe-area-inset-left, 0px));
+    color: var(--text-color);
+    background: var(--main-bg-color);
+    border-bottom: 1px solid var(--device-border-color);
+}
+
+.stream-header button {
+    min-height: 44px;
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 9px;
+    color: var(--text-color);
+    background: var(--header-bg-color);
+    cursor: pointer;
+    font: inherit;
+}
+
+.stream-header-back {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+}
+
+.stream-header-device {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.stream-header-device > strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+}
+
+.stream-header-status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-color-light);
+    font-size: 11px;
+}
+
+.stream-header-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    /* A dot, not text: the brighter fill colour. */
+    background: var(--status-starting-fill);
+}
+
+.stream-header-status.connected .stream-header-status-dot {
+    background: var(--status-ready-fill);
+}
+
+.stream-header-switch {
+    padding: 0 12px;
+    font-weight: 600 !important;
+}

@@ -9,6 +9,7 @@ const { test } = require('node:test');
 const path = require('node:path');
 
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
+require.extensions['.css'] = () => {};
 
 const ORIGIN = 'http://phones.test:8000/';
 const SOCKET = 'ws://phones.test:8000/?action=proxy-adb&remote=tcp%3A8886&udid=PIXEL';
@@ -583,4 +584,58 @@ test('the tab title is the same for both forms of an address', () => {
         assert.equal(pageTitle(usp(current), list), title);
     }
     assert.equal(pageTitle(usp('action=device&udid=GONE&view=screen'), list), 'GONE · Screen · ws-scrcpy');
+});
+
+/** Every element in a Preact tree, as { type, props }. */
+function elements(node, found = []) {
+    if (Array.isArray(node)) node.forEach((child) => elements(child, found));
+    else if (node && typeof node === 'object') {
+        if (typeof node.type === 'function') elements(node.type(node.props), found);
+        else {
+            if (typeof node.type === 'string') found.push(node);
+            elements(node.props?.children, found);
+        }
+    }
+    return found;
+}
+
+test('AppBar and TabStrip are the stream header and the tool tabs, with their class names', () => {
+    const { browser } = open('#!');
+    const { AppBar, AppBarStatus } = require('../src/app/ui/AppBar');
+    const { TabStrip } = require('../src/app/ui/TabStrip');
+    const { DEVICE_TABS } = require('../src/app/state/routes');
+
+    const bar = elements(AppBar({ title: 'Pixel 9', status: AppBarStatus({ connected: true, children: 'Connected' }), children: 'actions' }));
+    const classes = bar.map((element) => element.props.class).filter(Boolean);
+    assert.deepEqual(classes, ['stream-header', 'stream-header-back', 'stream-header-device', 'stream-header-status connected', 'stream-header-status-dot']);
+    const back = bar.find((element) => element.props.class === 'stream-header-back');
+    assert.equal(back.props['aria-label'], 'Phones', 'the back control is named after the list');
+    assert.equal(bar.find((element) => element.type === 'strong').props.children, 'Pixel 9');
+    // The back control is up: with nothing below this page, the list replaces it.
+    browser.location.hash = '#!action=shell&udid=PIXEL';
+    browser.settle();
+    back.props.onClick({ type: 'click' });
+    browser.settle();
+    assert.equal(browser.location.hash, '#!');
+    assert.equal(browser.index, 0);
+    let custom = 0;
+    elements(AppBar({ title: 'Inbox', backLabel: 'Notifications', onBack: () => custom++ }))[1].props.onClick({});
+    assert.equal(custom, 1);
+
+    const picked = [];
+    const strip = elements(
+        TabStrip({
+            label: 'Device views',
+            tabs: DEVICE_TABS.android.map((tab) => ({ id: tab.view, title: tab.title })),
+            current: 'files',
+            onSelect: (id) => picked.push(id),
+            children: 'Connected',
+        }),
+    );
+    assert.deepEqual(strip.slice(0, 2).map((element) => [element.type, element.props.class]), [['nav', 'tool-navigation'], ['div', 'tool-tabs']]);
+    assert.equal(strip[0].props['aria-label'], 'Device views');
+    const tabs = strip.filter((element) => element.type === 'button');
+    assert.deepEqual(tabs.map((tab) => [tab.props.children, tab.props['aria-current']]), [['Screen', undefined], ['Files', 'page'], ['Shell', undefined]]);
+    tabs[2].props.onClick();
+    assert.deepEqual(picked, ['shell']);
 });

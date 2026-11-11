@@ -337,6 +337,52 @@ async function linksOpenOnce(browser) {
     console.log('PASS older links, short links and push links open the right page, with one stream socket per screen');
 }
 
+/** A link for a phone that is in no list and that this browser has never opened. */
+async function phoneNotListed(browser) {
+    const GONE = 'NAV-GONE-0009';
+    for (const viewport of VIEWPORTS) {
+        for (const colorScheme of ['light', 'dark']) {
+            const test = await start(browser, { viewport, colorScheme, hash: `action=device&udid=${GONE}&view=screen` });
+            const label = `${viewport.name}-${colorScheme}`;
+            try {
+                const { page } = test;
+                await page.getByRole('heading', { name: 'This phone is not connected', exact: true }).waitFor();
+                await page.getByText('It is not in the list of phones. This page shows its screen when it is connected.', { exact: true }).waitFor();
+                assert.deepEqual(test.streams, [], 'no stream is started for a phone of an unknown kind');
+                // The header is the stream header: same classes, same size, same back control.
+                const header = page.locator('header.stream-header');
+                assert.equal(await header.locator('.stream-header-device > strong').textContent(), GONE);
+                const bar = await header.boundingBox();
+                assert.ok(bar.height >= 48 && bar.height <= 50, `${label}: the bar is as tall as the stream header (${bar.height})`);
+                const back = header.locator('button.stream-header-back');
+                assert.equal(await back.getAttribute('aria-label'), 'Phones');
+                const target = await back.boundingBox();
+                assert.ok(target.width >= 44 && target.height >= 44, `${label}: the back control is a 44px target`);
+                assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `${label}: nothing overflows`);
+                await page.screenshot({ path: path.join(OUT, `phone-not-listed-${label}.png`) });
+
+                if (viewport.name === 'phone' && colorScheme === 'light') {
+                    // The phone is connected while the page is open: its screen opens, once.
+                    await test.trackers.android([...ANDROIDS, android(GONE, 'Pixel 7')]);
+                    await page.getByText('Connected', { exact: true }).first().waitFor();
+                    await quiet(page);
+                    assert.deepEqual(test.streams.map((stream) => stream.udid), [GONE]);
+                    await backControl(page).click();
+                } else if (colorScheme === 'dark') {
+                    await page.getByRole('button', { name: 'Phones', exact: true }).last().click();
+                } else {
+                    await back.click();
+                }
+                await page.locator('#devices').waitFor();
+                assert.equal(await hash(page), '#!');
+                assert.deepEqual(await backOutOfApp(test, `not listed ${label}`), []);
+                assert.deepEqual(test.errors, []);
+            } finally { await test.context.close(); }
+        }
+    }
+    console.log('PASS a link for a phone that is not connected says so under the shared header, on a phone and a desktop, light and dark');
+}
+
 /** A sheet opened from the list is mounted above the pages. It closes when the page under it changes. */
 async function sheetsCloseWithTheRoute(browser) {
     const test = await start(browser);
@@ -370,6 +416,7 @@ async function main() {
             await backAfterSwitching(browser, viewport);
         }
         await linksOpenOnce(browser);
+        await phoneNotListed(browser);
         await sheetsCloseWithTheRoute(browser);
     } finally {
         await browser.close();
