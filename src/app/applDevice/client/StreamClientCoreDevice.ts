@@ -12,7 +12,7 @@ import { ApplToolBox } from '../toolbox/ApplToolBox';
 import { hidUsageForCode, keyboardReportsForText } from '../hidKeyboard';
 import { isLocalKeyboardTarget } from '../../googDevice/localKeyboardTarget';
 import { getVideoBounds } from '../../ControlBarLayout';
-import { deviceClipboard, deviceClipboardError, lastFrameAt, streamConnected, streamNotice } from '../../state/stream';
+import { deviceClipboard, deviceClipboardError, streamConnected, streamNotice } from '../../state/stream';
 import { AudioSession, createAudioSession } from '../../state/audio';
 import Size from '../../Size';
 import Util from '../../Util';
@@ -506,7 +506,6 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     }
 
     private onVideo = (frame: Uint8Array): void => {
-        lastFrameAt.value = Date.now();
         this.player?.pushFrame(frame);
     };
 

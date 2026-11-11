@@ -24,7 +24,7 @@ const NEW_SESSION_RESET = '\x1b[?1047;1000;1002;1003;1006l\x1b[!p\r\n';
 
 export class ShellClient extends ManagerClient<ParamsShell, never> {
     public static ACTION = ACTION.SHELL;
-    public static start(params: ParamsShell, mount?: HTMLElement): ShellClient {
+    public static start(params: ParamsShell, mount: HTMLElement): ShellClient {
         return new ShellClient(params, mount);
     }
 
@@ -43,16 +43,12 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
     private controlActive = false;
     private controlListener?: (active: boolean) => void;
 
-    constructor(params: ParamsShell, mount?: HTMLElement) {
+    constructor(params: ParamsShell, mount: HTMLElement) {
         super(params);
         this.udid = params.udid;
-        if (!mount) {
-            this.setTitle(`Shell ${this.udid}`);
-            this.setBodyClass('shell');
-        }
         this.container = document.createElement('div');
         this.container.className = 'terminal-container';
-        (mount ?? document.body).appendChild(this.container);
+        mount.appendChild(this.container);
         this.term = new Terminal({ fontSize: 14, cursorBlink: true, scrollback: 3000 });
         this.fitAddon = new FitAddon();
         this.term.loadAddon(this.fitAddon);

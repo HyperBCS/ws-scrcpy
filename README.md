@@ -411,10 +411,8 @@ over plain `http://`. Add `&player=mse` or `&player=hevc` to the stream URL to f
 one decoder.
 * If the device list stops noticing an iPhone being plugged in, `usbmuxd` has
 wedged: `sudo systemctl restart usbmuxd`.
-* Drag-and-drop APK push over the stream is **broken**: `ScrcpyFilePushStream`
-sends control message type `102`, a NetrisTV extension that the stock scrcpy 3.1
-server does not implement, so it is misparsed and can drop the control socket —
-taking all input with it. Push files over adb instead until this is rerouted.
+* Dropping a file on an Android stream does not push it to the phone. The page
+shows a notice instead; upload through **Files**, which uses adb.
 * Changing anything in the stream settings sheet's *Stream quality* group
 restarts the scrcpy server on the device, which briefly disconnects every viewer
 of that device (they reconnect automatically).

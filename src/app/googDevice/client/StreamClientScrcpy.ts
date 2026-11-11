@@ -18,7 +18,7 @@ import { DisplayInfo } from '../../DisplayInfo';
 import { ACTION } from '../../../common/Action';
 import { StreamReceiverScrcpy } from './StreamReceiverScrcpy';
 import { UhidKeyboard } from '../UhidKeyboard';
-import { deviceClipboard, lastFrameAt, streamConnected, streamNotice, streamServiceStopped } from '../../state/stream';
+import { deviceClipboard, streamConnected, streamNotice, streamServiceStopped } from '../../state/stream';
 import { STREAM_SERVICE_STOPPED } from '../../../common/StreamCloseCode';
 import { AudioSession, createAudioSession } from '../../state/audio';
 import { isLocalKeyboardTarget } from '../localKeyboardTarget';
@@ -157,9 +157,6 @@ export class StreamClientScrcpy
     };
 
     public onVideo = (data: Uint8Array): void => {
-        // Fed to `lastFrameAt` unconditionally (even before the player starts playing) so the
-        // frame clock reflects "is data still arriving", not "is this tab currently rendering it".
-        lastFrameAt.value = Date.now();
         if (!this.player) {
             return;
         }
@@ -261,9 +258,8 @@ export class StreamClientScrcpy
         this.sendMessage(new CommandControlMessage(ControlMessage.TYPE_RESET_VIDEO));
     };
 
-    // Tears down the DOM this client owns and stops the underlying receiver/player. Wired up as
-    // the more-box "Stop" action, and also the right thing for a host view to call from its own
-    // unmount (see `views/StreamView.tsx`) -- safe to call more than once.
+    // Tears down the DOM this client owns and stops the receiver and player. The host view calls
+    // it on unmount (see `views/StreamView.tsx`). Safe to call more than once.
     public stop = (ev?: string | Event): void => {
         if (ev && ev instanceof Event && ev.type === 'error') {
             console.error(TAG, ev);
@@ -303,8 +299,6 @@ export class StreamClientScrcpy
             throw Error(`Invalid udid value: "${udid}"`);
         }
 
-        // Fresh frame clock for this session -- see `lastFrameAt`/`SleepOverlay`.
-        lastFrameAt.value = undefined;
         streamConnected.value = this.streamReceiver.isReady();
         deviceClipboard.value = undefined;
         if (!player) {

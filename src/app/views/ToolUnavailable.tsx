@@ -12,7 +12,8 @@ import '../../style/views/ToolUnavailable.css';
  */
 export function ToolUnavailable({ entry, tool }: { entry: DeviceEntry; tool: string }) {
     useLayoutEffect(() => {
-        document.body.className = 'tool-page';
+        // Clears the class the list or a stream left on the body.
+        document.body.className = '';
     }, []);
     const name = deviceName(entry);
     return (

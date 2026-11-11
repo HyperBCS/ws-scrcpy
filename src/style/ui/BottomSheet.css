@@ -29,10 +29,8 @@
 .bottom-sheet {
     --sheet-gutter: 20px;
     position: absolute;
-    /* Inset by the control bar's footprint (published by `trackControlBarInset`) so the bar stays
-       visible and tappable while a sheet is open -- otherwise the sheet covers it and the buttons
-       under it silently stop working. Falls back to 0 outside the stream view, where there is no
-       bar. */
+    /* No script sets --control-bar-side or --control-bar-bottom any more, so the sheet sits at
+       the bottom edge. */
     left: 0;
     right: var(--control-bar-side, 0px);
     bottom: var(--control-bar-bottom, 0px);

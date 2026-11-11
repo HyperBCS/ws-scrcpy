@@ -1,5 +1,4 @@
 import { ControlMessage } from './ControlMessage';
-import VideoSettings from '../VideoSettings';
 import Util from '../Util';
 
 /** Matches scrcpy's `sc_copy_key`. */
@@ -40,19 +39,6 @@ export class CommandControlMessage extends ControlMessage {
         [ControlMessage.TYPE_CHANGE_STREAM_PARAMETERS, 'Change video settings'],
     ]);
 
-    public static createSetVideoSettingsCommand(videoSettings: VideoSettings): CommandControlMessage {
-        const temp = videoSettings.toBuffer();
-        const event = new CommandControlMessage(ControlMessage.TYPE_CHANGE_STREAM_PARAMETERS);
-        const offset = CommandControlMessage.PAYLOAD_LENGTH + 1;
-        const buffer = Buffer.alloc(offset + temp.length);
-        buffer.writeUInt8(event.type, 0);
-        temp.forEach((byte, index) => {
-            buffer.writeUInt8(byte, index + offset);
-        });
-        event.buffer = buffer;
-        return event;
-    }
-
     /**
      * Wire format (verified against scrcpy 4.1's `control_msg.c`):
      *   type(1) sequence(u64) paste(1) length(u32) text
@@ -90,16 +76,6 @@ export class CommandControlMessage extends ControlMessage {
         const buffer = Buffer.alloc(2);
         buffer.writeUInt8(event.type, 0);
         buffer.writeUInt8(copyKey, 1);
-        event.buffer = buffer;
-        return event;
-    }
-
-    public static createSetScreenPowerModeCommand(mode: boolean): CommandControlMessage {
-        const event = new CommandControlMessage(ControlMessage.TYPE_SET_SCREEN_POWER_MODE);
-        let offset = 0;
-        const buffer = Buffer.alloc(1 + 1);
-        offset = buffer.writeInt8(event.type, offset);
-        buffer.writeUInt8(mode ? 1 : 0, offset);
         event.buffer = buffer;
         return event;
     }
