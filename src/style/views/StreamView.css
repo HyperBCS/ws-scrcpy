@@ -85,6 +85,16 @@
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
 }
 
+/* An Android phone's page has its tabs under the header. What is laid over the picture starts
+   below them: 55px further down, the height of the tab strip. */
+.stream-view > .tool-navigation ~ .stream-notice {
+    top: calc(111px + env(safe-area-inset-top, 0px));
+}
+
+.stream-view > .tool-navigation ~ .sleep-overlay {
+    top: calc(112px + env(safe-area-inset-top, 0px));
+}
+
 .stream-notice > span {
     flex: 1;
     min-width: 0;

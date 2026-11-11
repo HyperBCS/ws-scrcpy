@@ -437,8 +437,8 @@ async function main() {
             assert.equal(await page.locator('.stream-header').count(), 1, 'shared tool header remains visible');
             assert.equal(
                 await page.locator('.tool-navigation button').allInnerTexts().then((list) => list.join(',')),
-                'Files,Shell',
-                'the tools navigation offers Files and Shell only',
+                'Screen,Files,Shell',
+                'the tabs of the phone\'s page: the screen, then the tools',
             );
 
             // Layout: nothing may overflow sideways, and touch builds keep 44px targets.

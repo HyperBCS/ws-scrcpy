@@ -1,3 +1,4 @@
+import { ComponentChildren } from 'preact';
 import { Presence } from '../ui/Presence';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ParamsStreamScrcpy } from '../../types/ParamsStreamScrcpy';
@@ -36,9 +37,11 @@ import '../../style/views/StreamView.css';
 
 interface StreamViewProps {
     params: ParamsStreamScrcpy;
+    /** The tab strip of the phone's page, drawn under the header. */
+    tabs?: ComponentChildren;
 }
 
-export function StreamView({ params }: StreamViewProps) {
+export function StreamView({ params, tabs }: StreamViewProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [error, setError] = useState('');
     // Counts the owner's "Start again" after the stream service was stopped: a new connection
@@ -55,8 +58,8 @@ export function StreamView({ params }: StreamViewProps) {
         streamNotice.value = '';
         streamServiceStopped.value = false;
         setError('');
-        // `StreamClientScrcpy` sets `document.body.className = 'stream'` itself; navigating back
-        // to the device list re-sets it to 'list' from there (see `views/DeviceList.tsx`).
+        // `StreamClientScrcpy` sets `document.body.className = 'stream'` itself; the list and
+        // the tool tabs set their own when they are shown (`DeviceList.tsx`, `ToolView.tsx`).
         let client: StreamClientScrcpy;
         try {
             client = StreamClientScrcpy.start(params, undefined, undefined, undefined, container);
@@ -123,6 +126,7 @@ export function StreamView({ params }: StreamViewProps) {
                     Switch
                 </button>
             </AppBar>
+            {tabs}
             <LockScreenNotice
                 key="lock-notice"
                 udid={params.udid}

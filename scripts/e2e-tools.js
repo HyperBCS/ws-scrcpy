@@ -239,12 +239,13 @@ async function main() {
             assert.equal(state.starts.length,sessions+1,'device switching creates one replacement terminal');
             assert.equal(state.starts.at(-1).udid,'tool-fixture-002');
             assert(state.closed.includes('SHEL'),'old shell channel is closed');
-            // The tools navigation is Files and Shell only: the screen is started from the device list.
-            assert.deepEqual(await page.locator('.tool-navigation button').allInnerTexts(),['Files','Shell']);
+            // The tabs of the phone's page: the screen, then the tools.
+            assert.deepEqual(await page.locator('.tool-navigation button').allInnerTexts(),['Screen','Files','Shell']);
             await page.getByRole('button',{name:'Files',exact:true}).click();
             await page.locator('.file-listing-client').waitFor();
-            assert.equal(await page.locator('.terminal-container').count(),0,'terminal removes all DOM on navigation');
-            assert.equal(state.closed.filter(code=>code==='SHEL').length,2,'both departed shells closed');
+            // A tab change hides the shell and keeps its session. Leaving the page ends it.
+            assert.equal(await page.locator('.terminal-container:visible').count(),0,'the terminal is hidden while Files is shown');
+            assert.equal(state.closed.filter(code=>code==='SHEL').length,1,'the shell of the phone before is closed; this one stays open behind Files');
             // Files reports a lost connection the same way and comes back by itself.
             await page.locator('.tool-connection.connected').waitFor({state:'attached'});
             state.refuse = true;
@@ -266,6 +267,7 @@ async function main() {
             assert.equal(await page.locator('.file-explorer.fx-offline').count(),0);
             await page.getByRole('button',{name:'Phones',exact:true}).click();
             await page.locator('#devices').waitFor();
+            assert.equal(await page.locator('.terminal-container').count(),0,'leaving the page removes the terminal');
             const card2 = page.locator('.device').filter({hasText:'Phone B'});
             await card2.getByRole('link',{name:'Open screen',exact:true}).click();
             await page.locator('.stream-stage').waitFor();

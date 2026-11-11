@@ -177,7 +177,7 @@ async function backFromEveryPage(browser, viewport) {
     console.log(`PASS ${viewport.name} the back control of the screen, Files and Shell goes back to the list; Back from the list never shows a stream`);
 }
 
-/** Several phones and views in a row. Switch replaces the entry, the tool tabs still push; the back control ends on the list. */
+/** Several phones and views in a row. Switch and the tabs replace the entry; the back control ends on the list. */
 async function backAfterSwitching(browser, viewport) {
     const test = await start(browser, { viewport });
     const { page } = test;
@@ -216,11 +216,13 @@ async function backAfterSwitching(browser, viewport) {
             const tool = tools.page;
             await card(tool, `android:${PIXEL}`).getByRole('link', { name: 'Files', exact: true }).click();
             await tool.locator('.tool-view-list-files').waitFor();
+            const inTool = await tool.evaluate(() => history.length);
             await tool.locator('.tool-tabs').getByRole('button', { name: 'Shell', exact: true }).click();
             await tool.locator('.tool-view-shell').waitFor();
             assert.equal(await hash(tool), `#!action=device&udid=${PIXEL}&view=shell`);
             await tool.locator('.tool-tabs').getByRole('button', { name: 'Files', exact: true }).click();
             await tool.locator('.tool-view-list-files').waitFor();
+            assert.equal(await tool.evaluate(() => history.length), inTool, `${viewport.name}: a tab change adds no entry`);
             await tool.locator('.stream-header .notifications-link').click();
             await tool.locator('.notifications-page').waitFor();
             // "Open screen" in the inbox is a link in the older form.

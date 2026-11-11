@@ -211,3 +211,19 @@
         gap: 4px;
     }
 }
+
+/* A tool whose tab is not the one shown stays mounted. It is kept laid out and out of sight
+   instead of undisplayed: a question it has to put from behind another tab (Files asks before
+   uploads are dropped) is a modal dialog, and one inside an undisplayed element would block
+   the page without showing. */
+.tool-view[hidden] {
+    position: fixed;
+    inset: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.tool-view[hidden] dialog:modal {
+    visibility: visible;
+    pointer-events: auto;
+}

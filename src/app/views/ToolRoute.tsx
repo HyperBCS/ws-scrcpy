@@ -1,3 +1,4 @@
+import { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { DeviceEntry, findDeviceByUdid, findDeviceWithoutTools } from '../state/devices';
 import { deviceTools, ToolView } from './ToolView';
@@ -13,16 +14,24 @@ interface Decision {
     refused?: DeviceEntry;
 }
 
+interface ToolRouteProps {
+    params: URLSearchParams;
+    /** Whether this tool's tab is the one shown. See `ToolView`. */
+    active: boolean;
+    tabs: (status: ComponentChildren) => ComponentChildren;
+}
+
 /**
- * A Files or Shell route. Both tools run over adb, so a link that names an iPhone gets an
- * explanation and no tool: the server would run adb with the iPhone's UDID and could only fail.
+ * The Files or Shell tab of a phone's page. Both tools run over adb, so a link that names an
+ * iPhone gets an explanation and no tool: the server would run adb with the iPhone's UDID and
+ * could only fail.
  *
  * A reloaded or typed link arrives before the device list. The tool then waits until the serial
  * is listed (at most `TOOL_IDENTIFY_MS`), so it is not started for an iPhone and torn down
  * again. Once a tool is open it stays open: a device that disconnects keeps its page and that
  * page's own lost-connection state.
  */
-export function ToolRoute({ params }: { params: URLSearchParams }) {
+export function ToolRoute({ params, active, tabs }: ToolRouteProps) {
     const udid = params.get('udid') || '';
     const withoutTools = findDeviceWithoutTools(udid);
     const known = !!findDeviceByUdid(udid);
@@ -50,10 +59,10 @@ export function ToolRoute({ params }: { params: URLSearchParams }) {
     const refused = current?.refused ?? withoutTools;
     if (refused) {
         const tool = deviceTools.find((item) => item.action === params.get('action'));
-        return <ToolUnavailable entry={refused} tool={tool?.title || 'This tool'} />;
+        return active ? <ToolUnavailable entry={refused} tool={tool?.title || 'This tool'} /> : null;
     }
     if (!current && !known) {
-        return <main class="tool-unavailable" aria-busy="true" />;
+        return active ? <main class="tool-unavailable" aria-busy="true" /> : null;
     }
-    return <ToolView params={params} />;
+    return <ToolView params={params} active={active} tabs={tabs} />;
 }
