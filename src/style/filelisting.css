@@ -78,6 +78,30 @@ body.file-listing-page {
     gap: 2px;
 }
 
+/* A phone's selection bar. It takes the history row's place while anything is selected (see
+   the narrow layout); a wider screen has the same commands in its toolbar. */
+.fx-selection-bar {
+    display: none;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+}
+
+.fx-selection-count {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0 6px;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+/* The row whose ⋮ menu is open. The menu acts on it alone, whatever is selected. */
+.fx-row.fx-menu-for {
+    background: var(--device-list-hover-color);
+    box-shadow: inset 3px 0 0 var(--fx-accent);
+}
+
 .fx-button {
     display: inline-flex;
     align-items: center;
@@ -1063,6 +1087,25 @@ body.file-listing-page {
         display: flex;
         order: 3;
         margin-left: auto;
+    }
+    /* While anything is selected, the history row becomes the selection bar: the count and the
+       commands for the selection, with the Actions menu for the rest. */
+    .file-explorer.fx-selecting .fx-history,
+    .file-explorer.fx-selecting .fx-mobile-tools [data-command='filter-toggle'] {
+        display: none;
+    }
+    .file-explorer.fx-selecting .fx-selection-bar {
+        display: flex;
+        order: 2;
+    }
+    @media (max-width: 380px) {
+        .fx-selection-word {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip-path: inset(50%);
+        }
     }
     .fx-commands {
         display: none;

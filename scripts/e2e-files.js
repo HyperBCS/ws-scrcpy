@@ -817,7 +817,8 @@ async function main() {
             await page.locator('.fx-row[data-name="photo.png"]').waitFor({ state: 'detached' });
             assert.deepEqual(new Set(traffic.operations.at(-1).paths), new Set([ROOT + '/photo.png', ROOT + '/empty']));
             assert.equal(traffic.operations.at(-1).cmd, 'DELE');
-            await command(page, 'Select', 'Select items');
+            // The delete ended selection mode: no checkboxes, and a tap opens again.
+            await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
 
             // Properties reads the stat data already in the listing.
             await page.locator('.fx-row[data-name="notes.txt"] .fx-row-menu').click();

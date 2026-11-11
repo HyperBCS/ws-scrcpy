@@ -169,6 +169,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private readonly dialog: HTMLDialogElement;
     private readonly picker: HTMLInputElement;
     private readonly buttons = new Map<string, HTMLButtonElement>();
+    /** The phone's selection bar. Its buttons run the same commands as the toolbar's. */
+    private readonly barButtons = new Map<string, HTMLButtonElement>();
+    private readonly selectionCount: HTMLElement;
+    /**
+     * The items a row's ⋮ menu acts on: that row alone. The menu never changes the selection,
+     * so the selection bar and the Actions menu keep acting on what the owner selected.
+     */
+    private menuTargets?: string[];
 
     private filePushHandler?: FilePushHandler;
     private readonly requests = new Map<Multiplexer, Request>();
@@ -280,6 +288,48 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                         aria-expanded="false"
                         aria-label="Quick access"
                         title="Quick access"
+                    ></button>
+                </div>
+                <div class="fx-selection-bar" role="toolbar" aria-label="Selected items">
+                    <button
+                        type="button"
+                        class="fx-button fx-icon-button"
+                        data-command="end-selection"
+                        aria-label="Close selection"
+                        title="Close selection"
+                    ></button>
+                    <span class="fx-selection-count"></span>
+                    <button
+                        type="button"
+                        class="fx-button fx-icon-button"
+                        data-command="download"
+                        aria-label="Download selected files"
+                        title="Download"
+                        disabled
+                    ></button>
+                    <button
+                        type="button"
+                        class="fx-button fx-icon-button"
+                        data-command="copy"
+                        aria-label="Copy selected items"
+                        title="Copy"
+                        disabled
+                    ></button>
+                    <button
+                        type="button"
+                        class="fx-button fx-icon-button"
+                        data-command="cut"
+                        aria-label="Move selected items"
+                        title="Move"
+                        disabled
+                    ></button>
+                    <button
+                        type="button"
+                        class="fx-button fx-icon-button fx-danger"
+                        data-command="delete"
+                        aria-label="Delete selected items"
+                        title="Delete"
+                        disabled
                     ></button>
                 </div>
                 <div class="fx-address" data-command="edit-path">
@@ -443,8 +493,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.dialog.addEventListener('keydown', this.onDialogKeyDown);
         this.picker = this.wrapper.querySelector('input[type="file"]') as HTMLInputElement;
         this.wrapper.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) => {
-            this.buttons.set(button.dataset.command as string, button);
+            const map = button.closest('.fx-selection-bar') ? this.barButtons : this.buttons;
+            map.set(button.dataset.command as string, button);
         });
+        this.selectionCount = this.wrapper.querySelector('.fx-selection-count') as HTMLElement;
         this.wrapper.dataset.listing = 'loading';
         this.decorateIcons();
         this.renderBreadcrumb();
@@ -513,12 +565,22 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             actions:
                 '<circle cx="12" cy="5.5" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="18.5" r="1.7" fill="currentColor" stroke="none"/>',
         };
-        Object.entries(shapes).forEach(([command, shape]) => {
-            const button = this.buttons.get(command);
-            if (button) {
-                button.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shape}</svg>`;
-            }
-        });
+        const bar: Record<string, string> = {
+            'end-selection': '<path d="M6 6l12 12M18 6 6 18"/>',
+            download: '<path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/>',
+            copy: '<rect x="8.5" y="8.5" width="11" height="11.5" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v8.5a2 2 0 0 0 2 2h2"/>',
+            cut: '<path d="M3.5 7h5l1.5 2h10v10h-16zM3.5 7v12"/><path d="M10 14h6.5m-2.5-2.5 2.5 2.5-2.5 2.5"/>',
+            delete: '<path d="M5 7h14M10 7V4.5h4V7M7 7l1 13h8l1-13"/>',
+        };
+        const draw = (map: Map<string, HTMLButtonElement>, list: Record<string, string>) =>
+            Object.entries(list).forEach(([command, shape]) => {
+                const button = map.get(command);
+                if (button) {
+                    button.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shape}</svg>`;
+                }
+            });
+        draw(this.buttons, shapes);
+        draw(this.barButtons, bar);
     }
 
     private renderPlaces(): void {
@@ -636,8 +698,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             const selected = this.selection.has(entry.name);
             const name = esc(entry.name);
             const tabIndex = entry.name === this.rovingName ? 0 : -1;
-            return `<tr class="fx-row${selected ? ' selected' : ''}${
-                cut.includes(entry.name) ? ' fx-cut' : ''
+            return `<tr class="fx-row${selected ? ' selected' : ''}${cut.includes(entry.name) ? ' fx-cut' : ''}${
+                this.menuTargets?.includes(entry.name) ? ' fx-menu-for' : ''
             }" data-name="${name}" data-index="${index}" data-kind="${kindOf(entry)}" aria-selected="${selected}">
                 <td class="fx-cell-select"><input type="checkbox" class="fx-check" tabindex="-1" aria-label="Select ${name}"${
                     selected ? ' checked' : ''
@@ -806,10 +868,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const selected = this.selectedEntries();
         const files = selected.filter((entry) => entry.isFile());
         const enable = (command: string, value: boolean) => {
-            const button = this.buttons.get(command);
-            if (button) {
-                button.disabled = !value;
-            }
+            [this.buttons.get(command), this.barButtons.get(command)].forEach((button) => {
+                if (button) {
+                    button.disabled = !value;
+                }
+            });
         };
         enable('back', this.historyIndex > 0);
         enable('forward', this.historyIndex < this.historyTop);
@@ -824,12 +887,27 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         enable('copy', ready && selected.length > 0);
         enable('paste', ready && !!this.clipboard?.names.length);
         this.buttons.get('selection-mode')?.setAttribute('aria-pressed', String(this.selectionMode));
-        this.wrapper.classList.toggle('fx-selecting', this.selectionMode || this.selection.size > 0);
+        this.wrapper.classList.toggle('fx-selecting', this.selecting());
+        // A narrow phone shows the number alone; the word stays for screen readers.
+        this.selectionCount.innerHTML = `${selected.length}<span class="fx-selection-word"> selected</span>`;
         this.wrapper.setAttribute('aria-busy', String(this.loading));
     }
 
     private selectedEntries(): Entry[] {
         return this.entries.filter((entry) => this.selection.has(entry.name));
+    }
+
+    /** Selection mode, or anything selected: the checkboxes show and the selection bar replaces history. */
+    private selecting(): boolean {
+        return this.selectionMode || this.selection.size > 0;
+    }
+
+    /** What a command acts on: the row a ⋮ menu was opened for, or else the selection. */
+    private targetEntries(targets?: string[]): Entry[] {
+        if (!targets) {
+            return this.selectedEntries();
+        }
+        return this.entries.filter((entry) => targets.includes(entry.name));
     }
 
     // ---------------------------------------------------------------- input
@@ -879,11 +957,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         if (target.closest('.fx-row-menu')) {
+            // The menu acts on its own row and leaves the selection as it is.
             event.preventDefault();
-            if (!this.selection.has(name)) {
-                this.selectOnly(name);
-            }
-            this.openRowMenu(target.closest('.fx-row-menu') as HTMLElement);
+            this.openRowMenu(target.closest('.fx-row-menu') as HTMLElement, name);
             return;
         }
         if (target.closest('.fx-check')) {
@@ -1166,8 +1242,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     // ---------------------------------------------------------------- menus
 
-    private itemMenuItems(): string[] {
-        const selected = this.selectedEntries();
+    private itemMenuItems(selected = this.selectedEntries()): string[] {
         const single = selected.length === 1 ? selected[0] : undefined;
         const files = selected.filter((entry) => entry.isFile()).length;
         const items: string[] = [];
@@ -1273,6 +1348,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private openMenu(build: () => string[], clientX: number, clientY: number): void {
+        this.forgetMenuTargets();
         this.menuBuilder = build;
         this.menuAnchor = { x: clientX, y: clientY };
         this.menu.innerHTML = build().join('');
@@ -1307,9 +1383,18 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.menu.style.transformOrigin = `${x - bounds.left - left}px ${y - bounds.top - top}px`;
     }
 
-    private openRowMenu(button: HTMLElement): void {
+    private openRowMenu(button: HTMLElement, name: string): void {
         const rect = button.getBoundingClientRect();
-        this.openMenu(() => this.itemMenuItems(), rect.left, rect.bottom);
+        const targets = [name];
+        this.openMenu(() => this.itemMenuItems(this.targetEntries(targets)), rect.left, rect.bottom);
+        // Set after `openMenu`, which forgets the targets of the menu it replaces.
+        this.menuTargets = targets;
+        button.closest('tr')?.classList.add('fx-menu-for');
+    }
+
+    private forgetMenuTargets(): void {
+        this.menuTargets = undefined;
+        this.tableBody.querySelectorAll('.fx-menu-for').forEach((row) => row.classList.remove('fx-menu-for'));
     }
 
     private refreshMenu(focus?: string): void {
@@ -1331,6 +1416,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             this.menu.innerHTML = '';
         });
         this.menuBuilder = undefined;
+        this.forgetMenuTargets();
         ['view-menu', 'places', 'actions'].forEach((command) =>
             this.buttons.get(command)?.setAttribute('aria-expanded', 'false'),
         );
@@ -1364,8 +1450,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const kind = item.dataset.menu;
         const value = item.dataset.value || '';
         if (kind === 'command') {
+            const targets = this.menuTargets;
             this.closeMenu();
-            this.runCommand(value);
+            this.runCommand(value, targets);
             return;
         }
         if (kind === 'place') {
@@ -1406,7 +1493,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     // ---------------------------------------------------------------- commands
 
-    private runCommand(command: string): void {
+    /**
+     * `targets` names the row a ⋮ menu was opened for. Without it, item commands act on the
+     * selection, and a command that is done with the selection ends selection mode: the
+     * checkboxes go away and a tap opens a folder again.
+     */
+    private runCommand(command: string, targets?: string[]): void {
         // Keyboard shortcuts reach the same commands as the (already disabled) buttons do.
         const MODIFYING = ['upload', 'download', 'new-folder', 'rename', 'delete', 'paste'];
         if (MODIFYING.includes(command) && !this.canModify()) {
@@ -1425,6 +1517,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 | 'actions'
                 | 'filter-toggle'
                 | 'selection-mode'
+                | 'end-selection'
         ) {
             case 'back':
                 // Never past the entry Files was opened on: that Back belongs to the browser.
@@ -1480,41 +1573,59 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 }
                 this.paintSelection();
                 return;
+            case 'end-selection':
+                this.clearSelection();
+                return;
             case 'select-all':
                 this.visible().forEach((entry) => this.selection.add(entry.name));
+                // On touch the selection is a mode: taps now add and remove rows.
+                if (matchMedia(COARSE_POINTER).matches) {
+                    this.selectionMode = true;
+                }
                 this.paintSelection();
                 return;
             case 'upload':
                 this.picker.click();
                 return;
             case 'open': {
-                const [entry] = this.selectedEntries();
+                const [entry] = this.targetEntries(targets);
                 if (entry) {
                     this.open(entry.name);
                 }
                 return;
             }
-            case 'download':
-                this.selectedEntries()
-                    .filter((entry) => entry.isFile())
-                    .forEach((entry) => this.download(path.join(this.path, entry.name), entry));
+            case 'download': {
+                const files = this.targetEntries(targets).filter((entry) => entry.isFile());
+                files.forEach((entry) => this.download(path.join(this.path, entry.name), entry, files.length === 1));
+                if (files.length > 1) {
+                    this.toast(`Downloads of ${files.length} files started in your browser.`);
+                }
+                this.doneWithSelection(targets);
                 return;
+            }
             case 'copy-path': {
-                const paths = this.selectedEntries().map((entry) => path.join(this.path, entry.name));
+                const paths = this.targetEntries(targets).map((entry) => path.join(this.path, entry.name));
                 void this.copyText(paths.join('\n'));
+                this.doneWithSelection(targets);
                 return;
             }
             case 'cut':
             case 'copy': {
-                const selected = this.selectedEntries();
+                const selected = this.targetEntries(targets);
                 const names = selected.map((entry) => entry.name);
                 if (!names.length) {
                     return;
                 }
                 const folders = selected.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
                 this.clipboard = { mode: command as Clipboard['mode'], dir: this.path, names, folders };
-                this.toast(`${names.length} item${names.length === 1 ? '' : 's'} ready to paste.`);
+                const count = `${names.length} item${names.length === 1 ? '' : 's'}`;
+                this.toast(
+                    command === 'cut'
+                        ? `${count} ready to move. Open the destination folder and choose Paste.`
+                        : `${count} ready to paste.`,
+                );
                 this.paintSelection();
+                this.doneWithSelection(targets);
                 return;
             }
             case 'paste':
@@ -1524,14 +1635,21 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 void this.createFolder();
                 return;
             case 'rename':
-                void this.rename();
+                void this.rename(this.targetEntries(targets));
                 return;
             case 'delete':
-                void this.remove();
+                void this.remove(this.targetEntries(targets));
                 return;
             case 'properties':
-                this.showProperties();
+                this.showProperties(this.targetEntries(targets));
                 return;
+        }
+    }
+
+    /** A command that acted on the selection ends selection mode. A ⋮ menu leaves it alone. */
+    private doneWithSelection(targets?: string[]): void {
+        if (!targets) {
+            this.clearSelection();
         }
     }
 
@@ -1573,9 +1691,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         });
     }
 
-    private async rename(): Promise<void> {
-        const [entry] = this.selectedEntries();
-        if (!entry) {
+    private async rename(entries: Entry[]): Promise<void> {
+        const [entry] = entries;
+        if (!entry || entries.length !== 1) {
             return;
         }
         const name = await this.prompt({
@@ -1597,8 +1715,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         );
     }
 
-    private async remove(): Promise<void> {
-        const selected = this.selectedEntries();
+    private async remove(selected: Entry[]): Promise<void> {
         if (!selected.length) {
             return;
         }
@@ -1634,7 +1751,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             payload.write(item, offset, 'utf-8');
             offset += length;
         });
-        this.selection.clear();
         this.mutate(payload, `Deleting ${label}…`, {
             success: `Deleted ${label}.`,
             failure: `Could not delete ${label}`,
@@ -1786,9 +1902,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         return '';
     }
 
-    private showProperties(): void {
-        const [entry] = this.selectedEntries();
-        if (!entry) {
+    private showProperties(entries: Entry[]): void {
+        const [entry] = entries;
+        if (!entry || entries.length !== 1) {
             return;
         }
         const rows: [string, string][] = [
@@ -2027,6 +2143,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (this.stopped || !this.hasConnection()) {
             return;
         }
+        // Every folder operation ends selection mode; the folder is listed again afterwards.
+        this.selection.clear();
+        this.selectionMode = false;
+        this.anchorName = undefined;
+        this.paintSelection();
         this.report(pending);
         this.operations++;
         this.updateControls();
@@ -2336,7 +2457,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
      * Every download is a plain HTTP request that the browser saves to disk itself: it shows the
      * progress, and a file of any size never passes through this page's memory.
      */
-    private download(destination: string, entry: Entry): void {
+    private download(destination: string, entry: Entry, announce = true): void {
         const direct = this.buildDirectWebSocketUrl();
         const endpoint = new URL('api/files/download', new URL('.', location.href));
         endpoint.searchParams.set('udid', this.params.udid);
@@ -2350,7 +2471,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         document.body.appendChild(link);
         link.click();
         link.remove();
-        this.toast(`Download of ${entry.name} started in your browser.`);
+        if (announce) {
+            this.toast(`Download of ${entry.name} started in your browser.`);
+        }
     }
 
     // ---------------------------------------------------------------- navigation

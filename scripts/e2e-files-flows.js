@@ -216,7 +216,8 @@ async function keyboardFocus(browser) {
     assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), 'Actions for denied');
     await page.keyboard.press('Space');
     await page.locator('.fx-menu').waitFor();
-    assert.equal(await page.locator('.fx-row.selected').count(), 1, 'Space on the menu button opens the menu');
+    assert.equal(await page.locator('.fx-row.fx-menu-for').getAttribute('data-name'), 'denied', 'Space opens the menu');
+    assert.equal(await page.locator('.fx-row.selected').count(), 0, 'the menu does not change the selection');
     await page.keyboard.press('Escape');
     await page.locator('.fx-menu').waitFor({ state: 'hidden' });
     await row(page, 'denied').locator('.fx-row-menu').focus();
@@ -530,6 +531,99 @@ async function nameCase(browser) {
     await finish();
 }
 
+// Selection on a phone: a bar with the selection's commands, a ⋮ that never retargets, and
+// selection mode that ends with the action.
+async function phoneSelection(browser, layout, name, scheme) {
+    const { page, finish, traffic } = await start(browser, layout, ROOT, scheme);
+    const bar = page.locator('.fx-selection-bar');
+    const dialog = page.locator('.fx-dialog[open]');
+    const closed = () => page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+    const selected = () => page.locator('.fx-row.selected').evaluateAll((rows) => rows.map((item) => item.dataset.name));
+    const tap = (item) => row(page, item).locator('.entry-name a').click();
+    assert.equal(await bar.isVisible(), false, 'no bar without a selection');
+
+    await page.getByRole('button', { name: 'Actions', exact: true }).click();
+    await page.getByRole('menuitemcheckbox', { name: 'Select items', exact: true }).click();
+    await tap('notes.txt');
+    await tap('photo.png');
+    assert.deepEqual(await selected(), ['notes.txt', 'photo.png']);
+    await bar.waitFor();
+    assert.equal(await page.locator('.fx-history').isVisible(), false, 'the bar takes the history row');
+    assert.equal(await bar.locator('.fx-selection-count').textContent(), '2 selected');
+    // A narrow phone shows the number alone; the word is still read out.
+    const word = await bar.locator('.fx-selection-word').boundingBox();
+    assert.equal(word.width <= 1, name === 'phone320', `the word "selected" at ${layout.width}px`);
+    const commands = ['Close selection', 'Download selected files', 'Copy selected items', 'Move selected items', 'Delete selected items'];
+    const actions = page.getByRole('button', { name: 'Actions', exact: true });
+    for (const label of commands) {
+        const button = bar.getByRole('button', { name: label, exact: true });
+        assert.equal(await button.isEnabled(), true, `${label} is enabled`);
+        const box = await button.boundingBox();
+        assert(box.width >= 44 && box.height >= 44, `${label} is a touch target`);
+        assert(box.x >= 0 && box.x + box.width <= layout.width, `${label} is on screen`);
+    }
+    const more = await actions.boundingBox();
+    assert(more.x + more.width <= layout.width, 'the Actions menu stays reachable');
+    assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+        true,
+        'the bar does not widen the page',
+    );
+    await settleMotion(page);
+    await page.screenshot({ path: path.join(OUT, `flows-selection-bar-${name}.png`) });
+
+    // A ⋮ on a row that is not selected acts on that row and leaves the selection alone.
+    await row(page, 'archive').locator('.fx-row-menu').click();
+    await page.locator('.fx-menu').waitFor();
+    assert.equal(await page.locator('.fx-row.fx-menu-for').getAttribute('data-name'), 'archive');
+    assert.deepEqual(await selected(), ['notes.txt', 'photo.png'], 'the menu keeps the selection');
+    await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
+    await dialog.getByRole('heading', { name: `Delete “archive” from ${DEVICE}?`, exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    await closed();
+    assert.deepEqual(await selected(), ['notes.txt', 'photo.png']);
+    assert.equal(traffic.operations.length, 0);
+
+    // The bar's Delete acts on the selection, and the action ends selection mode.
+    await bar.getByRole('button', { name: 'Delete selected items', exact: true }).click();
+    await dialog.getByRole('heading', { name: `Delete 2 items from ${DEVICE}?`, exact: true }).waitFor();
+    await settleMotion(page);
+    await page.waitForTimeout(500);
+    await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
+    await closed();
+    await row(page, 'notes.txt').waitFor({ state: 'detached' });
+    await ready(page);
+    assert.deepEqual(traffic.operations.at(-1), { cmd: 'DELE', paths: [ROOT + '/notes.txt', ROOT + '/photo.png'] });
+    await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
+    assert.equal(await bar.isVisible(), false);
+    assert.equal(await page.locator('.fx-history').isVisible(), true, 'history is back');
+    assert.equal(await page.locator('.fx-check').first().isVisible(), false, 'no checkboxes');
+    await tap('archive');
+    await crumb(page, 'archive');
+    await ready(page);
+    await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
+    await crumb(page, 'tmp');
+    await ready(page);
+
+    // Copy from the bar ends selection mode too; Close ends it without doing anything.
+    await page.getByRole('button', { name: 'Actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Select all', exact: true }).click();
+    await bar.waitFor();
+    await tap('archive');
+    assert.equal((await selected()).includes('archive'), false, 'after Select all a tap toggles, it does not open');
+    await bar.getByRole('button', { name: 'Copy selected items', exact: true }).click();
+    await page.locator('.app-toast .toast-message').filter({ hasText: 'ready to paste.' }).waitFor();
+    await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
+    await page.getByRole('button', { name: 'Actions', exact: true }).click();
+    await page.getByRole('menuitemcheckbox', { name: 'Select items', exact: true }).click();
+    await bar.waitFor();
+    assert.equal(await bar.getByRole('button', { name: 'Delete selected items', exact: true }).isDisabled(), true);
+    await bar.getByRole('button', { name: 'Close selection', exact: true }).click();
+    await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
+    assert.equal(traffic.operations.length, 1, 'Copy and Close send nothing to the device');
+    await finish();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -544,6 +638,8 @@ async function main() {
         ['names that differ by case', () => nameCase(browser)],
         ['errors phone', () => errors(browser, PHONE, 'phone')],
         ['errors desktop', () => errors(browser, DESKTOP, 'desktop')],
+        ['selection on a phone', () => phoneSelection(browser, PHONE, 'phone', 'light')],
+        ['selection on a small phone', () => phoneSelection(browser, { width: 320, height: 640, touch: true }, 'phone320', 'dark')],
     ];
     try {
         for (const [name, run] of scenarios) {
