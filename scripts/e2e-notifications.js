@@ -741,13 +741,13 @@ async function perDeviceHistory(browser) {
         await backControl(f.page).click();
         await f.page.getByRole('heading', { name: 'Phones', exact: true }).waitFor();
         await until(() => f.summaryPolls > 0, 'Devices loads the lightweight unread summary');
-        const headerLink = f.page.locator('.device-list-header a[href*=notifications]');
+        const headerLink = f.page.locator('header.kit-bar-root a[href*=notifications]');
         assert.equal(await headerLink.getAttribute('href'), '#!action=notifications', 'Devices has a Notifications link that does not depend on a card');
-        assert.equal(await headerLink.locator('.notification-unread-count').textContent(), '1', 'the header shows the total unread count');
+        assert.equal(await headerLink.locator('.kit-badge').textContent(), '1', 'the header shows the total unread count');
         const card = id => f.page.locator(`article.device[data-device-key$=":${id}"]`);
         await card('phone-b').locator('.device-notification-history').waitFor();
-        assert.equal(await card('phone-a').locator('.notification-unread-count').count(), 0);
-        assert.equal(await card('phone-b').locator('.notification-unread-count').textContent(), '1');
+        assert.equal(await card('phone-a').locator('.kit-badge').count(), 0);
+        assert.equal(await card('phone-b').locator('.kit-badge').textContent(), '1');
         // An iPhone that does not send notifications here has no inbox, so its card has no button.
         await card('phone-c').waitFor();
         assert.equal(await card('phone-c').locator('.device-notification-history').count(), 0, 'an unconfigured device offers no inbox');
@@ -1072,7 +1072,7 @@ async function openScreenFromInbox(browser) {
         await back.waitFor();
         assert.equal(await back.getAttribute('href'), '#!action=notifications&source=phone-a');
         await f.page.waitForFunction(() => document.querySelector('.kit-bar .notifications-link')?.getAttribute('aria-label') === 'Notifications, 2 unread');
-        assert.equal(await back.locator('.notification-unread-count').textContent(), '2');
+        assert.equal(await back.locator('.kit-badge').textContent(), '2');
         await back.click();
         await f.page.locator('#notification-history-heading').waitFor();
         // A mouse double-click on a card opens it too.
@@ -2025,7 +2025,7 @@ async function sharedHeader(browser) {
             await backControl(page).click();
             await page.locator('#devices').waitFor();
             assert.equal(await page.evaluate(() => location.hash), '#!');
-            await page.locator('.device-list-header .notifications-link').click();
+            await page.locator('header.kit-bar-root .notifications-link').click();
             await article(page, 'Message 1').waitFor();
             await page.locator('.notification-history-device-row').getByRole('link', { name: 'Open screen', exact: true }).click();
             await page.locator('.stream-view').waitFor();
@@ -2161,7 +2161,7 @@ async function viewStateInAddress(browser) {
         // An inbox opened from the list starts at the top.
         await backControl(page).click();
         await page.locator('#devices').waitFor();
-        await page.locator('.device-list-header .notifications-link').click();
+        await page.locator('header.kit-bar-root .notifications-link').click();
         await article(page, 'Message 1').waitFor();
         assert.equal(await main.evaluate(el => el.scrollTop), 0);
         assert.equal(await shown(), 25);

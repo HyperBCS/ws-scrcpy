@@ -4,9 +4,11 @@ import { signal } from '@preact/signals';
 import type { AudioPlaybackStatus, AudioSession } from '../state/audio';
 import { Disclosure } from '../ui/AnimatedDetails';
 import { AppBar, AppBarStatus } from '../ui/AppBar';
+import { Badge } from '../ui/Badge';
 import { Banner } from '../ui/Banner';
 import { Button, buttonClass, ButtonVariant } from '../ui/Button';
 import { Checkbox } from '../ui/Checkbox';
+import { Chip, chipClass } from '../ui/Chip';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { SelectField, TextAreaField, TextField } from '../ui/Field';
 import { Icon } from '../ui/Icon';
@@ -214,6 +216,54 @@ function IconButtons() {
                 </Refusal>
             </Demo>
         </Section>
+    );
+}
+
+function ChipsAndBadges() {
+    return (
+        <>
+            <Section title="Chip">
+                <Demo name="tones">
+                    <Chip tone="success">Ready</Chip>
+                    <Chip tone="info">Viewing</Chip>
+                    <Chip>Offline</Chip>
+                    <Chip tone="warning">Needs attention</Chip>
+                    <Chip tone="error">Error</Chip>
+                </Demo>
+                <Demo name="from a string">
+                    <div
+                        class="kit-demo-html"
+                        dangerouslySetInnerHTML={{ __html: `<span class="${chipClass('info')}">Locked</span>` }}
+                    />
+                </Demo>
+            </Section>
+            <Section title="Badge">
+                <Demo name="on an icon button">
+                    <a
+                        class={iconButtonClass()}
+                        href="#!action=kit"
+                        title="Notifications"
+                        aria-label="Notifications, 5 unread"
+                    >
+                        <Icon name="bell" />
+                        <Badge count={5} />
+                    </a>
+                    <a
+                        class={iconButtonClass({ variant: 'bare' })}
+                        href="#!action=kit"
+                        title="Notifications"
+                        aria-label="Notifications, 120 unread"
+                    >
+                        <Icon name="bell" />
+                        <Badge count={120} />
+                    </a>
+                    <a class={iconButtonClass()} href="#!action=kit" title="Notifications" aria-label="Notifications">
+                        <Icon name="bell" />
+                        <Badge count={0} />
+                    </a>
+                </Demo>
+            </Section>
+        </>
     );
 }
 
@@ -787,6 +837,7 @@ export function KitPage() {
                 </header>
                 <Buttons />
                 <IconButtons />
+                <ChipsAndBadges />
                 <Icons />
                 <Fields />
                 <Switches />

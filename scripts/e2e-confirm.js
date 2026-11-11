@@ -95,7 +95,7 @@ async function start(browser, { mobile = true, dark = false, device = iphone(), 
 const prompt = (scope, name) => scope.getByRole('alertdialog', { name, exact: true });
 // The buttons of a prompt, in the kit look (the sheets) and in the older one (the cards).
 const PROMPT_BUTTONS = '.confirm-prompt-button, .kit-confirm-actions .kit-button';
-const READY_PROMPT_BUTTON = '.confirm-prompt-button:not([aria-disabled]), .kit-confirm-actions .kit-button:not([aria-disabled])';
+const READY_PROMPT_BUTTON = '.confirm-prompt-button:not([aria-disabled]), .kit-confirm-go:not([aria-disabled])';
 const READY_DANGER_BUTTON = '.confirm-prompt-button.danger:not([aria-disabled]), .kit-confirm-danger .kit-confirm-go:not([aria-disabled])';
 // A trigger can share its name with the confirm button it arms ("Reboot"); this is the trigger.
 const trigger = (scope, name) =>
@@ -368,7 +368,12 @@ async function deviceCards(browser, mobile) {
             await confirmAfterGuard(dialog, confirmLabel);
             await dialog.waitFor({ state: 'detached' });
             assert.equal(ofType(type).length, 1, `${name} is sent once after confirming`);
-            if (type !== 'kill_server') await card.getByText('Fixture done.', { exact: true }).waitFor();
+            if (type !== 'kill_server') {
+                await card.getByText('Fixture done.', { exact: true }).waitFor();
+                // The outcome is the status line under the row whose button was pressed.
+                const outcome = trouble.locator(`.device-trouble-row:has(> [aria-label="${name}"]) + .kit-status`);
+                assert.equal(await outcome.textContent(), 'Fixture done.', `${name}: the outcome is under its row`);
+            }
         }
         assert.deepEqual(ofType('kill_server')[0].data, { udid: UDID, pid: 1 });
 

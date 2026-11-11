@@ -5,7 +5,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const { fixture, UDID } = require('./e2e-settings');
-const { gesture, initialStreamPacket, settle } = require('./e2e-sheets');
+const { gesture, initialStreamPacket } = require('./e2e-sheets');
+// Waits for the sheet's own motion, whatever element carries it.
+const { settleMotion: settle } = require('./ui-motion');
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-switcher';
 const descriptors = Array.from({ length: 28 }, (_, index) => ({
@@ -21,11 +23,14 @@ const descriptors = Array.from({ length: 28 }, (_, index) => ({
     'screen.power': 'on',
     'device.awake': true,
 }));
+// The switcher is the kit sheet: a native dialog. Below 600px it is a bottom sheet with a
+// handle to drag; from 600px it is a centred dialog, whatever the pointer.
+const SHEET = 'dialog.kit-sheet[open]';
 async function checkGeometry(page) {
-    const result = await page.locator('.bottom-sheet-root.open').evaluate((root) => {
+    const result = await page.locator(SHEET).evaluate((root) => {
         const list = root.querySelector('.device-switcher-list');
-        const body = root.querySelector('.bottom-sheet-body');
-        const panel = root.querySelector('.bottom-sheet');
+        const body = root.querySelector('.kit-sheet-body');
+        const panel = root.querySelector('.kit-sheet-panel');
         const bounds = list.getBoundingClientRect();
         list.scrollLeft = 100;
         return {
@@ -96,25 +101,33 @@ async function main() {
             await page.locator('.touch-layer').waitFor({ state: 'visible' });
             const trigger = page.getByRole('button', { name: 'Switch', exact: true });
             await trigger.click();
-            const root = page.locator('.bottom-sheet-root.open');
+            const root = page.locator(SHEET);
             await root.waitFor();
             await settle(page);
             const list = root.locator('.device-switcher-list');
             const search = page.getByRole('searchbox', { name: 'Find a device to switch to' });
             await page.waitForFunction(() => document.querySelectorAll('.device-switcher-list button').length === 28);
             await checkGeometry(page);
-            // The search field is one 48px row: it used to take a 220px flex-basis as its height.
+            assert.equal(await root.getAttribute('role'), 'dialog', `${label}: the sheet is a dialog`);
+            assert.equal(await root.evaluate((el) => document.getElementById(el.getAttribute('aria-labelledby')).textContent), 'Switch device', `${label}: the dialog is named by its title`);
+            // The search field is the kit's field, one 44px row: it once took a 220px flex-basis as its height.
             const field = await root.locator('.device-switcher-search').boundingBox();
             const firstRow = await list.locator('button').first().boundingBox();
-            assert.ok(Math.abs(field.height - 48) <= 1, `${label}: the search field is 48px tall, not ${field.height}`);
+            assert.ok(Math.abs(field.height - 44) <= 1, `${label}: the search field is 44px tall, not ${field.height}`);
             assert.ok(field.height < firstRow.height, `${label}: search is shorter than a device row`);
-            assert.equal(await root.locator('.device-switcher-search svg').count(), 1, 'the search icon is drawn, not a text glyph');
+            assert.equal(await search.evaluate((el) => el.matches('input.kit-field') && getComputedStyle(el).fontSize), '16px', `${label}: the search field is the kit field, at 16px`);
+            assert.equal(await root.locator('.device-switcher-search svg.kit-icon').count(), 1, 'the search icon is the kit icon, not a text glyph');
+            assert.ok(firstRow.height >= 56, `${label}: a row is at least 56px tall (${firstRow.height})`);
+            const sizes = await root.evaluate((el) => [...new Set([...el.querySelectorAll('.kit-sheet-title, .device-switcher-item strong, .device-switcher-item small, .device-switcher-status, .kit-chip')].map((node) => getComputedStyle(node).fontSize))].sort());
+            assert.deepEqual(sizes.filter((size) => !['12px', '13px', '15px', '20px'].includes(size)), [], `${label}: the switcher's text is on the type scale`);
+            assert.equal(await list.locator('button[aria-current="true"] .kit-chip').textContent(), 'Viewing', `${label}: the phone on screen is marked with a chip`);
+            assert.doesNotMatch(await list.textContent(), /[→←]/, `${label}: no arrow glyph in a row`);
             assert.equal(await list.getAttribute('tabindex'), null, 'the list is not a tab stop of its own');
             // With a mouse and keyboard the search field has focus; a touch screen keeps its keyboard down.
             await page.waitForTimeout(80);
             assert.equal(await search.evaluate((el) => el === document.activeElement), !touch, `${label}: search focus on open`);
             const searchStart = await search.boundingBox();
-            const headerStart = await root.locator('.bottom-sheet-header').boundingBox();
+            const headerStart = await root.locator('.kit-sheet-header').boundingBox();
             const listBox = await list.boundingBox();
             const beforeTouches = messages.filter((packet) => packet[0] === 2).length;
             if (touch)
@@ -132,12 +145,12 @@ async function main() {
             assert(await list.evaluate((el) => el.scrollTop > 50), 'native gesture/wheel advances device rows');
             assert.equal((await search.boundingBox()).y, searchStart.y, 'search remains fixed while rows scroll');
             assert.equal(
-                (await root.locator('.bottom-sheet-header').boundingBox()).y,
+                (await root.locator('.kit-sheet-header').boundingBox()).y,
                 headerStart.y,
                 'header remains fixed',
             );
             assert.equal(
-                await root.locator('.bottom-sheet-body').evaluate((el) => el.scrollTop),
+                await root.locator('.kit-sheet-body').evaluate((el) => el.scrollTop),
                 0,
                 'only list scrolls',
             );
@@ -178,6 +191,11 @@ async function main() {
                 await search.evaluate((el) => document.activeElement !== el),
                 'Search action dismisses the phone keyboard',
             );
+            // Focus stays in the dialog, where the sheet hears Escape; the page behind is inert.
+            assert(
+                await root.evaluate((el) => el.contains(document.activeElement)),
+                `${label}: focus stays in the sheet when Search finds nothing to open`,
+            );
             assert.equal(await list.locator('button').count(), 1, 'search filters without scrolling page');
             assert.equal(await list.evaluate((el) => el.scrollTop), 0, 'search resets list to its first result');
             await search.fill('no matching device');
@@ -197,9 +215,20 @@ async function main() {
             await root.waitFor();
             await settle(page);
             assert.equal(await list.evaluate((el) => el.scrollTop), 0, 'reopening begins at top');
-            if (touch) {
-                const handle = await root.locator('.bottom-sheet-handle').boundingBox();
-                await gesture(cdp, { x: handle.x + handle.width / 2, y: handle.y + 2 }, 0, 130);
+            // The browser's Back closes the sheet and leaves the page where it was.
+            const address = await page.evaluate(() => location.href);
+            await page.goBack();
+            await root.waitFor({ state: 'hidden' });
+            assert.equal(await page.evaluate(() => location.href), address, `${label}: Back closes the sheet and stays on the phone's page`);
+            await trigger.click();
+            await root.waitFor();
+            await settle(page);
+            // A bottom sheet is dragged down by its header. A dialog has no handle; Escape closes it.
+            const handle = root.locator('.kit-sheet-handle');
+            assert.equal(await handle.isVisible(), width < 600, `${label}: the handle shows on a bottom sheet only`);
+            if (touch && width < 600) {
+                const box = await handle.boundingBox();
+                await gesture(cdp, { x: box.x + box.width / 2, y: box.y + 2 }, 0, 130);
             } else await page.keyboard.press('Escape');
             await root.waitFor({ state: 'hidden' });
             assert.equal(
@@ -284,7 +313,7 @@ async function main() {
             console.log(
                 'PASS',
                 label,
-                'native list scroll, final row, 48px sticky search, filtering, keyboard, Close/drag and remote isolation',
+                'native list scroll, final row, kit search field, filtering, keyboard, Back, Close/drag and remote isolation',
             );
         }
     } finally {

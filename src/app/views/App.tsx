@@ -96,28 +96,15 @@ export function App() {
                 `state/settingsSheet.ts`. */}
             <ErrorBoundary
                 fallback={(reset) => (
-                    <div class="screen-failed notice" role="alert">
-                        <h1>This panel failed</h1>
-                        <div class="screen-failed-actions">
-                            <button
-                                type="button"
-                                class="screen-failed-button primary"
-                                onClick={() => location.reload()}
-                            >
-                                Reload
-                            </button>
-                            <button
-                                type="button"
-                                class="screen-failed-button"
-                                onClick={() => {
-                                    closeAllSheets();
-                                    reset();
-                                }}
-                            >
-                                Dismiss
-                            </button>
-                        </div>
-                    </div>
+                    <ScreenFailed
+                        notice
+                        title="This panel failed"
+                        backLabel="Dismiss"
+                        onBack={() => {
+                            closeAllSheets();
+                            reset();
+                        }}
+                    />
                 )}
             >
                 <SettingsSheet />

@@ -1,14 +1,16 @@
 // Run with: node --test scripts/test-home.js
 // The Devices page, its cards and the device switcher, without a browser: names and tab titles,
 // the Notifications target, the attention and error statuses, the switcher keys, the tool filter,
-// and the installed-app name and colours. scripts/e2e-home.js and scripts/e2e-switcher.js cover
-// the same changes in a browser.
+// the installed-app name and colours, and what the list takes from the kit: the status chip, the
+// unread badge, kit buttons, icons and messages. scripts/e2e-home.js and scripts/e2e-switcher.js
+// cover the same changes in a browser.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
 
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
+require.extensions['.css'] = () => {};
 global.location = new URL('http://localhost:8000/');
 
 const {
@@ -28,6 +30,8 @@ const {
 } = require('../src/app/state/deviceStatus');
 const { isSwitcherShortcut, nextHighlight } = require('../src/app/state/switcherKeys');
 const view = require('../src/app/state/deviceListView');
+const { Chip, chipClass } = require('../src/app/ui/Chip');
+const { Badge, badgeText } = require('../src/app/ui/Badge');
 
 const root = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -295,12 +299,109 @@ test('the installed app has one name and the colours of the page', () => {
     assert.equal(target.hash, '#!action=notifications');
 });
 
-test('the switcher search styles live with the switcher and have a fixed height', () => {
+test('the switcher is on the kit sheet, and its search field is the kit field', () => {
     const list = read('src/style/views/DeviceList.css');
     const switcher = read('src/style/views/DeviceSwitcherSheet.css');
+    const source = read('src/app/views/DeviceSwitcherSheet.tsx');
     assert.equal(/\.device-search\b/.test(list), false, 'Devices has no search field, so no search rule');
+    // The search row keeps its own height inside the column: it once took a flex-basis as height.
     const rule = switcher.match(/\.device-switcher-search \{([^}]*)\}/)?.[1] || '';
     assert.match(rule, /flex:\s*0 0 auto;/);
-    assert.match(rule, /height:\s*48px;/);
-    assert.equal(/class="device-search/.test(read('src/app/views/DeviceSwitcherSheet.tsx')), false);
+    assert.equal(/height:/.test(rule), false, 'the height is the kit field\'s, not a number of its own');
+    assert.match(source, /<input\s+ref=\{searchRef\}\s+class="kit-field"\s+type="search"/);
+    assert.equal(/class="device-search/.test(source), false);
+    assert.match(source, /from '\.\.\/ui\/Sheet'/);
+    assert.equal(/BottomSheet|bottom-sheet/.test(source + switcher), false, 'nothing of the older sheet is left');
+});
+
+test('a status is words and a chip tone, with no glyph and no colour of its own', () => {
+    const schedule = { enabled: true, time: '03:00', hasPasscode: false };
+    const cases = {
+        ready: [android('A'), 'Ready', 'success'],
+        asleep: [android('B', { 'screen.power': 'off' }), 'Asleep', 'info'],
+        locked: [android('C', { 'device.locked': true }), 'Locked', 'info'],
+        offline: [android('D', { state: 'offline' }), 'Offline', 'neutral'],
+        unauthorized: [android('E', { state: 'unauthorized' }), 'Unauthorized', 'error'],
+        starting: [iphone('F', { session: 'starting' }), 'Starting…', 'warning'],
+        streaming: [iphone('G', { session: 'ready' }), 'Streaming', 'info'],
+        attention: [iphone('H', { unlockSchedule: schedule }), 'Needs attention', 'warning'],
+        error: [iphone('I', { session: 'error' }), 'Error', 'error'],
+    };
+    for (const [status, [entry, label, tone]] of Object.entries(cases)) {
+        const info = getDeviceStatusInfo(entry);
+        assert.deepEqual(info, { status, label, tone }, status);
+        assert.match(info.label, /^[A-Z][a-z]+( [a-z]+)?…?$/, `${status} is said in words`);
+    }
+    assert.equal(/icon:|color:|[▶●▣☾◐○⚠✕]/.test(read('src/app/state/deviceStatus.ts')), false, 'the status module holds no glyph or colour');
+});
+
+test('the status chip and the unread badge of the kit', () => {
+    assert.equal(chipClass(), 'kit-chip');
+    assert.equal(chipClass('neutral'), 'kit-chip');
+    for (const tone of ['success', 'info', 'warning', 'error']) assert.equal(chipClass(tone), `kit-chip kit-chip-${tone}`);
+    const chip = Chip({ tone: 'warning', class: 'device-status', attributes: { 'data-status': 'attention' }, children: 'Needs attention' });
+    assert.equal(chip.type, 'span');
+    assert.equal(chip.props.class, 'kit-chip kit-chip-warning device-status');
+    assert.equal(chip.props['data-status'], 'attention');
+    assert.equal(chip.props.children, 'Needs attention');
+    const chipRules = read('src/style/kit/Chip.css');
+    for (const tone of ['success', 'info', 'warning', 'error']) assert.match(chipRules, new RegExp(`\\.kit-chip-${tone} \\{`), `${tone} has a rule`);
+    assert.match(chipRules, /font-size: var\(--font-size-12\);/);
+
+    assert.equal(badgeText(0), '');
+    assert.equal(badgeText(-1), '');
+    assert.equal(badgeText(1), '1');
+    assert.equal(badgeText(99), '99');
+    assert.equal(badgeText(100), '99+');
+    assert.equal(Badge({ count: 0 }), null, 'nothing is drawn for zero');
+    const badge = Badge({ count: 120 });
+    assert.equal(badge.props.class, 'kit-badge');
+    assert.equal(badge.props.children, '99+');
+    // The control it sits on says the count in its name, so the badge is not read out twice.
+    assert.equal(badge.props['aria-hidden'], 'true');
+    const bell = read('src/app/ui/NotificationsLink.tsx');
+    assert.match(bell, /aria-label=\{unread \? `Notifications, \$\{unread\} unread` : 'Notifications'\}/);
+    assert.match(bell, /<Badge count=\{unread\} \/>/);
+    assert.match(bell, /iconButtonClass\(/);
+});
+
+test('the list, its cards, the switcher and the notices take their controls, icons and messages from the kit', () => {
+    const views = ['src/app/views/DeviceList.tsx', 'src/app/views/DeviceCard.tsx', 'src/app/views/DeviceSwitcherSheet.tsx'];
+    const parts = ['AsleepBanner', 'StreamServiceStatus', 'TrackerStatusNotice', 'ErrorBoundary', 'NotificationsLink', 'DeviceIcon'].map(
+        (name) => `src/app/ui/${name}.tsx`,
+    );
+    for (const file of [...views, ...parts]) {
+        const source = read(file);
+        assert.equal(/<svg\b/.test(source), false, `${file} draws no icon of its own`);
+        assert.equal(/<button\b[^>]*class=/.test(source.replace(/class=\{`device-switcher-item[^`]*`\}/, '')), false, `${file} has no button look of its own`);
+        assert.equal(/[☾⚠✕▶●▣◐○→←]/.test(source.replace(/\/\/.*|\/\*[\s\S]*?\*\//g, '')), false, `${file} has no text glyph`);
+        assert.equal(/ui-button|action-button|wake-button|device-problem-action|screen-failed-button|control-button/.test(source), false, `${file} uses no older button class`);
+    }
+    const styles = [
+        'src/style/views/DeviceList.css', 'src/style/views/DeviceSwitcherSheet.css', 'src/style/ui/StreamServiceStatus.css',
+        'src/style/ui/ErrorBoundary.css', 'src/style/ui/NotificationsLink.css', 'src/style/ui/DeviceIcon.css',
+    ];
+    for (const file of styles) {
+        const rules = read(file);
+        assert.equal(/\.(ui-button|desc-block|action-button|wake-button|device-problem-action|screen-failed-button|control-button)\b/.test(rules), false, `${file} styles no button of its own`);
+        assert.equal(/content:\s*'[^']/.test(rules), false, `${file} draws no glyph`);
+        assert.equal(/--(device|text-color|main-bg|status-|button-|control-border|header-bg|radius-control|radius-panel|accent-solid|progress)/.test(rules), false, `${file} reads role tokens only`);
+    }
+    for (const gone of ['src/style/ui/AsleepBanner.css', 'src/style/ui/TrackerStatusNotice.css']) {
+        assert.equal(fs.existsSync(path.join(root, gone)), false, `${gone} is deleted`);
+    }
+    // The header of the list is the kit bar, with the bell and Reload as icon buttons.
+    const list = read('src/app/views/DeviceList.tsx');
+    assert.match(list, /<AppBar\s+kit\s+root\s+title=\{LIST_PAGE_NAME\}/);
+    assert.match(list, /<IconButton icon="refresh" label="Reload"/);
+    // Messages: a banner for a condition, a status line under the control for an outcome.
+    assert.match(read('src/app/ui/AsleepBanner.tsx'), /<Banner tone="info" action=/);
+    assert.match(read('src/app/ui/AsleepBanner.tsx'), /<InlineStatus tone="error">Could not wake the screen\./);
+    assert.match(read('src/app/ui/TrackerStatusNotice.tsx'), /<Banner>/);
+    const card = read('src/app/views/DeviceCard.tsx');
+    assert.equal(/device-unavailable-hint/.test(card), false, 'the grey paragraph for every outcome is gone');
+    for (const place of ['developer-mode', 'restart-problem', 'refresh', 'restart', 'remount']) {
+        assert.match(card, new RegExp(`\\{feedbackAt\\('${place}'\\)\\}`), `the outcome of ${place} shows under its control`);
+    }
+    assert.equal((card.match(/<ConfirmPrompt\b/g) || []).length, (card.match(/<ConfirmPrompt\s+kit\b/g) || []).length, 'every prompt on a card is the kit prompt');
 });

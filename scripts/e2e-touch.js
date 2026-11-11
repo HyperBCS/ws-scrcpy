@@ -68,7 +68,7 @@ async function main() {
     // check, measured rather than eyeballed.
     const targets = await page.evaluate(() => {
         const out = [];
-        document.querySelectorAll('#devices .desc-block, #devices .wake-button').forEach((el) => {
+        document.querySelectorAll('#devices .desc-block, #devices .device-asleep-banner .kit-button').forEach((el) => {
             const r = el.getBoundingClientRect();
             out.push({ text: (el.innerText || '').trim().slice(0, 28), w: Math.round(r.width), h: Math.round(r.height) });
         });

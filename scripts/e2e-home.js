@@ -2,7 +2,9 @@
 // node scripts/test-browser.js home
 // The Devices page, its cards and the screen headers, against socket fixtures: the Notifications
 // entry, one device name and one tab-title format, attention and error states, the action row,
-// scroll and disclosure restore, and the refusal of tool links that name an iPhone.
+// scroll and disclosure restore, and the refusal of tool links that name an iPhone. The list is
+// also measured against the kit: the type scale, kit buttons at their heights, the kit bar with
+// one h1, status as a chip with words, and the unread count as a badge.
 // No device, adb or pymobiledevice3 is involved.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -97,6 +99,8 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
 }
 
 const card = (page, key) => page.locator(`article.device[data-device-key="${key}"]`);
+// The bar of the list: the kit bar in its root form.
+const HEADER = 'header.kit-bar.kit-bar-root';
 const noOverflow = (page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
 
 /** WCAG contrast of an element's text on its own background, composited over what is behind it. */
@@ -129,23 +133,23 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
     const { page } = test;
     try {
         await card(page, 'ios:HOME-IPHONE-START').waitFor();
-        await page.locator('.device-list-header .notification-unread-count').waitFor();
+        await page.locator(`${HEADER} .kit-badge`).waitFor();
         await settleMotion(page);
         assert.equal(await page.title(), 'Phones · ws-scrcpy');
 
         // Header: a Notifications entry with the total unread count, and a reload control.
-        const header = page.locator('.device-list-header');
+        const header = page.locator(HEADER);
         const inbox = header.getByRole('link', { name: 'Notifications, 5 unread', exact: true });
         assert.equal(await inbox.getAttribute('href'), '#!action=notifications');
-        assert.equal(await inbox.locator('.notification-unread-count').textContent(), '5');
-        assert.equal(await inbox.locator('.notifications-link-label').isVisible(), width >= 480, 'the word shows where there is room');
+        assert.equal(await inbox.locator('.kit-badge').textContent(), '5');
         const reload = header.getByRole('button', { name: 'Reload', exact: true });
         for (const control of [inbox, reload]) {
             const box = await control.boundingBox();
             assert.ok(box.width >= 44 && box.height >= 44, `${label}: header controls keep a 44px target`);
         }
-        const pill = header.locator('.device-list-summary');
+        const pill = header.locator('.kit-bar-status');
         assert.equal((await pill.textContent()).trim(), '9 available · 3 need attention');
+        assert.equal(await pill.getAttribute('role'), 'status');
         const title = await header.getByRole('heading', { name: 'Phones', exact: true }).boundingBox();
         assert.ok(Math.abs((await inbox.boundingBox()).y + 22 - (title.y + title.height / 2)) < 16, `${label}: the actions sit on the heading row`);
         assert.equal(await noOverflow(page), true, `${label}: no horizontal page scroll`);
@@ -160,7 +164,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         };
         for (const [key, status] of Object.entries(expected)) {
             const badge = card(page, key).locator('.device-status');
-            assert.equal(await badge.locator('.device-status-label').textContent(), status, key);
+            assert.equal(await badge.textContent(), status, key);
             const { ratio, size } = await contrastOf(badge);
             assert.ok(size >= 12, `${label} ${status}: status text is ${size}px`);
             assert.ok(ratio >= 4.5, `${label} ${status}: status contrast is ${ratio.toFixed(2)}`);
@@ -216,8 +220,8 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         // A failed session: the message as a problem line with one action, confirmed.
         const failed = card(page, 'ios:HOME-IPHONE-ERROR');
         const line = failed.locator('.device-problem[data-problem="session"]');
-        assert.equal(await line.locator('.device-problem-text').textContent(), 'The screen stream ended.');
-        assert.ok((await contrastOf(line.locator('.device-problem-text'))).ratio >= 4.5, `${label}: the error line is readable`);
+        assert.equal(await line.locator('.kit-banner-text').textContent(), 'The screen stream ended.');
+        assert.ok((await contrastOf(line.locator('.kit-banner-text'))).ratio >= 4.5, `${label}: the error line is readable`);
         assert.notEqual(
             await line.evaluate((el) => getComputedStyle(el).color),
             await failed.locator('.device-meta').evaluate((el) => getComputedStyle(el).color),
@@ -228,10 +232,15 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         await prompt.waitFor();
         assert.equal(await failed.locator('.device-details').evaluate((el) => el.open), false, 'the prompt shows without opening Details');
         assert.equal(test.commands.filter((command) => command.type === 'restart_session').length, 0, 'the first press sends nothing');
-        await prompt.locator('.confirm-prompt-button:not([aria-disabled])').first().waitFor();
+        await prompt.locator('.kit-confirm-go:not([aria-disabled])').waitFor();
         await prompt.getByRole('button', { name: 'Restart services', exact: true }).click();
-        await page.waitForFunction(() => !document.querySelector('.confirm-prompt'));
+        await page.waitForFunction(() => !document.querySelector('.kit-confirm'));
         assert.deepEqual(test.commands.filter((command) => command.type === 'restart_session').map((command) => command.data.udid), ['HOME-IPHONE-ERROR']);
+        // The outcome is a status line directly under the line whose button was pressed, not a
+        // grey paragraph further down the card.
+        const outcome = failed.locator('.device-problem[data-problem="session"] + .kit-status');
+        assert.equal(await outcome.textContent(), 'Restarting services…', `${label}: the outcome is under the control that caused it`);
+        assert.equal(await failed.locator('.kit-status').count(), 1, `${label}: the outcome shows once`);
 
         // A failed scheduled unlock: a problem line whose action opens the settings panel.
         const unlock = card(page, 'ios:HOME-IPHONE-UNLOCK');
@@ -258,6 +267,151 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
     }
 }
 
+/**
+ * The list measured against the kit, with the details of an Android and an iPhone card open:
+ * what a person can read and press on the page, as a list of faults.
+ */
+function auditList({ mobile }) {
+    const faults = [];
+    const page = document.querySelector('.devices-page');
+    const shown = (element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden';
+    const name = (element) => {
+        const key = element.closest('[data-device-key]')?.getAttribute('data-device-key') || 'page';
+        const text = (element.getAttribute('aria-label') || element.textContent || '').trim().slice(0, 40);
+        return `${key} / ${element.tagName.toLowerCase()}.${String(element.getAttribute('class') || '').split(' ')[0]} "${text}"`;
+    };
+    // Type: every piece of text is on the scale, and nothing is under 12px.
+    const SCALE = [12, 13, 15, 17, 20, 24];
+    for (const element of page.querySelectorAll('*')) {
+        if (element.closest('svg') || !shown(element)) continue;
+        const hasText = [...element.childNodes].some((node) => node.nodeType === 3 && node.textContent.trim());
+        if (!hasText) continue;
+        const size = parseFloat(getComputedStyle(element).fontSize);
+        if (!SCALE.includes(size)) faults.push(`${size}px is not on the type scale: ${name(element)}`);
+    }
+    // Controls: every button and link that looks like one is the kit's, at the kit's height.
+    for (const element of page.querySelectorAll('button, a[href]')) {
+        if (!shown(element)) continue;
+        const kit = element.matches('.kit-button, .kit-icon-button');
+        if (!kit) faults.push(`not a kit button: ${name(element)}`);
+        const compact = element.matches('.kit-button-compact, .kit-icon-button-compact');
+        const expected = compact && !mobile ? 32 : 44;
+        const { width, height } = element.getBoundingClientRect();
+        // A line of words in place of Open screen may wrap; it is never shorter.
+        const tall = element.matches('.stream.unavailable') ? height >= expected : Math.abs(height - expected) < 0.5;
+        if (kit && !tall) faults.push(`${height}px high, not ${expected}px: ${name(element)}`);
+        if (element.matches('.kit-icon-button') && Math.abs(width - expected) >= 0.5) faults.push(`not square: ${name(element)}`);
+        const label = (element.getAttribute('aria-label') || element.textContent || '').trim();
+        if (!label) faults.push(`a control without a name: ${name(element)}`);
+    }
+    for (const summary of page.querySelectorAll('summary')) {
+        if (!summary.closest('.kit-disclosure')) faults.push(`not the kit disclosure: ${name(summary)}`);
+        if (summary.getBoundingClientRect().height < 44) faults.push(`under 44px: ${name(summary)}`);
+    }
+    // The header is the kit bar, with the page's one h1.
+    const bars = document.querySelectorAll('header');
+    if (bars.length !== 1 || !bars[0].matches('.kit-bar.kit-bar-root')) faults.push('the header is not the kit bar of the list');
+    const headings = [...document.querySelectorAll('h1')].map((heading) => heading.textContent);
+    if (headings.join('|') !== 'Phones') faults.push(`the page has these h1: ${headings.join('|') || 'none'}`);
+    // A status is a chip with words, never a glyph alone.
+    for (const item of page.querySelectorAll('article.device')) {
+        const chips = item.querySelectorAll('.device-header .kit-chip');
+        if (chips.length !== 1) faults.push(`${chips.length} status chips: ${name(item)}`);
+        else if (!/^[A-Za-z][A-Za-z ]{3,}…?$/.test(chips[0].textContent)) faults.push(`a status without words: "${chips[0].textContent}"`);
+    }
+    // Text glyphs that stood in for icons.
+    const glyphs = page.textContent.match(/[☾⚠✕▶●▣◐○→←]/g);
+    if (glyphs) faults.push(`text glyphs in place of icons: ${[...new Set(glyphs)].join(' ')}`);
+    // The unread count is a badge on the bell, and the bell's name says the count.
+    const bell = document.querySelector('header .notifications-link');
+    const badge = bell?.querySelector('.kit-badge');
+    if (!bell?.matches('a.kit-icon-button')) faults.push('the bell is not a kit icon button');
+    if (bell?.getAttribute('aria-label') !== 'Notifications, 5 unread') faults.push(`the bell is named "${bell?.getAttribute('aria-label')}"`);
+    if (badge?.textContent !== '5' || badge.getAttribute('aria-hidden') !== 'true') faults.push('the unread count is not a badge inside the named bell');
+    if (document.documentElement.scrollWidth > innerWidth + 1) faults.push('the page scrolls sideways');
+    return faults;
+}
+
+async function kitList(browser, { width, height, mobile, colorScheme }) {
+    const label = `${width}-${colorScheme}`;
+    const test = await start(browser, { width, height, mobile, colorScheme });
+    const { page } = test;
+    try {
+        await card(page, 'ios:HOME-IPHONE-START').waitFor();
+        await page.locator(`${HEADER} .kit-badge`).waitFor();
+        for (const key of ['android:HOME-PIXEL-0001', `ios:${LINKED}`]) {
+            await card(page, key).locator('summary').evaluate((el) => el.click());
+            await page.waitForFunction((key) => document.querySelector(`[data-device-key="${key}"] .device-details`).open, key);
+        }
+        await settleMotion(page);
+        assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), mobile, `${label}: the pointer of the context`);
+        assert.deepEqual(await page.evaluate(auditList, { mobile }), [], `${label}: the list against the kit`);
+        // Focus shows the token's ring on a kit control of the bar and of a card.
+        if (!mobile) {
+            const ring = await page.evaluate(() => {
+                const probe = document.createElement('span');
+                probe.style.outline = 'var(--focus-ring)';
+                document.body.append(probe);
+                const value = getComputedStyle(probe).outlineColor;
+                probe.remove();
+                return value;
+            });
+            await page.keyboard.press('Tab');
+            for (let step = 0; step < 4; step++) {
+                const focus = await page.evaluate(() => {
+                    const style = getComputedStyle(document.activeElement);
+                    return { name: document.activeElement.getAttribute('aria-label') || document.activeElement.textContent, style: style.outlineStyle, width: style.outlineWidth, colour: style.outlineColor };
+                });
+                assert.deepEqual([focus.style, focus.width, focus.colour], ['solid', '2px', ring], `${label}: the focus ring on "${focus.name}"`);
+                await page.keyboard.press('Tab');
+            }
+        }
+        await page.screenshot({ path: path.join(OUT, `kit-list-${label}.png`), fullPage: true });
+        assert.deepEqual(test.errors, []);
+        console.log('PASS', label, 'the list on the kit: type scale, kit buttons and heights, kit bar with one h1, status chips, unread badge');
+    } finally {
+        await test.context.close();
+    }
+}
+
+/**
+ * A phone with a notch, emulated: the bar's fill reaches the top and the sides of the window,
+ * what is in the bar and in the list keeps clear of the notch, and the list ends above the home
+ * indicator. A real phone still has to show this.
+ */
+async function notchedList(browser) {
+    const insets = { top: 47, left: 44, right: 44, bottom: 21 };
+    const test = await start(browser, { width: 844, height: 390, mobile: true });
+    const { page } = test;
+    try {
+        const cdp = await test.context.newCDPSession(page);
+        await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets });
+        await page.reload();
+        await card(page, 'ios:HOME-IPHONE-START').waitFor();
+        await settleMotion(page);
+        const seen = await page.evaluate((HEADER) => {
+            const box = (element) => { const r = element.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
+            const bar = document.querySelector(HEADER);
+            return {
+                bar: box(bar), title: box(bar.querySelector('h1')), reload: box(bar.querySelector('button')),
+                list: box(document.querySelector('#devices')), card: box(document.querySelector('article.device')),
+            };
+        }, HEADER);
+        assert.deepEqual([seen.bar.left, seen.bar.top, seen.bar.right], [0, 0, 844], 'the bar reaches the top and the sides');
+        assert.ok(seen.title.top >= insets.top && seen.title.left >= insets.left, `the title is clear of the notch ${JSON.stringify(seen.title)}`);
+        assert.ok(seen.reload.top >= insets.top && seen.reload.right <= 844 - insets.right, `Reload is clear of the notch ${JSON.stringify(seen.reload)}`);
+        // The bar is about 61px high: its two lines of text, its padding and its edge.
+        assert.ok(seen.bar.bottom >= 60 + insets.top && seen.bar.bottom <= 64 + insets.top, `the bar is its own height below the notch, with no second inset (${seen.bar.bottom})`);
+        assert.ok(seen.card.left >= insets.left && seen.card.right <= 844 - insets.right, `a card is clear of the sides ${JSON.stringify(seen.card)}`);
+        assert.ok(seen.list.bottom <= 390 - insets.bottom + 1, `the list ends above the home indicator ${JSON.stringify(seen.list)}`);
+        assert.equal(await noOverflow(page), true, 'no horizontal page scroll with a notch');
+        assert.deepEqual(test.errors, []);
+        console.log('PASS notch: the bar fills to the edges, and the bar and the list keep clear of the insets');
+    } finally {
+        await test.context.close();
+    }
+}
+
 async function narrowRow(browser) {
     const test = await start(browser, { width: 320, height: 568, mobile: true });
     const { page } = test;
@@ -270,7 +424,7 @@ async function narrowRow(browser) {
         assert.ok(open.width >= (await row.evaluate((el) => el.clientWidth)) / 2 - 1, 'Open screen takes at least half the row at 320px');
         assert.equal(await row.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false);
         assert.equal(await noOverflow(page), true, 'no horizontal page scroll at 320px');
-        const header = page.locator('.device-list-header');
+        const header = page.locator(HEADER);
         const heading = await header.getByRole('heading', { name: 'Phones', exact: true }).boundingBox();
         const inbox = await header.locator('.notifications-link').boundingBox();
         assert.ok(inbox.y < heading.y + heading.height, 'the header actions stay on the first row at 320px');
@@ -342,9 +496,10 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await page.getByRole('button', { name: 'Phones', exact: true }).click();
         await check('Files');
 
-        // Notifications and back. The header has scrolled away with the list; the link still works.
+        // Notifications and back. The bar stays in view above the scrolled list.
         before = await list.evaluate((el) => el.scrollTop);
-        await page.locator('.device-list-header .notifications-link').evaluate((el) => el.click());
+        assert.equal(await page.locator(`${HEADER} .notifications-link`).isVisible(), true, `${label}: the bar does not scroll away`);
+        await page.locator(`${HEADER} .notifications-link`).evaluate((el) => el.click());
         await page.locator('.notifications-view').getByRole('button', { name: 'Phones', exact: true }).waitFor();
         await page.waitForFunction(() => document.title === 'Notifications · ws-scrcpy');
         await page.locator('.notifications-view').getByRole('button', { name: 'Phones', exact: true }).click();
@@ -355,7 +510,7 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await card(page, 'android:HOME-EXTRA-15').locator('summary').click();
         await settleMotion(page);
         await page.waitForFunction(() => !document.querySelector('[data-device-key="android:HOME-EXTRA-15"] .device-details').open);
-        await page.locator('.device-list-header .notifications-link').evaluate((el) => el.click());
+        await page.locator(`${HEADER} .notifications-link`).evaluate((el) => el.click());
         await page.locator('.notifications-view').getByRole('button', { name: 'Phones', exact: true }).click();
         await card(page, 'android:HOME-EXTRA-15').waitFor();
         assert.deepEqual(await openBefore(), ['android:HOME-PIXEL-0001']);
@@ -390,7 +545,7 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         await page.locator('.stream-view').waitFor();
         await page.getByRole('link', { name: 'Notifications, 5 unread', exact: true }).waitFor();
         assert.equal(await headerLink.getAttribute('href'), '#!action=notifications');
-        assert.equal(await headerLink.locator('.notification-unread-count').textContent(), '5');
+        assert.equal(await headerLink.locator('.kit-badge').textContent(), '5');
         await fits('Android screen');
         await page.screenshot({ path: path.join(OUT, `stream-header-${label}.png`) });
         await page.getByRole('button', { name: 'Phones', exact: true }).click();
@@ -427,8 +582,10 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         assert.deepEqual(rows.map((row) => row.name).sort(), ANDROIDS.map((device) => `Google ${device['ro.product.model']}`).sort(), 'the Shell switcher lists Android devices only');
         assert.equal(rows.some((row) => /iPhone|iPad/.test(row.name)), false);
         assert.equal(rows.find((row) => row.name === 'Google Pixel 9 Pro').status, 'Viewing');
-        assert.equal(rows.find((row) => row.name === 'Google Pixel 8').status, 'Shell →', 'a row says what it opens');
-        assert.equal(rows.find((row) => row.name === 'Google Galaxy Tab S9').status, 'Shell →', 'a sleeping screen does not matter to Shell');
+        assert.equal(rows.find((row) => row.name === 'Google Pixel 8').status, 'Shell', 'a row says what it opens');
+        assert.equal(rows.find((row) => row.name === 'Google Galaxy Tab S9').status, 'Shell', 'a sleeping screen does not matter to Shell');
+        assert.equal(await sheet.locator('.device-switcher-item.current .kit-chip').textContent(), 'Viewing', 'the phone on screen is marked with a chip');
+        assert.equal(await sheet.locator('.device-switcher-item:not(:disabled) .device-switcher-status svg').count(), ANDROIDS.length - 3, 'the arrow is an icon');
         await page.screenshot({ path: path.join(OUT, `switcher-shell-${label}.png`) });
         await sheet.getByRole('button', { name: /Google Pixel 8/ }).click();
         await page.waitForFunction(() => location.hash.includes('view=shell') && location.hash.includes('HOME-LOCKED-0003'));
@@ -456,7 +613,7 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         await filesSheet.waitFor();
         await settleMotion(page);
         assert.equal(await filesSheet.locator('.device-switcher-item').filter({ hasText: /iPhone|iPad/ }).count(), 0);
-        assert.equal(await filesSheet.locator('.device-switcher-item').filter({ hasText: 'Google Pixel 9 Pro' }).locator('.device-switcher-status').textContent(), 'Files →');
+        assert.equal(await filesSheet.locator('.device-switcher-item').filter({ hasText: 'Google Pixel 9 Pro' }).locator('.device-switcher-status').textContent(), 'Files');
         await filesSheet.getByRole('button', { name: /^Close/ }).click();
         await filesSheet.waitFor({ state: 'hidden' });
 
@@ -469,11 +626,19 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         await streamSheet.waitFor();
         await settleMotion(page);
         assert.equal(await streamSheet.locator('.device-switcher-item').count(), ANDROIDS.length + IPHONES.length);
-        assert.equal(await streamSheet.locator('.device-switcher-item').filter({ hasText: 'iPhone linked' }).locator('.device-switcher-status').textContent(), 'Screen →');
+        assert.equal(await streamSheet.locator('.device-switcher-item').filter({ hasText: 'iPhone linked' }).locator('.device-switcher-status').textContent(), 'Screen');
+        assert.equal(await streamSheet.locator('.device-switcher-item').filter({ hasText: 'Galaxy Tab S9' }).locator('.device-switcher-status .kit-chip').textContent(), 'Asleep', 'a sleeping phone says so in a chip');
         // Developer Mode off: the screen cannot open, so the row cannot be chosen.
         const ipadRow = streamSheet.locator('.device-switcher-item').filter({ hasText: 'iPad mini' });
         assert.equal(await ipadRow.isDisabled(), true, 'an iPhone with Developer Mode off is not offered');
-        assert.equal(await ipadRow.locator('.device-switcher-status').textContent(), 'Needs attention');
+        assert.equal(await ipadRow.locator('.device-switcher-status .kit-chip').textContent(), 'Needs attention');
+        // The sheet is the kit's dialog, and the browser's Back closes it and stays on the page.
+        assert.equal(await streamSheet.evaluate((el) => el.matches('dialog.kit-sheet[open]')), true, `${label}: the switcher is the kit sheet`);
+        const address = await page.evaluate(() => location.href);
+        await page.goBack();
+        await streamSheet.waitFor({ state: 'hidden' });
+        assert.equal(await page.evaluate(() => location.href), address, `${label}: Back closes the switcher and leaves the page`);
+        await page.locator('.touch-layer').waitFor({ state: 'visible' });
         assert.deepEqual(test.errors, []);
         console.log('PASS', label, 'Notifications in screen and tool headers; tool switcher lists Android only');
     } finally {
@@ -558,7 +723,7 @@ async function installedApp(browser) {
         // With no device listed, Devices still has the way into Notifications.
         await page.goto(BASE);
         await page.getByRole('heading', { name: 'No devices connected', exact: true }).or(page.getByRole('heading', { name: 'Connection lost', exact: true })).waitFor();
-        await page.locator('.device-list-header').getByRole('link', { name: 'Notifications', exact: true }).click();
+        await page.locator(HEADER).getByRole('link', { name: 'Notifications', exact: true }).click();
         await page.locator('.notifications-view .stream-header-device > strong').getByText('Notifications', { exact: true }).waitFor();
         console.log('PASS installed app: one name, a Notifications shortcut, page-coloured browser bar, inbox reachable with no devices');
     } finally {
@@ -577,7 +742,12 @@ async function main() {
             { width: 1280, height: 800, mobile: false, colorScheme: 'dark' },
         ];
         for (const size of sizes) await devicesPage(browser, size);
+        for (const colorScheme of ['light', 'dark']) {
+            await kitList(browser, { width: 390, height: 844, mobile: true, colorScheme });
+            await kitList(browser, { width: 1440, height: 900, mobile: false, colorScheme });
+        }
         await narrowRow(browser);
+        await notchedList(browser);
         for (const size of [sizes[0], sizes[3]]) {
             await returnToDevices(browser, size);
             await screenHeaders(browser, size);

@@ -1,11 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { BottomSheet } from '../ui/BottomSheet';
+import { Sheet } from '../ui/Sheet';
 import { canOpenScreen, devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/devices';
 import { activeStream, deviceSwitcherOpen, activeCoreDeviceStream, openSheet } from '../state/stream';
 import { deviceHref, followLink } from '../state/links';
 import { getDeviceStatusInfo } from '../state/deviceStatus';
 import { isSwitcherShortcut, nextHighlight } from '../state/switcherKeys';
 import { DeviceIcon } from '../ui/DeviceIcon';
+import { Chip } from '../ui/Chip';
+import { Icon } from '../ui/Icon';
+// The search field is a plain input with the kit's field class, so that it can take a ref.
+import '../../style/kit/Field.css';
 import '../../style/views/DeviceSwitcherSheet.css';
 
 interface DeviceSwitcherSheetProps {
@@ -60,7 +64,7 @@ export function DeviceSwitcherSheet({
         if (!open || !window.matchMedia(KEYBOARD_QUERY).matches) {
             return;
         }
-        // The sheet focuses its panel on the next frame; the search field takes over after that.
+        // The sheet takes focus itself when it opens; the search field takes over after that.
         let frame = requestAnimationFrame(() => {
             frame = requestAnimationFrame(() => searchRef.current?.focus({ preventScroll: true }));
         });
@@ -149,8 +153,15 @@ export function DeviceSwitcherSheet({
                 if (target) {
                     current.onSelect(target);
                 } else if (event.target instanceof HTMLInputElement) {
-                    // Nothing to open: the Search key still puts the phone keyboard away.
-                    event.target.blur();
+                    // Nothing to open: the Search key still puts the phone keyboard away. Focus
+                    // goes to the sheet, as when it opened. On the page behind the sheet it
+                    // would be outside the dialog, where the sheet does not see Escape.
+                    const sheet = event.target.closest<HTMLElement>('dialog');
+                    if (sheet) {
+                        sheet.focus({ preventScroll: true });
+                    } else {
+                        event.target.blur();
+                    }
                 }
             }
         };
@@ -159,7 +170,7 @@ export function DeviceSwitcherSheet({
     }, []);
 
     return (
-        <BottomSheet
+        <Sheet
             open={open}
             onClose={() => (deviceSwitcherOpen.value = false)}
             title={title}
@@ -167,19 +178,10 @@ export function DeviceSwitcherSheet({
         >
             {entries.length > 3 && (
                 <label class="device-switcher-search">
-                    <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        aria-hidden="true"
-                    >
-                        <circle cx="11" cy="11" r="6.5" />
-                        <path d="m16 16 4.5 4.5" />
-                    </svg>
+                    <Icon name="search" size={20} />
                     <input
                         ref={searchRef}
+                        class="kit-field"
                         type="search"
                         enterkeyhint="search"
                         value={query}
@@ -201,8 +203,9 @@ export function DeviceSwitcherSheet({
                 {rows.map(({ entry, isCurrent, available, info }) => (
                     <button
                         key={entry.key}
+                        type="button"
                         data-switcher-key={entry.key}
-                        class={`bottom-sheet-list-item device-switcher-item ${isCurrent ? 'current' : ''} ${
+                        class={`device-switcher-item ${isCurrent ? 'current' : ''} ${
                             entry.key === highlight ? 'highlighted' : ''
                         }`}
                         onClick={() => onSelect(entry)}
@@ -217,18 +220,26 @@ export function DeviceSwitcherSheet({
                             </small>
                         </span>
                         <span class="device-switcher-status">
-                            {isCurrent
-                                ? 'Viewing'
-                                : available
-                                  ? // A sleeping screen matters to a stream, not to Files or Shell.
-                                    info.status === 'asleep' && !onSelectDevice
-                                      ? 'Asleep →'
-                                      : `${openLabel} →`
-                                  : info.label}
+                            {isCurrent ? (
+                                <Chip tone="info">Viewing</Chip>
+                            ) : !available ? (
+                                <Chip tone={info.tone}>{info.label}</Chip>
+                            ) : (
+                                <>
+                                    {/* What the row opens. A sleeping screen matters to a stream, not
+                                        to Files or Shell. */}
+                                    {info.status === 'asleep' && !onSelectDevice ? (
+                                        <Chip tone={info.tone}>{info.label}</Chip>
+                                    ) : (
+                                        openLabel
+                                    )}
+                                    <Icon name="arrowRight" size={16} />
+                                </>
+                            )}
                         </span>
                     </button>
                 ))}
             </div>
-        </BottomSheet>
+        </Sheet>
     );
 }

@@ -154,7 +154,7 @@ function streamOverlays(test, platform) {
     const overlays = [
         kitSheetOverlay('Actions', /^Actions$/, () => control(test, 'Actions')),
         kitSheetOverlay('Settings', platform === 'android' ? /^Stream settings$/ : /^Scheduled unlock$/, () => control(test, 'Settings')),
-        bottomSheet('Switch', /Switch/, () => press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }))),
+        kitSheetOverlay('Switch', /Switch/, () => press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }))),
         kitSheetOverlay('Type text', /^Type text$/, () => control(test, 'Type text')),
         platform === 'android'
             ? kitSheetOverlay('Unlock', /^Unlock/, () => press(test, page.locator('.lock-screen-notice').getByRole('button', { name: 'Unlock', exact: true })))
@@ -436,7 +436,7 @@ async function listPage(browser, viewport) {
     try {
         const overlays = [
             kitSheetOverlay('Settings of an Android phone', /^Stream settings$/, () => press(test, card(page, `android:${PIXEL_2}`).locator('button.stream-settings-button'))),
-            kitSheetOverlay('Settings of an iPhone', /^Scheduled unlock$/, () => press(test, card(page, `ios:${IPHONE}`).locator('button[title="Scheduled unlock"]'))),
+            kitSheetOverlay('Settings of an iPhone', /^Scheduled unlock$/, () => press(test, card(page, `ios:${IPHONE}`).locator('button.stream-settings-button'))),
         ];
         const home = await backClosesEach(test, label, overlays, page.locator('#devices'));
         assert.equal(home.index, 0);
@@ -467,7 +467,7 @@ async function notificationsPage(browser, viewport) {
     const { page } = test;
     const label = `${viewport.name} Notifications`;
     try {
-        await page.locator('.device-list-header .notifications-link').click();
+        await page.locator('header.kit-bar-root .notifications-link').click();
         await page.locator('.notifications-page').waitFor();
         await page.locator('article.notification-history-item').first().waitFor();
         const dialog = () => page.locator('dialog.notification-action-sheet');
@@ -535,7 +535,7 @@ async function notificationsPage(browser, viewport) {
         await page.locator('#devices').waitFor();
 
         // Back from Notifications with nothing open is the list, in one step.
-        await page.locator('.device-list-header .notifications-link').click();
+        await page.locator('header.kit-bar-root .notifications-link').click();
         await page.locator('.notifications-page').waitFor();
         await overlays[1].open();
         await dialog().waitFor();

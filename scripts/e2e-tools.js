@@ -249,7 +249,7 @@ async function main() {
             }
             const sessions = state.starts.length;
             await page.getByRole('button',{name:'Switch',exact:true}).click();
-            const sheet=page.locator('.bottom-sheet-root.open');
+            const sheet=page.locator('dialog.kit-sheet[open]');
             await sheet.getByRole('button',{name:/Phone B/}).click();
             await page.waitForFunction(()=>location.hash.includes('tool-fixture-002') && document.querySelector('.tool-connection.connected'));
             await page.waitForTimeout(100);

@@ -1,0 +1,38 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* A state in a word or two (`ui/Chip.tsx`): a tint with its own text colour. An error is solid,
+   like the error banner. Classes: kit-chip, plus kit-chip-success, -info, -warning or -error.
+   Neutral is the class alone. */
+.kit-chip {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    box-sizing: border-box;
+    height: 24px;
+    padding: 0 var(--space-8);
+    border-radius: var(--radius-full);
+    background: var(--neutral-fill);
+    color: var(--neutral-text);
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-bold);
+    line-height: 1;
+    white-space: nowrap;
+}
+.kit-chip-success {
+    background: var(--success-fill);
+    color: var(--success-text);
+}
+.kit-chip-info {
+    background: var(--info-fill);
+    color: var(--info-text);
+}
+.kit-chip-warning {
+    background: var(--warning-fill);
+    color: var(--warning-text);
+}
+.kit-chip-error {
+    background: var(--danger-fill);
+    color: var(--on-accent);
+}
+}

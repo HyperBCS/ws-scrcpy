@@ -1,5 +1,6 @@
 import { Component, ComponentChildren } from 'preact';
 import { LIST_PAGE_NAME } from '../state/routes';
+import { Button } from './Button';
 import '../../style/ui/ErrorBoundary.css';
 
 interface ScreenFailedProps {
@@ -7,23 +8,29 @@ interface ScreenFailedProps {
     /** Leaves the failed screen. Left out where there is nowhere else to go. */
     onBack?: () => void;
     backLabel?: string;
+    /**
+     * A sheet failed and the page behind it still works: a notice at the bottom edge instead of
+     * a full page. Its title is then a heading under the page's own.
+     */
+    notice?: boolean;
 }
 
 /** Shown in place of a screen that could not be drawn, so the app is never left blank. */
-export function ScreenFailed({ title = 'This screen failed', onBack, backLabel = LIST_PAGE_NAME }: ScreenFailedProps) {
+export function ScreenFailed({
+    title = 'This screen failed',
+    onBack,
+    backLabel = LIST_PAGE_NAME,
+    notice = false,
+}: ScreenFailedProps) {
     return (
-        <div class="screen-failed" role="alert">
-            <h1>{title}</h1>
-            <p>Reload the page to try again.</p>
+        <div class={`screen-failed ${notice ? 'notice' : ''}`.trim()} role="alert">
+            {notice ? <h2 class="screen-failed-title">{title}</h2> : <h1 class="screen-failed-title">{title}</h1>}
+            {!notice && <p class="screen-failed-text">Reload the page to try again.</p>}
             <div class="screen-failed-actions">
-                <button type="button" class="screen-failed-button primary" onClick={() => location.reload()}>
+                <Button variant="primary" onClick={() => location.reload()}>
                     Reload
-                </button>
-                {onBack && (
-                    <button type="button" class="screen-failed-button" onClick={onBack}>
-                        {backLabel}
-                    </button>
-                )}
+                </Button>
+                {onBack && <Button onClick={onBack}>{backLabel}</Button>}
             </div>
         </div>
     );

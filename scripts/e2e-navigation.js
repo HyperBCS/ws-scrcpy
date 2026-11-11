@@ -190,7 +190,7 @@ async function backAfterSwitching(browser, viewport) {
         const opened = await page.evaluate(() => history.state.nav.index);
         const pick = async (name) => {
             await page.getByRole('button', { name: 'Switch', exact: true }).click();
-            const sheet = page.locator('.bottom-sheet-root.open');
+            const sheet = page.locator('dialog.kit-sheet[open]');
             await sheet.waitFor();
             await settleMotion(page);
             await sheet.getByRole('button', { name }).click();
@@ -415,7 +415,7 @@ async function sheetsCloseWithTheRoute(browser) {
     const { page } = test;
     try {
         await card(page, `android:${PIXEL}`).waitFor();
-        await page.locator('.device-list-header .notifications-link').click();
+        await page.locator('header.kit-bar-root .notifications-link').click();
         await page.locator('.notifications-page').waitFor();
         await page.goBack();
         await page.locator('#devices').waitFor();
