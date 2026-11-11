@@ -1,33 +1,45 @@
 import { ToolBoxButton } from './ToolBoxButton';
 import SvgImage from '../ui/SvgImage';
-import { AudioSession, audioAvailability } from '../state/audio';
+import { AudioSession, audioAvailability, listenStateLabel } from '../state/audio';
 import { streamNotice } from '../state/stream';
 
 /**
- * The toolbar's Sound button, shared by the Android and iOS toolboxes: reflects the browser
- * audio session's state on the icon and ARIA, toggles mute, and hands unavailable/error states
- * to `onUnavailable` (Android opens Settings, which explains and offers recovery; iOS shows the
- * message as a notice). Disposers are pushed onto `cleanup`.
+ * The toolbar's Listen button, shared by the Android and iOS toolboxes. It turns this browser's
+ * playback on and off, so it is named and drawn apart from the phone's own volume keys: a
+ * headphones icon, never a speaker, and a caption that states the playback state ("Listen",
+ * "Listening", "Waiting for audio", "Blocked"). Unavailable and error states go to
+ * `onUnavailable` (Android opens Stream settings, which explains and offers recovery; iOS shows
+ * the message as a notice). Disposers are pushed onto `cleanup`.
  */
 export function createSoundButton(
     session: AudioSession | undefined,
     onUnavailable: (message: string) => void,
     cleanup: (() => void)[],
 ): ToolBoxButton {
-    const toggle = new ToolBoxButton('Sound', SvgImage.Icon.VOLUME_OFF);
+    const toggle = new ToolBoxButton('Listen', SvgImage.Icon.HEADPHONES);
     const button = toggle.getElement();
     button.dataset.control = 'audio';
+    // `FloatingToolbar` captions every button once from its title. This caption changes with the
+    // playback state, so the button brings its own.
+    const caption = document.createElement('span');
+    caption.className = 'floating-control-label';
+    caption.setAttribute('aria-hidden', 'true');
+    caption.textContent = 'Listen';
+    button.appendChild(caption);
     if (session) {
         let audioNotice = '';
         cleanup.push(
             session.status.subscribe((status) => {
                 const audible = !session.isMuted();
+                const label = listenStateLabel(status.state, !audible);
+                caption.textContent = label;
                 button.setAttribute('aria-pressed', String(audible));
-                button.setAttribute('aria-description', status.message);
+                // The name stays "Listen"; the state and its explanation are the description.
+                button.setAttribute(
+                    'aria-description',
+                    label === 'Listen' ? status.message : `${label}. ${status.message}`,
+                );
                 button.dataset.audioState = status.state;
-                button
-                    .querySelector('svg')
-                    ?.replaceWith(SvgImage.create(audible ? SvgImage.Icon.VOLUME_UP : SvgImage.Icon.VOLUME_OFF));
                 if (status.state === 'error' || status.state === 'unsupported') {
                     audioNotice = status.message;
                     streamNotice.value = status.message;

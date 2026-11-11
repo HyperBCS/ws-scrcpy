@@ -125,8 +125,10 @@ interface SoundRowsProps {
 }
 
 /**
- * Listen/mute plus volume, as two rows. The status message doubles as the listen row's
- * description, so "blocked" or "waiting" is read next to the button that fixes it.
+ * Listen plus volume, as two rows, in the Actions sheet of both platforms. "Listen" is this
+ * browser's playback; the phone's own volume keys are separate controls on the toolbar. The
+ * status message doubles as the listen row's description, so "blocked" or "waiting" is read
+ * next to the button that fixes it.
  */
 export function SoundRows({ session }: SoundRowsProps) {
     const status = session.status.value;
@@ -145,7 +147,7 @@ export function SoundRows({ session }: SoundRowsProps) {
                     disabled={unavailable}
                     onClick={() => (muted ? session.unmute() : session.mute())}
                 >
-                    {muted ? 'Listen' : 'Mute'}
+                    {muted ? 'Listen' : 'Stop listening'}
                 </button>
             </SheetRow>
             <SheetRow

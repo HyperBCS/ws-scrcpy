@@ -529,7 +529,7 @@ export function SettingsSheet() {
                                 <small>
                                     {audioUnavailableReason ||
                                         (shown.audio
-                                            ? 'Capture is on. Tap Listen or Sound to hear it in this browser.'
+                                            ? 'Capture is on. Tap Listen to hear it in this browser.'
                                             : 'Enable capture, then apply the change to listen in this browser.')}
                                 </small>
                             </span>
@@ -607,7 +607,7 @@ export function SettingsSheet() {
                                         >
                                             {audioSession.isMuted() || audioStatus.state === 'blocked'
                                                 ? 'Listen'
-                                                : 'Mute sound'}
+                                                : 'Stop listening'}
                                         </button>
                                     </div>
                                 </div>
@@ -647,9 +647,7 @@ export function SettingsSheet() {
                             </label>
                         </div>
                     </AnimatedDetails>
-                    {!client && (
-                        <p class="settings-sheet-hint">After applying, open the screen and tap Sound to listen.</p>
-                    )}
+                    {!client && <p class="settings-sheet-hint">After applying, open the screen and tap Listen.</p>}
                 </section>
                 {client ? (
                     <AnimatedDetails class="settings-playback">
