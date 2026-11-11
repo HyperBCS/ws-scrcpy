@@ -398,6 +398,25 @@ test('the private app link comes from WS_PUBLIC_URL only', async () => {
     assert.doesNotMatch(view, /https?:\/\/[^'"\s]*\.ts\.net/, 'no host name is built into the client');
 });
 
+// ------------------------------------------------------------------ Build output (C-server-core-13)
+
+test('client chunks carry a content hash and only the client directory is cleaned', async () => {
+    await startServer();
+    const { frontend, backend, CLIENT_DIST_PATH, SERVER_DIST_PATH } = require('../webpack/ws-scrcpy.common');
+    const client = frontend();
+    assert.equal(client.output.path, CLIENT_DIST_PATH);
+    assert.match(client.output.chunkFilename, /\[contenthash\]/);
+    assert.equal(client.output.clean, true, 'chunks of earlier builds are removed');
+    const styles = client.plugins.find((plugin) => plugin.constructor.name === 'MiniCssExtractPlugin');
+    assert.match(styles.options.chunkFilename, /\[contenthash\]/);
+    // With no configuration the server keeps data/ and stream-config.json in its working
+    // directory, which is dist/ under `npm start`. Cleaning that would delete them.
+    const server = backend();
+    assert.equal(server.output.path, SERVER_DIST_PATH);
+    assert.equal(server.output.clean, undefined);
+    assert.notEqual(path.relative(SERVER_DIST_PATH, CLIENT_DIST_PATH), '', 'the two builds have separate directories');
+});
+
 // ------------------------------------------------------------------ adb server (C-server-core-4)
 
 /** Speaks enough of the adb host protocol for forwards. Each connection carries one request. */
