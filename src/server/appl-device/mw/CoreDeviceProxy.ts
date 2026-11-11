@@ -48,8 +48,11 @@ const CLIPBOARD_DEAD_HINT =
 // serve-web keeps a bounded queue per subscriber and PLI-recovers when it overflows; the same
 // idea here, so one slow browser tab cannot make Node buffer a whole GOP.
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
-// A healthy HID post answers in milliseconds; anything longer is a wedged channel, and a queue of
-// typed characters must not sit behind the default 15 s for each of them.
+// serve-web answers /touch and /key as soon as the report is queued, not when the phone has it, so
+// this bounds serve-web's HTTP loop and nothing more: a HID worker stuck on a report still answers
+// 200 in milliseconds. That case shows up as 503 "Device input queue is full" once the patched
+// helper's queue reaches its bound (python/patches/pymobiledevice3-keyboard.py). A queue of typed
+// characters must not sit behind the default 15 s for each of them either.
 const INPUT_TIMEOUT_MS = 4000;
 // Button edges and keyboard detach wait for native completion, bounded at 8 s by serve-web.
 const INPUT_COMPLETION_TIMEOUT_MS = 10000;
@@ -60,8 +63,9 @@ const INPUT_COMPLETION_TIMEOUT_MS = 10000;
 const CLOSE_START_FAILED = 4009;
 const CLOSE_START_REFUSED = 4010;
 const CLOSE_START_BUDGET = 4011;
-// Typing bursts are a few hundred reports; a backlog beyond this means the phone stopped
-// answering, and stale input aimed at an old picture is worse than dropped input.
+// Typing bursts are a few hundred reports. A backlog beyond this means serve-web's HTTP loop has
+// stopped answering, and stale input aimed at an old picture is worse than dropped input. It does
+// not fill while the phone alone is stuck: those reports are answered and wait in serve-web.
 const MAX_QUEUED_INPUT = 512;
 
 /**

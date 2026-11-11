@@ -5,6 +5,10 @@ import shutil
 
 MARKER = '# ws-scrcpy keyboard lifecycle'
 VERSION_MARKER = '# ws-scrcpy keyboard lifecycle v2'
+BUTTON_MARKER = '# ws-scrcpy button completion'
+QUEUE_MARKER = '# ws-scrcpy input queue bound'
+# A typing burst is a few hundred reports. The proxy drops input past the same number.
+HID_QUEUE_LIMIT = 512
 
 
 def replace_once(source, old, new):
@@ -124,9 +128,9 @@ def patch_stream_v2(source):
     return source
 
 
-def patch_stream(source):
+def patch_stream_buttons(source):
     source = patch_stream_v2(source)
-    marker = '# ws-scrcpy button completion'
+    marker = BUTTON_MARKER
     if marker in source:
         return source
     # The proxy measures each button hold after DOWN reaches the phone. A queue
@@ -137,6 +141,27 @@ def patch_stream(source):
     for suffix in ('timed out', 'interrupted', 'failed'):
         source = source.replace(f'Keyboard disconnect {suffix}', f'Device input {suffix}')
     return source
+
+
+def patch_stream(source):
+    source = patch_stream_buttons(source)
+    if QUEUE_MARKER in source:
+        return source
+    # /touch and /key are answered as soon as they are queued, so a HID worker that has stopped
+    # taking reports looks healthy from outside while the queue grows without limit. Past the
+    # bound the request is refused, and the proxy ends the viewer's session with an error.
+    return replace_once(source, '''                self._hid_queue.put_nowait((path, body))
+                keep_alive = headers.get("connection", "").lower() != "close"''', f'''                {QUEUE_MARKER}
+                if self._hid_queue.qsize() >= {HID_QUEUE_LIMIT}:
+                    message = b"Device input queue is full"
+                    writer.write(b"HTTP/1.1 503 Service Unavailable\\r\\nContent-Type: text/plain\\r\\n"
+                                 + b"Content-Length: " + str(len(message)).encode()
+                                 + b"\\r\\nConnection: close\\r\\n\\r\\n" + message)
+                    await writer.drain()
+                    writer.close()
+                    return
+                self._hid_queue.put_nowait((path, body))
+                keep_alive = headers.get("connection", "").lower() != "close"''')
 
 
 def patch_hid_initial(source):

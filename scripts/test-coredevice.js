@@ -1147,6 +1147,33 @@ test('audio relay: the unpatched helper\'s 503 becomes a disabled status with th
     });
 });
 
+test('a serve-web whose input queue is full ends the viewer with an error instead of piling input up', async () => {
+    // /touch and /key are answered when queued, so a stuck HID worker never times a request out.
+    // The patched helper refuses reports past its queue bound, and that refusal is what the proxy sees.
+    await withEnv({ FAKE_HID_QUEUE_LIMIT: '2', IOS_AUDIO: '0' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const socket = new FakeSocket();
+        const proxy = CoreDeviceProxy.processRequest(socket, {
+            action: 'proxy-coredevice',
+            url: new URL('ws://localhost/?action=proxy-coredevice&udid=iphone-queue-full'),
+        });
+        assert(proxy);
+        for (let i = 0; i < 200 && !socket.binaries().length; i++) await sleep(20);
+        const tap = JSON.stringify({ type: 'touch', op: 'tap', x: 100, y: 100 });
+        socket.message(tap);
+        socket.message(tap);
+        await proxy.inputChain;
+        assert.equal(socket.readyState, socket.OPEN, 'reports under the bound are taken');
+        socket.message(tap);
+        await proxy.inputChain;
+        await tick();
+        assert.equal(socket.readyState, socket.CLOSED);
+        assert.match(socket.texts().at(-1).message, /Touch input failed/);
+        assert.equal(socket.closes.at(-1).code, 4009);
+        runner.release();
+    });
+});
+
 test('audio relay: IOS_AUDIO=0 tells the viewer audio is off instead of leaving it pending', async () => {
     await withEnv({ IOS_AUDIO: '0' }, async () => {
         const runner = CoreDeviceRunner.getInstance();
