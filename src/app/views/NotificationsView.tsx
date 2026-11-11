@@ -409,10 +409,12 @@ export function NotificationsView() {
                 </p>
             )}
             <Presence
-                show={!!error && activePanel === 'setup'}
+                show={!!error}
                 kind="collapse"
                 role="alert"
-                class="notification-notice notification-error notification-feedback"
+                // Sticky on Setup only: in the inbox the search bar would cover it. The inbox
+                // reports its own failures at the bottom of the screen.
+                class={`notification-notice notification-error ${activePanel === 'setup' ? 'notification-feedback' : ''}`}
             >
                 {error}
             </Presence>
