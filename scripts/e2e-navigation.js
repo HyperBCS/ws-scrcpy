@@ -251,7 +251,7 @@ async function linksOpenOnce(browser) {
     const rewritten = new URLSearchParams({ action: 'device', udid: PIXEL, view: 'screen', player: 'webcodecs', ws: socket.toString(), captureKeyboard: '0', fitToScreen: 'true' });
 
     // An older Android link, with the phone list arriving after the stream has started.
-    let test = await start(browser, { hash: oldAndroid, listDelay: 1500 });
+    let test = await start(browser, { hash: oldAndroid, listDelay: 3000 });
     try {
         const { page } = test;
         await page.getByText('Connected', { exact: true }).first().waitFor();
