@@ -307,6 +307,24 @@ async function checkControls(page, label, viewport, titles) {
         assert.equal(control.pressed, control.title === 'Listen' ? 'false' : null, `${name}: only Listen is a control that stays on`);
     }
     assert.notEqual(ICONS.headphones, ICONS.volMute, 'Listen and the mute key of the phone are different icons');
+    if (!viewport.mobile) {
+        // The rail scrolls and its controls take its full width: the focus ring of each one is
+        // drawn where the rail does not cut it. A disabled key takes no focus.
+        const rings = await page.locator('.control-buttons-list > :not(:disabled)').evaluateAll((list) =>
+            list.map((control) => {
+                control.focus();
+                const style = getComputedStyle(control);
+                const reach = Math.max(0, parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth));
+                const box = control.getBoundingClientRect();
+                const panel = control.closest('.floating-toolbar-panel');
+                const left = panel.getBoundingClientRect().left + panel.clientLeft;
+                const inside = box.left - reach >= left - 0.5 && box.right + reach <= left + panel.clientWidth + 0.5;
+                return { title: control.title, ring: control.matches(':focus-visible') && style.outlineStyle === 'solid', inside };
+            }),
+        );
+        await page.evaluate(() => document.activeElement?.blur());
+        assert.deepEqual(rings.filter((ring) => !ring.ring || !ring.inside).map((ring) => ring.title), [], `${label}: every control of the rail shows its whole focus ring`);
+    }
     if (viewport.mobile) {
         await fab.click();
         await page.locator('.floating-toolbar.open').waitFor({ state: 'detached' });
