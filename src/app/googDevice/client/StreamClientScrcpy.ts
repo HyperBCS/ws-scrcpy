@@ -5,11 +5,12 @@ import { GoogToolBox } from '../toolbox/GoogToolBox';
 import VideoSettings from '../../VideoSettings';
 import Size from '../../Size';
 import { ControlMessage } from '../../controlMessage/ControlMessage';
+import { CommandControlMessage } from '../../controlMessage/CommandControlMessage';
 import { ClientsStats, DisplayCombinedInfo } from '../../client/StreamReceiver';
 import Util from '../../Util';
 import { KeyEventListener, KeyInputHandler } from '../KeyInputHandler';
 import { KeyCodeControlMessage } from '../../controlMessage/KeyCodeControlMessage';
-import { BasePlayer, PlayerClass } from '../../player/BasePlayer';
+import { BasePlayer, DecoderErrorEvent, PlayerClass } from '../../player/BasePlayer';
 import {
     FeaturedInteractionHandler,
     InteractionHandlerListener,
@@ -40,6 +41,10 @@ export class StreamClientScrcpy
 {
     public static ACTION = 'stream';
     private static players: Map<string, PlayerClass> = new Map<string, PlayerClass>();
+    /** At most this many encoder restarts are requested for decoder recovery per window. */
+    private static readonly MAX_VIDEO_RESETS = 3;
+    private static readonly VIDEO_RESET_WINDOW_MS = 5 * 60 * 1000;
+    private videoResets: number[] = [];
 
     private controlButtons?: HTMLElement;
     private toolBox?: GoogToolBox;
@@ -302,6 +307,31 @@ export class StreamClientScrcpy
         streamConnected.value = true;
     };
 
+    // The socket stays up through a decoder failure, so nothing else on screen says that the
+    // picture stopped. Brief failures the player recovers from are not announced.
+    private onDecoderError = ({ recovering }: DecoderErrorEvent): void => {
+        if (!recovering) {
+            streamNotice.value =
+                'The video decoder in this browser stopped. If the picture does not come back, reopen the stream or choose another video player in Settings.';
+        }
+    };
+
+    /**
+     * A rebuilt decoder needs a keyframe, and on a still screen the device may not send one for
+     * a long time. RESET_VIDEO restarts the device's encoder, which then sends its parameter sets
+     * and a keyframe to every viewer. It is rationed because it interrupts the other viewers too.
+     */
+    private onKeyframeRequest = (): void => {
+        const now = Date.now();
+        const { VIDEO_RESET_WINDOW_MS, MAX_VIDEO_RESETS } = StreamClientScrcpy;
+        this.videoResets = this.videoResets.filter((time) => now - time < VIDEO_RESET_WINDOW_MS);
+        if (this.videoResets.length >= MAX_VIDEO_RESETS) {
+            return;
+        }
+        this.videoResets.push(now);
+        this.sendMessage(new CommandControlMessage(ControlMessage.TYPE_RESET_VIDEO));
+    };
+
     // Tears down the DOM this client owns and stops the underlying receiver/player. Wired up as
     // the more-box "Stop" action, and also the right thing for a host view to call from its own
     // unmount (see `views/StreamView.tsx`) -- safe to call more than once.
@@ -315,6 +345,8 @@ export class StreamClientScrcpy
         this.streamReceiver.off('displayInfo', this.onDisplayInfo);
         this.streamReceiver.off('disconnected', this.onDisconnected);
         this.streamReceiver.off('connected', this.onConnected);
+        this.player?.off('decoder-error', this.onDecoderError);
+        this.player?.off('keyframe-request', this.onKeyframeRequest);
 
         this.container.removeEventListener('dragover', this.onFileDragOver);
         this.container.removeEventListener('drop', this.onFileDrop);
@@ -436,6 +468,8 @@ export class StreamClientScrcpy
         streamReceiver.on('displayInfo', this.onDisplayInfo);
         streamReceiver.on('disconnected', this.onDisconnected);
         streamReceiver.on('connected', this.onConnected);
+        player.on('decoder-error', this.onDecoderError);
+        player.on('keyframe-request', this.onKeyframeRequest);
         console.log(TAG, player.getName(), udid);
 
         // Fit changes browser playback bounds; encoder changes require a server restart.

@@ -97,7 +97,7 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
                 // Wait for the next keyframe and rebuild there; deltas after an error only
                 // produce more errors.
                 this.needsResync = true;
-                this.emit('decoder-error' as never, error as never);
+                this.emit('decoder-error', { message: error.message, recovering: true });
             },
         });
     }

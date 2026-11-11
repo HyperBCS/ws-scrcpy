@@ -440,6 +440,10 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
             kind === 'mse' ? new MseHevcPlayer(this.params.udid) : new WebCodecsHevcPlayer(this.params.udid);
         player.setParent(this.videoWrapper);
         player.on('input-video-resize', () => this.applyBounds());
+        // Both players start again at the next key frame after a decoder error. Ask for one,
+        // or the picture stays frozen until the phone happens to send it. The proxy passes on
+        // at most one request a second.
+        player.on('decoder-error', () => this.requestKeyframe());
         this.player = player;
         this.decoderKind = kind;
         this.touchHandler = new CoreDeviceInteractionHandler(player, this);

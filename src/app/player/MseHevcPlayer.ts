@@ -168,7 +168,7 @@ export class MseHevcPlayer extends BasePlayer {
             this.enqueue(this.initSegment);
             this.startChasing();
         } catch (error) {
-            this.emit('decoder-error' as never, error as never);
+            this.emit('decoder-error', { message: (error as Error).message, recovering: true });
         }
     };
 
@@ -202,7 +202,7 @@ export class MseHevcPlayer extends BasePlayer {
                 return;
             }
             console.error(`[${this.name}]`, error);
-            this.emit('decoder-error' as never, error as never);
+            this.emit('decoder-error', { message: (error as Error).message, recovering: true });
         }
     }
 
@@ -311,7 +311,7 @@ export class MseHevcPlayer extends BasePlayer {
     private onVideoError = (): void => {
         const error = this.tag.error;
         console.error(`[${this.name}]`, error?.code, error?.message);
-        this.emit('decoder-error' as never, (error || new Error('MediaSource error')) as never);
+        this.emit('decoder-error', { message: error?.message || 'MediaSource error', recovering: true });
         // The element is dead after a MEDIA_ERR_DECODE; rebuild on the next key frame.
         this.needsResync = true;
         this.resetSource();

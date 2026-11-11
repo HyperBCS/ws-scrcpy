@@ -26,10 +26,19 @@ export interface PlaybackQuality {
     timestamp: number;
 }
 
+export interface DecoderErrorEvent {
+    message: string;
+    /** True while the player is recovering by itself; false when it has stopped trying for now. */
+    recovering: boolean;
+}
+
 export interface PlayerEvents {
     'video-view-resize': Size;
     'input-video-resize': ScreenInfo;
     'video-settings': VideoSettings;
+    'decoder-error': DecoderErrorEvent;
+    /** The player needs a keyframe that the stream will not send unasked. */
+    'keyframe-request': void;
 }
 
 export interface PlayerClass {

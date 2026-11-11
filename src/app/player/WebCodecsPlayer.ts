@@ -24,6 +24,8 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
 
     private static readonly MAX_DECODER_ERRORS = 3;
     private static readonly DECODER_ERROR_WINDOW_MS = 5000;
+    /** How long a new decoder waits for the stream's own next keyframe before asking for one. */
+    private static readonly KEYFRAME_WAIT_MS = 2000;
 
     public static readonly preferredVideoSettings: VideoSettings = new VideoSettings({
         lockedVideoOrientation: -1,
@@ -80,6 +82,14 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     private bufferedSPS = false;
     private bufferedPPS = false;
     private decoderErrors: number[] = [];
+    /**
+     * The last parameter sets seen. scrcpy sends them once per encoder session, so a decoder
+     * that is rebuilt mid-session has to be configured from this copy.
+     */
+    private lastConfig?: { codec: string; sps: Uint8Array; pps?: Uint8Array };
+    /** Set while a decoder that kept failing is left alone; nothing is decoded meanwhile. */
+    private suspended = false;
+    private recoveryTimer?: ReturnType<typeof setTimeout>;
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = WebCodecsPlayer.playerFullName) {
         super(udid, displayInfo, name, WebCodecsPlayer.storageKeyPrefix);
@@ -110,6 +120,9 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     }
 
     private onDecoderError(error: DOMException): void {
+        if (this.getState() === WebCodecsPlayer.STATE.STOPPED) {
+            return;
+        }
         const now = Date.now();
         this.decoderErrors.push(now);
         while (this.decoderErrors.length && this.decoderErrors[0] < now - WebCodecsPlayer.DECODER_ERROR_WINDOW_MS) {
@@ -119,16 +132,28 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             console.error(
                 `[${this.name}]`,
                 `Decoder failed ${this.decoderErrors.length} times in ` +
-                    `${WebCodecsPlayer.DECODER_ERROR_WINDOW_MS}ms, giving up`,
+                    `${WebCodecsPlayer.DECODER_ERROR_WINDOW_MS}ms, pausing decoding`,
                 error,
             );
-            this.stop();
+            // Rebuilding at once would only fail again. Leave the decoder alone for a while,
+            // tell the client so it can say why the picture stopped, then start over.
+            this.suspended = true;
+            this.discardDecoderState();
+            this.emit('decoder-error', { message: error.message, recovering: false });
+            this.clearRecoveryTimer();
+            this.recoveryTimer = setTimeout(() => {
+                this.recoveryTimer = undefined;
+                this.suspended = false;
+                this.decoderErrors = [];
+                this.resetDecoder(0);
+            }, WebCodecsPlayer.DECODER_ERROR_WINDOW_MS);
             return;
         }
-        this.resetDecoder();
+        this.emit('decoder-error', { message: error.message, recovering: true });
+        this.resetDecoder(WebCodecsPlayer.KEYFRAME_WAIT_MS);
     }
 
-    private resetDecoder(): void {
+    private discardDecoderState(): void {
         // A fatal error usually closes the decoder before the error callback fires.
         if (this.decoder.state !== 'closed') {
             this.decoder.close();
@@ -139,11 +164,55 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         this.hadIDR = false;
         this.bufferedSPS = false;
         this.bufferedPPS = false;
-        this.waitingForSPS = true;
+    }
+
+    /**
+     * Replaces a failed decoder. The stream does not repeat its parameter sets, so the new
+     * decoder is configured from the cached ones and decoding resumes at the next keyframe. The
+     * canvas keeps the last picture until then. If no keyframe comes within `keyframeWaitMs`
+     * the client is asked to get one from the device.
+     */
+    private resetDecoder(keyframeWaitMs: number): void {
+        this.discardDecoderState();
         this.decoder = this.createDecoder();
-        // Rest in PAUSED: `StreamClientScrcpy.onVideo()` calls `play()` on the next incoming
-        // frame, and the next SPS + IDR re-configure the fresh decoder.
-        this.pause();
+        const config = this.lastConfig;
+        if (config) {
+            this.decoder.configure({ codec: config.codec, optimizeForLatency: true } as VideoDecoderConfig);
+            this.addToBuffer(config.sps);
+            this.bufferedSPS = true;
+            if (config.pps) {
+                this.addToBuffer(config.pps);
+                this.bufferedPPS = true;
+            }
+            this.waitingForSPS = false;
+        } else {
+            this.waitingForSPS = true;
+        }
+        this.clearRecoveryTimer();
+        this.recoveryTimer = setTimeout(this.onKeyframeOverdue, keyframeWaitMs);
+    }
+
+    private onKeyframeOverdue = (): void => {
+        this.recoveryTimer = undefined;
+        if (this.hadIDR || this.getState() === WebCodecsPlayer.STATE.STOPPED) {
+            return;
+        }
+        this.emit('keyframe-request', undefined);
+        // One request only: it restarts the encoder for every viewer. If that brings no
+        // keyframe either, report it instead of leaving a frozen picture unexplained.
+        this.recoveryTimer = setTimeout(() => {
+            this.recoveryTimer = undefined;
+            if (!this.hadIDR && this.getState() !== WebCodecsPlayer.STATE.STOPPED) {
+                this.emit('decoder-error', { message: 'No keyframe after a decoder reset', recovering: false });
+            }
+        }, WebCodecsPlayer.KEYFRAME_WAIT_MS * 2);
+    };
+
+    private clearRecoveryTimer(): void {
+        if (this.recoveryTimer !== undefined) {
+            clearTimeout(this.recoveryTimer);
+            this.recoveryTimer = undefined;
+        }
     }
 
     private releaseDecodedFrames(): void {
@@ -196,6 +265,18 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         const type = data[4] & 31;
         const isIDR = type === NALU.IDR;
 
+        // Copies, because `addToBuffer` hands the array's whole backing buffer to the decoder.
+        let sps: ParametersSubSet | undefined;
+        if (type === NALU.SPS) {
+            sps = WebCodecsPlayer.parseSPS(data.subarray(4));
+            this.lastConfig = { codec: sps.codec, sps: data.slice() };
+        } else if (type === NALU.PPS && this.lastConfig) {
+            this.lastConfig.pps = data.slice();
+        }
+        if (this.suspended) {
+            return;
+        }
+
         if (this.waitingForSPS) {
             // After a decoder reset the stream must restart at an SPS. Anything before it is
             // undecodable without the lost parameter sets, and buffering it would both grow
@@ -207,8 +288,8 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             this.waitingForSPS = false;
         }
 
-        if (type === NALU.SPS) {
-            const { codec, width, height } = WebCodecsPlayer.parseSPS(data.subarray(4));
+        if (sps) {
+            const { codec, width, height } = sps;
             this.scaleCanvas(width, height);
             const config: VideoDecoderConfig = {
                 codec,
@@ -229,8 +310,15 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             if (!this.bufferedSPS || !this.bufferedPPS) {
                 return;
             }
+        } else if (type === NALU.NDR && !this.hadIDR) {
+            // Nothing can decode a picture that depends on a keyframe the decoder never had.
+            // Buffering it would put stale slices in front of the keyframe that follows a reset.
+            return;
         }
         const array = this.addToBuffer(data);
+        if (isIDR && !this.hadIDR) {
+            this.clearRecoveryTimer();
+        }
         this.hadIDR = this.hadIDR || isIDR;
         if (array && this.decoder.state === 'configured' && this.hadIDR) {
             this.buffer = undefined;
@@ -288,6 +376,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
 
     public stop(): void {
         super.stop();
+        this.clearRecoveryTimer();
         if (this.decoder.state !== 'closed') {
             this.decoder.close();
         }

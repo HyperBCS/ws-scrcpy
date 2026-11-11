@@ -61,6 +61,7 @@ export class MsePlayer extends BasePlayer {
     private jumpEnd = -1;
     private lastTime = -1;
     protected canPlay = false;
+    private waitingForConfig = false;
     private seekingSince = -1;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     protected readonly isSafari = !!(window as unknown as any)['safari'];
@@ -93,6 +94,17 @@ export class MsePlayer extends BasePlayer {
 
     onVideoError = (event: Event): void => {
         console.error(`[${this.name}]`, event);
+        const error = this.tag.error;
+        if (!error || this.getState() === BasePlayer.STATE.STOPPED) {
+            return;
+        }
+        // The element plays nothing more after a decode error. Drop the converter (the next
+        // frame builds a new MediaSource) and start again at the next parameter sets. The stream
+        // only repeats those when its encoder restarts, so ask for that.
+        this.pause();
+        this.waitingForConfig = true;
+        this.emit('decoder-error', { message: error.message || `Media error ${error.code}`, recovering: false });
+        this.emit('keyframe-request', undefined);
     };
 
     onVideoCanPlay = (): void => {
@@ -298,6 +310,13 @@ export class MsePlayer extends BasePlayer {
 
     public pushFrame(frame: Uint8Array): void {
         super.pushFrame(frame);
+        if (this.waitingForConfig) {
+            // After a decode error: nothing is playable until parameter sets (SPS, type 7) arrive.
+            if (frame.length < 5 || (frame[4] & 31) !== 7) {
+                return;
+            }
+            this.waitingForConfig = false;
+        }
         if (!this.checkForIFrame(frame)) {
             this.frames.push(frame);
         } else {
