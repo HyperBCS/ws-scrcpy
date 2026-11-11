@@ -317,7 +317,6 @@
     align-items: center;
     gap: var(--space-8);
     padding: var(--space-4) 0;
-    color: var(--text-muted);
 }
 
 .fx-upload-name {
@@ -329,8 +328,10 @@
     color: var(--text);
 }
 
+/* How far an upload is: the kit's status line, beside the name instead of under a control. */
 .fx-upload-state {
     flex: none;
+    margin: 0;
     font-variant-numeric: tabular-nums;
 }
 

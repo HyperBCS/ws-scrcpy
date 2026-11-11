@@ -9,6 +9,7 @@ import { SHEET_DIALOG } from '../../ui/Sheet';
 import { bindSheetDrag } from '../../ui/sheetDrag';
 import '../../../style/kit/Icon.css';
 import '../../../style/kit/Field.css';
+import '../../../style/kit/InlineStatus.css';
 import '../../../style/filelisting.css';
 import { ParamsFileListing } from '../../../types/ParamsFileListing';
 import { ManagerClient } from '../../client/ManagerClient';
@@ -2972,7 +2973,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             }
             const row = document.createElement('div');
             row.className = 'file-listing-upload-progress';
-            row.innerHTML = `<span class="fx-upload-name">${esc(data.fileName)}</span><span class="fx-upload-state"></span><button type="button" class="${BUTTON} fx-upload-cancel" data-upload-cancel="${
+            row.innerHTML = `<span class="fx-upload-name">${esc(data.fileName)}</span><span class="kit-status kit-status-neutral fx-upload-state"></span><button type="button" class="${BUTTON} fx-upload-cancel" data-upload-cancel="${
                 data.key
             }" aria-label="${esc(`Cancel the upload of ${data.fileName}`)}">Cancel</button>`;
             this.transfers.appendChild(row);

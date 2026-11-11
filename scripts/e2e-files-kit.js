@@ -240,6 +240,49 @@ async function run(browser, layout, theme) {
         assert.equal(await page.locator('th[aria-sort="none"] .fx-sort-arrow svg').count(), 0, `${label}: only the sorted column has an arrow`);
     }
 
+    // ---------------------------------------------------------------- keyboard
+    // Every stop of the Tab key shows the focus ring of the token: 2px in the accent colour.
+    if (!layout.mobile) {
+        const stop = () =>
+            page.evaluate(() => {
+                const active = document.activeElement;
+                const explorer = active?.closest('.file-explorer');
+                if (!explorer) return null;
+                const probe = document.createElement('span');
+                probe.style.transition = 'none';
+                probe.style.color = 'var(--accent)';
+                explorer.append(probe);
+                const accent = getComputedStyle(probe).color;
+                probe.remove();
+                // The path field shows its ring on the box around it.
+                const ringed = active.matches('.fx-address-input') ? active.closest('.fx-address') : active;
+                const style = getComputedStyle(ringed);
+                return {
+                    name: `${active.tagName.toLowerCase()}.${String(active.getAttribute('class') || '').split(' ').join('.')}`,
+                    ring: active.matches(':focus-visible') && style.outlineColor === accent ? `${style.outlineWidth} ${style.outlineStyle}` : 'none',
+                };
+            });
+        // Up is the first control that is enabled. Leaving it and coming back is a key press.
+        await page.locator('.fx-history [data-command="up"]').focus();
+        await page.keyboard.press('Shift+Tab');
+        await page.keyboard.press('Tab');
+        const stops = [];
+        for (let count = 0; count < 80; count++) {
+            const at = await stop();
+            if (!at) break;
+            stops.push(at);
+            await page.keyboard.press('Tab');
+        }
+        assert(stops.length >= 20 && stops.length < 80, `${label}: the Tab key walks the explorer and leaves it (${stops.length} stops)`);
+        assert.deepEqual(stops.filter((at) => at.ring !== '2px solid'), [], `${label}: every stop shows the focus ring`);
+        for (const kind of ['button.kit-icon-button', 'button.kit-button', 'button.fx-crumb', 'input.kit-field', 'button.fx-sort', 'a.', '.fx-row-menu']) {
+            assert(stops.some((at) => at.name.includes(kind)), `${label}: the walk meets ${kind}`);
+        }
+        await page.getByRole('button', { name: 'Type a folder path', exact: true }).click();
+        assert.deepEqual(await stop(), { name: 'input.fx-address-input', ring: '2px solid' }, `${label}: the path field shows its ring on its box`);
+        await page.keyboard.press('Escape');
+    }
+
     // ---------------------------------------------------------------- menus
     const opener = page.getByRole('button', { name: layout.mobile ? 'Actions' : 'View', exact: true });
     await opener.click();
@@ -514,6 +557,19 @@ async function run(browser, layout, theme) {
     assert.equal(await failure.locator('svg.kit-icon').count(), 2, `${label}: the warning icon and the close icon`);
     await check('toast-error');
     await failure.getByRole('button', { name: 'Dismiss message', exact: true }).click();
+
+    // ---------------------------------------------------------------- an upload in progress
+    // Its state is the kit's status line and Cancel is the kit's button.
+    traffic.hold = true;
+    await pick('held.bin');
+    const upload = page.locator('.file-listing-upload-progress');
+    await upload.waitFor();
+    assert.equal(await upload.locator('.fx-upload-state.kit-status.kit-status-neutral').count(), 1, `${label}: the state of an upload is the kit's status line`);
+    await check('upload');
+    await page.getByRole('button', { name: 'Cancel all', exact: true }).click();
+    await upload.waitFor({ state: 'detached' });
+    traffic.hold = false;
+    await ready(page);
 
     // ---------------------------------------------------------------- a folder that cannot be opened
     const denied = row(page, 'denied').locator('.entry-name a');
