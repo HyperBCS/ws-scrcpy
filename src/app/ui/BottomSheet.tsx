@@ -1,4 +1,5 @@
-import { trapDialogTab, restoreDialogFocus } from './dialogFocus';
+import { trapDialogTab, rememberDialogFocus, returnDialogFocus } from './dialogFocus';
+import { cancelConfirmPrompt } from './ConfirmAction';
 import { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import '../../style/ui/BottomSheet.css';
@@ -21,6 +22,8 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
     closeRef.current = onClose;
     const dismissibleRef = useRef(dismissible);
     dismissibleRef.current = dismissible;
+    const openRef = useRef(open);
+    openRef.current = open;
     const requestClose = () => {
         if (dismissibleRef.current) {
             closeRef.current();
@@ -44,7 +47,7 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
         if (!present || !root || !panel) {
             return;
         }
-        const previousFocus = document.activeElement;
+        rememberDialogFocus(panel);
         // Keep the device list at its exact position while the sheet itself remains scrollable.
         // Lock the actual list scroller, not only body (the PWA shell never scrolls).
         const list = document.getElementById('devices');
@@ -82,10 +85,17 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
         const focusFrame = requestAnimationFrame(() => panel.focus({ preventScroll: true }));
 
         const onKeyDown = (event: KeyboardEvent) => {
+            // A sheet that is animating out leaves the keyboard to the one that replaced it.
+            if (!openRef.current) {
+                return;
+            }
             if (event.key === 'Escape' && !event.isComposing) {
                 event.preventDefault();
                 event.stopPropagation();
-                requestClose();
+                // The first Escape cancels a confirm prompt; the sheet stays open.
+                if (!cancelConfirmPrompt(panel)) {
+                    requestClose();
+                }
             } else trapDialogTab(event, panel);
         };
         window.addEventListener('keydown', onKeyDown, true);
@@ -102,7 +112,7 @@ export function BottomSheet({ open, onClose, dismissible = true, bodyClassName, 
             viewport?.removeEventListener('scroll', updateViewport);
             window.removeEventListener('resize', updateViewport);
             window.removeEventListener('keydown', onKeyDown, true);
-            restoreDialogFocus(previousFocus, document.querySelector<HTMLElement>('.floating-toolbar-fab'));
+            returnDialogFocus(panel, document.querySelector<HTMLElement>('.floating-toolbar-fab'));
         };
     }, [present]);
 

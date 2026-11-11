@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { liveTextOpen, streamConnected } from '../state/stream';
 import '../../style/views/LiveTextOverlay.css';
 import { usePresence } from '../ui/Presence';
+import { rememberDialogFocus, returnDialogFocus } from '../ui/dialogFocus';
 
 /** Keys the overlay can press by name, besides typing text. */
 export type LiveTextKey = 'enter' | 'backspace' | 'delete' | 'left' | 'right';
@@ -86,10 +87,10 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     // the gesture; the post-paint timing of `useEffect` would not be.
     useLayoutEffect(() => {
         if (!present) return;
-        const previous = document.activeElement;
         const input = inputRef.current;
         const overlay = overlayRef.current;
         const panel = panelRef.current;
+        if (panel) rememberDialogFocus(panel);
         const stream = overlay?.closest<HTMLElement>('.stream-view');
         const viewport = window.visualViewport;
         let frame = 0;
@@ -141,11 +142,7 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
             stream?.style.removeProperty('--typing-dock-height');
             if (document.activeElement === input) input?.blur();
             if (compositionTimer.current) clearTimeout(compositionTimer.current);
-            if (previous instanceof HTMLElement && previous.isConnected && previous.getClientRects().length) {
-                previous.focus({ preventScroll: true });
-            } else {
-                document.querySelector<HTMLButtonElement>('.floating-toolbar-fab')?.focus({ preventScroll: true });
-            }
+            if (panel) returnDialogFocus(panel, document.querySelector<HTMLElement>('.floating-toolbar-fab'));
         };
     }, [present]);
 

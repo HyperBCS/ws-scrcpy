@@ -71,6 +71,24 @@ export function useArmedAction<T>(active = true): ArmedAction<T> {
     };
 }
 
+// Prompts on screen, so the surface that holds one can cancel it before closing itself.
+const openPrompts = new Map<HTMLElement, () => void>();
+
+/**
+ * Cancels the prompt shown inside `container`, if there is one. A sheet calls this on Escape:
+ * the first press cancels the prompt wherever focus is, and only the next one closes the sheet.
+ */
+export function cancelConfirmPrompt(container: HTMLElement): boolean {
+    let cancelled = false;
+    openPrompts.forEach((disarm, node) => {
+        if (container.contains(node)) {
+            disarm();
+            cancelled = true;
+        }
+    });
+    return cancelled;
+}
+
 interface ConfirmPromptProps {
     // The prompt never reads the armed value, so one prompt type serves every action type.
     action: Pick<ArmedAction<unknown>, 'disarm' | 'trigger' | 'pressed'>;
@@ -171,7 +189,13 @@ export function ConfirmPrompt({
         pointerEvents.forEach((name) => document.addEventListener(name, onPointer, true));
         document.addEventListener('click', onClick, true);
         document.addEventListener('focusin', onFocus);
+        if (node) {
+            openPrompts.set(node, () => disarm.current());
+        }
         return () => {
+            if (node) {
+                openPrompts.delete(node);
+            }
             clearTimeout(reveal);
             clearTimeout(timer);
             clearTimeout(withdraw);
