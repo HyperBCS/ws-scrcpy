@@ -239,6 +239,7 @@ async function main() {
             assert(completeApply, 'Apply reached only fixture');
             completeApply();
             await page.locator('.settings-sheet-apply-bar [role="alert"]').waitFor();
+            assert(!(await close.isDisabled()), 'Close works again once Apply has ended');
             // Once Apply has ended, Back closes the sheet and the list stays.
             await page.goBack();
             await closed();

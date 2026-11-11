@@ -74,8 +74,10 @@ export function NotificationActionSheet({ open, title, description, onClose, chi
             aria-describedby={shown.description ? descriptionId : undefined}
             onClose={close}
             onCancel={(event) => {
+                // Escape, and Back on Android, where Chrome sends Back to an open modal dialog
+                // instead of stepping through history. A confirm prompt is cancelled first.
                 event.preventDefault();
-                close();
+                if (!cancelConfirmPrompt(event.currentTarget)) close();
             }}
             onKeyDown={(event) => trapDialogTab(event, event.currentTarget)}
             onPointerDown={(event) => {

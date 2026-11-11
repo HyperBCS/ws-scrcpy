@@ -408,6 +408,28 @@ async function notificationsPage(browser, viewport) {
         assert.deepEqual(await at(page), home);
         assert.deepEqual(test.posted, [], `${label}: Back sent nothing to the phone`);
 
+        // Chrome on Android sends Back to an open modal dialog as a close request: a cancel
+        // event, and no step through history. The prompt goes first there too.
+        const closeRequest = () => page.evaluate(() => {
+            const node = document.querySelector('dialog.notification-action-sheet');
+            node.dispatchEvent(new Event('cancel', { cancelable: true }));
+        });
+        await press(test, page.getByRole('button', { name: 'Actions for Design review', exact: true }));
+        await dialog().waitFor();
+        await settleMotion(page);
+        await press(test, dialog().getByRole('button', { name: 'Decline on iPhone', exact: true }));
+        await dialog().locator('.confirm-prompt').waitFor();
+        await closeRequest();
+        await dialog().locator('.confirm-prompt').waitFor({ state: 'detached' });
+        await page.waitForTimeout(150);
+        assert.equal(await dialog().isVisible(), true, `${label}: a close request with a prompt open leaves the sheet open`);
+        assert.deepEqual(await at(page), { ...home, index: home.index + 1, overlay: 1 }, `${label}: and its entry`);
+        await closeRequest();
+        await dialog().waitFor({ state: 'hidden' });
+        await untilAt(page, home.index, 0);
+        assert.deepEqual(await at(page), home, `${label}: the next close request closes the sheet and steps back over its entry`);
+        assert.deepEqual(test.posted, [], `${label}: close requests sent nothing to the phone`);
+
         // Another page while the sheet is open: it does not show there.
         await overlays[0].open();
         await dialog().waitFor();
