@@ -173,9 +173,9 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
                 // `.on()` the matching event name (declared in that subclass's own `TE`).
                 this.emit(
                     message.type as EventKey<TE>,
-                    message.data && typeof message.data === 'object' && !Array.isArray(message.data)
+                    (message.data && typeof message.data === 'object' && !Array.isArray(message.data)
                         ? { ...message.data, requestId: message.id }
-                        : message.data,
+                        : message.data) as TE[EventKey<TE>],
                 );
         }
     }

@@ -1,14 +1,47 @@
 import WS from 'ws';
-import { Mw, RequestParameters } from '../../mw/Mw';
+import { Mw, RequestParameters, SocketMessageEvent } from '../../mw/Mw';
 import * as pty from 'node-pty';
 import { IDisposable, IPty } from 'node-pty';
-import { Message } from '../../../types/Message';
-import { XtermClientMessage, XtermServiceParameters } from '../../../types/XtermMessage';
+import { XtermClientMessage, XtermStartMessage } from '../../../types/XtermMessage';
 import { ACTION } from '../../../common/Action';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import { ChannelCode } from '../../../common/ChannelCode';
 
 const EVENT_TYPE_SHELL = 'shell';
+const MAX_TERMINAL_SIZE = 500;
+const CLOSE_INVALID_MESSAGE = 4001;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isTerminalSize(value: unknown): value is number {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_TERMINAL_SIZE;
+}
+
+/**
+ * Checks a message from the browser before any of it is used, and copies only the known fields.
+ * Returns undefined for anything that is not a well-formed shell message.
+ */
+export function parseShellMessage(message: unknown): XtermClientMessage | undefined {
+    if (!isRecord(message) || message.type !== EVENT_TYPE_SHELL || !isRecord(message.data)) {
+        return undefined;
+    }
+    const { type, udid, cols, rows } = message.data;
+    if (type === 'stop') {
+        return { type };
+    }
+    if (!isTerminalSize(cols) || !isTerminalSize(rows)) {
+        return undefined;
+    }
+    if (type === 'resize') {
+        return { type, cols, rows };
+    }
+    if (type === 'start' && typeof udid === 'string' && udid) {
+        return { type, udid, cols, rows };
+    }
+    return undefined;
+}
 
 export class RemoteShell extends Mw {
     public static readonly TAG = 'RemoteShell';
@@ -39,14 +72,12 @@ export class RemoteShell extends Mw {
         super(ws);
     }
 
-    public createTerminal(params: XtermServiceParameters): IPty {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const env = Object.assign({}, process.env) as any;
-        env['COLORTERM'] = 'truecolor';
-        const { cols = 80, rows = 24 } = params;
+    public createTerminal({ udid, cols, rows }: XtermStartMessage): IPty {
+        // The environment and working directory come from the server process, never the client.
+        const env: NodeJS.ProcessEnv = { ...process.env, COLORTERM: 'truecolor' };
         const cwd = env.PWD || '/';
         const file = 'adb';
-        const term = pty.spawn(file, ['-s', params.udid, 'shell'], {
+        const term = pty.spawn(file, ['-s', udid, 'shell'], {
             name: 'xterm-256color',
             cols,
             rows,
@@ -80,39 +111,57 @@ export class RemoteShell extends Mw {
         return term;
     }
 
-    protected onSocketMessage(event: WS.MessageEvent): void {
+    protected onSocketMessage(event: SocketMessageEvent): void {
         if (this.initialized) {
             if (!this.term) {
                 return;
             }
-            return this.term.write(event.data as string);
+            // Typed input is a text frame and goes to the shell as it is. Messages travel in
+            // binary frames, so nothing typed or pasted can be taken for one.
+            if (typeof event.data === 'string') {
+                return this.term.write(event.data);
+            }
+            return this.handleControl(event.data);
         }
-        let data;
+        let message: XtermClientMessage | undefined;
         try {
-            data = JSON.parse(event.data.toString());
-        } catch (error: any) {
-            console.error(`[${RemoteShell.TAG}]`, error?.message);
+            message = parseShellMessage(JSON.parse(event.data.toString()));
+        } catch {
+            message = undefined;
+        }
+        if (!message) {
+            // Nothing is running yet, so close rather than leave the browser waiting for a prompt.
+            console.error(`[${RemoteShell.TAG}]`, 'Invalid shell message');
+            this.ws.close(CLOSE_INVALID_MESSAGE, `[${RemoteShell.TAG}] Invalid shell message`);
             return;
         }
-        this.handleMessage(data as Message).catch((error: Error) => {
-            console.error(`[${RemoteShell.TAG}]`, error.message);
-        });
-    }
-
-    private handleMessage = async (message: Message): Promise<void> => {
-        if (message.type !== EVENT_TYPE_SHELL) {
-            return;
-        }
-        const data: XtermClientMessage = message.data as XtermClientMessage;
-        const { type } = data;
-        if (type === 'start') {
-            this.term = this.createTerminal(data);
+        if (message.type === 'start') {
+            this.term = this.createTerminal(message);
             this.initialized = true;
-        }
-        if (type === 'stop') {
+        } else if (message.type === 'stop') {
             this.release();
         }
-    };
+    }
+
+    private handleControl(data: Exclude<SocketMessageEvent['data'], string>): void {
+        let message: XtermClientMessage | undefined;
+        try {
+            const bytes = Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data);
+            message = parseShellMessage(JSON.parse(bytes.toString('utf8')));
+        } catch {
+            message = undefined;
+        }
+        if (message?.type === 'resize') {
+            try {
+                this.term?.resize(message.cols, message.rows);
+            } catch (error) {
+                // The pty refuses a resize once adb has exited. The exit closes the channel.
+                console.error(`[${RemoteShell.TAG}]`, 'Resize failed:', (error as Error).message);
+            }
+        } else if (message?.type === 'stop') {
+            this.release();
+        }
+    }
 
     private bufferUtf8(timeout: number): (data: Buffer) => void {
         let buffer: Buffer[] = [];

@@ -1,5 +1,5 @@
-export interface Message {
+export interface Message<T = unknown> {
     id: number;
     type: string;
-    data: any;
+    data: T;
 }

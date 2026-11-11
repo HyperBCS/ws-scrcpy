@@ -179,6 +179,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private menuTargets?: string[];
 
     private filePushHandler?: FilePushHandler;
+    /** Set when the connection closes. The tool page reports that; the status line stays quiet. */
+    private offline = false;
     private readonly requests = new Map<Multiplexer, Request>();
     /** Uploads that have not ended, by key: two uploads may carry the same file name. */
     private readonly uploads = new Map<number, { row: HTMLElement; name: string; sent: number; size: number }>();
@@ -756,7 +758,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 ? 'Loading folder…'
                 : this.entries.length
                   ? 'No items match the filter.'
-                  : 'This folder is empty.';
+                  : !this.hasConnection()
+                    ? '' // Offline or still connecting: nothing was listed, so the folder is not known to be empty.
+                    : 'This folder is empty.';
             rows.push(`<tr class="fx-empty-row"><td colspan="6" class="fx-empty">${esc(message)}</td></tr>`);
         }
         this.tableBody.innerHTML = rows.join('');
@@ -840,7 +844,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
      * `toast`, where the whole message fits and stays long enough to read.
      */
     private report(message: string, error = false): void {
-        if (this.stopped) {
+        // Requests cut off by a lost connection would each ask for a refresh that cannot work.
+        if (this.stopped || this.offline) {
             return;
         }
         this.status.textContent = message;
@@ -2845,7 +2850,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         );
         this.loading = false;
         this.updateControls();
-        this.report('Connection lost. Return to your devices and open Files again.', true);
+        // The tool page says the connection is lost and reconnects. Until then the rows stay
+        // on screen but cannot be opened.
+        this.report('');
+        this.offline = true;
+        this.wrapper.classList.add('fx-offline');
+        this.scheduleRender();
     }
     protected supportMultiplexing(): boolean {
         return true;
