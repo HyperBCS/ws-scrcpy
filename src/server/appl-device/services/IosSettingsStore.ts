@@ -233,8 +233,9 @@ function sanitizeUnlock(value: unknown): StoredUnlockSettings | undefined {
 
 /**
  * Settings and the encrypted unlock passcode for each iPhone, under the server data directory.
- * The file layout is `IosSettingsFile`: one `StoredUnlockSettings` record per udid. The cipher
- * parameters are on `EncryptedPasscode` and in the constants above.
+ * The file layout is `IosSettingsFile`: per udid, an optional `unlock` record
+ * (`StoredUnlockSettings`). The cipher parameters are on `EncryptedPasscode` and in the
+ * constants above.
  *
  * Responsibility split: `ControlCenter` never calls this class. All four unlock commands go to
  * `UnlockScheduler`, which owns the only reference to the store (`IosSettingsStore.getInstance()`

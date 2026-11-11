@@ -68,9 +68,9 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
     private readonly id: string;
     private onSessionStatus?: (event: { udid: string; state: string; message?: string }) => void;
     private onRuntimeState?: (event: { udid: string } & AppleRuntimeState) => void;
-    // The runner and the monitor the two listeners above were added to. `release()` removes them
-    // from these and never asks for the singletons: either may have been released first, and
-    // `getInstance()` would then build a new one that nothing releases.
+    // The runner and the monitor the two listeners above were added to. `release()` takes the
+    // listeners off these, not off whatever `getInstance()` returns: either may have been released
+    // first, and `getInstance()` would then build a new one that nothing releases.
     private statusSource?: CoreDeviceRunner;
     private stateSource?: DeviceStateMonitor;
     // Set only when the scheduler started. Tracking never depends on it: without it the four
