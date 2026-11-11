@@ -27,16 +27,14 @@ export class BaseClient<P extends ParamsBase, TE extends EventMap> extends Typed
         };
     }
 
-    public setTitle(text = this.title): void {
-        // A `title` URL param overrides the automatic per-client title, so an
-        // embedded or popped-out client can show a meaningful document title
-        // (e.g. in a browser tab or detached window).
-        let titleTag: HTMLTitleElement | null = document.querySelector('head > title');
-        if (!titleTag) {
-            titleTag = document.createElement('title');
-            document.head.appendChild(titleTag);
-        }
-        titleTag.innerText = this.params?.title || text;
+    /**
+     * Does nothing. Tab titles are set in one place, from the route and the device list
+     * (`state/pageTitle.ts`, applied in `views/App.tsx`), which also honours the `title` URL
+     * parameter. Each client used to write its own format here ("Stream <model>",
+     * "Files · <serial>"). Kept so the existing callers compile; remove it together with them.
+     */
+    public setTitle(_text = this.title): void {
+        // Intentionally empty.
     }
 
     public setBodyClass(text: string): void {

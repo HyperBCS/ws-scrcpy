@@ -1,7 +1,9 @@
 import { NotificationsView } from './NotificationsView';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useLayoutEffect } from 'preact/hooks';
 import '../ui/viewport';
 import { route } from '../state/router';
+import { devices } from '../state/devices';
+import { pageTitle } from '../state/pageTitle';
 import { ToolRoute } from './ToolRoute';
 import { DeviceList } from './DeviceList';
 import { StreamView } from './StreamView';
@@ -14,6 +16,18 @@ import { CoreDeviceStreamView } from './CoreDeviceStreamView';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
 import { ACTION } from '../../common/Action';
 import { startNotificationSummary } from '../state/notifications';
+
+/**
+ * The one place a tab title is set; see `state/pageTitle.ts`. Its own component, so a device
+ * update re-renders this and not the whole app.
+ */
+function PageTitle() {
+    const title = pageTitle(route.value, devices.value.values());
+    useLayoutEffect(() => {
+        document.title = title;
+    }, [title]);
+    return null;
+}
 
 export function App() {
     // Started here, not in `DeviceList`: opening a stream deep link directly (or just reloading
@@ -55,6 +69,7 @@ export function App() {
 
     return (
         <>
+            <PageTitle />
             {view}
             {/* Mounted here rather than inside `StreamView` -- it is also reachable from a
                 device-list card (`DeviceCard`) with no stream open at all, see

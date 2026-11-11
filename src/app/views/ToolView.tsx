@@ -111,7 +111,6 @@ export function ToolView({ params }: { params: URLSearchParams }) {
         setConnectionLost(false);
         setControl(false);
         document.body.className = `tool-page ${action === ACTION.FILE_LISTING ? 'file-listing' : action}`;
-        document.title = `${tool?.title || 'Tools'} · ${udid}`;
         mountTool(routeRef.current, mount, () => cancelled)
             .then((client) => {
                 if (!client) return;

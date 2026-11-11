@@ -34,7 +34,6 @@ function groupByHost(list: DeviceEntry[]): HostGroup[] {
 export function DeviceList() {
     useLayoutEffect(() => {
         document.body.className = 'list';
-        document.title = 'Devices · ws-scrcpy';
     }, []);
 
     const entries = Array.from(devices.value.values());
