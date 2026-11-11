@@ -18,7 +18,8 @@ enum State {
 
 export class FilePushReader {
     private static fileId = 1;
-    private static maxId = 4294967295; // 2^32 - 1
+    // The id travels as a signed 16-bit field in every response, and 0 means "no id yet".
+    private static readonly maxId = 0x7fff;
 
     public static handle(serial: string, channel: WebSocket): FilePushReader {
         return new FilePushReader(serial, channel);
