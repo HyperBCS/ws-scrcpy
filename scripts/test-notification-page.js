@@ -1,7 +1,9 @@
 // Client-side pieces of the Notifications page that run without a browser.
 const assert = require('node:assert/strict');
 const { test, mock } = require('node:test');
+const path = require('node:path');
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
+require.extensions['.css'] = () => {};
 const { requestJson, REQUEST_TIMEOUT_MS } = require('../src/app/client/request');
 const { madeForServerKey, serverKeyBytes } = require('../src/common/pushKey');
 
@@ -76,4 +78,184 @@ test('a request waits as long as its caller allows, and 10 s by default', async 
         global.fetch = originalFetch;
         mock.timers.reset();
     }
+});
+
+// The view state of the page lives in its address (src/app/state/notificationPage.ts) and is
+// written by src/app/state/notificationNav.ts. scripts/e2e-notifications.js covers the same in
+// a browser.
+const ORIGIN = 'http://phones.test:8000/';
+const SCREEN = `${ORIGIN}#!action=device&udid=phone-a&view=screen`;
+
+/**
+ * A tab's session history, as much of it as the router uses. `pushState` and `replaceState` act
+ * at once; `go` and `back` act when `settle()` runs and then fire `popstate` and `hashchange`.
+ */
+function fakeBrowser(address) {
+    const listeners = { popstate: new Set(), hashchange: new Set() };
+    const tasks = [];
+    const entries = [{ url: new URL(address, ORIGIN), state: null }];
+    let index = 0;
+    const fire = (type) => [...listeners[type]].forEach((listener) => listener({ type }));
+    const here = () => entries[index].url;
+    const go = (delta) =>
+        tasks.push(() => {
+            if (index + delta < 0 || index + delta >= entries.length) return;
+            const from = here().hash;
+            index += delta;
+            fire('popstate');
+            if (here().hash !== from) fire('hashchange');
+        });
+    const write = (replace) => (state, _unused, url) => {
+        const entry = { url: url === undefined ? here() : new URL(url, here()), state: structuredClone(state) };
+        if (!replace) entries.length = ++index;
+        entries[index] = entry;
+    };
+    global.window = {
+        addEventListener: (type, listener) => listeners[type]?.add(listener),
+        removeEventListener: (type, listener) => listeners[type]?.delete(listener),
+    };
+    global.location = {
+        get hash() { return here().hash; },
+        get href() { return here().href; },
+        get origin() { return here().origin; },
+        get pathname() { return here().pathname; },
+    };
+    global.history = {
+        get state() { return entries[index].state; },
+        pushState: write(false),
+        replaceState: write(true),
+        go,
+        back: () => go(-1),
+    };
+    global.localStorage = { getItem: () => null, setItem: () => undefined };
+    return {
+        hashes: () => entries.map((entry) => entry.url.hash),
+        get index() { return index; },
+        settle() { while (tasks.length) tasks.shift()(); },
+    };
+}
+
+/** Loads the route modules into a new tab that was opened on `address`. */
+function openTab(address = '') {
+    const browser = fakeBrowser(address);
+    const app = path.join(__dirname, '..', 'src', 'app') + path.sep;
+    for (const key of Object.keys(require.cache)) if (key.startsWith(app)) delete require.cache[key];
+    return {
+        browser,
+        router: require('../src/app/state/router'),
+        page: require('../src/app/state/notificationPage'),
+        nav: require('../src/app/state/notificationNav'),
+    };
+}
+
+const DEFAULT_VIEW = { source: '', panel: 'history', filter: 'inbox', app: '', q: '', notification: '' };
+
+test('the Notifications address carries the iPhone, the panel, the filter, the app and the search text', () => {
+    const { page } = openTab();
+    const view = { source: 'phone-b', panel: 'setup', filter: 'archive', app: 'com.example.mail', q: 'coffee at 4 & more', notification: '' };
+    const address = page.notificationRoute(view);
+    assert.equal(address.toString(), 'action=notifications&source=phone-b&panel=setup&filter=archive&app=com.example.mail&q=coffee+at+4+%26+more');
+    assert.deepEqual(page.readNotificationPage(address), view);
+    // Defaults are left out, so the plain link is the plain inbox.
+    assert.equal(page.notificationRoute().toString(), 'action=notifications');
+    assert.equal(page.notificationRoute(DEFAULT_VIEW).toString(), 'action=notifications');
+    assert.equal(page.notificationRoute({ filter: 'unread' }).toString(), 'action=notifications&filter=unread');
+    assert.deepEqual(page.readNotificationPage(new URLSearchParams('action=notifications')), DEFAULT_VIEW);
+    // A value the page does not have is the default.
+    assert.deepEqual(page.readNotificationPage(new URLSearchParams('action=notifications&panel=other&filter=all')), DEFAULT_VIEW);
+});
+
+test('each part of the view is read from the address the tab opens on', () => {
+    for (const [address, expected] of [
+        ['#!action=notifications&source=phone-b', { source: 'phone-b' }],
+        ['#!action=notifications&panel=setup', { panel: 'setup' }],
+        ['#!action=notifications&filter=unread', { filter: 'unread' }],
+        ['#!action=notifications&app=com.example.chat', { app: 'com.example.chat' }],
+        ['#!action=notifications&q=design+review', { q: 'design review' }],
+        ['#!action=notifications&source=phone-a&panel=setup&filter=archive&app=com.example.chat&q=four', { source: 'phone-a', panel: 'setup', filter: 'archive', app: 'com.example.chat', q: 'four' }],
+    ]) {
+        const { router, page } = openTab(address);
+        assert.deepEqual(page.readNotificationPage(router.route.value), { ...DEFAULT_VIEW, ...expected }, address);
+    }
+});
+
+test('the iPhone, the panel, the filter, the app and the search text are each written into the same history entry', () => {
+    const { browser, router, page, nav } = openTab('#!');
+    router.openRoute(page.notificationRoute());
+    assert.deepEqual(browser.hashes(), ['#!', '#!action=notifications']);
+    for (const [change, address] of [
+        [{ source: 'phone-b' }, '#!action=notifications&source=phone-b'],
+        [{ panel: 'setup' }, '#!action=notifications&source=phone-b&panel=setup'],
+        [{ panel: 'history' }, '#!action=notifications&source=phone-b'],
+        [{ filter: 'unread' }, '#!action=notifications&source=phone-b&filter=unread'],
+        [{ app: 'com.example.mail' }, '#!action=notifications&source=phone-b&filter=unread&app=com.example.mail'],
+        [{ q: 'itinerary' }, '#!action=notifications&source=phone-b&filter=unread&app=com.example.mail&q=itinerary'],
+        [{ filter: 'inbox', app: '', q: '' }, '#!action=notifications&source=phone-b'],
+    ]) {
+        assert.equal(nav.changeNotificationPage(change), address.slice(2));
+        assert.deepEqual(browser.hashes(), ['#!', address], `${JSON.stringify(change)} is a replace`);
+        assert.equal(browser.index, 1);
+        assert.deepEqual(page.readNotificationPage(router.route.value), page.readNotificationPage(new URLSearchParams(address.slice(2))), 'the route the views read follows');
+    }
+    // One step back leaves the page: no earlier choice is in between.
+    history.back();
+    browser.settle();
+    assert.equal(location.hash, '#!');
+});
+
+test('a delivered push link opens its notification once, and a filter written afterwards does not open it again', () => {
+    const { browser, router, page, nav } = openTab('#!action=notifications&source=phone-a&notification=a-chat');
+    assert.deepEqual(page.readNotificationPage(router.route.value), { ...DEFAULT_VIEW, source: 'phone-a', notification: 'a-chat' });
+    // A filter written before the notification has been found keeps the request.
+    nav.changeNotificationPage({ filter: 'unread' });
+    assert.equal(page.readNotificationPage(router.route.value).notification, 'a-chat');
+    // The page found it: it shows the list that holds it and takes its name out of the address.
+    nav.changeNotificationPage({ notification: '', filter: 'inbox', app: '', q: '' });
+    assert.deepEqual(browser.hashes(), ['#!action=notifications&source=phone-a'], 'in the entry the link opened');
+    assert.equal(page.readNotificationPage(router.route.value).notification, '');
+    for (const change of [{ filter: 'unread' }, { q: 'coffee' }, { app: 'com.example.chat' }, { panel: 'setup' }, { source: 'phone-b' }]) {
+        nav.changeNotificationPage(change);
+        assert.equal(page.readNotificationPage(router.route.value).notification, '', `${JSON.stringify(change)} does not bring it back`);
+        assert.doesNotMatch(location.hash, /notification=/);
+    }
+    assert.equal(browser.hashes().length, 1);
+    // The alert link of a push is still the list.
+    assert.equal(openTab('#!action=').router.route.value.get('action'), '');
+});
+
+test('a change that arrives after the page is left does not put Notifications back', () => {
+    const { browser, router, page, nav } = openTab('#!');
+    assert.equal(nav.changeNotificationPage({ q: 'late' }), undefined, 'nothing is written on the list');
+    assert.deepEqual(browser.hashes(), ['#!']);
+    router.openRoute(page.notificationRoute());
+    // The back control was pressed and the search text is written before the browser has moved.
+    router.goUp();
+    nav.changeNotificationPage({ q: 'late' });
+    browser.settle();
+    assert.equal(location.hash, '#!');
+    assert.deepEqual(browser.hashes(), ['#!', '#!action=notifications'], 'the entry that was left is as it was');
+    assert.equal(router.route.value.toString(), '');
+});
+
+test('opening a screen from the inbox writes the search text first and keeps the place for the return with Back', () => {
+    const { browser, router, page, nav } = openTab('#!');
+    router.openRoute(page.notificationRoute({ source: 'phone-a', filter: 'archive' }));
+    assert.equal(nav.takeNotificationScroll(), undefined, 'an inbox opened from the list starts at the top');
+    nav.openScreenFromNotifications(SCREEN, 'four', { top: 640, limit: 50 });
+    assert.deepEqual(browser.hashes(), ['#!', '#!action=notifications&source=phone-a&filter=archive&q=four', '#!action=device&udid=phone-a&view=screen']);
+    assert.equal(browser.index, 2, 'the screen is a new entry');
+    assert.equal(nav.takeNotificationScroll(), undefined, 'nothing to restore on the screen');
+    history.back();
+    browser.settle();
+    assert.deepEqual(page.readNotificationPage(router.route.value), { ...DEFAULT_VIEW, source: 'phone-a', filter: 'archive', q: 'four' });
+    assert.deepEqual(nav.takeNotificationScroll(), { top: 640, limit: 50 });
+    assert.equal(nav.takeNotificationScroll(), undefined, 'the place is used once');
+
+    // From the screen to the list with the back control, then the inbox again: a new visit.
+    nav.openScreenFromNotifications(SCREEN, 'four', { top: 320, limit: 25 });
+    router.goUp();
+    browser.settle();
+    assert.equal(location.hash, '#!');
+    router.openRoute(page.notificationRoute({ source: 'phone-a', filter: 'archive', q: 'four' }));
+    assert.equal(nav.takeNotificationScroll(), undefined, 'an inbox opened from the list starts at the top');
 });

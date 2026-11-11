@@ -1,11 +1,26 @@
+/* The shared header stays in place; the page under it scrolls. */
+.notifications-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+/* `body.list` already keeps this page clear of the status bar and the screen edges. */
+.notifications-view > .stream-header {
+    padding: 0 8px 0 6px;
+}
+.notifications-view > .stream-header .notification-unread-count {
+    margin-right: 8px;
+}
 .notifications-page {
+    flex: 1 1 auto;
+    width: 100%;
     max-width: 720px;
-    margin: auto;
-    /* No top padding on the scroller: Chromium offsets its sticky children by it. The header carries it. */
+    min-height: 0;
+    margin: 0 auto;
+    /* No top padding on the scroller: Chromium offsets its sticky children by it. The block at its top carries it. */
     padding: 0 16px 88px;
     overflow-y: auto;
     overscroll-behavior-y: contain;
-    height: 100%;
     box-sizing: border-box;
     color: var(--text-color);
     background: var(--main-bg-color);
@@ -13,18 +28,6 @@
 }
 .notification-page-header {
     padding-top: 20px;
-    margin-bottom: 20px;
-}
-.notification-page-header > a {
-    display: inline-flex;
-    align-items: center;
-    min-height: 44px;
-}
-.notifications-page h1 {
-    font-size: 22px;
-    letter-spacing: -0.025em;
-    line-height: 1.2;
-    margin: 6px 0 8px;
 }
 .notifications-page h2 {
     font-size: 18px;
@@ -698,16 +701,6 @@
     padding: 0;
     border: 0;
     background: transparent;
-}
-.notification-page-header > a {
-    gap: 6px;
-    text-decoration: none;
-    font-size: 13px;
-}
-.notification-page-header h1 {
-    display: flex;
-    align-items: center;
-    gap: 8px;
 }
 .notification-history > .notification-source-heading h2 {
     font-size: 16px;
