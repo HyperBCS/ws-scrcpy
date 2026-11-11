@@ -28,10 +28,9 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         udid: string,
         displayInfo?: DisplayInfo,
         name = 'Canvas',
-        storageKeyPrefix = 'DummyCanvas',
         protected tag: HTMLCanvasElement = BaseCanvasBasedPlayer.createElement(),
     ) {
-        super(udid, displayInfo, name, storageKeyPrefix, tag);
+        super(udid, displayInfo, name, tag);
     }
 
     protected abstract decode(data: Uint8Array): void;

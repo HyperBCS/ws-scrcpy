@@ -205,6 +205,9 @@ async function main() {
                 });
             });
             await dialog.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+            const playback = await dialog.locator('.settings-playback').textContent();
+            assert(/Show quality stats/.test(playback), label + ': playback settings are listed');
+            assert(!/Fit screen/i.test(playback), label + ': no Fit screen toggle, the picture always fits');
             await geometry(page, label + ' all sections');
             await page.screenshot({ path: path.join(OUT, label + '-quality.png') });
             await page.locator('.settings-audio').evaluate((el) => {

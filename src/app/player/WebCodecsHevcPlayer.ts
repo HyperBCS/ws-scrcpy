@@ -20,7 +20,6 @@ import {
  * scrcpy-shaped frame flow, and the two share almost nothing beyond the canvas.
  */
 export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
-    public static readonly storageKeyPrefix = 'WebCodecsHevcPlayer';
     public static readonly playerFullName = 'WebCodecs HEVC';
     public static readonly playerCodeName = 'hevc';
     public static readonly preferredVideoSettings: VideoSettings = new VideoSettings({
@@ -59,7 +58,7 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
     private frameSize?: Size;
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = WebCodecsHevcPlayer.playerFullName) {
-        super(udid, displayInfo, name, WebCodecsHevcPlayer.storageKeyPrefix);
+        super(udid, displayInfo, name);
         const context = this.tag.getContext('2d');
         if (!context) {
             throw Error('Failed to get 2d context from canvas');
@@ -68,14 +67,6 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
     }
 
     public getPreferredVideoSetting(): VideoSettings {
-        return WebCodecsHevcPlayer.preferredVideoSettings;
-    }
-
-    public getFitToScreenStatus(): boolean {
-        return true;
-    }
-
-    public loadVideoSettings(): VideoSettings {
         return WebCodecsHevcPlayer.preferredVideoSettings;
     }
 

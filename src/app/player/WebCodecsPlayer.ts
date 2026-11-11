@@ -18,7 +18,6 @@ function toHex(value: number) {
 }
 
 export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
-    public static readonly storageKeyPrefix = 'WebCodecsPlayer';
     public static readonly playerFullName = 'WebCodecs';
     public static readonly playerCodeName = 'webcodecs';
 
@@ -92,7 +91,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     private recoveryTimer?: ReturnType<typeof setTimeout>;
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = WebCodecsPlayer.playerFullName) {
-        super(udid, displayInfo, name, WebCodecsPlayer.storageKeyPrefix);
+        super(udid, displayInfo, name);
         const context = this.tag.getContext('2d');
         if (!context) {
             throw Error('Failed to get 2d context from canvas');
@@ -236,26 +235,12 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         return array;
     }
 
+    /** The canvas takes the picture's own size; CSS scales it to fit the stream area. */
     protected scaleCanvas(width: number, height: number): void {
-        const videoSize = new Size(width, height);
-        let scale = 1;
-        if (this.bounds && !this.bounds.intersect(videoSize).equals(videoSize)) {
-            scale = Math.min(this.bounds.w / width, this.bounds.h / height);
-        }
-        const w = width * scale;
-        const h = height * scale;
-        const screenInfo = new ScreenInfo(new Rect(0, 0, width, height), new Size(w, h), 0);
+        const screenInfo = new ScreenInfo(new Rect(0, 0, width, height), new Size(width, height), 0);
         this.emit('input-video-resize', screenInfo);
         this.setScreenInfo(screenInfo);
-
-        // FIXME: canvas was initialized from `.setScreenInfo()` call above, but with wrong values
         this.initCanvas(width, height);
-        if (scale !== 1) {
-            this.tag.style.transform = `scale(${scale.toFixed(4)})`;
-        } else {
-            this.tag.style.transform = ``;
-        }
-        this.tag.style.transformOrigin = 'top left';
     }
 
     protected decode(data: Uint8Array): void {
@@ -358,16 +343,8 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         frame.close();
     }
 
-    public getFitToScreenStatus(): boolean {
-        return false;
-    }
-
     public getPreferredVideoSetting(): VideoSettings {
         return WebCodecsPlayer.preferredVideoSettings;
-    }
-
-    public loadVideoSettings(): VideoSettings {
-        return WebCodecsPlayer.loadVideoSettings(this.udid, this.displayInfo);
     }
 
     protected needScreenInfoBeforePlay(): boolean {

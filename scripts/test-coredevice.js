@@ -2317,27 +2317,20 @@ function streamLayoutFixture(t, platform, legacy = false) {
     const toolbox = { getHolderElement: () => controls, release() {} };
     const params = { action: 'stream', udid: `layout-${platform}`, player: 'fixture', captureKeyboard: false };
     const mount = legacy ? undefined : createElement();
-    if (platform === 'ios') {
-        const { StreamClientCoreDevice } = require('../src/app/applDevice/client/StreamClientCoreDevice');
-        const { CoreDeviceReceiver } = require('../src/app/applDevice/client/CoreDeviceReceiver');
-        const { ApplToolBox } = require('../src/app/applDevice/toolbox/ApplToolBox');
-        t.mock.method(CoreDeviceReceiver.prototype, 'openNewConnection', () => undefined);
-        t.mock.method(ApplToolBox, 'createToolBox', () => toolbox);
-        client = StreamClientCoreDevice.start(params, mount);
-        client.player = player;
-        client.applyBounds();
-    } else {
-        const { StreamClientScrcpy } = require('../src/app/googDevice/client/StreamClientScrcpy');
-        const { GoogToolBox } = require('../src/app/googDevice/toolbox/GoogToolBox');
-        t.mock.method(GoogToolBox, 'createToolBox', () => toolbox);
-        t.mock.method(StreamClientScrcpy.prototype, 'setTouchListeners', () => {});
-        const receiver = Object.assign(new EventEmitter(), { isReady: () => true, stop() {} });
-        client = StreamClientScrcpy.start(params, receiver, player, true, undefined, mount);
-    }
+    const { StreamClientCoreDevice } = require('../src/app/applDevice/client/StreamClientCoreDevice');
+    const { CoreDeviceReceiver } = require('../src/app/applDevice/client/CoreDeviceReceiver');
+    const { ApplToolBox } = require('../src/app/applDevice/toolbox/ApplToolBox');
+    t.mock.method(CoreDeviceReceiver.prototype, 'openNewConnection', () => undefined);
+    t.mock.method(ApplToolBox, 'createToolBox', () => toolbox);
+    client = StreamClientCoreDevice.start(params, mount);
+    client.player = player;
+    client.applyBounds();
     return { client, layout, observers, windowListeners, bounds, body, mount };
 }
 
-for (const platform of ['ios', 'android']) {
+// The Android client has no bounds to follow: CSS fits its picture, and the Fit screen setting
+// that fed these bounds is gone (scripts/test-stream-clients.js).
+for (const platform of ['ios']) {
     test(`browser side: ${platform} stream bounds follow the video content box and stop observing on teardown`, (t) => {
         const { client, layout, observers, windowListeners, bounds } = streamLayoutFixture(t, platform);
         const lastBounds = () => [bounds.at(-1).width, bounds.at(-1).height];
@@ -2357,17 +2350,6 @@ for (const platform of ['ios', 'android']) {
         observers[0].callback();
         t.mock.timers.tick(300);
         assert.equal(bounds.length, visibleCount, 'hidden layout does not overwrite useful playback bounds');
-        if (platform === 'android') {
-            client.setFitToScreen(false);
-            assert.deepEqual(lastBounds(), [720, 1280], 'native-size mode retains the device size');
-            Object.assign(layout, { width: 500, height: 700 });
-            const nativeCount = bounds.length;
-            observers[0].callback();
-            t.mock.timers.tick(300);
-            assert.equal(bounds.length, nativeCount, 'layout changes do not turn fitting back on');
-            client.setFitToScreen(true);
-            assert.deepEqual(lastBounds(), [480, 656], 're-enabling fitting uses the current wrapper');
-        }
         Object.assign(layout, { width: 900, height: 600 });
         observers[0].callback();
         const pendingCount = bounds.length;

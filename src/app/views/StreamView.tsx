@@ -50,7 +50,7 @@ export function StreamView({ params }: StreamViewProps) {
         // to the device list re-sets it to 'list' from there (see `views/DeviceList.tsx`).
         let client: StreamClientScrcpy;
         try {
-            client = StreamClientScrcpy.start(params, undefined, undefined, params.fitToScreen, undefined, container);
+            client = StreamClientScrcpy.start(params, undefined, undefined, undefined, container);
         } catch (cause) {
             streamConnected.value = false;
             setError(cause instanceof Error ? cause.message : 'The stream could not be started.');

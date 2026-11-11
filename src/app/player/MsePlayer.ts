@@ -16,7 +16,6 @@ type Block = {
 };
 
 export class MsePlayer extends BasePlayer {
-    public static readonly storageKeyPrefix = 'MseDecoder';
     public static readonly playerFullName = 'H264 Converter';
     public static readonly playerCodeName = 'mse';
     public static readonly preferredVideoSettings: VideoSettings = new VideoSettings({
@@ -81,7 +80,7 @@ export class MsePlayer extends BasePlayer {
         name = MsePlayer.playerFullName,
         protected tag: HTMLVideoElement = MsePlayer.createElement(),
     ) {
-        super(udid, displayInfo, name, MsePlayer.storageKeyPrefix, tag);
+        super(udid, displayInfo, name, tag);
         tag.oncontextmenu = function (event: MouseEvent): boolean {
             event.preventDefault();
             return false;
@@ -150,7 +149,6 @@ export class MsePlayer extends BasePlayer {
         this.canPlay = true;
         this.tag.play();
         this.tag.removeEventListener('canplay', this.onVideoCanPlay);
-        this.checkVideoResize();
     }
 
     protected calculateMomentumStats(): void {
@@ -233,7 +231,7 @@ export class MsePlayer extends BasePlayer {
         this.stopConverter();
     }
 
-    public setVideoSettings(videoSettings: VideoSettings, fitToScreen: boolean, saveToStorage: boolean): void {
+    public setVideoSettings(videoSettings: VideoSettings): void {
         if (this.videoSettings && this.videoSettings.maxFps !== videoSettings.maxFps) {
             const state = this.getState();
             if (this.converter) {
@@ -245,22 +243,13 @@ export class MsePlayer extends BasePlayer {
                 this.play();
             }
         }
-        super.setVideoSettings(videoSettings, fitToScreen, saveToStorage);
+        super.setVideoSettings(videoSettings);
     }
 
     public getPreferredVideoSetting(): VideoSettings {
         return MsePlayer.preferredVideoSettings;
     }
 
-    checkVideoResize = (): void => {
-        if (!this.tag) {
-            return;
-        }
-        const { videoHeight, videoWidth } = this.tag;
-        if (this.videoHeight !== videoHeight || this.videoWidth !== videoWidth) {
-            this.calculateScreenInfoForBounds(videoWidth, videoHeight);
-        }
-    };
     cleanSourceBuffer = (): void => {
         if (!this.sourceBuffer) {
             return;
@@ -442,9 +431,6 @@ export class MsePlayer extends BasePlayer {
                     return true;
                 }
             }
-            if (this.sourceBuffer) {
-                this.sourceBuffer.onupdateend = this.checkVideoResize;
-            }
         }
         if (this.waitUntilSegmentRemoved) {
             return false;
@@ -474,20 +460,11 @@ export class MsePlayer extends BasePlayer {
         if (this.sourceBuffer) {
             this.sourceBuffer.removeEventListener('updateend', this.cleanSourceBuffer);
             this.sourceBuffer.removeEventListener('updateend', this.jumpToEnd);
-            this.sourceBuffer.onupdateend = null;
             this.sourceBuffer = undefined;
         }
         // A new MediaSource must not inherit a removal wait or queued pictures from the old one.
         this.waitUntilSegmentRemoved = false;
         this.frames = [];
         this.blocks = [];
-    }
-
-    public getFitToScreenStatus(): boolean {
-        return MsePlayer.getFitToScreenStatus(this.udid, this.displayInfo);
-    }
-
-    public loadVideoSettings(): VideoSettings {
-        return MsePlayer.loadVideoSettings(this.udid, this.displayInfo);
     }
 }

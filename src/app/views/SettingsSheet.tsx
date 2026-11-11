@@ -96,7 +96,6 @@ export function SettingsSheet() {
     const [confirming, setConfirming] = useState(false);
     const [applyError, setApplyError] = useState<string>();
     const [appliedNote, setAppliedNote] = useState<string>();
-    const [fitToScreen, setFitToScreenState] = useState(false);
     const [captureKeyboard, setCaptureKeyboard] = useState(true);
     const [useUhid, setUseUhid] = useState(true);
     const [showStats, setShowStats] = useState(false);
@@ -191,7 +190,6 @@ export function SettingsSheet() {
     }, [target, tracker, reload]);
 
     useEffect(() => {
-        setFitToScreenState(client?.isFitToScreen() ?? false);
         setShowStats(client?.getPlayer()?.getShowQualityStats() ?? false);
         setCaptureKeyboard(client?.isKeyboardCaptured() ?? true);
         setUseUhid(client?.isUsingUhidKeyboard() ?? true);
@@ -302,7 +300,6 @@ export function SettingsSheet() {
             udid: session.params.udid,
             player: (event.currentTarget as HTMLSelectElement).value,
             ws: session.params.ws,
-            fitToScreen: client?.isFitToScreen(),
             captureKeyboard: captureKeyboard,
         });
     };
@@ -670,19 +667,6 @@ export function SettingsSheet() {
                                         </option>
                                     ))}
                                 </select>
-                            </label>
-                            <label class="settings-sheet-row settings-toggle-row">
-                                <span>
-                                    Fit screen<small>Keep the full device visible</small>
-                                </span>
-                                <input
-                                    type="checkbox"
-                                    checked={fitToScreen}
-                                    onChange={(event) => {
-                                        setFitToScreenState(event.currentTarget.checked);
-                                        client.setFitToScreen(event.currentTarget.checked);
-                                    }}
-                                />
                             </label>
                             <label class="settings-sheet-row settings-toggle-row">
                                 <span>

@@ -90,7 +90,6 @@ export function DeviceSwitcherSheet({ currentDeviceKey, onSelectDevice }: Device
                 udid: entry.descriptor.udid,
                 player: player.playerCodeName,
                 ws: selected.url,
-                fitToScreen: 'true',
             },
             entry.params,
         );

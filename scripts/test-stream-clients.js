@@ -445,7 +445,7 @@ function androidClient(t, player) {
         getDisplayInfo: () => undefined,
     });
     const params = { action: 'stream', udid: 'android-client', player: 'fixture', ws: 'ws://localhost:8000/', captureKeyboard: false };
-    const client = StreamClientScrcpy.start(params, receiver, player, undefined, undefined, element());
+    const client = StreamClientScrcpy.start(params, receiver, player, undefined, element());
     t.after(() => client.stop());
     return { client, receiver, sent, toolbox };
 }
@@ -535,4 +535,89 @@ test('the iPhone client asks for a key frame when its decoder reports an error',
     client.getPlayer().configure('hev1', new Uint8Array([1]));
     MockDecoder.instances[0].fail();
     assert.deepEqual(sent, [{ type: 'pli' }]);
+});
+
+// ---------------------------------------------------------------- picture size and fitting
+
+test('a second scrcpy_initial after a rotation gives the player the new picture size', (t) => {
+    const { DisplayInfo } = require('../src/app/DisplayInfo');
+    const VideoSettings = require('../src/app/VideoSettings').default;
+    const player = fakePlayer();
+    const sizes = [];
+    player.setScreenInfo = function (info) {
+        this.screenInfo = info;
+        sizes.push([info.videoSize.width, info.videoSize.height]);
+    };
+    const { client, receiver } = androidClient(t, player);
+    const initial = (width, height, connectionCount) => [
+        {
+            displayInfo: new DisplayInfo(0, new Size(width, height), 0, 0, 0),
+            screenInfo: screen(width, height),
+            videoSettings: new VideoSettings({ bounds: new Size(width, height), bitrate: 7340032, maxFps: 60 }),
+            connectionCount,
+        },
+    ];
+    receiver.emit('displayInfo', initial(720, 1280, 0));
+    assert.deepEqual(sizes, [[720, 1280]]);
+    receiver.emit('displayInfo', initial(720, 1280, 1));
+    assert.deepEqual(sizes, [[720, 1280]], 'the same size again does not reset the player');
+    assert.equal(client.getClientsCount(), 1);
+    receiver.emit('displayInfo', initial(1280, 720, 1));
+    assert.deepEqual(sizes, [[720, 1280], [1280, 720]], 'touch mapping and the canvas follow the rotation');
+});
+
+test('the Android client has no fit-to-screen mode and stores nothing per window size', (t) => {
+    const { StreamClientScrcpy } = require('../src/app/googDevice/client/StreamClientScrcpy');
+    const { BasePlayer } = require('../src/app/player/BasePlayer');
+    const query = new URLSearchParams({
+        action: 'stream',
+        udid: 'emulator-5554',
+        player: 'webcodecs',
+        ws: 'ws://localhost:8000/?action=proxy-adb',
+        fitToScreen: '1',
+    });
+    const parsed = StreamClientScrcpy.parseParameters(query);
+    assert.equal('fitToScreen' in parsed, false, 'an old link still opens; its fitToScreen parameter is ignored');
+    assert.equal(parsed.captureKeyboard, true);
+
+    // What earlier versions left behind, next to keys that belong to other features.
+    const stored = new Map([
+        ['MseDecoder:emulator-5554:1280x800', '{}'],
+        ['MseDecoder:emulator-5554:1280x800:fit', 'true'],
+        ['WebCodecsPlayer:emulator-5554:390x844:0:1080x2400', '{}'],
+        ['WebCodecsPlayer:emulator-5554:390x844:0:1080x2400:fit', 'false'],
+        ['WebCodecsPlayer:192.168.1.20:5555:1440x900:fit', 'true'],
+        ['theme', 'dark'],
+        ['ios-passcode:00008110', 'kept'],
+    ]);
+    const writes = [];
+    const storage = {
+        get length() {
+            return stored.size;
+        },
+        key: (index) => [...stored.keys()][index] ?? null,
+        getItem: (key) => stored.get(key) ?? null,
+        setItem: (key) => writes.push(key),
+        removeItem: (key) => stored.delete(key),
+    };
+    const previous = global.localStorage;
+    global.localStorage = storage;
+    t.after(() => (global.localStorage = previous));
+    BasePlayer.storedSettingsRemoved = false;
+
+    const player = fakePlayer();
+    const { client } = androidClient(t, player);
+    assert.deepEqual([...stored.keys()], ['theme', 'ios-passcode:00008110'], 'stale keys are removed, others kept');
+    assert.equal(typeof client.setFitToScreen, 'undefined');
+    assert.equal(typeof client.isFitToScreen, 'undefined');
+
+    const { WebCodecsPlayer } = require('../src/app/player/WebCodecsPlayer');
+    const { MsePlayer } = require('../src/app/player/MsePlayer');
+    const VideoSettings = require('../src/app/VideoSettings').default;
+    for (const real of [new WebCodecsPlayer('emulator-5554'), new MsePlayer('emulator-5554')]) {
+        real.setVideoSettings(new VideoSettings({ bounds: new Size(1080, 2400), bitrate: 7340032, maxFps: 60 }));
+        real.stop();
+    }
+    assert.deepEqual(writes, [], 'no player writes video settings to storage');
+    assert.deepEqual([...stored.keys()], ['theme', 'ios-passcode:00008110']);
 });

@@ -25,7 +25,6 @@ import { buildHevcInitSegment, buildHevcMediaSegment, concat, hevcMimeCandidates
  * live-edge chasing needs.
  */
 export class MseHevcPlayer extends BasePlayer {
-    public static readonly storageKeyPrefix = 'MseHevcPlayer';
     public static readonly playerFullName = 'MSE HEVC';
     public static readonly playerCodeName = 'mse';
     public static readonly preferredVideoSettings: VideoSettings = new VideoSettings({
@@ -93,21 +92,13 @@ export class MseHevcPlayer extends BasePlayer {
     private decodedFrames = 0;
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = MseHevcPlayer.playerFullName) {
-        super(udid, displayInfo, name, MseHevcPlayer.storageKeyPrefix, MseHevcPlayer.createElement());
+        super(udid, displayInfo, name, MseHevcPlayer.createElement());
         this.tag.addEventListener('resize', this.onVideoResize);
         this.tag.addEventListener('loadedmetadata', this.onVideoResize);
         this.tag.addEventListener('error', this.onVideoError);
     }
 
     public getPreferredVideoSetting(): VideoSettings {
-        return MseHevcPlayer.preferredVideoSettings;
-    }
-
-    public getFitToScreenStatus(): boolean {
-        return true;
-    }
-
-    public loadVideoSettings(): VideoSettings {
         return MseHevcPlayer.preferredVideoSettings;
     }
 
