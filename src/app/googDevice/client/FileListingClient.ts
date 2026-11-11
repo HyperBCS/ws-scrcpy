@@ -146,7 +146,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     public static readonly PARENT_DIR = '..';
     public static readonly PROPERTY_NAME = 'data-name';
     public static readonly PROPERTY_ENTRY_ID = 'data-entry-id';
-    public static start(params: ParamsFileListing, mount?: HTMLElement): FileListingClient {
+    public static start(params: ParamsFileListing, mount: HTMLElement): FileListingClient {
         return new FileListingClient(params, mount);
     }
     public static createEntryForDeviceList(descriptor: GoogDeviceDescriptor): ToolEntry | undefined {
@@ -252,7 +252,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /** Checks the open dialog's field. A message keeps the dialog open and is shown under the field. */
     private dialogCheck?: () => string;
 
-    constructor(params: ParamsFileListing, mount?: HTMLElement) {
+    constructor(params: ParamsFileListing, mount: HTMLElement) {
         super(params);
         this.serial = params.udid;
         this.path = path.resolve('/', params.path);
@@ -560,11 +560,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             }
         });
 
-        (mount || document.body).appendChild(this.wrapper);
-        if (!mount) {
-            this.setTitle(`Files · ${this.serial}`);
-            this.setBodyClass('file-listing-page');
-        }
+        mount.appendChild(this.wrapper);
         this.openNewConnection();
         if (this.ws instanceof Multiplexer) {
             this.filePushHandler = new FilePushHandler(
