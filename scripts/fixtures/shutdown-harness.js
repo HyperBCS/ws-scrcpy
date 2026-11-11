@@ -5,6 +5,8 @@
 //   reject  an unhandled promise rejection
 //   signal  waits for the test to send signals
 //   exit    process.exit(3) with no shutdown at all (only the runner's exit hook runs)
+//   late    like signal, and on SIGTERM asks for a second phone's session once the runner has
+//           been released; prints whether that was refused
 // HARNESS_PYMOBILEDEVICE3 is the fake CLI. Prints "harness ready" once the session is up.
 const path = require('node:path');
 
@@ -26,8 +28,21 @@ shutdown.addWaiter({
     closed: () => CoreDeviceRunner.childrenClosed(),
     budgetMs: () => CoreDeviceRunner.shutdownBudgetMs(),
 });
+// As in src/server/index.ts.
+CoreDeviceRunner.setShutdownCheck(() => shutdown.isStopping());
 if (mode !== 'exit') {
     shutdown.install();
+}
+if (mode === 'late') {
+    // Added after `install()`, so it runs once Shutdown's own handler has released the runner.
+    process.on('SIGTERM', () => {
+        CoreDeviceRunner.getInstance()
+            .acquire('iphone-late')
+            .then(
+                () => console.log('late acquire started'),
+                (error) => console.log(`late acquire refused: ${error.message}`),
+            );
+    });
 }
 
 runner.acquire('iphone-harness').then(() => {

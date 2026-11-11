@@ -88,10 +88,14 @@ async function loadApplModules() {
         HostTracker.registerLocalTracker(DeviceTracker);
     }
 
-    servicesToStart.push(ControlCenter);
     // Owns every per-device `pymobiledevice3 ... display serve-web` child (the screen stream +
-    // HID session) so they are all killed from the central exit() cleanup.
+    // HID session) so they are all stopped from the central shutdown. It is listed before the
+    // tracker because services stop in reverse order: the tracker lets go of the runner and the
+    // state monitor first, then the runner stops the sessions.
     servicesToStart.push(CoreDeviceRunner);
+    servicesToStart.push(ControlCenter);
+    // Once the server is stopping no new screen session starts, whoever asks for one.
+    CoreDeviceRunner.setShutdownCheck(() => shutdown.isStopping());
     // serve-web returns the phone's display sessions in its own shutdown; Node waits for it.
     shutdown.addWaiter({
         pending: () => CoreDeviceRunner.hasChildren(),

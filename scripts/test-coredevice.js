@@ -886,6 +886,198 @@ test('Node exiting without a shutdown sends serve-web SIGTERM, not SIGKILL', asy
     assert(calls().includes('serve-web sigterm iphone-harness'));
 });
 
+// ---------------------------------------------------------------------------------------------
+// Shutdown: once the runner and the state monitor have been released, nothing may build a new
+// one. A runner built during shutdown is never released, and a serve-web it starts is never
+// stopped, which leaves a display session open on the phone.
+
+// Counts the runners and monitors that `getInstance()` builds from here to the end of the test.
+const countBuilt = (t) => {
+    const built = { runner: 0, monitor: 0 };
+    for (const [name, service] of [
+        ['runner', CoreDeviceRunner],
+        ['monitor', DeviceStateMonitor],
+    ]) {
+        const getInstance = service.getInstance;
+        t.mock.method(service, 'getInstance', () => {
+            if (!service.hasInstance()) built[name]++;
+            return getInstance.call(service);
+        });
+    }
+    return built;
+};
+// Whatever a failed assertion left behind, so the next test starts without it.
+const releaseLeftovers = () => {
+    if (CoreDeviceRunner.hasInstance()) CoreDeviceRunner.getInstance().release();
+    if (DeviceStateMonitor.hasInstance()) DeviceStateMonitor.getInstance().release();
+};
+const mockOnePhone = (t, udid) =>
+    t.mock.method(PyMobileDevice, 'runJson', async (args) => {
+        if (args[0] === 'usbmux') return [udid];
+        if (args[0] === 'lockdown') return { DeviceName: 'Stop', ProductType: 'iPhone14,3', ProductVersion: '27.0' };
+        if (args[0] === 'amfi') return true;
+        throw new Error(`unexpected ${args.join(' ')}`);
+    });
+
+test('a tracker released after the runner and the monitor builds neither of them again', async (t) => {
+    const { ControlCenter } = require('../src/server/appl-device/services/ControlCenter');
+    const udid = 'iphone-stop-order';
+    mockOnePhone(t, udid);
+    // No observer or probe processes: this test is about who holds which listener.
+    await withEnv({ IOS_STATE_PROBE: '0' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const monitor = DeviceStateMonitor.getInstance();
+        const tracker = new ControlCenter();
+        try {
+            await tracker.init();
+            await tick();
+            await tick();
+            assert.equal(tracker.getDescriptor(udid).state, 'Connected');
+            assert.equal(runner.listenerCount('status'), 1, 'the tracker follows the session state');
+            const built = countBuilt(t);
+            // The other two first: the order a change to the service list could bring back.
+            runner.release();
+            monitor.release();
+            tracker.release();
+            assert.deepEqual(built, { runner: 0, monitor: 0 }, 'release() asked for no new singleton');
+            assert.equal(runner.listenerCount('status'), 0, 'the listener came off the runner it was put on');
+            assert.equal(monitor.listenerCount('state'), 0, 'and off the monitor it was put on');
+            // A serve-web that closes late still reports through the released runner.
+            runner.emit('status', { udid, state: 'error', message: 'The screen stream exited (0)' });
+            assert.deepEqual(built, { runner: 0, monitor: 0 }, 'a late session status builds nothing either');
+            assert.equal(CoreDeviceRunner.hasInstance(), false);
+            assert.equal(DeviceStateMonitor.hasInstance(), false);
+        } finally {
+            tracker.release();
+            releaseLeftovers();
+        }
+    });
+});
+
+test('a second release of the runner, the monitor or the tracker leaves a newer one in place', async (t) => {
+    const { ControlCenter } = require('../src/server/appl-device/services/ControlCenter');
+    mockOnePhone(t, 'iphone-twice');
+    await withEnv({ IOS_STATE_PROBE: '0' }, async () => {
+        try {
+            const oldRunner = CoreDeviceRunner.getInstance();
+            oldRunner.release();
+            const runner = CoreDeviceRunner.getInstance();
+            oldRunner.release();
+            assert.equal(CoreDeviceRunner.hasInstance(), true, 'the newer runner is still the instance');
+            assert.equal(CoreDeviceRunner.getInstance(), runner);
+
+            const oldMonitor = DeviceStateMonitor.getInstance();
+            oldMonitor.release();
+            const monitor = DeviceStateMonitor.getInstance();
+            oldMonitor.release();
+            assert.equal(DeviceStateMonitor.hasInstance(), true, 'the newer monitor is still the instance');
+            assert.equal(DeviceStateMonitor.getInstance(), monitor);
+            monitor.release();
+
+            const oldTracker = ControlCenter.getInstance();
+            await oldTracker.init();
+            oldTracker.release();
+            assert.equal(ControlCenter.hasInstance(), false);
+            assert.equal(DeviceStateMonitor.hasInstance(), false, 'the tracker released the monitor');
+            const tracker = ControlCenter.getInstance();
+            try {
+                await tracker.init();
+                const watched = DeviceStateMonitor.getInstance();
+                assert.equal(runner.listenerCount('status'), 1);
+                oldTracker.release();
+                assert.equal(ControlCenter.getInstance(), tracker, 'the newer tracker is still the instance');
+                assert.equal(DeviceStateMonitor.hasInstance(), true, 'its monitor was not released under it');
+                assert.equal(DeviceStateMonitor.getInstance(), watched);
+                assert.equal(runner.listenerCount('status'), 1, 'and its listener is still on the runner');
+            } finally {
+                tracker.release();
+            }
+            assert.equal(runner.listenerCount('status'), 0);
+        } finally {
+            releaseLeftovers();
+        }
+    });
+});
+
+test('a session asked for after shutdown began is refused and starts nothing', async () => {
+    fs.rmSync(logFile, { force: true });
+    await withEnv({ FAKE_LOG: logFile }, async () => {
+        const udid = 'iphone-stopping';
+        let stopping = false;
+        // src/server/index.ts gives the runner `shutdown.isStopping()`.
+        CoreDeviceRunner.setShutdownCheck(() => stopping);
+        try {
+            const runner = CoreDeviceRunner.getInstance();
+            await runner.acquire(udid);
+            assert.equal(serveWebStarts(), 1);
+            // What Shutdown does: mark the server as stopping, then release the services.
+            stopping = true;
+            runner.release();
+            await assert.rejects(runner.acquire(udid), /Server is shutting down/, 'the released runner refuses');
+            // A caller that asks for the singleton afterwards gets a new runner. It refuses too.
+            const late = CoreDeviceRunner.getInstance();
+            assert.notEqual(late, runner);
+            await assert.rejects(late.acquire(udid), /Server is shutting down/);
+            await assert.rejects(late.acquire('iphone-other'), /Server is shutting down/);
+            assert.equal(late.getStatus(udid).state, 'stopped', 'no session was created');
+            await CoreDeviceRunner.childrenClosed();
+            const mounts = calls().filter((line) => line.startsWith('args ') && line.includes('"mounter"'));
+            assert.equal(serveWebStarts(), 1, 'the only serve-web is the one from before the shutdown');
+            assert.equal(mounts.length, 1, 'and nothing was mounted again');
+            assert.equal(CoreDeviceRunner.hasChildren(), false, 'nothing is left running');
+        } finally {
+            CoreDeviceRunner.setShutdownCheck(undefined);
+            releaseLeftovers();
+        }
+    });
+});
+
+test('with the real shutdown handlers, a session asked for after SIGTERM is refused and Node exits', async () => {
+    fs.rmSync(logFile, { force: true });
+    const result = await runHarness('late', (child) => child.kill('SIGTERM'));
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /late acquire refused: Server is shutting down/);
+    const spawned = result.lines.filter((line) => line.startsWith('args '));
+    assert.equal(spawned.filter((line) => line.includes('"serve-web"')).length, 1, 'one serve-web, from before the signal');
+    assert.equal(spawned.filter((line) => line.includes('"mounter"')).length, 1, 'nothing was mounted for the late request');
+    assert(result.lines.includes('serve-web shutdown complete iphone-harness'), 'the first session stopped in order');
+});
+
+test('input that finishes after the state monitor was released does not bring the monitor back', async (t) => {
+    fs.rmSync(logFile, { force: true });
+    // The button press is answered 300 ms after it was sent, like a phone that is slow to take HID.
+    await withEnv({ FAKE_LOG: logFile, FAKE_BUTTON_MS: '300' }, async () => {
+        const runner = CoreDeviceRunner.getInstance();
+        const monitor = DeviceStateMonitor.getInstance();
+        try {
+            const { socket, proxy } = openViewer('iphone-late-input');
+            // Input is taken once the video is attached.
+            assert(await until(() => socket.binaries().length >= 1));
+            const built = countBuilt(t);
+            // A viewer still connected while the server stops: its button press is on its way to
+            // the phone when the tracker releases the monitor.
+            socket.message(JSON.stringify({ type: 'button', name: 'volume-up', state: 'press' }));
+            assert(await until(() => calls().some((line) => line.startsWith('post /button'))));
+            monitor.release();
+            assert.equal(DeviceStateMonitor.hasInstance(), false);
+            assert(await until(() => calls().some((line) => line.startsWith('done /button'))), 'the press was answered');
+            await sleep(50);
+            assert.equal(built.monitor, 0, 'the finished press did not build a monitor');
+            // The same for a tap, and for the teardown that follows it.
+            socket.message(JSON.stringify({ type: 'touch', op: 'tap', x: 1, y: 2 }));
+            assert(await until(() => calls().some((line) => line.startsWith('post /touch'))));
+            await sleep(50);
+            proxy.release();
+            await sleep(50);
+            assert.deepEqual(built, { runner: 0, monitor: 0 });
+            assert.equal(DeviceStateMonitor.hasInstance(), false);
+        } finally {
+            runner.release();
+            releaseLeftovers();
+        }
+    });
+});
+
 test('clipboard requests are serialised, and a third is refused rather than queued', async () => {
     await withEnv({ FAKE_LOG: logFile, FAKE_CLIPBOARD_HANG: '1', IOS_CLIPBOARD_TIMEOUT_MS: '300' }, async () => {
         const runner = CoreDeviceRunner.getInstance();

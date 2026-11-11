@@ -68,6 +68,11 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
     private readonly id: string;
     private onSessionStatus?: (event: { udid: string; state: string; message?: string }) => void;
     private onRuntimeState?: (event: { udid: string } & AppleRuntimeState) => void;
+    // The runner and the monitor the two listeners above were added to. `release()` takes the
+    // listeners off these, not off whatever `getInstance()` returns: either may have been released
+    // first, and `getInstance()` would then build a new one that nothing releases.
+    private statusSource?: CoreDeviceRunner;
+    private stateSource?: DeviceStateMonitor;
     // Set only when the scheduler started. Tracking never depends on it: without it the four
     // unlock commands are refused and `descriptor.unlockSchedule` stays absent.
     private scheduler?: UnlockScheduler;
@@ -116,7 +121,8 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
                 event.state === 'ready' || event.state === 'starting',
             );
         };
-        CoreDeviceRunner.getInstance().on('status', this.onSessionStatus);
+        this.statusSource = CoreDeviceRunner.getInstance();
+        this.statusSource.on('status', this.onSessionStatus);
         this.onRuntimeState = (event) => {
             const item = this.tracked.get(event.udid);
             if (!item || item.descriptor.state !== DeviceState.CONNECTED) {
@@ -127,7 +133,8 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
             item.descriptor['last.update.timestamp'] = Date.now();
             this.emit('device', item.descriptor);
         };
-        DeviceStateMonitor.getInstance().on('state', this.onRuntimeState);
+        this.stateSource = DeviceStateMonitor.getInstance();
+        this.stateSource.on('state', this.onRuntimeState);
         this.startScheduler();
         this.startListener();
         await this.poll();
@@ -449,7 +456,14 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
         });
     }
 
+    /** Stops tracking. A second call, or one on a tracker that never started, changes nothing. */
     public release(): void {
+        if (ControlCenter.instance === this) {
+            ControlCenter.instance = undefined;
+        }
+        if (!this.initialized) {
+            return;
+        }
         this.initialized = false;
         if (this.pollTimer) {
             clearTimeout(this.pollTimer);
@@ -463,19 +477,20 @@ export class ControlCenter extends BaseControlCenter<ApplDeviceDescriptor> imple
         this.listener?.stop();
         this.listener = undefined;
         if (this.onSessionStatus) {
-            CoreDeviceRunner.getInstance().off('status', this.onSessionStatus);
+            this.statusSource?.off('status', this.onSessionStatus);
             this.onSessionStatus = undefined;
         }
         if (this.onRuntimeState) {
-            DeviceStateMonitor.getInstance().off('state', this.onRuntimeState);
+            this.stateSource?.off('state', this.onRuntimeState);
             this.onRuntimeState = undefined;
         }
+        this.statusSource = undefined;
+        this.stateSource = undefined;
         // Before the monitor: the scheduler holds a listener on it.
         this.stopScheduler();
         if (DeviceStateMonitor.hasInstance()) {
             DeviceStateMonitor.getInstance().release();
         }
-        ControlCenter.instance = undefined;
     }
 
     public async runCommand(command: ControlCenterCommand): Promise<string | void> {

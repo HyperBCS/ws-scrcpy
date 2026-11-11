@@ -103,21 +103,15 @@ export interface UnlockSchedulerDeps {
  * Runs the unlock twice a day per iPhone and keeps `UnlockScheduleStatus` current. An iPhone
  * refuses new connections 24 hours after its passcode was last entered, so the schedule has two
  * slots a day, 12 hours apart, and a slot that could not run is tried again until the next one
- * (`tickDevice`). Skip order, serialisation of runs, logging and the failure push are in plan
- * section 3.5; docs/HANDOFF.md has the 2026-11-11 changes.
+ * (`tickDevice`). Runs go through one promise chain for the whole process (`enqueue`), the skip
+ * rules are checked in order in `perform`, and `execute` records the result, logs it and sends
+ * the failure push. The reasons are in docs/HANDOFF.md: "Scheduled unlock: driver, scheduler,
+ * monitor helpers and failure push", "Scheduled unlock and passcode handling after the
+ * 2026-11-10 review" and "Scheduled unlock every 12 hours, and the 24-hour lockout".
  *
- * Responsibility split with `ControlCenter` (W1):
- * - `ControlCenter.init()` calls `UnlockScheduler.getInstance().start({ isConnected })` after
- *   its own monitor listeners are registered, inside a try/catch that logs and continues, and
- *   keeps the instance in a private field only when `start` succeeded. Device tracking must
- *   never depend on the scheduler.
- * - `ControlCenter` subscribes to `status` and copies `event.status` into
- *   `descriptor.unlockSchedule`, then emits `device`. `refreshDetails` seeds it from
- *   `getStatus(udid)`.
- * - The four commands map 1:1 onto `updateSchedule`, `setPasscode`, `clearPasscode` and
- *   `runNow(udid, 'manual')`; `ControlCenter` replies `JSON.stringify(<return value>)` and does
- *   no other work. It never imports `IosSettingsStore`.
- * - `ControlCenter.release()` calls `release()` here before `DeviceStateMonitor.release()`.
+ * `ControlCenter` starts and releases the scheduler with the tracker, copies each `status` event
+ * onto the phone's descriptor and passes the four unlock commands through. Tracking does not
+ * depend on the scheduler: one that cannot start is left out.
  *
  * This class owns the only reference to the store (`IosSettingsStore.getInstance()` by default)
  * and calls `store.load()` from `start()`. It emits `status` itself after each of its mutating
