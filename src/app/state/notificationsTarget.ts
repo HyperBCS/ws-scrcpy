@@ -1,4 +1,5 @@
 import type { NotificationSummary } from '../../common/Notification';
+import { notificationRoute } from './notificationPage';
 
 /** True when this iPhone sends its notifications to the server, so it has an inbox of its own. */
 export function isNotificationSource(summary: NotificationSummary, udid: string): boolean {
@@ -13,9 +14,9 @@ export function isNotificationSource(summary: NotificationSummary, udid: string)
 export function notificationsTarget(summary: NotificationSummary, udid?: string): { href: string; unread: number } {
     if (udid && isNotificationSource(summary, udid)) {
         return {
-            href: `#!${new URLSearchParams({ action: 'notifications', source: udid })}`,
+            href: `#!${notificationRoute({ source: udid })}`,
             unread: summary.unreadBySource[udid] || 0,
         };
     }
-    return { href: '#!action=notifications', unread: summary.unread || 0 };
+    return { href: `#!${notificationRoute()}`, unread: summary.unread || 0 };
 }
