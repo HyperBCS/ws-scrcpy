@@ -1,0 +1,44 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* A box to tick, with its label beside it (`ui/Checkbox.tsx`), for a choice that takes effect
+   with the action of its form. A setting that applies at once is a switch. Markup:
+   <label class="kit-check"><input type="checkbox"><span>Remember in this browser</span></label>
+   The box is the browser's own, in the accent colour. The label makes the target 44px high. */
+.kit-check {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: var(--control-height);
+    color: var(--text);
+    font-size: var(--font-size-15);
+    line-height: 1.4;
+    cursor: pointer;
+}
+.kit-check > input {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+.kit-check > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.kit-check > input:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+}
+.kit-check:has(> input:disabled),
+.kit-check > input:disabled {
+    cursor: default;
+}
+.kit-check > input:disabled,
+.kit-check > input:disabled + span {
+    opacity: var(--disabled-opacity);
+}
+}

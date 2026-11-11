@@ -6,6 +6,7 @@ import { Disclosure } from '../ui/AnimatedDetails';
 import { AppBar, AppBarStatus } from '../ui/AppBar';
 import { Banner } from '../ui/Banner';
 import { Button, buttonClass, ButtonVariant } from '../ui/Button';
+import { Checkbox } from '../ui/Checkbox';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
 import { SelectField, TextAreaField, TextField } from '../ui/Field';
 import { Icon } from '../ui/Icon';
@@ -277,6 +278,24 @@ function Switches() {
             <Demo name="disabled">
                 <Switch label="Unavailable, off" checked={false} disabled onChange={nothing} />
                 <Switch label="Unavailable, on" checked disabled onChange={nothing} />
+            </Demo>
+        </Section>
+    );
+}
+
+function Checkboxes() {
+    const [remember, setRemember] = useState(false);
+    return (
+        <Section title="Checkbox">
+            <Demo name="off or on">
+                <Checkbox checked={remember} onChange={setRemember}>
+                    Remember in this browser
+                </Checkbox>
+            </Demo>
+            <Demo name="disabled">
+                <Checkbox checked disabled onChange={nothing}>
+                    Unavailable, ticked
+                </Checkbox>
             </Demo>
         </Section>
     );
@@ -744,6 +763,7 @@ export function KitPage() {
                 <Icons />
                 <Fields />
                 <Switches />
+                <Checkboxes />
                 <Segments />
                 <Messages />
                 <Groups />
