@@ -240,6 +240,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
      * stop: this row's name, then its menu button.
      */
     private rovingName?: string;
+    /**
+     * Whether the Tab stop is on a row because that row had focus. Otherwise it belongs on the
+     * first row, also while a listing is still arriving: its rows come in bursts and the first
+     * one to arrive is not the first one shown.
+     */
+    private rovingFromFocus = false;
     private path: string;
     private pendingPath?: string;
     private closeMenuListener?: (event: Event) => void;
@@ -709,7 +715,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const cut = this.clipboard?.mode === 'cut' && this.clipboard.dir === this.path ? this.clipboard.names : [];
         const shown = (name?: string) =>
             name !== undefined && list.some((entry) => entry.name === name) ? name : undefined;
-        this.rovingName = shown(focusedName) ?? shown(this.rovingName) ?? list[0]?.name;
+        const kept = this.rovingFromFocus ? shown(this.rovingName) : undefined;
+        this.rovingName = shown(focusedName) ?? kept ?? list[0]?.name;
         // With rows to stop on, the container itself is reached by script only.
         this.items.tabIndex = list.length ? -1 : 0;
         const rows = list.map((entry) => {
@@ -798,7 +805,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /** Moves the list's Tab stop to the row that took focus. */
     private onRowFocus = (event: FocusEvent): void => {
         const name = (event.target as Element | null)?.closest<HTMLElement>('tr[data-name]')?.dataset.name;
-        if (name === undefined || name === this.rovingName) {
+        if (name === undefined) {
+            return;
+        }
+        this.rovingFromFocus = true;
+        if (name === this.rovingName) {
             return;
         }
         const stops = (rowName: string | undefined, tabIndex: number) => {
@@ -2391,6 +2402,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.entries = [];
         this.selection.clear();
         this.anchorName = undefined;
+        this.rovingFromFocus = false;
         this.renderBreadcrumb();
         this.updateControls();
         const params = this.routeParams();
