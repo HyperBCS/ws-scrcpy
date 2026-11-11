@@ -104,6 +104,8 @@ interface ConfirmPromptProps {
      * `stack`: full-width buttons with Cancel last, for sheets that grow from the bottom edge.
      */
     layout?: 'row' | 'stack';
+    /** The look of the design kit. Left off, the prompt looks as it always has. */
+    kit?: boolean;
     onConfirm: () => void;
 }
 
@@ -115,6 +117,7 @@ export function ConfirmPrompt({
     confirmLabel,
     danger = false,
     layout = 'row',
+    kit = false,
     onConfirm,
 }: ConfirmPromptProps) {
     const root = useRef<HTMLDivElement>(null);
@@ -214,7 +217,7 @@ export function ConfirmPrompt({
     return (
         <div
             ref={root}
-            class={`confirm-prompt ${layout} ${danger ? 'danger' : ''} ${swapped ? 'swapped' : ''}`}
+            class={`confirm-prompt ${layout} ${danger ? 'danger' : ''} ${swapped ? 'swapped' : ''}${kit ? ' kit' : ''}`}
             role="alertdialog"
             aria-labelledby={questionId}
             aria-describedby={consequence ? consequenceId : undefined}
