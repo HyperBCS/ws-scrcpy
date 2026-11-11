@@ -215,8 +215,12 @@ test('a mouse wheel notch scrolls one notch, and trackpad steps add up between m
     assert.equal(lines.vScroll, 1, 'one notch up in Firefox, which reports lines');
 
     t.mock.timers.tick(500);
+    // Horizontal is not mirrored: AXIS_HSCROLL is positive to the right, like deltaX.
     const [sideways] = wheel({ deltaX: 50 });
-    assert.deepEqual([sideways.hScroll, sideways.vScroll], [-0.5, 0]);
+    assert.deepEqual([sideways.hScroll, sideways.vScroll], [0.5, 0], 'half a notch to the right');
+    t.mock.timers.tick(500);
+    const [left] = wheel({ deltaX: -3, deltaMode: 1 });
+    assert.equal(left.hScroll, -1, 'one notch to the left');
 
     // A trackpad: small steps every 8 ms. They are not sent one by one, and none is lost.
     t.mock.timers.tick(500);

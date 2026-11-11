@@ -73,8 +73,9 @@ export class FeaturedInteractionHandler extends InteractionHandler {
             pending.hScroll = 0;
             pending.vScroll = 0;
         }
-        // A positive delta moves the content up or left, which Android reads as a negative axis.
-        pending.hScroll -= FeaturedInteractionHandler.wheelNotches(event.deltaX, event.deltaMode);
+        // The browser's deltaY is positive for scrolling down, Android's AXIS_VSCROLL for scrolling
+        // up. Both use positive for scrolling right (AXIS_HSCROLL, as scrcpy passes SDL's x).
+        pending.hScroll += FeaturedInteractionHandler.wheelNotches(event.deltaX, event.deltaMode);
         pending.vScroll -= FeaturedInteractionHandler.wheelNotches(event.deltaY, event.deltaMode);
         pending.time = time;
         if (time - this.lastScrollSentAt <= FeaturedInteractionHandler.SCROLL_EVENT_THROTTLING_TIME) {

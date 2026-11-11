@@ -1887,7 +1887,9 @@ again at the next SPS. Both iPhone players emit `decoder-error` and the client a
 
 **Scroll.** One wheel notch is one scrcpy notch. `FeaturedInteractionHandler` converts the wheel
 delta (100 px or 3 lines per notch), adds up what arrives within the 30 ms throttle and clamps to
-16 notches. How that feels on a device has not been judged by hand.
+16 notches. Horizontal scroll used to be mirrored: `AXIS_HSCROLL` is positive to the right, like
+the browser's `deltaX`, so only the vertical axis is negated now. How either feels on a device has
+not been judged by hand.
 
 **Touches beside the picture.** The touch layer is still the size of the picture. A touch that
 starts on the `.video` band next to it is now accepted on both platforms, held back until it
