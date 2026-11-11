@@ -1,0 +1,126 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* The one button (`ui/Button.tsx`). It works on a plain `<button>` or `<a>` with these classes:
+   kit-button, plus kit-button-primary, -quiet or -danger, plus kit-button-compact and -full.
+   Secondary is the class alone. */
+.kit-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-8);
+    box-sizing: border-box;
+    height: var(--control-height);
+    margin: 0;
+    padding: 0 var(--space-16);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    color: var(--text);
+    font-family: inherit;
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.25;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+        background-color var(--motion-fast) ease,
+        border-color var(--motion-fast) ease,
+        transform var(--motion-fast) var(--ease-out);
+}
+.kit-button-primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+}
+.kit-button-quiet {
+    border-color: transparent;
+    background: transparent;
+    color: var(--accent-text);
+}
+.kit-button-danger {
+    color: var(--danger-text);
+}
+/* 32px is for dense rows under a mouse. A finger gets the full height. */
+.kit-button-compact {
+    height: var(--control-height-compact);
+    padding: 0 var(--space-12);
+    font-size: var(--font-size-13);
+}
+@media (pointer: coarse) {
+    .kit-button-compact {
+        height: var(--control-height);
+    }
+}
+.kit-button-full {
+    display: flex;
+    width: 100%;
+}
+
+/* A control that stays on, such as a held modifier key. */
+.kit-button[aria-pressed='true'] {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+}
+
+@media (hover: hover) {
+    .kit-button:hover:not(:disabled, [aria-disabled='true']) {
+        background: var(--surface-sunken);
+    }
+    .kit-button-primary:hover:not(:disabled, [aria-disabled='true']),
+    .kit-button[aria-pressed='true']:hover:not(:disabled, [aria-disabled='true']) {
+        border-color: var(--accent-pressed);
+        background: var(--accent-pressed);
+    }
+}
+.kit-button:active:not(:disabled, [aria-disabled='true']) {
+    background: var(--surface-sunken);
+    transform: scale(0.97);
+}
+.kit-button-primary:active:not(:disabled, [aria-disabled='true']),
+.kit-button[aria-pressed='true']:active:not(:disabled, [aria-disabled='true']) {
+    border-color: var(--accent-pressed);
+    background: var(--accent-pressed);
+}
+
+.kit-button:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+}
+.kit-button:disabled,
+.kit-button[aria-disabled='true'] {
+    cursor: default;
+}
+.kit-button:disabled,
+.kit-button[aria-disabled='true']:not([aria-busy='true']) {
+    opacity: var(--disabled-opacity);
+}
+
+/* Busy: a ring turns where the icon would be. The label stays, so the width does not change. */
+.kit-button[aria-busy='true'] {
+    cursor: progress;
+}
+.kit-button[aria-busy='true']::before {
+    content: '';
+    box-sizing: border-box;
+    width: 16px;
+    height: 16px;
+    flex: none;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: var(--radius-full);
+    animation: kit-button-busy calc(var(--motion-settle) * 2.5) linear infinite;
+}
+@keyframes kit-button-busy {
+    to {
+        transform: rotate(360deg);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .kit-button[aria-busy='true']::before {
+        animation: none;
+    }
+}
+}

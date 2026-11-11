@@ -17,8 +17,13 @@
     /* Accent as words on a surface, and the tint behind a selected item. */
     --accent-text: #1b56c9;
     --accent-soft: #e3ecfd;
+    /* A primary button under the pointer or a finger. */
+    --accent-pressed: #1f58cc;
     /* Words and icons on --accent and on --danger-fill. */
     --on-accent: #ffffff;
+    /* The toast: a dark surface in both themes, with its own text colour. */
+    --surface-inverse: #20242c;
+    --on-inverse: #ffffff;
     /* Each status has `-text` for words and icons and `-fill` for the background behind them.
        The fill is a tint that takes its own `-text`, except danger: its fill is solid and takes
        --on-accent. */
@@ -34,6 +39,8 @@
     --neutral-fill: #e6e8ec;
     --scrim: rgba(20, 24, 32, 0.45);
     --shadow-raised: 0 8px 30px rgba(20, 24, 32, 0.18);
+    /* Under the selected option of a segmented control. */
+    --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.14);
     --focus-ring: 2px solid var(--accent);
     --focus-ring-offset: 2px;
     --disabled-opacity: 0.5;
@@ -166,6 +173,7 @@
         --text-muted: #a0a7b3;
         --accent-text: #8fb8f5;
         --accent-soft: #1d2a47;
+        --surface-inverse: #3a3f49;
         --danger-text: #f29a94;
         --success-text: #5fd08a;
         --success-fill: #1c3326;
