@@ -603,10 +603,14 @@
 .file-explorer[data-view='list'] tr,
 .file-explorer[data-view='tiles'] tr {
     display: flex;
-    align-items: center;
     min-width: 0;
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
+}
+
+/* A row of the list is one line; a tile is a column (below). */
+.file-explorer[data-view='list'] tr {
+    align-items: center;
 }
 
 .file-explorer[data-view='list'] td,

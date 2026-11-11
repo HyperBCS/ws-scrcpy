@@ -306,6 +306,35 @@ test('the Files stylesheet states each rule once and forces nothing', () => {
     const seen = new Set();
     const repeated = [];
     const open = [];
+    // A property that one selector of a list sets again in another rule under the same
+    // condition: the later rule overrides the earlier one inside this file.
+    const declared = new Map();
+    const overridden = [];
+    /** The selectors of a list, split at the commas that are not inside parentheses. */
+    const selectors = (prelude) => {
+        const parts = [''];
+        let depth = 0;
+        for (const character of prelude) {
+            if (character === ',' && depth === 0) parts.push('');
+            else {
+                depth += character === '(' ? 1 : character === ')' ? -1 : 0;
+                parts[parts.length - 1] += character;
+            }
+        }
+        return parts.map((part) => part.trim());
+    };
+    const declare = (text) => {
+        const prelude = open[open.length - 1];
+        const property = text.split(':')[0].trim();
+        if (!prelude || prelude.startsWith('@') || !property) return;
+        const conditions = open.slice(0, -1).join(' { ');
+        for (const selector of selectors(prelude)) {
+            const key = `${conditions} { ${selector} { ${property}`;
+            const rule = [...open].join(' { ');
+            if (declared.has(key) && declared.get(key) !== rule) overridden.push(key);
+            declared.set(key, rule);
+        }
+    };
     let buffer = '';
     for (const character of source) {
         if (character === '{') {
@@ -318,9 +347,11 @@ test('the Files stylesheet states each rule once and forces nothing', () => {
             open.push(prelude);
             buffer = '';
         } else if (character === '}') {
+            declare(buffer);
             open.pop();
             buffer = '';
         } else if (character === ';') {
+            declare(buffer);
             buffer = '';
         } else {
             buffer += character;
@@ -328,6 +359,8 @@ test('the Files stylesheet states each rule once and forces nothing', () => {
     }
     assert.ok(seen.size > 50, 'the rules are found');
     assert.deepEqual(repeated, [], 'each selector is written once under each condition');
+    assert.ok(declared.size > 300, 'the declarations are found');
+    assert.deepEqual(overridden, [], 'no rule sets a property that another rule for the same selector sets');
 });
 
 test('every kind of file has an icon of the kit set, with the classes the explorer sizes it by', () => {
