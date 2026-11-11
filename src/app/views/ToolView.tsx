@@ -7,8 +7,8 @@ import { deviceName, DeviceEntry, supportsDeviceTools } from '../state/devices';
 import { DEFAULT_FILES_PATH } from '../googDevice/client/deviceTools';
 import { findDeviceForTool } from '../state/toolDevice';
 import { buildLinkHref } from '../state/links';
-import { goToDeviceList } from '../state/router';
 import { closeAllSheets, openSheet } from '../state/stream';
+import { AppBar } from '../ui/AppBar';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { NotificationsLink } from '../ui/NotificationsLink';
@@ -274,35 +274,15 @@ export function ToolView({ params }: { params: URLSearchParams }) {
             class={`tool-view tool-view-${action}`}
             style={viewportHeight ? { height: `${viewportHeight}px` } : undefined}
         >
-            <header class="stream-header">
-                <button
-                    type="button"
-                    class="stream-header-back"
-                    onClick={goToDeviceList}
-                    aria-label="Back to devices"
-                    title="Back to devices"
-                >
-                    <svg
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        aria-hidden="true"
-                    >
-                        <path d="m15 6-6 6 6 6" />
-                    </svg>
-                </button>
-                <div class="stream-header-device">
-                    <strong>{entry ? deviceName(entry) : udid}</strong>
-                    <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
-                </div>
+            <AppBar
+                title={entry ? deviceName(entry) : udid}
+                status={<StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />}
+            >
                 <NotificationsLink compact />
                 <button type="button" class="stream-header-switch" onClick={() => openSheet('devices')}>
                     Switch
                 </button>
-            </header>
+            </AppBar>
             <nav class="tool-navigation" aria-label="Device views">
                 <div class="tool-tabs">
                     {deviceTools.map((item) => (

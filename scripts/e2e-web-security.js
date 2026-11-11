@@ -186,7 +186,7 @@ async function streamLinks(browser) {
             assert.equal(await refused.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
             if (ws.startsWith('wss://attacker')) await refused.page.screenshot({ path: path.join(OUT, `refused-link-${mobile ? 'phone' : 'desktop'}.png`) });
             // The error offers the way back to the device list.
-            await refused.page.locator('button.sheet-button', { hasText: 'Back to devices' }).click();
+            await refused.page.locator('button.sheet-button', { hasText: 'Phones' }).click();
             await refused.page.locator('.device').first().waitFor();
             assert.deepEqual(refused.errors, []);
             await refused.context.close();

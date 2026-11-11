@@ -3,6 +3,7 @@ import { devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/de
 import { listSummary, needsAttention } from '../state/deviceStatus';
 import { rememberListScroll, savedListScroll } from '../state/deviceListView';
 import { hostsError, hostsStatus } from '../state/hosts';
+import { LIST_PAGE_NAME } from '../state/routes';
 import { DeviceCard } from './DeviceCard';
 import { DeviceIcon } from '../ui/DeviceIcon';
 import { TrackerStatusNotice } from '../ui/TrackerStatusNotice';
@@ -60,7 +61,7 @@ export function DeviceList() {
         <main id="devices" ref={scroller} onScroll={(event) => rememberListScroll(event.currentTarget.scrollTop)}>
             <div class="devices-content">
                 <header class="device-list-header">
-                    <h1>Devices</h1>
+                    <h1>{LIST_PAGE_NAME}</h1>
                     <div class="device-list-summary" role="status">
                         <span
                             class={`device-list-summary-dot ${attention ? 'attention' : available ? 'available' : ''}`}

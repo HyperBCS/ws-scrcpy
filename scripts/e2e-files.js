@@ -1059,7 +1059,7 @@ async function main() {
                 document.querySelector('.file-listing-upload-progress')?.textContent.includes('pending-upload'),
             );
             // Leaving with an upload in progress asks first, and stops it only when told to.
-            await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+            await page.getByRole('button', { name: 'Phones', exact: true }).click();
             const leave = page.locator('.fx-dialog[open]');
             await leave.getByRole('heading', { name: `Stop the upload to ${DEVICE}?`, exact: true }).waitFor();
             await page.waitForTimeout(550);

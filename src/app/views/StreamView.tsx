@@ -17,7 +17,9 @@ import {
 import { findDeviceForStream } from '../state/streamDevice';
 import { deviceName } from '../state/devices';
 import { NotificationsLink } from '../ui/NotificationsLink';
-import { goToDeviceList } from '../state/router';
+import { goUp } from '../state/router';
+import { LIST_PAGE_NAME } from '../state/routes';
+import { AppBar, AppBarStatus } from '../ui/AppBar';
 import { ActionsSheet } from './ActionsSheet';
 import { FloatingToolbar } from './FloatingToolbar';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
@@ -94,42 +96,23 @@ export function StreamView({ params }: StreamViewProps) {
 
     return (
         <div class="stream-view">
-            <header class="stream-header">
-                <button
-                    type="button"
-                    class="stream-header-back"
-                    onClick={goToDeviceList}
-                    aria-label="Back to devices"
-                    title="Back to devices"
-                >
-                    <svg
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                    >
-                        <path d="m15 6-6 6 6 6" />
-                    </svg>
-                </button>
-                <div class="stream-header-device">
-                    <strong title={String(name)}>{name}</strong>
-                    <span class={`stream-header-status ${streamConnected.value ? 'connected' : ''}`} role="status">
-                        <span class="stream-header-status-dot" aria-hidden="true" />
-                        {error
-                            ? 'Unable to connect'
-                            : streamConnected.value
-                              ? 'Connected'
-                              : stopped
-                                ? 'Stopped'
-                                : 'Connecting…'}
-                    </span>
-                    <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
-                </div>
+            <AppBar
+                title={String(name)}
+                status={
+                    <>
+                        <AppBarStatus connected={streamConnected.value}>
+                            {error
+                                ? 'Unable to connect'
+                                : streamConnected.value
+                                  ? 'Connected'
+                                  : stopped
+                                    ? 'Stopped'
+                                    : 'Connecting…'}
+                        </AppBarStatus>
+                        <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
+                    </>
+                }
+            >
                 <NotificationsLink compact />
                 <button
                     type="button"
@@ -139,7 +122,7 @@ export function StreamView({ params }: StreamViewProps) {
                 >
                     Switch
                 </button>
-            </header>
+            </AppBar>
             <LockScreenNotice
                 key="lock-notice"
                 udid={params.udid}
@@ -168,8 +151,8 @@ export function StreamView({ params }: StreamViewProps) {
                 <div class="stream-start-error" role="alert">
                     <h2>Unable to start this stream</h2>
                     <p>{error}</p>
-                    <button type="button" class="sheet-button" onClick={goToDeviceList}>
-                        Back to devices
+                    <button type="button" class="sheet-button" onClick={goUp}>
+                        {LIST_PAGE_NAME}
                     </button>
                 </div>
             )}
@@ -181,8 +164,8 @@ export function StreamView({ params }: StreamViewProps) {
                         <button type="button" class="sheet-button primary" onClick={() => setAttempt(attempt + 1)}>
                             Start again
                         </button>
-                        <button type="button" class="sheet-button" onClick={goToDeviceList}>
-                            Back to devices
+                        <button type="button" class="sheet-button" onClick={goUp}>
+                            {LIST_PAGE_NAME}
                         </button>
                     </div>
                 </div>

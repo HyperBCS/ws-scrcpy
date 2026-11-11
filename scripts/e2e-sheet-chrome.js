@@ -388,7 +388,7 @@ async function errorBoundary(browser) {
         await failed.getByRole('heading', { name: 'This screen failed', exact: true }).waitFor();
         await failed.getByRole('button', { name: 'Reload', exact: true }).waitFor();
         await shot(page, 'screen-failed-desktop-light');
-        await failed.getByRole('button', { name: 'Back to devices', exact: true }).click();
+        await failed.getByRole('button', { name: 'Phones', exact: true }).click();
         await page.locator('.device').filter({ hasText: UDID }).waitFor();
         assert.equal(await failed.count(), 0, 'the device list is back');
     } finally {

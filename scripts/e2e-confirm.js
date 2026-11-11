@@ -523,13 +523,13 @@ async function controlsPanelShield(browser) {
         await panel.waitFor({ state: 'visible' });
         await settleMotion(page);
 
-        // Disconnect only returns to the list, so it is not styled as a danger.
+        // The sheet has no way out of the page: the header's back control is the one.
         await page.locator('.control-buttons-list [title="Actions"]').click();
         const sheet = page.getByRole('dialog', { name: 'Actions', exact: true });
         await sheet.waitFor();
-        assert.doesNotMatch(await sheet.getByRole('button', { name: 'Disconnect', exact: true }).getAttribute('class'), /danger/);
+        assert.equal(await sheet.getByRole('button', { name: 'Disconnect', exact: true }).count(), 0);
         assert.deepEqual(errors, []);
-        console.log('PASS controls panel: the dismissing tap stays off the phone, the next tap reaches it, Disconnect is neutral');
+        console.log('PASS controls panel: the dismissing tap stays off the phone, the next tap reaches it, the Actions sheet has no Disconnect');
     } finally {
         await context.close();
     }

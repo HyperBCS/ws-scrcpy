@@ -18,8 +18,8 @@ import './CoreDeviceStreamView';
 import { DevicePage } from './DevicePage';
 import { startNotificationSummary } from '../state/notifications';
 import { ErrorBoundary, ScreenFailed } from '../ui/ErrorBoundary';
-import { goToDeviceList, onPageChange } from '../state/router';
-import { clientParams, parseRoute } from '../state/routes';
+import { goUp, onPageChange } from '../state/router';
+import { clientParams, LIST_PAGE_NAME, parseRoute } from '../state/routes';
 import { closeAllSheets } from '../state/stream';
 
 // The sheets are signals, not history entries, and several are mounted here, above the pages.
@@ -76,10 +76,10 @@ export function App() {
                 fallback={(reset) => (
                     <ScreenFailed
                         onBack={() => {
-                            goToDeviceList();
+                            goUp();
                             reset();
                         }}
-                        backLabel={onDevices ? 'Try again' : 'Back to devices'}
+                        backLabel={onDevices ? 'Try again' : LIST_PAGE_NAME}
                     />
                 )}
             >

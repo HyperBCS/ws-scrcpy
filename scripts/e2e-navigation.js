@@ -104,7 +104,7 @@ const card = (page, key) => page.locator(`article.device[data-device-key="${key}
 const hash = (page) => page.evaluate(() => location.hash);
 const streamsOf = (test, udid) => test.streams.filter((stream) => stream.udid === udid).length;
 const quiet = (page, ms = 350) => page.waitForTimeout(ms);
-const backControl = (page) => page.getByRole('button', { name: 'Back to devices', exact: true }).first();
+const backControl = (page) => page.getByRole('button', { name: 'Phones', exact: true }).first();
 
 /**
  * Presses the browser's Back until the app is left. No step may show a stream page or open a
@@ -338,7 +338,7 @@ async function linksOpenOnce(browser) {
         [`action=list-files&udid=${PIXEL}&path=sdcard`, `#!action=list-files&udid=${PIXEL}&path=`, 'Google Pixel 9 · Files · ws-scrcpy', '.tool-view-list-files', 'FSLS'],
         [`action=device&udid=${PIXEL}&view=files&path=sdcard`, `#!action=list-files&udid=${PIXEL}&path=`, 'Google Pixel 9 · Files · ws-scrcpy', '.tool-view-list-files', 'FSLS'],
         [`action=notifications&source=${IPHONE}&notification=history-key`, `#!action=notifications&source=${IPHONE}&notification=history-key`, 'Notifications · ws-scrcpy', '.notifications-page'],
-        ['action=', '#!action=', 'Devices · ws-scrcpy', '#devices'],
+        ['action=', '#!action=', 'Phones · ws-scrcpy', '#devices'],
     ]) {
         test = await start(browser, { hash: link });
         try {

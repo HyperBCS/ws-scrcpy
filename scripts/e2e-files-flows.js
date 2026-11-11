@@ -722,7 +722,7 @@ async function uploads(browser, layout, name) {
     for (const way of ['Shell tab', 'browser Back', 'Back to devices']) {
         if (way === 'Shell tab') await page.locator('.tool-tabs').getByRole('button', { name: 'Shell', exact: true }).click();
         if (way === 'browser Back') await page.goBack();
-        if (way === 'Back to devices') await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+        if (way === 'Back to devices') await page.getByRole('button', { name: 'Phones', exact: true }).click();
         await question.waitFor();
         assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Keep uploading');
         await settleMotion(page);
@@ -749,7 +749,7 @@ async function uploads(browser, layout, name) {
     if (!(await filesLink.isVisible())) await card.locator('summary').click();
     await filesLink.click();
     await ready(page);
-    await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+    await page.getByRole('button', { name: 'Phones', exact: true }).click();
     await card.waitFor();
     await finish();
 }

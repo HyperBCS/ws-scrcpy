@@ -264,13 +264,13 @@ async function main() {
             await page.locator('.tool-connection.connected').waitFor({state:'attached'});
             assert.equal(await page.locator('.file-explorer').count(),1,'Files is mounted once after reconnecting');
             assert.equal(await page.locator('.file-explorer.fx-offline').count(),0);
-            await page.getByRole('button',{name:'Back to devices',exact:true}).click();
+            await page.getByRole('button',{name:'Phones',exact:true}).click();
             await page.locator('#devices').waitFor();
             const card2 = page.locator('.device').filter({hasText:'Phone B'});
             await card2.getByRole('link',{name:'Open screen',exact:true}).click();
             await page.locator('.stream-stage').waitFor();
             await page.getByText('Connected',{exact:true}).waitFor();
-            await page.getByRole('button',{name:'Back to devices',exact:true}).click();
+            await page.getByRole('button',{name:'Phones',exact:true}).click();
             await page.locator('#devices').waitFor();
             assert.deepEqual(errors,[]);
             console.log('PASS',name,'in-app tools, status transitions, shell input, switching, cleanup and viewport');

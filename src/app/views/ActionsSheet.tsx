@@ -15,7 +15,6 @@ import { findDeviceForStream } from '../state/streamDevice';
 import { deviceName } from '../state/devices';
 import { activeAudioSession, audioAvailability } from '../state/audio';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
-import { goToDeviceList } from '../state/router';
 import { ControlMessage } from '../controlMessage/ControlMessage';
 import { CommandControlMessage, CopyKey } from '../controlMessage/CommandControlMessage';
 import { CLIPBOARD_TOO_LONG_NOTE, clipboardTextTooLong } from '../ui/clipboardLimit';
@@ -232,11 +231,6 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                             </button>
                         </SheetRow>
                     )}
-                    <SheetRow title="Disconnect" description="Return to devices.">
-                        <button type="button" class="sheet-button" onClick={goToDeviceList}>
-                            Disconnect
-                        </button>
-                    </SheetRow>
                 </SheetGroup>
             </div>
         </BottomSheet>

@@ -1,4 +1,5 @@
 import { Component, ComponentChildren } from 'preact';
+import { LIST_PAGE_NAME } from '../state/routes';
 import '../../style/ui/ErrorBoundary.css';
 
 interface ScreenFailedProps {
@@ -9,11 +10,7 @@ interface ScreenFailedProps {
 }
 
 /** Shown in place of a screen that could not be drawn, so the app is never left blank. */
-export function ScreenFailed({
-    title = 'This screen failed',
-    onBack,
-    backLabel = 'Back to devices',
-}: ScreenFailedProps) {
+export function ScreenFailed({ title = 'This screen failed', onBack, backLabel = LIST_PAGE_NAME }: ScreenFailedProps) {
     return (
         <div class="screen-failed" role="alert">
             <h1>{title}</h1>

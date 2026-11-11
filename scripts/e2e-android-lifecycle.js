@@ -189,7 +189,7 @@ async function stoppedStream(browser, layout, label) {
     await pause(3500);
     assert.equal(state.streams.length, 1, 'the viewer does not reconnect, which would start the service again');
     await fits(page, panel, `${label} stopped panel`);
-    for (const name of ['Start again', 'Back to devices']) {
+    for (const name of ['Start again', 'Phones']) {
         const box = await panel.getByRole('button', { name, exact: true }).boundingBox();
         assert(box.height >= 40, `${name} is a usable target`);
     }

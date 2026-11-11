@@ -128,7 +128,7 @@ async function main() {
             await page.keyboard.press('Escape');
         }
         const streamUrl = page.url();
-        await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+        await page.getByRole('button', { name: 'Phones', exact: true }).click();
         await page.locator('.device').first().waitFor();
         const desktopContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
         const desktop = await desktopContext.newPage();
@@ -171,7 +171,7 @@ async function main() {
         );
         await screenshot(desktop, 'desktop-settings');
         await desktop.keyboard.press('Escape');
-        await desktop.getByRole('button', { name: 'Back to devices', exact: true }).click();
+        await desktop.getByRole('button', { name: 'Phones', exact: true }).click();
         await desktop.locator('.device').first().waitFor();
         await screenshot(desktop, 'desktop-devices');
         assert.deepEqual(errors, [], 'no browser runtime errors');
