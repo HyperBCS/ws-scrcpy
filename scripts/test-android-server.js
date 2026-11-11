@@ -197,3 +197,67 @@ test('a shell command too long for one adb request is refused, not cut short', a
     assert.equal(commands.length, 0);
     assert.equal((await AdbUtils.shellExec('serial', `echo ${'x'.repeat(60000)}`)).code, 0);
 });
+
+// Stands in for the adb server's forward table.
+function forwardFixture(t, { listDelay = () => tick(), refuse = () => false } = {}) {
+    const adb = { forwards: [], requests: [] };
+    const client = {
+        listForwards: async () => {
+            const snapshot = adb.forwards.map((item) => ({ ...item }));
+            await listDelay();
+            return snapshot;
+        },
+        forwardNoRebind: async (serial, local, remote) => {
+            adb.requests.push({ serial, local, remote });
+            await tick();
+            if (refuse(local) || adb.forwards.some((item) => item.local === local)) {
+                throw Error(`cannot rebind existing socket`);
+            }
+            adb.forwards.push({ serial, local, remote });
+        },
+        forward: async () => assert.fail('the rebinding form must not be used'),
+    };
+    t.mock.method(AdbExtended, 'createClient', () => client);
+    // Only adb's own table decides which ports are taken here.
+    t.mock.method(portfinder, 'getPortPromise', async (options = {}) => options.port || 8000);
+    return adb;
+}
+
+test('two phones that start together get different forward ports', async (t) => {
+    const adb = forwardFixture(t);
+    const [first, second] = await Promise.all([
+        AdbUtils.forward('phone-a', 'localabstract:scrcpy_0000aaaa'),
+        AdbUtils.forward('phone-b', 'localabstract:scrcpy_0000aaaa'),
+    ]);
+    assert.notEqual(first, second);
+    assert.deepEqual(
+        adb.forwards.map((item) => `${item.serial} ${item.local}`),
+        [`phone-a tcp:${first}`, `phone-b tcp:${second}`],
+    );
+    assert.equal(await AdbUtils.forward('phone-a', 'localabstract:scrcpy_0000aaaa'), first, 'a forward is reused');
+    assert.equal(adb.requests.length, 2);
+});
+
+test('a port that another server took first is skipped, and its forward is left alone', async (t) => {
+    // The other server's forward is made after this one listed the table.
+    const adb = forwardFixture(t, { refuse: (local) => local === 'tcp:8000' });
+    const port = await AdbUtils.forward('phone-a', 'localabstract:scrcpy_0000aaaa');
+    assert.equal(port, 8001);
+    assert.deepEqual(
+        adb.requests.map((item) => item.local),
+        ['tcp:8000', 'tcp:8001'],
+    );
+});
+
+test('a failed forward is reported and does not block the next one', async (t) => {
+    const adb = forwardFixture(t);
+    const failing = AdbExtended.createClient();
+    const forwardNoRebind = failing.forwardNoRebind;
+    failing.forwardNoRebind = async () => {
+        throw Error("device 'phone-a' not found");
+    };
+    await assert.rejects(AdbUtils.forward('phone-a', 'localabstract:scrcpy_0000aaaa'), /not found/);
+    failing.forwardNoRebind = forwardNoRebind;
+    assert.equal(await AdbUtils.forward('phone-b', 'localabstract:scrcpy_0000aaaa'), 8000);
+    assert.equal(adb.forwards.length, 1);
+});
