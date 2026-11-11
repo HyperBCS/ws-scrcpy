@@ -204,8 +204,10 @@ body.file-listing-page {
     cursor: text;
 }
 
-/* Rows from the previous folder linger, dimmed and inert, while the next one loads. */
-.file-explorer.fx-loading tbody {
+/* Rows from the previous folder linger, dimmed and inert, while the next one loads. Rows left
+   behind by a lost connection look the same. */
+.file-explorer.fx-loading tbody,
+.file-explorer.fx-offline tbody {
     opacity: 0.45;
     pointer-events: none;
     transition: opacity 120ms;

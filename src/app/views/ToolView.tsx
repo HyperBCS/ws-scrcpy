@@ -21,7 +21,21 @@ interface MountedTool {
     sendInput?(text: string): void;
     setControl?(active: boolean): void;
     onControlChange?(listener: (active: boolean) => void): void;
+    /** Opens a new connection in place. A tool without it is mounted again instead. */
+    reconnect?(): void;
+    /** True when the tool's own session ended, which a new attempt would not bring back. */
+    sessionEnded?(): boolean;
 }
+
+/** Waits before each automatic reconnect attempt after the connection is lost. */
+const RETRY_DELAYS_MS = [1000, 2000, 4000];
+/** How long the last attempt gets before the page stops trying and offers Reconnect. */
+const RETRY_SETTLE_MS = 4000;
+/** A first connection that has not opened by now counts as lost. */
+const FIRST_CONNECT_MS = 10000;
+
+/** '' while there is nothing to report, then one state at a time. */
+type Lost = '' | 'reconnecting' | 'closed' | 'ended';
 
 export const deviceTools = [
     /// #if INCLUDE_FILE_LISTING
@@ -82,7 +96,10 @@ export function ToolView({ params }: { params: URLSearchParams }) {
     const [error, setError] = useState('');
     const [loaded, setLoaded] = useState(false);
     const [connected, setConnected] = useState(false);
-    const [connectionLost, setConnectionLost] = useState(false);
+    const [lost, setLost] = useState<Lost>('');
+    // Outlives the mount effect: a tool that cannot reconnect in place is mounted again for each
+    // automatic attempt, and the count must carry over. `nextAt` is 0 while nothing is lost.
+    const retryRef = useRef({ identity: '', attempts: 0, nextAt: 0 });
     const [attempt, setAttempt] = useState(0);
     const [control, setControl] = useState(false);
     const [viewportHeight, setViewportHeight] = useState<number>();
@@ -103,13 +120,20 @@ export function ToolView({ params }: { params: URLSearchParams }) {
         if (!mount) return;
         let cancelled = false;
         let mounted: MountedTool | undefined;
-        let wasConnected = false;
+        let remounting = false;
+        const retry = retryRef.current;
+        const retrying = retry.identity === identity && retry.nextAt !== 0;
+        if (!retrying) {
+            Object.assign(retry, { identity, attempts: 0, nextAt: 0 });
+            closeAllSheets();
+        }
+        // An attempt that does not open is a failed attempt, not a slow first connection.
+        let wasConnected = retrying;
         const openedAt = Date.now();
-        closeAllSheets();
         setError('');
         setLoaded(false);
         setConnected(false);
-        setConnectionLost(false);
+        setLost(retrying ? 'reconnecting' : '');
         setControl(false);
         document.body.className = `tool-page ${action === ACTION.FILE_LISTING ? 'file-listing' : action}`;
         document.title = `${tool?.title || 'Tools'} · ${udid}`;
@@ -125,17 +149,44 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                 client.onControlChange?.(setControl);
                 client.navigate?.(routeRef.current.get('path') || '/data/local/tmp/');
                 setLoaded(true);
-                wasConnected = client.hasConnection();
-                setConnected(wasConnected);
+                wasConnected ||= client.hasConnection();
+                setConnected(client.hasConnection());
             })
             .catch((failure: Error) => {
                 if (!cancelled) setError(failure.message || 'This tool could not open. Try again.');
             });
         const connectionCheck = window.setInterval(() => {
             const ready = mounted?.hasConnection() ?? false;
-            wasConnected ||= ready;
             setConnected(ready);
-            setConnectionLost(!!mounted && !ready && (wasConnected || Date.now() - openedAt > 10000));
+            if (ready) {
+                wasConnected = true;
+                Object.assign(retry, { attempts: 0, nextAt: 0 });
+                setLost('');
+                return;
+            }
+            const now = Date.now();
+            if (!mounted || !(wasConnected || now - openedAt > FIRST_CONNECT_MS)) {
+                return;
+            }
+            if (mounted.sessionEnded?.()) {
+                Object.assign(retry, { attempts: 0, nextAt: 0 });
+                setLost('ended');
+                return;
+            }
+            if (!retry.nextAt) {
+                retry.nextAt = now + RETRY_DELAYS_MS[0];
+            }
+            if (now >= retry.nextAt && retry.attempts < RETRY_DELAYS_MS.length) {
+                retry.attempts++;
+                retry.nextAt = now + (RETRY_DELAYS_MS[retry.attempts] ?? RETRY_SETTLE_MS);
+                if (mounted.reconnect) {
+                    mounted.reconnect();
+                } else {
+                    remounting = true;
+                    setAttempt((value) => value + 1);
+                }
+            }
+            setLost(now < retry.nextAt ? 'reconnecting' : 'closed');
         }, 500);
         return () => {
             cancelled = true;
@@ -143,13 +194,44 @@ export function ToolView({ params }: { params: URLSearchParams }) {
             mounted?.stop();
             clientRef.current = undefined;
             mount.replaceChildren();
-            closeAllSheets();
+            // An automatic attempt must not close the device switcher under the owner's finger.
+            if (!remounting) {
+                closeAllSheets();
+            }
         };
     }, [identity, attempt]);
 
     useEffect(() => {
         clientRef.current?.navigate?.(params.get('path') || '/data/local/tmp/');
     }, [params.get('path')]);
+
+    const reconnect = () => {
+        const retry = retryRef.current;
+        const client = clientRef.current;
+        retry.attempts = 0;
+        if (!error && client?.reconnect) {
+            // The check above sees the attempt and starts a new round if it fails.
+            retry.nextAt = 0;
+            client.reconnect();
+            setLost('reconnecting');
+        } else {
+            // A tool that did open is mounted again as a reconnect attempt, so a failure shows
+            // within seconds. One that never loaded starts from the beginning.
+            retry.nextAt = error ? 0 : Date.now() + RETRY_DELAYS_MS[0];
+            setAttempt((value) => value + 1);
+        }
+    };
+
+    // The banner keeps its last wording while it collapses.
+    const showBanner = !!error || lost === 'closed' || lost === 'ended';
+    const bannerRef = useRef({ text: '', button: 'Reconnect' });
+    if (showBanner) {
+        bannerRef.current = error
+            ? { text: error, button: 'Reconnect' }
+            : lost === 'ended'
+              ? { text: 'The shell session ended.', button: 'New session' }
+              : { text: 'Connection lost.', button: 'Reconnect' };
+    }
 
     const switchTool = (nextAction: ACTION, nextEntry = entry) => {
         if (nextEntry) {
@@ -224,18 +306,22 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                         ? 'Unavailable'
                         : connected
                           ? 'Connected'
-                          : loaded
-                            ? connectionLost
+                          : lost === 'reconnecting'
+                            ? 'Reconnecting…'
+                            : lost === 'ended'
+                              ? 'Ended'
+                              : lost === 'closed'
                                 ? 'Disconnected'
-                                : 'Connecting…'
-                            : 'Opening…'}
+                                : loaded
+                                  ? 'Connecting…'
+                                  : 'Opening…'}
                 </span>
             </nav>
             <section class="tool-workspace" aria-label={tool?.title}>
-                <Presence show={!!error || connectionLost} kind="collapse" class="tool-error" role="status">
-                    <span>{error || 'The connection is closed. Reconnect to continue.'}</span>
-                    <button type="button" onClick={() => setAttempt((value) => value + 1)}>
-                        Reconnect
+                <Presence show={showBanner} kind="collapse" class="tool-error" role="status">
+                    <span>{bannerRef.current.text}</span>
+                    <button type="button" onClick={reconnect}>
+                        {bannerRef.current.button}
                     </button>
                 </Presence>
                 <div key="tool-mount" ref={mountRef} class="tool-mount" />

@@ -11,10 +11,16 @@ import { ChannelCode } from '../../../common/ChannelCode';
 import { ToolEntry } from '../../client/Tool';
 import { shellTool } from './deviceTools';
 import { applyControl } from './shellInput';
+import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 
 const TAG = '[ShellClient]';
 // A window drag or the phone keyboard sliding in refits the terminal many times in a row.
 const RESIZE_DEBOUNCE_MS = 100;
+// Written before a new session's output when the terminal is reused. The old session may have
+// ended inside a full-screen program, so leave the alternate screen (1047, which unlike 1049
+// does not move the cursor), turn off mouse reporting, soft-reset the remaining modes, and start
+// on a fresh line. The scrollback is kept.
+const NEW_SESSION_RESET = '\x1b[?1047;1000;1002;1003;1006l\x1b[!p\r\n';
 
 export class ShellClient extends ManagerClient<ParamsShell, never> {
     public static ACTION = ACTION.SHELL;
@@ -28,6 +34,8 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
     private readonly container: HTMLElement;
     private readonly resizeObserver: ResizeObserver;
     private closed = false;
+    private ended = false;
+    private sessions = 0;
     private started = false;
     private resizeTimer?: number;
     private controlActive = false;
@@ -76,9 +84,14 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
     }
 
     protected onSocketOpen = (): void => {
-        if (!this.destroyed) {
-            this.startShell(this.udid);
+        if (this.destroyed) {
+            return;
         }
+        if (this.sessions++) {
+            this.term.write(NEW_SESSION_RESET);
+        }
+        this.term.options.disableStdin = false;
+        this.startShell(this.udid);
     };
 
     protected onSocketClose(event: CloseEvent): void {
@@ -88,8 +101,36 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         console.log(TAG, `Connection closed: ${event.reason}`);
         this.closed = true;
         this.started = false;
+        // When adb exits the server closes this channel and the socket stays open. A lost
+        // connection closes the socket under it.
+        const socket = this.ws instanceof Multiplexer ? this.ws.ws : undefined;
+        this.ended = !!socket && socket.readyState === socket.OPEN;
+        // The tool page reports the state and offers Reconnect; nothing is written here.
         this.term.options.disableStdin = true;
-        this.term.writeln('\r\n[Shell disconnected. Use Reconnect to open a new session.]');
+    }
+
+    /** True when the shell itself exited, as opposed to the connection to the server dropping. */
+    public sessionEnded(): boolean {
+        return this.ended;
+    }
+
+    /**
+     * Opens a new session in this terminal and keeps what is on screen. Does nothing while a
+     * session is open or an attempt is still connecting.
+     */
+    public reconnect(): void {
+        if (this.destroyed || !this.closed) {
+            return;
+        }
+        try {
+            this.openNewConnection();
+        } catch (error) {
+            // The shared socket is still closing. The next attempt gets a new one.
+            console.log(TAG, `Reconnect failed: ${(error as Error).message}`);
+            return;
+        }
+        this.closed = false;
+        this.ended = false;
     }
 
     protected onSocketMessage(event: MessageEvent): void {

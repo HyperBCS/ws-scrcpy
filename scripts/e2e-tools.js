@@ -20,11 +20,18 @@ function frame(type, id, data) {
     return packet;
 }
 async function fixtures(page) {
-    const state = { starts: [], input: [], resizes: [], closed: [], sends: [], update: undefined, close: undefined };
+    // close() drops the whole socket, as a server restart or a lost network does. endShell() closes
+    // only the shell channel, as the server does when adb exits. While refuse is set, a new socket
+    // is closed at once.
+    const state = { starts: [], input: [], resizes: [], closed: [], sends: [], update: undefined, close: undefined, endShell: undefined, refuse: false };
     await page.routeWebSocket('**', socket => {
         const url = new URL(socket.url());
         if (url.searchParams.get('action') === 'proxy-adb') {
             setTimeout(() => socket.send(initialStreamPacket()), 40);
+            return;
+        }
+        if (state.refuse) {
+            socket.close();
             return;
         }
         const channels = new Map();
@@ -49,6 +56,7 @@ async function fixtures(page) {
                     if (message.data?.type === 'start') {
                         state.starts.push(message.data);
                         socket.send(frame(32,id,'Fixture terminal ready\r\n$ '));
+                        state.endShell = (code = 1000) => { const body = Buffer.alloc(2); body.writeUInt16LE(code); socket.send(frame(8,id,body)); };
                     }
                 } else state.input.push(body);
             } else if (packet[0] === 16 && channels.get(id) === 'SHEL') {
@@ -83,6 +91,57 @@ async function geometry(page) {
     assert(result.terminalHeight > 20, 'terminal retains usable space');
     assert.deepEqual(result.outside, [], '44px controls fit visible viewport');
     assert.equal(result.bodyScroll,0);
+}
+// A lost connection is retried without being asked and reported in one place. A shell that
+// exits is not restarted behind the owner's back.
+async function lostConnection(page, state, name) {
+    const chip = page.locator('.tool-connection');
+    const banner = page.locator('.tool-error');
+    const terminalText = () => page.locator('.terminal-container .xterm-rows').innerText();
+    const sessionsShown = async () => (await terminalText()).split('Fixture terminal ready').length - 1;
+    const sessions = state.starts.length;
+
+    state.close();
+    await chip.getByText('Reconnecting…',{exact:true}).waitFor();
+    assert.equal(await banner.count(),0,'no banner while reconnecting');
+    assert(await page.getByRole('button',{name:'Ctrl',exact:true}).isDisabled(),'terminal keys are off while offline');
+    await page.locator('.tool-connection.connected').waitFor({state:'attached'});
+    await until(()=>state.starts.length===sessions+1,'the automatic attempt starts one new session');
+    await until(async()=>await sessionsShown()===2,'the new session continues in the same terminal');
+    assert(!/disconnected|reconnect/i.test(await terminalText()),'the terminal carries no instructions of its own');
+    assert.equal(await banner.count(),0,'no banner after an automatic reconnect');
+
+    state.endShell();
+    await banner.getByText('The shell session ended.',{exact:true}).waitFor();
+    assert.equal(await chip.innerText(),'Ended');
+    await page.waitForTimeout(1600);
+    assert.equal(state.starts.length,sessions+1,'a shell that exited is not restarted automatically');
+    await banner.getByRole('button',{name:'New session',exact:true}).click();
+    await page.locator('.tool-connection.connected').waitFor({state:'attached'});
+    await until(()=>state.starts.length===sessions+2,'New session starts one session');
+    await banner.waitFor({state:'detached'});
+
+    // The retries take eleven seconds to run out, so two sizes are enough.
+    if (name !== 'phone320' && name !== 'desktop') return;
+    state.refuse = true;
+    state.close();
+    await chip.getByText('Reconnecting…',{exact:true}).waitFor();
+    await banner.getByText('Connection lost.',{exact:true}).waitFor({timeout:20000});
+    assert.equal(await chip.innerText(),'Disconnected');
+    assert.equal(await page.getByText(/reconnect/i).count(),1,'one instruction: the Reconnect button');
+    assert.equal(state.starts.length,sessions+2,'nothing starts while the server is away');
+    const button = banner.getByRole('button',{name:'Reconnect',exact:true});
+    // A tool that fails to load puts a long message here. The button must not give way to it.
+    await banner.locator('span').evaluate(el=>{ el.textContent='A message long enough to need several lines at this width, as a failed load can produce.'; });
+    const fit = await button.evaluate(el=>{ const range=document.createRange(); range.selectNodeContents(el); const box=el.getBoundingClientRect(); return {lines:range.getClientRects().length,right:box.right,width:innerWidth}; });
+    assert.equal(fit.lines,1,'the Reconnect label stays on one line');
+    assert(fit.right<=fit.width,'the Reconnect button stays on screen');
+    await page.screenshot({path:`/tmp/ws-scrcpy-tools/${name}-shell-lost.png`});
+    state.refuse = false;
+    await button.click();
+    await page.locator('.tool-connection.connected').waitFor({state:'attached'});
+    await until(()=>state.starts.length===sessions+3,'Reconnect starts one session');
+    await banner.waitFor({state:'detached'});
 }
 async function main() {
     const browser = await chromium.launch({headless:true});
@@ -154,13 +213,15 @@ async function main() {
             await page.waitForFunction(()=>Math.abs(document.querySelector('.tool-view').getBoundingClientRect().height-visualViewport.height)<1);
             await until(()=>{ const last=state.resizes.at(-1); return last.cols===started.cols && last.rows===started.rows; },'the restored size reaches the device');
             assert.deepEqual(state.input,typed,'a resize is never typed into the shell');
+            await lostConnection(page,state,name);
+            const sessions = state.starts.length;
             await page.getByRole('button',{name:'Switch',exact:true}).click();
             const sheet=page.locator('.bottom-sheet-root.open');
             await sheet.getByRole('button',{name:/Phone B/}).click();
             await page.waitForFunction(()=>location.hash.includes('tool-fixture-002') && document.querySelector('.tool-connection.connected'));
             await page.waitForTimeout(100);
-            assert.equal(state.starts.length,2,'device switching creates one replacement terminal');
-            assert.equal(state.starts[1].udid,'tool-fixture-002');
+            assert.equal(state.starts.length,sessions+1,'device switching creates one replacement terminal');
+            assert.equal(state.starts.at(-1).udid,'tool-fixture-002');
             assert(state.closed.includes('SHEL'),'old shell channel is closed');
             // The tools navigation is Files and Shell only: the screen is started from the device list.
             assert.deepEqual(await page.locator('.tool-navigation button').allInnerTexts(),['Files','Shell']);
@@ -168,6 +229,18 @@ async function main() {
             await page.locator('.file-listing-client').waitFor();
             assert.equal(await page.locator('.terminal-container').count(),0,'terminal removes all DOM on navigation');
             assert.equal(state.closed.filter(code=>code==='SHEL').length,2,'both departed shells closed');
+            // Files reports a lost connection the same way and comes back by itself.
+            await page.locator('.tool-connection.connected').waitFor({state:'attached'});
+            state.refuse = true;
+            state.close();
+            await until(()=>page.locator('.file-explorer.fx-offline .fx-empty').evaluateAll(cells=>cells.length===1 && cells[0].textContent===''),'a folder that was never listed is not called empty while offline');
+            assert.equal(await page.locator('.fx-status').innerText(),'','Files leaves the message to the tool page');
+            await page.locator('.tool-connection').getByText('Reconnecting…',{exact:true}).waitFor();
+            assert.equal(await page.locator('.tool-error').count(),0,'no banner while Files reconnects');
+            state.refuse = false;
+            await page.locator('.tool-connection.connected').waitFor({state:'attached'});
+            assert.equal(await page.locator('.file-explorer').count(),1,'Files is mounted once after reconnecting');
+            assert.equal(await page.locator('.file-explorer.fx-offline').count(),0);
             await page.getByRole('button',{name:'Back to devices',exact:true}).click();
             await page.locator('#devices').waitFor();
             const card2 = page.locator('.device').filter({hasText:'Phone B'});
