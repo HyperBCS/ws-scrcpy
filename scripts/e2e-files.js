@@ -1029,12 +1029,49 @@ async function main() {
             assert.equal(files.get(ROOT + '/later.txt').toString(), 'Device copy');
             assert.equal(files.get(ROOT + '/on-time.txt').toString(), 'On time');
 
+            // An answer belongs to the folder it was given in. Here the explorer moves to another
+            // folder while the question is open: a change within the page leaves the question
+            // open. The file still goes to the folder that was checked, and the same name in the
+            // other folder is left alone.
+            files.set(ROOT + '/archive/notes.txt', Buffer.from('Never asked about'));
+            await pick(['notes.txt', 'Answered for tmp']);
+            await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
+            traffic.holdStat = true;
+            await page.evaluate((target) => {
+                const params = new URLSearchParams(location.hash.replace(/^#!/, ''));
+                params.set('path', target);
+                location.hash = `#!${params}`;
+            }, ROOT + '/archive');
+            await until(page, () => traffic.releaseStat, 'the folder change');
+            traffic.holdStat = false;
+            assert.equal(await page.locator('.fx-dialog[open]').count(), 1, 'the question stays open while the folder changes');
+            traffic.hold = true;
+            await answer(page, 'Replace');
+            await until(page, () => traffic.pending, 'the upload to ask for a push id');
+            traffic.releaseStat();
+            await page.locator('.fx-crumb[aria-current="page"]').filter({ hasText: 'archive' }).waitFor();
+            traffic.hold = false;
+            traffic.pending.release();
+            traffic.pending = null;
+            await until(page, () => traffic.starts.length && traffic.starts.at(-1).overwrite, 'the START');
+            assert.deepEqual(traffic.starts.at(-1), { path: ROOT + '/notes.txt', overwrite: true });
+            await until(page, () => files.get(ROOT + '/notes.txt').toString() === 'Answered for tmp', 'the upload');
+            await settled(page);
+            assert.equal(files.get(ROOT + '/archive/notes.txt').toString(), 'Never asked about');
+            assert.equal(await page.evaluate(() => history.state?.nav?.overlay), undefined, 'the tab is on the folder entry, not on an entry of the question');
+            files.delete(ROOT + '/archive/notes.txt');
+            await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
+            await row(page, 'notes.txt').waitFor();
+            await settled(page);
+
             // A question has a history entry of its own. The browser's Back closes it, which
-            // skips the file: nothing is sent, and the folder stays where it was. (That an
-            // upload starts in the folder its name was checked against is in test-files.js; the
-            // folder can no longer change under an open question.)
+            // skips the file: nothing is sent, and the folder stays where it was. The owner
+            // presses Upload before choosing files; `setInputFiles` makes no press, so a key
+            // stands in for it. Without a press since the last step through history the
+            // question gets no entry (Chrome would skip one), and Back would leave Files.
             const startsBeforeBack = traffic.starts.length;
             const notesBeforeBack = files.get(ROOT + '/notes.txt').toString();
+            await page.keyboard.press('Shift');
             await pick(['notes.txt', 'Never sent']);
             await conflict(page, 'Replace “notes.txt”?', ['Skip', 'Keep both', 'Replace']);
             await page.goBack();

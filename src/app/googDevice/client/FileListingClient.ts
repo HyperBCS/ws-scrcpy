@@ -210,7 +210,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private missed?: { message: string; error: boolean };
     /** The history entries of the open menu and the open dialog: Back closes the top one. */
     private menuEntry?: OverlayEntry;
-    private dialogEntry?: OverlayEntry;
+    /** `left` once Back has closed the dialog through its entry. */
+    private dialogEntry?: { entry: OverlayEntry; left: boolean };
+    /** Gives up the dialog's entry once a closed question has had no successor. */
+    private dialogRelease?: ReturnType<typeof setTimeout>;
     /** Holds the dialog on the page itself while the question before leaving is open. */
     private dialogHolder?: HTMLElement;
     /** Results of the folder operations in flight, reported together when the last one answers. */
@@ -2140,15 +2143,34 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private presentDialog(): void {
-        const entry = this.overlayEntry(() => this.closeDialog(''));
+        clearTimeout(this.dialogRelease);
+        this.dialogRelease = undefined;
+        // A question that opens as soon as the one before it is answered (the next name of an
+        // upload) takes over that one's entry. Released at once, the entry would be stepped back
+        // over before the next question opens, and the step would count against the press that
+        // answered: the next question would get no entry, and Back would leave Files.
+        if (!this.dialogEntry || this.dialogEntry.left) {
+            const fresh = { left: false } as { entry: OverlayEntry; left: boolean };
+            fresh.entry = this.overlayEntry(() => {
+                fresh.left = true;
+                this.closeDialog('');
+            });
+            this.dialogEntry = fresh;
+        }
+        const held = this.dialogEntry;
         const closed = () => {
             this.dialog.removeEventListener('close', closed);
-            if (this.dialogEntry === entry) {
-                this.dialogEntry = undefined;
-            }
-            entry.release();
+            // Given up once the code that waits for the answer has run. The question that
+            // follows, if any, has opened by then and cleared this timer.
+            clearTimeout(this.dialogRelease);
+            this.dialogRelease = setTimeout(() => {
+                this.dialogRelease = undefined;
+                if (this.dialogEntry === held && !this.dialog.open) {
+                    this.dialogEntry = undefined;
+                    held.entry.release();
+                }
+            });
         };
-        this.dialogEntry = entry;
         this.dialog.addEventListener('close', closed);
         transitionVisibility(this.dialog, true);
         this.dialog.showModal();
@@ -2211,9 +2233,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 resolve(this.dialog.returnValue);
             };
             this.dialog.returnValue = '';
-            // Before `finish` is added, so the dialog's history entry is given up before the
-            // wait ends. Whoever waits may open the next dialog at once (promise callbacks run
-            // between two listeners of one event), and its entry must not sit on this one's.
+            // Whoever waits may open the next dialog at once (promise callbacks run between two
+            // listeners of one event). That dialog takes over this one's entry; see
+            // `presentDialog`.
             this.presentDialog();
             this.dialog.addEventListener('close', finish);
             this.dialog.querySelector<HTMLButtonElement>('[data-dialog="cancel"]')?.addEventListener('click', () => {
@@ -2971,7 +2993,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         cancelVisibility(this.menu);
         cancelVisibility(this.dialog);
         this.returnDialog();
-        this.dialogEntry?.release();
+        clearTimeout(this.dialogRelease);
+        this.dialogEntry?.entry.release();
         this.dialogEntry = undefined;
         this.dialog.removeEventListener('cancel', this.onDialogCancel);
         this.dialog.removeEventListener('submit', this.onDialogSubmit);

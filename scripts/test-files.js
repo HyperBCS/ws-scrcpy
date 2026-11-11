@@ -446,7 +446,9 @@ function fakeTab(address) {
         removeEventListener: (type, listener) => listeners[type]?.delete(listener),
         matchMedia: () => ({ matches: true, addEventListener: () => undefined }),
     };
-    return { location, history, window, writes, hashes: () => entries.map((entry) => entry.url.hash) };
+    // The owner presses something. An overlay gets a history entry only after a press.
+    const press = () => [...(listeners.pointerup || [])].forEach((listener) => listener({ type: 'pointerup', isTrusted: true }));
+    return { location, history, window, writes, press, hashes: () => entries.map((entry) => entry.url.hash) };
 }
 
 /** The phone's side of the Files channel: every folder exists and holds the same two files. */
@@ -731,15 +733,21 @@ test('two questions in a row each have one history entry, and Back answers the o
     await settle();
     const answer = (value) => dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value }) });
     const asks = (name) => dialog.open && dialog.innerHTML.includes(`Replace “${name}”`);
+    // The owner picks the files: a press.
+    tab.press();
     const plan = client.planUploads([{ name: 'notes.txt' }, { name: 'photo.png' }, { name: 'new.txt' }]);
     await settle();
     assert.equal(asks('notes.txt'), true);
     assert.equal(tab.history.state.nav.overlay, 1, 'the question has an entry on the folder');
-    // The next question opens as soon as this one is answered, before its entry is left.
+    // The next question opens as soon as this one is answered and takes over its entry: the
+    // tab does not step back and forward in between.
+    const length = tab.history.length;
     answer('keep');
     await settle();
+    await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(asks('photo.png'), true, 'the second question stays open');
-    assert.equal(tab.history.state.nav.overlay, 1, 'on one entry of its own, not on the first one');
+    assert.equal(tab.history.state.nav.overlay, 1, 'with one entry');
+    assert.equal(tab.history.length, length, 'and no entry was added or stepped over for it');
     tab.history.back();
     await settle();
     assert.equal(dialog.open, false, 'Back closes it');
@@ -750,6 +758,23 @@ test('two questions in a row each have one history entry, and Back answers the o
         ['notes (1).txt', 'new.txt'],
         'Back is Skip for that one file',
     );
+});
+
+test('a question that is answered and not followed by another gives up its entry', async (t) => {
+    const { tab, client, dialog, settle } = openFiles(t);
+    await settle();
+    tab.press();
+    const plan = client.planUploads([{ name: 'notes.txt' }, { name: 'new.txt' }]);
+    await settle();
+    assert.equal(tab.history.state.nav.overlay, 1, 'the question has an entry on the folder');
+    dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value: 'skip' }) });
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await settle();
+    assert.equal(dialog.open, false);
+    assert.equal(tab.history.state.nav.overlay, undefined, 'the entry was stepped back over');
+    assert.equal(tab.location.hash, address('files', '&path=%2Fsdcard'));
+    assert.deepEqual((await plan).map((upload) => upload.name), ['new.txt']);
 });
 
 test('an upload starts in the folder its name was checked against, not the one shown by then', async (t) => {

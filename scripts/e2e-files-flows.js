@@ -824,7 +824,10 @@ async function uploads(browser, layout, name, scheme) {
     const leave = page.locator('.fx-dialog[open]');
     const question = leave.getByRole('heading', { name: `Stop the upload to ${DEVICE}?`, exact: true });
     const files0 = await page.evaluate(() => location.hash);
-    // The second Back is pressed with the question open: it closes the question and stays.
+    // The question asked after the browser's Back opens with no press since that step, so it
+    // has no history entry of its own (Chrome would skip one, and the page with it). A second
+    // Back with it open is then refused like the first: the tab returns to Files and the
+    // question stays. Asked after the Phones button, a press, it has an entry.
     for (const way of ['browser Back', 'browser Back twice', 'Phones button']) {
         if (way.startsWith('browser Back')) await page.goBack();
         if (way === 'Phones button') await page.getByRole('button', { name: 'Phones', exact: true }).click();
@@ -836,8 +839,16 @@ async function uploads(browser, layout, name, scheme) {
         );
         await settleMotion(page);
         if (way === 'browser Back') await page.screenshot({ path: path.join(OUT, `flows-leave-${name}.png`) });
-        if (way === 'browser Back twice') await page.goBack();
-        else await leave.getByRole('button', { name: 'Keep uploading', exact: true }).click();
+        if (way === 'browser Back twice') {
+            await page.goBack();
+            await page.waitForFunction((hash) => location.hash === hash, files0);
+            await page.waitForTimeout(300);
+            assert.equal(await question.count(), 1, `${way}: the question is still open`);
+        }
+        if (way === 'Phones button') {
+            assert.equal(await page.evaluate(() => history.state?.nav?.overlay), 1, `${way}: the question has an entry`);
+        }
+        await leave.getByRole('button', { name: 'Keep uploading', exact: true }).click();
         await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
         assert.equal(await page.evaluate(() => location.hash), files0, `${way}: the address is still Files`);
         assert.equal(await page.locator('.file-listing-client').count(), 1, `${way}: Files stays open`);
@@ -863,8 +874,8 @@ async function uploads(browser, layout, name, scheme) {
     await page.getByRole('button', { name: 'Phones', exact: true }).click();
     await card.waitFor();
 
-    // Another tab of the same phone is not leaving it, so nothing is asked. What becomes of
-    // the upload under the other tab is the phone page's to check.
+    // Another tab of the same phone is not leaving it, so nothing is asked, and the upload goes
+    // on behind that tab.
     if (!(await filesLink.isVisible())) await card.locator('summary').click();
     await filesLink.click();
     await ready(page);
@@ -874,9 +885,30 @@ async function uploads(browser, layout, name, scheme) {
         buffer: Buffer.alloc(size, 7),
     });
     await rowFor('stay.bin').waitFor();
-    await page.locator('.tool-tabs').getByRole('button', { name: 'Shell', exact: true }).click();
+    const tabButton = (name) => page.locator('.tool-tabs').getByRole('button', { name, exact: true });
+    await tabButton('Shell').click();
     await page.waitForFunction((udid) => location.hash === `#!action=device&udid=${udid}&view=shell`, UDID);
     assert.equal(await page.locator('.fx-dialog[open]').count(), 0, 'a change of view on the same phone asks nothing');
+    assert.equal(await page.locator('.file-explorer').isVisible(), false, 'Files is hidden behind Shell');
+    // Leaving the phone from the Shell tab asks, with the question on top of the Shell tab.
+    await page.getByRole('button', { name: 'Phones', exact: true }).click();
+    await question.waitFor();
+    assert.equal(await question.isVisible(), true, 'the question of a hidden Files is shown');
+    await leave.getByRole('button', { name: 'Keep uploading', exact: true }).click();
+    await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => location.hash), `#!action=device&udid=${UDID}&view=shell`, 'Keep uploading stays on Shell');
+    // Back on Files: the same explorer, the upload still running, and the folder in the address.
+    await tabButton('Files').click();
+    await page.waitForFunction(
+        (expected) => location.hash === expected,
+        `#!action=device&udid=${UDID}&view=files&path=${encodeURIComponent(ROOT)}`,
+    );
+    assert.equal(await rowFor('stay.bin').count(), 1, 'the upload went on behind the Shell tab');
+    assert.equal(traffic.cancels.includes(ROOT + '/stay.bin'), false);
+    traffic.holdAppends = false;
+    traffic.releaseAppends();
+    await rowFor('stay.bin').waitFor({ state: 'detached' });
+    await until(page, () => files.get(ROOT + '/stay.bin')?.length === size, 'the upload to finish');
     await finish();
 }
 
