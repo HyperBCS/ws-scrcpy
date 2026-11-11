@@ -298,6 +298,8 @@ async function typeTextIsASheet(browser) {
             // is not a touch on the phone.
             const picture = await page.locator('.touch-layer').boundingBox();
             const panel = await typing.locator('.kit-sheet-panel').boundingBox();
+            // The picture is fitted above the sheet at every width, so what is typed can be seen.
+            assert(picture.height > 100 && picture.y + picture.height <= panel.y + 1, `the picture is above the sheet (${picture.y + picture.height} <= ${panel.y})`);
             const point = { x: picture.x + picture.width / 2, y: mobile ? picture.y + picture.height / 3 : picture.y + picture.height * 0.9 };
             assert(point.y < panel.y || point.y > panel.y + panel.height, 'the test presses the picture, not the sheet');
             const before = test.touches();

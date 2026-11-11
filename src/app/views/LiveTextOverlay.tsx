@@ -3,7 +3,7 @@ import { liveTextOpen, streamConnected } from '../state/stream';
 import { IconButton } from '../ui/IconButton';
 import type { IconName } from '../ui/icons';
 import { InlineStatus } from '../ui/InlineStatus';
-import { Sheet, SHEET_DIALOG } from '../ui/Sheet';
+import { Sheet } from '../ui/Sheet';
 import '../../style/views/LiveTextOverlay.css';
 
 /** Keys the sheet can press by name, besides typing text. */
@@ -98,12 +98,12 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
         const panel = content?.closest<HTMLElement>('.kit-sheet-panel');
         const stream = content?.closest<HTMLElement>('.stream-view');
         const viewport = window.visualViewport;
-        const dialog = window.matchMedia(SHEET_DIALOG);
         let frame = 0;
         // While typing, the picture and the sheet share what the on-screen keyboard leaves in
         // view: the keyboard can pan as well as shrink Safari's visual viewport without a window
-        // resize. A bottom sheet covers the lower part, so the picture is fitted above it. A
-        // dialog floats over the picture and reserves nothing.
+        // resize. The sheet stands at the bottom of that area at every width (as a dialog from
+        // 600px, a little above the edge), and the whole picture is fitted above it, so the
+        // field being typed into on the phone stays in sight.
         const update = () => {
             if (!stream || !panel) return;
             const bounds = typingViewport();
@@ -111,8 +111,11 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
             stream.style.setProperty('--typing-viewport-left', bounds.left);
             stream.style.setProperty('--typing-viewport-width', bounds.width);
             stream.style.setProperty('--typing-viewport-height', bounds.height);
-            const dock = dialog.matches ? 0 : Math.ceil(panel.getBoundingClientRect().height);
-            stream.style.setProperty('--typing-dock-height', `${dock}px`);
+            // From the top of the sheet to the bottom of the dialog, which covers that same area.
+            // Layout offsets, not drawn ones: the sheet may still be moving in.
+            const dialog = panel.offsetParent;
+            const dock = dialog ? dialog.clientHeight - panel.offsetTop : panel.offsetHeight;
+            stream.style.setProperty('--typing-dock-height', `${Math.max(0, Math.ceil(dock))}px`);
         };
         const schedule = () => {
             cancelAnimationFrame(frame);

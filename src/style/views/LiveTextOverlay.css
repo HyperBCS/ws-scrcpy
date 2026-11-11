@@ -33,6 +33,22 @@
     width: auto;
 }
 
+/* While typing, the picture is fitted above the sheet (views/LiveTextOverlay.tsx), so the field
+   being typed into on the phone stays in sight. From 600px the dialog therefore stands a little
+   above the bottom edge, not under the top edge, and on a short window it stands on the edge. */
+@media (min-width: 600px) {
+    .kit-sheet:has(.live-text) > .kit-sheet-panel {
+        top: auto;
+        bottom: var(--space-24);
+    }
+}
+@media (min-width: 600px) and (max-height: 500px) {
+    .kit-sheet:has(.live-text) > .kit-sheet-panel {
+        bottom: 0;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    }
+}
+
 /* On a touch screen the sheet shares the window with the on-screen keyboard and the picture, so
    it keeps to the field and the keys. The hint and the outcome of a send that worked are still
    read out; an outcome that needs attention is shown. */
@@ -51,8 +67,16 @@
 }
 
 /* A phone on its side leaves about 220px above its keyboard: the field and the keys share one
-   row, and an outcome that needs attention goes under them. */
+   row, an outcome that needs attention goes under them, and the header and the space under the
+   row are tighter, so some of the picture stays in sight above the sheet. */
 @media (max-height: 500px) and (hover: none) and (pointer: coarse) {
+    .kit-sheet:has(.live-text) .kit-sheet-header {
+        padding-top: var(--space-12);
+        padding-bottom: 0;
+    }
+    .kit-sheet:has(.live-text) .kit-sheet-body {
+        padding-bottom: var(--space-8);
+    }
     .live-text {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;

@@ -218,6 +218,20 @@ async function desktopFlow(browser) {
     const test = await start(browser, { mobile: false });
     const { page } = test;
     await openOverlay(page, false);
+    // A dialog from 600px, at the bottom of the window, with the picture fitted above it: the
+    // field being typed into on the phone is not under the sheet.
+    await page.waitForFunction(() => {
+        const video = document.querySelector('.video')?.getBoundingClientRect();
+        const panel = document.querySelector('dialog.kit-sheet[open] .kit-sheet-panel')?.getBoundingClientRect();
+        return !!video && !!panel && video.height > 100 && video.bottom <= panel.top + 1;
+    }, undefined, { timeout: 3000 }).catch(() => undefined);
+    const desk = await page.evaluate(() => ({
+        video: document.querySelector('.video').getBoundingClientRect().toJSON(),
+        panel: document.querySelector('dialog.kit-sheet[open] .kit-sheet-panel').getBoundingClientRect().toJSON(),
+        height: innerHeight,
+    }));
+    assert.ok(desk.video.height > 100 && desk.video.bottom <= desk.panel.top + 1, `desktop: the picture is fitted above the dialog (${JSON.stringify(desk)})`);
+    assert.ok(desk.panel.bottom < desk.height && desk.panel.bottom > desk.height - 40, 'desktop: the dialog stands a little above the bottom edge');
     await page.keyboard.type('a1!');
     assert.deepEqual(await test.waitForKeys(8), [...press(0x04), ...press(0x1e), ...shifted(0x1e)]);
     await page.keyboard.press('ArrowLeft');
@@ -354,8 +368,10 @@ async function typingGeometry(page) {
                 .filter(el => el.getClientRects().length)
                 .map(el => ({ name: el.getAttribute('aria-label') || el.textContent.trim(), ...el.getBoundingClientRect().toJSON() })),
             overflow: document.documentElement.scrollWidth > innerWidth || document.querySelector('dialog.kit-sheet[open] .kit-sheet-body').scrollWidth > document.querySelector('dialog.kit-sheet[open] .kit-sheet-body').clientWidth,
-            // Below 600px the sheet is at the bottom edge; from there it is a dialog over the picture.
+            // Below 600px the sheet is at the bottom edge; from there it is a dialog a little above
+            // it, and on the edge in a short window.
             docked: innerWidth < 600,
+            short: innerHeight <= 500,
             field: rect('.live-text-input'),
         };
     });
@@ -376,14 +392,12 @@ async function assertTypingLayout(page, label) {
     assert.ok(dock.left >= vv.left - 1 && dock.right <= vv.left + vv.width + 1, `${label}: the dock fits horizontally inside the visual viewport`);
     assert.ok(dock.top >= vv.top - 1 && dock.bottom <= vv.top + vv.height + 1, `${label}: every dock row stays above the local keyboard`);
     assert.ok(video.top >= header.bottom - 1, `${label}: the full stream starts below its header`);
-    if (boxes.docked) {
-        assert.ok(Math.abs(dock.bottom - (vv.top + vv.height)) < 1.1, `${label}: the sheet stands on the local keyboard`);
-        assert.ok(video.bottom <= dock.top + 1, `${label}: the video area is reserved above the typing dock`);
-    } else {
-        // A dialog reserves nothing: the picture keeps what the keyboard leaves in view.
-        assert.ok(video.bottom <= vv.top + vv.height + 1, `${label}: the video area ends above the local keyboard`);
-        assert.ok(video.bottom >= vv.top + vv.height - 1.1, `${label}: a dialog takes no room from the picture`);
-    }
+    // A bottom sheet, and a dialog in a short window, stand on the keyboard; a dialog in a taller
+    // window stands a little above it. The picture is fitted above the sheet in every case.
+    const gap = vv.top + vv.height - dock.bottom;
+    if (boxes.docked || boxes.short) assert.ok(Math.abs(gap) < 1.1, `${label}: the sheet stands on the local keyboard (${gap}px)`);
+    else assert.ok(gap > 8 && gap < 40, `${label}: the dialog stands a little above the local keyboard (${gap}px)`);
+    assert.ok(video.bottom <= dock.top + 1, `${label}: the video area is reserved above the typing dock`);
     assert.ok(field.top >= vv.top - 1 && field.bottom <= vv.top + vv.height + 1, `${label}: the typing field stays above the local keyboard`);
     assert.ok(video.height > 20, `${label}: the stream retains usable vertical space`);
     assert.ok(canvas.height > 20 && canvas.top >= video.top - 1 && canvas.bottom <= video.bottom + 1, `${label}: the whole portrait frame fits above the dock`);
