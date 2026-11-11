@@ -687,6 +687,36 @@ test('a Files tab that is shown again lists its folder again, reports what it mi
     assert.equal(wrapper.classList.contains('fx-selecting'), true, 'the selection is kept');
 });
 
+test('a tab link that names the folder shown is the same place in Files history, not a step', async (t) => {
+    const { tab, client, router, deviceRoute, settle } = openFiles(t);
+    await settle();
+    const place = () => [client.historyIndex, tab.history.state.files?.index];
+    const show = async (shown, extra = {}) => {
+        router.switchRoute(deviceRoute(PHONE, shown ? 'files' : 'shell', extra));
+        client.setActive(shown);
+        await settle();
+    };
+    assert.deepEqual(place(), [0, 0]);
+    // Back to the Files tab by a link with the path: the entry Files opened on, so the toolbar's
+    // Back still has nothing behind it.
+    await show(false);
+    await show(true, { path: '/sdcard' });
+    assert.deepEqual(place(), [0, 0]);
+    assert.equal(tab.history.length, 2);
+
+    // One folder step, then the same with the step's folder.
+    client.navigate('/sdcard/DCIM');
+    await settle();
+    assert.deepEqual(place(), [1, 1]);
+    await show(false);
+    await show(true, { path: '/sdcard/DCIM' });
+    assert.deepEqual(place(), [1, 1]);
+    assert.equal(client.getPath(), '/sdcard/DCIM');
+    tab.history.back();
+    await settle();
+    assert.equal(tab.location.hash, address('files', '&path=%2Fsdcard'), 'Back is the folder before');
+});
+
 test('two questions in a row each have one history entry, and Back answers the one that is open', async (t) => {
     const { tab, client, dialog, settle } = openFiles(t);
     await settle();

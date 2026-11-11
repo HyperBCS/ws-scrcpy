@@ -2553,7 +2553,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         const tag = history.state?.files;
-        if (tag && typeof tag.id === 'string' && Number.isInteger(tag.index)) {
+        if (FileListingClient.isTag(tag)) {
             if (tag.id !== this.historyId) {
                 // An entry from an earlier run in this tab: continue that run from here.
                 this.historyId = tag.id;
@@ -2570,6 +2570,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             replaceRoute(params, this.historyState());
             this.storeHistory();
         }
+    }
+
+    /** Whether `tag` is the mark an explorer leaves on a history entry it made or adopted. */
+    private static isTag(tag: unknown): tag is { id: string; index: number } {
+        const { id, index } = (tag || {}) as { id?: unknown; index?: unknown };
+        return typeof id === 'string' && Number.isInteger(index);
     }
 
     /** A link to a folder of this phone. It is the same whichever tab the address shows. */
@@ -2642,10 +2648,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.active = true;
         const params = this.routeParams();
         const asked = params?.get('path');
-        if (params && !asked) {
-            // The tab's link names no folder. The address gets the folder that is shown, in the
-            // same history entry.
-            params.set('path', this.path);
+        if (params && !FileListingClient.isTag(history.state?.files)) {
+            // A change of tab writes the same history entry and drops the explorer's tag. It is
+            // still the place the explorer was at, not a step forward, so it is tagged again with
+            // that place. When the tab's link names no folder, it gets the folder that is shown.
+            if (!asked) {
+                params.set('path', this.path);
+            }
             replaceRoute(params, this.historyState());
         } else {
             // Back or Forward came to one of this explorer's entries.
