@@ -131,12 +131,6 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
         this.initCanvas(width, height);
     }
 
-    public setScreenInfo(screenInfo: ScreenInfo): void {
-        // The base class clears queued frames on every ScreenInfo; ours only changes when the
-        // picture does, which `applyFrameSize` already handles without dropping the queue.
-        super.setScreenInfo(screenInfo);
-    }
-
     /** `frame` is `[type][AU]` as delivered by the server. */
     public pushFrame(frame: Uint8Array): void {
         if (this.getState() === BaseCanvasBasedPlayer.STATE.PAUSED) {

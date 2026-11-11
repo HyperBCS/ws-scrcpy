@@ -24,30 +24,3 @@ export function getVideoBounds(video: HTMLElement): Size | undefined {
     // Hidden or not-yet-laid-out players should keep their previous bounds until visible.
     return bounds.width > 0 && bounds.height > 0 ? bounds : undefined;
 }
-
-/**
- * Publishes the control bar's footprint as CSS custom properties so the bottom sheets can inset
- * themselves and leave the bar reachable.
- *
- * Without this a sheet anchored to `bottom: 0` sits on top of the bar, and because the overlap is
- * the sheet's own content (not its backdrop) a tap there hits a list item instead of the button
- * the user aimed at -- and does not even dismiss the sheet. Returns a teardown function.
- */
-export function trackControlBarInset(controlBar: HTMLElement): () => void {
-    const root = document.documentElement;
-    const apply = () => {
-        const isBottomBar = controlBar.clientWidth >= controlBar.clientHeight;
-        root.style.setProperty('--control-bar-bottom', isBottomBar ? `${controlBar.clientHeight}px` : '0px');
-        root.style.setProperty('--control-bar-side', isBottomBar ? '0px' : `${controlBar.clientWidth}px`);
-    };
-    apply();
-    const observer = new ResizeObserver(apply);
-    observer.observe(controlBar);
-    window.addEventListener('resize', apply);
-    return () => {
-        observer.disconnect();
-        window.removeEventListener('resize', apply);
-        root.style.removeProperty('--control-bar-bottom');
-        root.style.removeProperty('--control-bar-side');
-    };
-}

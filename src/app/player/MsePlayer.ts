@@ -57,7 +57,6 @@ export class MsePlayer extends BasePlayer {
     private waitUntilSegmentRemoved = false;
     private blocks: Block[] = [];
     private frames: Uint8Array[] = [];
-    private jumpEnd = -1;
     private lastTime = -1;
     protected canPlay = false;
     private waitingForConfig = false;
@@ -280,23 +279,6 @@ export class MsePlayer extends BasePlayer {
         }
     };
 
-    jumpToEnd = (): void => {
-        if (!this.sourceBuffer) {
-            return;
-        }
-        if (this.sourceBuffer.updating) {
-            return;
-        }
-        if (!this.tag.buffered.length) {
-            return;
-        }
-        const end = this.tag.buffered.end(this.tag.seekable.length - 1);
-        console.log(`[${this.name}]`, `Jumping to the end (${this.jumpEnd}, ${end - this.jumpEnd}).`);
-        this.tag.currentTime = end;
-        this.jumpEnd = -1;
-        this.sourceBuffer.removeEventListener('updateend', this.jumpToEnd);
-    };
-
     public pushFrame(frame: Uint8Array): void {
         super.pushFrame(frame);
         if (this.waitingForConfig) {
@@ -459,7 +441,6 @@ export class MsePlayer extends BasePlayer {
         }
         if (this.sourceBuffer) {
             this.sourceBuffer.removeEventListener('updateend', this.cleanSourceBuffer);
-            this.sourceBuffer.removeEventListener('updateend', this.jumpToEnd);
             this.sourceBuffer = undefined;
         }
         // A new MediaSource must not inherit a removal wait or queued pictures from the old one.

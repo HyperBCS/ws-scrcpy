@@ -135,7 +135,7 @@ export class GoogToolBox extends ToolBox {
         }
 
         // Keyboard capture is on by default (see `parseParameters`); `?captureKeyboard=0` opts
-        // out. The toggle that lets a user change it interactively lives in `ToolsSheet`.
+        // out. The toggle that changes it while streaming is in `SettingsSheet`.
         if (options.captureKeyboard !== false) {
             client.setHandleKeyboardEvents(true);
         }
