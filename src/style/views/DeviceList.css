@@ -49,43 +49,6 @@
     background: var(--status-ready-color);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-ready-color) 12%, transparent);
 }
-.device-search {
-    min-width: 0;
-    flex: 1 1 220px;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    background: var(--device-list-default-color);
-    border: 1px solid var(--device-border-color);
-    border-radius: 0.8rem;
-    padding: 0 0.85rem;
-}
-.device-search > span {
-    font-size: 1.8rem;
-    line-height: 1;
-    color: var(--text-color-light);
-}
-.device-search input {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    min-height: 48px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    color: var(--text-color);
-    font-family: inherit;
-    font-size: 16px;
-    outline: none;
-}
-.device-search:focus-within {
-    outline: 2px solid var(--button-text-color);
-    outline-offset: 2px;
-}
-.device-search input::placeholder {
-    color: var(--text-color-light);
-    opacity: 1;
-}
 .tracker-block {
     margin-bottom: 0.8rem;
 }

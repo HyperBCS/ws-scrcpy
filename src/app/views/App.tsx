@@ -2,13 +2,14 @@ import { NotificationsView } from './NotificationsView';
 import { useEffect } from 'preact/hooks';
 import '../ui/viewport';
 import { route } from '../state/router';
+import { ToolRoute } from './ToolRoute';
 import { DeviceList } from './DeviceList';
 import { StreamView } from './StreamView';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import { SettingsSheet } from './SettingsSheet';
 import { ApplSettingsSheet } from './ApplSettingsSheet';
 import { startHostTracker } from '../state/hosts';
-import { isToolAction, ToolView } from './ToolView';
+import { isToolAction } from './ToolView';
 import { CoreDeviceStreamView } from './CoreDeviceStreamView';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
 import { ACTION } from '../../common/Action';
@@ -45,7 +46,7 @@ export function App() {
     }
 
     if (!view && isToolAction(params.get('action')) && params.get('udid')) {
-        view = <ToolView params={params} />;
+        view = <ToolRoute params={params} />;
     }
 
     if (!view) {

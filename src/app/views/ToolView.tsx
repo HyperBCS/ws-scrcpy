@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { ACTION } from '../../common/Action';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { BaseClient } from '../client/BaseClient';
-import { deviceName, DeviceEntry } from '../state/devices';
+import { deviceName, DeviceEntry, supportsDeviceTools } from '../state/devices';
 import { findDeviceForTool } from '../state/toolDevice';
 import { buildLinkHref } from '../state/links';
 import { goToDeviceList } from '../state/router';
@@ -296,6 +296,9 @@ export function ToolView({ params }: { params: URLSearchParams }) {
             </section>
             <DeviceSwitcherSheet
                 currentDeviceKey={entry?.key}
+                filter={supportsDeviceTools}
+                title={`Switch device · ${tool?.title || 'Tools'}`}
+                openLabel={tool?.title}
                 onSelectDevice={(next: DeviceEntry) => switchTool(action as ACTION, next)}
             />
         </main>
