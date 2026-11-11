@@ -1,5 +1,16 @@
-/** A request ends on navigation or timeout instead of leaving a control busy indefinitely. */
-export async function requestJson<T>(url: string, options: RequestInit = {}, signal?: AbortSignal): Promise<T> {
+/** How long a request may take unless the caller allows more. */
+export const REQUEST_TIMEOUT_MS = 10000;
+
+/**
+ * A request ends on navigation or timeout instead of leaving a control busy indefinitely.
+ * `timeoutMs` must outlast the longest time the server may work on that route.
+ */
+export async function requestJson<T>(
+    url: string,
+    options: RequestInit = {},
+    signal?: AbortSignal,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<T> {
     const controller = new AbortController();
     let timedOut = false;
     const abort = () => controller.abort();
@@ -8,7 +19,7 @@ export async function requestJson<T>(url: string, options: RequestInit = {}, sig
     const timer = setTimeout(() => {
         timedOut = true;
         controller.abort();
-    }, 10000);
+    }, timeoutMs);
     try {
         const response = await fetch(url, { ...options, signal: controller.signal });
         const result = await response.json().catch(() => ({}));

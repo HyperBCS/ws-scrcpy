@@ -4,11 +4,20 @@ import { requestJson } from '../client/request';
 
 const base = new URL('.', window.location.href);
 export const notificationApi = new URL('api/notifications/', base).href;
+/**
+ * The server waits up to 15 s for the iPhone to confirm one action and works on a bulk request
+ * for up to 30 s. The browser must wait longer than that, or it reports a failure while the
+ * server carries on and the result never reaches the page.
+ */
+export const PHONE_ACTION_TIMEOUT_MS = 20000;
+export const BULK_PHONE_ACTION_TIMEOUT_MS = 35000;
+
 export async function notificationRequest<T>(
     route: string,
     method = 'GET',
     body?: unknown,
     signal?: AbortSignal,
+    timeoutMs?: number,
 ): Promise<T> {
     return requestJson<T>(
         notificationApi + route,
@@ -20,6 +29,7 @@ export async function notificationRequest<T>(
             ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         },
         signal,
+        timeoutMs,
     );
 }
 export function registerNotificationWorker(): Promise<ServiceWorkerRegistration> {

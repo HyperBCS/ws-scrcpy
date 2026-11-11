@@ -1,7 +1,12 @@
 import { AnimatedDetails } from '../ui/AnimatedDetails';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { NotificationSource } from '../../common/Notification';
-import { notificationRequest as api, closeReadNotifications } from '../state/notifications';
+import {
+    notificationRequest as api,
+    closeReadNotifications,
+    PHONE_ACTION_TIMEOUT_MS,
+    BULK_PHONE_ACTION_TIMEOUT_MS,
+} from '../state/notifications';
 import { route, pushRoute } from '../state/router';
 import { Toast } from '../ui/Toast';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
@@ -223,7 +228,13 @@ export function NotificationHistory({
         setUndo(null);
         setPhoneResult('');
         void run(async () => {
-            await api(`history/${encodeURIComponent(item.key)}/action`, 'POST', { expectedLabel: label });
+            await api(
+                `history/${encodeURIComponent(item.key)}/action`,
+                'POST',
+                { expectedLabel: label },
+                undefined,
+                PHONE_ACTION_TIMEOUT_MS,
+            );
             closeReadNotifications([item.key]);
             setAccepted((keys) => [...keys, item.key]);
             // The phone accepted the request; it does not report that the alert is gone.
@@ -257,10 +268,13 @@ export function NotificationHistory({
         void run(async () => {
             try {
                 if (onPhone) {
-                    const reply = await api<BulkReply>('history/actions', 'POST', {
-                        source: sourceId,
-                        items: snapshot,
-                    });
+                    const reply = await api<BulkReply>(
+                        'history/actions',
+                        'POST',
+                        { source: sourceId, items: snapshot },
+                        undefined,
+                        BULK_PHONE_ACTION_TIMEOUT_MS,
+                    );
                     setAccepted((keys) => [...keys, ...reply.accepted]);
                     closeReadNotifications(reply.accepted);
                     const remaining = reply.skipped.length + reply.failed.length + reply.unprocessed.length;
