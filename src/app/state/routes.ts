@@ -79,6 +79,19 @@ export function parseRoute(params: URLSearchParams): Route {
     return old ? { page: 'device', udid, ...old } : { page: 'list' };
 }
 
+/**
+ * Whether two addresses show the same page: the list, Notifications, or one view of one phone.
+ * The other keys (a Files path, a filter, a player) and the form of the address do not count.
+ */
+export function samePage(a: URLSearchParams, b: URLSearchParams): boolean {
+    const one = parseRoute(a);
+    const other = parseRoute(b);
+    if (one.page !== 'device' || other.page !== 'device') {
+        return one.page === other.page;
+    }
+    return one.udid === other.udid && one.view === other.view;
+}
+
 /** The same keys with `action`, `udid` and `view` first, so one page has one spelling. */
 function withHead(params: URLSearchParams, head: Record<string, string>): URLSearchParams {
     const result = new URLSearchParams(head);

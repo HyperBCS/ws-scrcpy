@@ -1,5 +1,5 @@
 import { signal } from '@preact/signals';
-import { route } from './router';
+import { onPageChange, route } from './router';
 import { requestJson } from '../client/request';
 import { madeForServerKey, serverKeyBytes } from '../../common/pushKey';
 
@@ -179,13 +179,15 @@ export function startNotificationSummary(): () => void {
     void refresh();
     void syncPushSubscription();
     const timer = window.setInterval(refresh, 15000);
-    window.addEventListener('hashchange', refresh);
+    // The router changes pages with pushState and replaceState, which fire no hashchange.
+    // Leaving Notifications, where the count was just changed, is the case that matters.
+    const stopPageChange = onPageChange(() => void refresh());
     document.addEventListener('visibilitychange', refresh);
     navigator.serviceWorker?.addEventListener('message', refresh);
     return () => {
         alive = false;
         clearInterval(timer);
-        window.removeEventListener('hashchange', refresh);
+        stopPageChange();
         document.removeEventListener('visibilitychange', refresh);
         navigator.serviceWorker?.removeEventListener('message', refresh);
     };

@@ -391,6 +391,63 @@ test('a write made while up is under way waits for it, and a step the browser ne
     assert.deepEqual(stale.browser.hashes(), ['#!', '#!action=device&udid=IPHONE&view=screen']);
 });
 
+test('a change within the page written while up is under way is dropped, so the page is not shown again', () => {
+    // Files answers a folder step just after the back control: the corrected path and the step
+    // belong to Files, which is no longer shown once the list is reached.
+    const { browser, router, shown } = open('#!');
+    router.openRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard'));
+    router.goUp();
+    router.replaceRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2F'));
+    router.pushRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM'));
+    browser.settle();
+    assert.equal(browser.location.hash, '#!', 'the list is shown');
+    assert.equal(browser.index, 0);
+    assert.deepEqual(browser.hashes(), ['#!', '#!action=list-files&udid=PIXEL&path=%2Fsdcard'], 'the list entry is not overwritten');
+    assert.equal(shown.at(-1), '');
+
+    // Another player for the stream that is being left: no stream is started again.
+    const stream = open('#!');
+    stream.router.openRoute({ action: 'device', udid: 'PIXEL', view: 'screen' });
+    stream.router.goUp();
+    stream.router.navigate({ action: 'device', udid: 'PIXEL', view: 'screen', player: 'mse' });
+    stream.browser.settle();
+    assert.equal(stream.browser.location.hash, '#!');
+    assert.deepEqual(stream.shown.filter(isStream), ['action=device&udid=PIXEL&view=screen']);
+
+    // Without a step under way, a change within the page is written at once.
+    const files = open('#!action=list-files&udid=PIXEL&path=%2Fsdcard');
+    files.router.replaceRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2F'));
+    assert.equal(files.browser.location.hash, '#!action=list-files&udid=PIXEL&path=%2Fsdcard%2F');
+});
+
+test('a page change is another page or view, not a folder, a corrected path or a filter', () => {
+    const { browser, router, routes } = open('#!action=list-files&udid=PIXEL&path=%2Fsdcard');
+    const changes = [];
+    router.onPageChange(() => changes.push(browser.location.hash));
+    router.replaceRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2F'));
+    router.pushRoute(usp('action=list-files&udid=PIXEL&path=%2Fsdcard%2FDCIM'));
+    browser.history.back();
+    browser.settle();
+    assert.deepEqual(changes, [], 'Files folders and a corrected path are the same page');
+    router.switchRoute({ action: 'device', udid: 'PIXEL', view: 'shell' });
+    router.switchRoute({ action: 'device', udid: 'PIXEL-2', view: 'shell' });
+    router.openRoute({ action: 'notifications' });
+    router.switchRoute({ action: 'notifications', filter: 'unread' });
+    router.goUp();
+    browser.settle();
+    assert.deepEqual(changes, [
+        '#!action=device&udid=PIXEL&view=shell',
+        '#!action=device&udid=PIXEL-2&view=shell',
+        '#!action=notifications',
+        '#!',
+    ]);
+    // Both forms of an address are the same page.
+    assert.equal(routes.samePage(usp('action=stream-coredevice&udid=IPHONE'), usp('action=device&udid=IPHONE&view=screen')), true);
+    assert.equal(routes.samePage(usp('action=device&udid=PIXEL&view=screen&player=mse'), usp('action=device&udid=PIXEL&view=screen')), true);
+    assert.equal(routes.samePage(usp(''), usp('action=')), true);
+    assert.equal(routes.samePage(usp('action=device&udid=PIXEL&view=screen'), usp('action=device&udid=PIXEL&view=files')), false);
+});
+
 test('a reload keeps the place in history, so up still goes back', () => {
     const first = open('#!');
     first.router.openRoute({ action: 'device', udid: 'IPHONE', view: 'screen' });

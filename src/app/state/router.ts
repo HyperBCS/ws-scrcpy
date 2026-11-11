@@ -1,5 +1,5 @@
 import { signal } from '@preact/signals';
-import { canonicalRoute, parseRoute, rememberPhone } from './routes';
+import { canonicalRoute, parseRoute, rememberPhone, samePage } from './routes';
 
 // The app has always used `#!key=value&...` deep links (documented in the README, produced by
 // `BaseDeviceTracker.buildLink` historically). Keeping `location.hash` as the source of truth
@@ -118,6 +118,22 @@ function belowAfter(nav: Nav, hash: string): number {
 }
 
 export const route = signal<RouteParams>(hashParams());
+
+/**
+ * Runs `listener` each time another page is shown: the list, Notifications, or another view or
+ * phone. A change within the page (a Files folder, a corrected path, a filter, another player)
+ * does not count. Returns the function that stops it.
+ */
+export function onPageChange(listener: () => void): () => void {
+    let page = route.peek();
+    return route.subscribe((next) => {
+        const left = !samePage(next, page);
+        page = next;
+        if (left) {
+            listener();
+        }
+    });
+}
 
 /**
  * Something on the current page that must not be dropped without asking, such as uploads in
@@ -253,7 +269,17 @@ function commit(target: RouteTarget, mode: 'push' | 'replace', state: unknown): 
         write(next, mode, state);
         return;
     }
-    leaveOverlays(() => write(next, mode, state));
+    // A change within the page that is shown (a Files folder or a corrected path, a filter,
+    // another player) belongs to that page. If a step through history that was already under
+    // way has left the page by the time it can be written (the back control was pressed a moment
+    // before), it is dropped: written then, it would show the page again over the list.
+    const from = samePage(next, hashParams()) ? hashParams() : undefined;
+    leaveOverlays(() => {
+        if (from && !samePage(hashParams(), from)) {
+            return;
+        }
+        write(next, mode, state);
+    });
 }
 
 /** Opens a page as a new history entry, so the browser's Back returns to this one. */

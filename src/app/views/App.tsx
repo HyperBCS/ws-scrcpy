@@ -18,14 +18,15 @@ import './CoreDeviceStreamView';
 import { DevicePage } from './DevicePage';
 import { startNotificationSummary } from '../state/notifications';
 import { ErrorBoundary, ScreenFailed } from '../ui/ErrorBoundary';
-import { goToDeviceList } from '../state/router';
+import { goToDeviceList, onPageChange } from '../state/router';
 import { clientParams, parseRoute } from '../state/routes';
 import { closeAllSheets } from '../state/stream';
 
 // The sheets are signals, not history entries, and several are mounted here, above the pages.
-// They close with the page they were opened on, as the overlays the router knows about do.
-// Before this, a sheet opened from the list stayed open over the page Back led to.
-route.subscribe(() => closeAllSheets());
+// They close with the page they were opened on. Before this, a sheet opened from the list stayed
+// open over the page Back led to. A change that stays on the page (a Files folder, a corrected
+// path, a filter) leaves them open, as it did before.
+onPageChange(closeAllSheets);
 
 /**
  * The one place a tab title is set; see `state/pageTitle.ts`. Its own component, so a device
