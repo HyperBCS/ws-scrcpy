@@ -361,7 +361,7 @@ export class NotificationService implements Service {
     }
     /**
      * How long to wait before the next collector start. A collector that fails as soon as it
-     * starts (no D-Bus, BlueZ down) used to be started again every 3 s without end.
+     * starts (no D-Bus, BlueZ down) must not be started again every 3 s without end.
      */
     private restartDelay(expected: boolean, uptime: number): number {
         if (expected) return COLLECTOR_RESTART_MS;
