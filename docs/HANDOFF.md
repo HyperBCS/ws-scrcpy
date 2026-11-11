@@ -1836,9 +1836,9 @@ and the phone still attached, so a release during a read no longer recreates the
   server restart during Remount left all three Troubleshooting buttons disabled.
 - Run now also ends when a device update shows a run that finished after the click (`lastRun.at`
   differs and `running` is false). The reply is lost when the tracker reconnects mid-run.
-- Stream-socket requests (rotate, Send to phone, Restart picture) carry an id, have a time limit
-  and end when the stream socket drops. `restart` is now answered: done, or "restarted a moment
-  ago, try again in N s" when the 30 s limit refuses it.
+- Stream-socket requests (rotate, Send to phone, Restart video) carry an id, have a time limit
+  and end when the stream socket drops. `restart` is now answered: done, or "The video was
+  restarted a moment ago. Try again in N s." when the 30 s limit refuses it.
 - `streamConnected` means the socket is open, the session is `ready` and this browser has a
   decoder. It used to mean "socket open", so the header said Connected and the hardware buttons
   were live over a stopped session or a stream the browser could not decode. Failed, stopped and
@@ -1847,8 +1847,8 @@ and the phone still attached, so a release during a read no longer recreates the
   stays up between automatic retries and says "Trying again". The progress notice is only for a
   first start.
 - The iPhone settings panel opens from the stream controls and the Actions sheet as well as the
-  card, and from the card of a disconnected phone. The sheets are titled "iPhone settings" and
-  "Stream settings".
+  card, and from the card of a disconnected phone. The sheets are titled "Scheduled unlock" and
+  "Stream settings" (the integration kept the p2-sheets name; p2-ios-misc had "iPhone settings").
 
 ### Scheduled unlock and passcode handling after the 2026-11-10 review (fixture-tested only)
 
@@ -2001,3 +2001,20 @@ returned. The iPhone client releases its keyboard keys when a key event lands on
 video settings in localStorage: CSS always fits the picture, so none of it had an effect. Stale
 `MseDecoder:` and `WebCodecsPlayer:` keys are deleted on the first stream start. `BasePlayer`
 still has `setBounds()`, which only the iPhone client calls and nothing reads.
+
+### Phase 2 integration choices (2026-11-11)
+
+Where two packages changed the same thing, the merge kept one behaviour:
+
+- A device card shows the Notifications bell only for an iPhone that sends its notifications to
+  this server (p2-home). p2-notif-page's "Set up notifications" card button is not kept; setup is
+  reached from Notifications in the page header, and a link that names an unlinked iPhone still
+  opens the add section with that iPhone chosen.
+- The iPhone screen header uses p2-home's `NotificationsLink`, the same control as on Devices and
+  the tool pages. p2-notif-page's `StreamNotificationsLink` is removed.
+- The iPhone sheet is "Scheduled unlock"; the iPhone Actions rows are "Restart video" and
+  "Reconnect"; the card Settings button stays on a disconnected iPhone (p2-ios-misc).
+- `Toast` has one error tone (`tone="error"`, class `toast-error`), used by Files and the inbox.
+- A tool page whose lazy chunk fails to download (a tab left open across a deploy) offers Reload
+  instead of Reconnect.
+
