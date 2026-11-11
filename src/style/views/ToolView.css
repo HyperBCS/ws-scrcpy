@@ -85,7 +85,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--status-starting-color);
+    background: var(--status-starting-fill);
 }
 
 .tool-connection.connected {
@@ -93,7 +93,7 @@
 }
 
 .tool-connection.connected::before {
-    background: var(--status-ready-color);
+    background: var(--status-ready-fill);
 }
 
 .tool-workspace {

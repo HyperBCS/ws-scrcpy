@@ -79,12 +79,12 @@
     flex: 0 0 auto;
 }
 .device-list-summary-dot.available {
-    background: var(--status-ready-color);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-ready-color) 12%, transparent);
+    background: var(--status-ready-fill);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-ready-fill) 12%, transparent);
 }
 .device-list-summary-dot.attention {
-    background: var(--status-starting-color);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-starting-color) 12%, transparent);
+    background: var(--status-starting-fill);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-starting-fill) 12%, transparent);
 }
 .tracker-block {
     margin-bottom: 0.8rem;

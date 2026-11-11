@@ -1,5 +1,6 @@
 .stream-service-status {
     --service-state-color: var(--text-color-light);
+    --service-state-fill: var(--text-color-light);
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
@@ -16,7 +17,7 @@
     width: 0.5rem;
     height: 0.5rem;
     border-radius: 50%;
-    background: var(--service-state-color);
+    background: var(--service-state-fill);
 }
 
 .stream-service-status strong {
@@ -26,14 +27,17 @@
 
 .stream-service-status[data-stream-service='running'] {
     --service-state-color: var(--status-ready-color);
+    --service-state-fill: var(--status-ready-fill);
 }
 
 .stream-service-status[data-stream-service='starting'] {
     --service-state-color: var(--status-starting-color);
+    --service-state-fill: var(--status-starting-fill);
 }
 
 .stream-service-status[data-stream-service='unauthorized'] {
     --service-state-color: var(--status-unauthorized-color);
+    --service-state-fill: var(--status-unauthorized-fill);
 }
 
 .device > .stream-service-status {
