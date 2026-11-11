@@ -6,7 +6,7 @@
     place-items: center;
     background: var(--progress-background-color);
     color: var(--button-text-color);
-    border-radius: 0.75rem;
+    border-radius: 10.5px;
 }
 
 .device-icon svg {

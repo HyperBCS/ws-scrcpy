@@ -15,7 +15,7 @@
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    gap: 0.5rem 0.7rem;
+    gap: 7px 9.8px;
     margin-bottom: 20px;
 }
 .device-list-summary {
@@ -24,7 +24,7 @@
 .device-list-actions {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 5.6px;
 }
 /* On a phone the summary takes its own row; the actions stay beside the heading. */
 @media (max-width: 479px) {
@@ -55,17 +55,17 @@
 .device-list-header h1 {
     font-size: 22px;
     line-height: 1.2;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.44px;
     margin: 0;
     font-weight: 700;
 }
 .device-list-summary {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 5.6px;
     border: 1px solid var(--device-border-color);
     border-radius: 999px;
-    padding: 0.25rem 0.6rem;
+    padding: 3.5px 8.4px;
     color: var(--text-color-light);
     font-size: 12px;
     background: var(--device-list-default-color);
@@ -87,13 +87,13 @@
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-starting-fill) 12%, transparent);
 }
 .tracker-block {
-    margin-bottom: 0.8rem;
+    margin-bottom: 11.2px;
 }
 #devices .tracker-name {
     display: flex;
     justify-content: space-between;
-    gap: 0.7rem;
-    padding: 0.1rem 0.15rem 0.35rem;
+    gap: 9.8px;
+    padding: 1.4px 2.1px 4.9px;
     font-size: 12px;
     color: var(--text-color-light);
 }
@@ -123,14 +123,14 @@
 #devices .device-header {
     display: flex;
     align-items: center;
-    gap: 0.55rem;
+    gap: 7.7px;
 }
 .device-heading {
     min-width: 0;
     flex: 1;
 }
 #devices .device-name {
-    font-size: 1rem;
+    font-size: 14px;
     font-weight: 700;
     line-height: 1.25;
     overflow-wrap: anywhere;
@@ -139,7 +139,7 @@
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 0 0.5rem;
+    gap: 0 7px;
     color: var(--text-color-light);
     font-size: 12px;
     line-height: 1.4;
@@ -158,13 +158,13 @@
 #devices .device-unlock-schedule.problem::before {
     content: '!';
     display: inline-block;
-    width: 1.15em;
-    height: 1.15em;
-    margin-right: 0.35em;
+    width: 11.73px;
+    height: 11.73px;
+    margin-right: 3.57px;
     border: 1.5px solid currentColor;
     border-radius: 50%;
     box-sizing: border-box;
-    font-size: 0.85em;
+    font-size: 10.2px;
     line-height: 1;
     text-align: center;
 }
@@ -178,9 +178,9 @@
     align-self: flex-start;
     display: inline-flex;
     align-items: center;
-    gap: 0.25rem;
+    gap: 3.5px;
     border-radius: 999px;
-    padding: 0.2rem 0.5rem;
+    padding: 2.8px 7px;
     /* The status colour tints the badge. The text is that colour pulled towards the text colour,
        which keeps every state at 4.5:1 or better on the tint in both themes. */
     background: color-mix(in srgb, var(--status-color) 12%, transparent);
@@ -206,13 +206,13 @@
     min-height: 51px;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 7px;
     border-radius: var(--radius-control);
     background: color-mix(in srgb, var(--status-asleep-color) 10%, transparent);
     color: color-mix(in srgb, var(--status-asleep-color) 65%, var(--text-color));
     font-size: 12px;
     line-height: 1.35;
-    padding: 0.25rem 0.5rem;
+    padding: 3.5px 7px;
     margin: 0;
 }
 #devices .device-asleep-banner.attention {
@@ -225,14 +225,14 @@
     min-height: 51px;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 7px;
     border-radius: var(--radius-control);
     background: color-mix(in srgb, var(--status-unauthorized-color) 10%, transparent);
     color: var(--problem-text-color);
     font-size: 12px;
     font-weight: 600;
     line-height: 1.35;
-    padding: 0.25rem 0.5rem;
+    padding: 3.5px 7px;
 }
 #devices .device-problem > span {
     min-width: 0;
@@ -242,7 +242,7 @@
     flex: 0 0 auto;
     margin-left: auto;
     min-height: 44px;
-    padding: 0 0.6rem;
+    padding: 0 8.4px;
     background: transparent;
     color: inherit;
     border: 1px solid currentColor;
@@ -257,7 +257,7 @@
     margin-left: auto;
     min-height: 44px;
     min-width: 56px;
-    padding: 0 0.6rem;
+    padding: 0 8.4px;
     background: transparent;
     color: inherit;
     border: 1px solid currentColor;
@@ -270,7 +270,7 @@
 #devices .services {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.4rem;
+    gap: 5.6px;
 }
 #devices .desc-block,
 #devices .action-button {
@@ -279,7 +279,7 @@
     justify-content: center;
     box-sizing: border-box;
     min-height: 44px;
-    padding: 0.3rem 0.7rem;
+    padding: 4.2px 9.8px;
     border: 1px solid var(--device-border-color);
     border-radius: var(--radius-control);
     background: var(--main-bg-color);
@@ -328,7 +328,7 @@
     background: var(--accent-solid, #2868e8);
     border-color: var(--accent-solid, #2868e8);
     color: #fff;
-    font-size: 0.87rem;
+    font-size: 12.18px;
     font-weight: 650;
 }
 #devices .device-details {
@@ -338,7 +338,7 @@
     min-height: 44px;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 7px;
     color: var(--text-color-light);
     font-size: 12px;
     list-style: none;
@@ -350,18 +350,18 @@
 #devices .device-details summary::after {
     content: '+';
     margin-left: auto;
-    font-size: 1.1rem;
+    font-size: 15.4px;
 }
 #devices .device-details[open] summary::after {
     content: '−';
 }
 #devices .device-details-content {
-    padding-bottom: 0.15rem;
+    padding-bottom: 2.1px;
 }
 #devices .device-interface {
     display: grid;
-    gap: 0.25rem;
-    margin-bottom: 0.45rem;
+    gap: 3.5px;
+    margin-bottom: 6.3px;
     font-size: 12px;
     color: var(--text-color-light);
 }
@@ -374,8 +374,8 @@
     color: var(--text-color);
     background: var(--main-bg-color);
     border: 1px solid var(--device-border-color);
-    border-radius: 0.6rem;
-    padding: 0.5rem;
+    border-radius: 8.4px;
+    padding: 7px;
 }
 #devices .device-secondary-actions > * {
     flex: 1 1 130px;
@@ -396,7 +396,7 @@
     border: 1px solid var(--device-border-color);
     border-radius: var(--radius-panel);
     padding: 48px 20px;
-    margin: 0.5rem 0;
+    margin: 7px 0;
     text-align: center;
 }
 .device-empty-icon {
@@ -404,33 +404,33 @@
     --device-icon-height: 48px;
     --device-icon-glyph-width: 26px;
     --device-icon-glyph-height: 30px;
-    border-radius: 0.8rem;
-    margin-bottom: 0.6rem;
+    border-radius: 11.2px;
+    margin-bottom: 8.4px;
 }
 .device-list-empty h2 {
-    font-size: 1.05rem;
-    letter-spacing: -0.02em;
-    margin: 0 0 0.35rem;
+    font-size: 14.7px;
+    letter-spacing: -0.294px;
+    margin: 0 0 4.9px;
 }
 .device-list-empty p {
     max-width: 420px;
     font-size: 12px;
     line-height: 1.45;
-    margin: 0 0 0.5rem;
+    margin: 0 0 7px;
     color: var(--text-color-light);
 }
 .device-list-empty ol {
     max-width: 400px;
     text-align: left;
     margin: 0;
-    padding-left: 1.2rem;
+    padding-left: 16.8px;
     color: var(--text-color-light);
     font-size: 12px;
     line-height: 1.45;
 }
 .device-list-empty li {
-    padding-left: 0.2rem;
-    margin-bottom: 0.3rem;
+    padding-left: 2.8px;
+    margin-bottom: 4.2px;
 }
 .device-empty-error {
     overflow-wrap: anywhere;
@@ -454,7 +454,7 @@
 }
 @media (max-width: 360px) {
     #devices {
-        padding-inline: 0.5rem;
+        padding-inline: 7px;
     }
     .device-avatar {
         display: none;
@@ -501,7 +501,7 @@
     align-items: center;
     box-sizing: border-box;
     min-height: 44px;
-    padding: 0.5rem;
+    padding: 7px;
     border: 1px solid var(--device-border-color);
     border-radius: var(--radius-control);
     background: var(--main-bg-color);

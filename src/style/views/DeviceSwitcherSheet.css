@@ -8,25 +8,25 @@
 .device-switcher-hint,
 .device-switcher-empty {
     flex: 0 0 auto;
-    margin: 0 0 1rem;
+    margin: 0 0 14px;
     color: var(--text-color-light);
     line-height: 1.5;
-    font-size: 0.9rem;
+    font-size: 12.6px;
 }
 .device-switcher-search {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 7px;
     width: 100%;
     max-width: none;
     height: 48px;
     box-sizing: border-box;
-    margin-bottom: 1rem;
-    padding: 0 0.85rem;
+    margin-bottom: 14px;
+    padding: 0 11.9px;
     background: var(--device-list-default-color);
     border: 1px solid var(--device-border-color);
-    border-radius: 0.8rem;
+    border-radius: 11.2px;
 }
 .device-switcher-search svg {
     flex: 0 0 auto;
@@ -65,7 +65,7 @@
     grid-template-columns: minmax(0, 1fr);
     grid-auto-rows: max-content;
     align-content: start;
-    gap: 0.65rem;
+    gap: 9.1px;
     padding: 2px;
     overflow-x: hidden;
     overflow-y: auto;
@@ -77,14 +77,14 @@
 .device-switcher-item.bottom-sheet-list-item {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 10.5px;
     min-height: 76px;
     min-width: 0;
     max-width: 100%;
     touch-action: pan-y;
-    padding: 0.8rem;
+    padding: 11.2px;
     border: 1px solid var(--device-border-color);
-    border-radius: 0.8rem;
+    border-radius: 11.2px;
     text-align: left;
 }
 .device-switcher-item.bottom-sheet-list-item.current {
@@ -99,21 +99,21 @@
 .device-switcher-copy {
     min-width: 0;
     display: grid;
-    gap: 0.35rem;
+    gap: 4.9px;
     flex: 1;
 }
 .device-switcher-copy strong {
-    font-size: 0.9rem;
+    font-size: 12.6px;
     font-weight: 600;
     overflow-wrap: anywhere;
 }
 .device-switcher-copy small {
-    font-size: 0.7rem;
+    font-size: 9.8px;
     color: var(--text-color-light);
     overflow-wrap: anywhere;
 }
 .device-switcher-status {
     flex-shrink: 0;
-    font-size: 0.75rem;
+    font-size: 10.5px;
     color: var(--button-text-color);
 }

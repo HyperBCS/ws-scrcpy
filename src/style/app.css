@@ -3,7 +3,8 @@ html {
     overflow: hidden;
     overscroll-behavior: none;
     touch-action: pan-y;
-    font-size: var(--font-size);
+    /* The root is 16px and no rule sizes anything from it: every length is px. */
+    font-size: 16px;
     font-family: var(--font-stack);
     /* Stops iOS Safari inflating text in landscape, which broke the measured touch targets. */
     -webkit-text-size-adjust: 100%;
@@ -69,6 +70,8 @@ a:visited {
 
 body {
     font-family: inherit;
+    /* Text that sets no size of its own stays at 14px until its screen moves to the type scale. */
+    font-size: var(--font-size);
     color: var(--text-color);
     background-color: var(--main-bg-color);
     margin: 0;
@@ -178,15 +181,15 @@ body.sheet-open #devices {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.45rem;
+    gap: 6.3px;
     box-sizing: border-box;
     min-height: 44px;
-    padding: 0.5rem 0.85rem;
+    padding: 7px 11.9px;
     border: 1px solid var(--device-border-color);
     border-radius: var(--radius-control);
     background: var(--control-buttons-bg-color);
     color: var(--text-color);
-    font: 550 0.9rem/1.25 var(--font-stack);
+    font: 550 12.6px/1.25 var(--font-stack);
     text-decoration: none;
     text-align: center;
     cursor: pointer;

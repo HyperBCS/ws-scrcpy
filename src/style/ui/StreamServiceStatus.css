@@ -3,19 +3,19 @@
     --service-state-fill: var(--text-color-light);
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 5.6px;
     min-width: 0;
     max-width: 100%;
     color: var(--text-color-light);
-    font-size: 0.75rem;
+    font-size: 10.5px;
     line-height: 1.5;
     overflow-wrap: anywhere;
 }
 
 .stream-service-status-dot {
-    flex: 0 0 0.5rem;
-    width: 0.5rem;
-    height: 0.5rem;
+    flex: 0 0 7px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     background: var(--service-state-fill);
 }

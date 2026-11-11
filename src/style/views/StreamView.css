@@ -241,14 +241,14 @@
     height: 100vh;
     background-color: var(--control-buttons-bg-color);
     flex-shrink: 0;
-    width: 3.715rem;
+    width: 52.01px;
 }
 
 .control-button {
-    margin: 0.357rem 0.786rem;
+    margin: 4.998px 11.004px;
     padding: 0;
-    width: 2.143rem;
-    height: 2.143rem;
+    width: 30.002px;
+    height: 30.002px;
     border: none;
     opacity: 0.75;
     background-color: var(--control-buttons-bg-color);
@@ -296,7 +296,7 @@
    (wide-and-short vs. tall-and-thin) rather than duplicating this breakpoint in JS. Landscape
    keeps the side rail: a phone rotated sideways has the width to spare, and a bottom bar would
    eat into the vertical space video needs most. */
-@media screen and (max-width: 37.5rem) and (orientation: portrait) {
+@media screen and (max-width: 600px) and (orientation: portrait) {
     .device-view {
         flex-direction: column;
     }
@@ -312,13 +312,12 @@
         padding-bottom: env(safe-area-inset-bottom, 0px);
     }
 
-    /* Fixed px, not rem: `--font-size` (the rem base) is 14px, so 2.143rem would be a ~30px
-       target -- under the 44px minimum touch target size on the surface people will actually
-       use this on. */
+    /* The 30px button of the side rail is under the 44px minimum touch target on the surface
+       people will actually use this on. */
     .control-button {
         width: 44px;
         height: 44px;
-        margin: 0.25rem 0.4rem;
+        margin: 3.5px 5.6px;
     }
 }
 
