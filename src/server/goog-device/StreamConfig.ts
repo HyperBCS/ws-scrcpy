@@ -80,8 +80,7 @@ export function validateStreamConfigPatch(value: unknown): Partial<StreamConfigD
 
 /**
  * Per-device video-settings overrides, layered on top of DEFAULT_SCRCPY_SERVER_CONFIG. Stock
- * scrcpy has no live "change settings" control message (see the commented-out
- * sendNewVideoSetting() call sites in StreamClientScrcpy), so "apply" means persisting the new
+ * scrcpy has no live "change settings" control message, so "apply" means persisting the new
  * config here and relaunching the server with a freshly-built argument string - see
  * Device.updateStreamConfig().
  *

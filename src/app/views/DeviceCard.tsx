@@ -154,7 +154,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const streamEntry = (player: typeof primaryPlayer, title: string): ToolEntry => ({
         title,
         action: ACTION.STREAM_SCRCPY,
-        params: { udid: descriptor.udid, player: player.playerCodeName, ws: socketUrl, fitToScreen: 'true' },
+        params: { udid: descriptor.udid, player: player.playerCodeName, ws: socketUrl },
     });
     const confirm = useArmedAction<'stop'>();
     const onAction = () => {

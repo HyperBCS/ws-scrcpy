@@ -73,7 +73,6 @@ export function DeviceSwitcherSheet({ currentDeviceKey, onSelectDevice }: Device
                 udid: entry.descriptor.udid,
                 player: player.playerCodeName,
                 ws: streamSocketUrl(entry.descriptor.udid, entry.params),
-                fitToScreen: 'true',
             },
             entry.params,
         );

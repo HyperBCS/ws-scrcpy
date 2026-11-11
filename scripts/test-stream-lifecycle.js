@@ -110,6 +110,40 @@ test('stopping during reconnect backoff cancels the replacement connection', (t)
     assert.equal(sockets.length, 1);
 });
 
+test('reconnect delays grow while the stream fails to start and reset only once it has started', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { sockets } = receiverWithSocket(t);
+    // The delay before the next connection, measured to the millisecond.
+    const delayUntilReconnect = () => {
+        const before = sockets.length;
+        let waited = 0;
+        while (sockets.length === before && waited < 60_000) {
+            t.mock.timers.tick(1);
+            waited++;
+        }
+        return waited;
+    };
+
+    // The socket opens every time, but the scrcpy server never gets as far as scrcpy_initial:
+    // a restart in progress, or a device that keeps failing. An open socket must not reset it.
+    const delays = [];
+    for (let i = 0; i < 8; i++) {
+        sockets.at(-1).open();
+        sockets.at(-1).close();
+        delays.push(delayUntilReconnect());
+    }
+    assert.deepEqual(delays, [1000, 1500, 2250, 3375, 5063, 7594, 8000, 8000], 'one and a half times longer, up to 8 s');
+
+    // A stream that came up starts the count again.
+    sockets.at(-1).open();
+    sockets.at(-1).initial();
+    sockets.at(-1).close();
+    assert.equal(delayUntilReconnect(), 1000);
+    sockets.at(-1).open();
+    sockets.at(-1).close();
+    assert.equal(delayUntilReconnect(), 1500);
+});
+
 test('single-use control batches never queue before handshake or replay after reconnect', (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const { receiver, socket, sockets } = receiverWithSocket(t);

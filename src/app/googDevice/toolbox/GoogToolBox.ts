@@ -10,6 +10,7 @@ import { closeAllSheets, openSheet } from '../../state/stream';
 import { openSettingsSheet } from '../../state/settingsSheet';
 import { AudioSession } from '../../state/audio';
 import { createSoundButton } from '../../toolbox/soundButton';
+import { HeldButtons } from '../../toolbox/heldButtons';
 
 const BUTTONS = [
     // Keep each group together in the mobile panel's three-column grid.
@@ -62,8 +63,14 @@ export class GoogToolBox extends ToolBox {
     protected constructor(
         list: ToolBoxElement<any>[],
         private readonly cleanup: (() => void)[] = [],
+        private readonly held?: HeldButtons,
     ) {
         super(list);
+    }
+
+    /** The stream disconnected: nothing more can be sent for a button that is still held. */
+    public forgetHeldButtons(): void {
+        this.held?.forgetAll();
     }
 
     public static createToolBox(
@@ -74,6 +81,8 @@ export class GoogToolBox extends ToolBox {
     ): GoogToolBox {
         const list = BUTTONS.slice();
         const cleanup: (() => void)[] = [];
+        const held = new HeldButtons();
+        cleanup.push(() => held.destroy());
         const elements: ToolBoxElement<any>[] = list.map((item) => {
             const button = new ToolBoxButton(item.title, item.icon, { code: item.code });
             const target = button.getElement();
@@ -82,13 +91,18 @@ export class GoogToolBox extends ToolBox {
             }
             let activePointer: number | undefined;
             const send = (action: number) => client.sendMessage(new KeyCodeControlMessage(action, item.code, 0, 0));
-            const release = () => {
+            const end = (notify: boolean) => {
                 if (activePointer === undefined) {
                     return;
                 }
                 activePointer = undefined;
-                send(KeyEvent.ACTION_UP);
+                if (notify) {
+                    send(KeyEvent.ACTION_UP);
+                }
             };
+            const release = () => end(true);
+            // Also released when the window loses focus or the page is hidden mid-press.
+            held.add(end);
             target.addEventListener('pointerdown', (event) => {
                 if (event.button !== 0 || activePointer !== undefined) {
                     return;
@@ -164,7 +178,7 @@ export class GoogToolBox extends ToolBox {
         });
         elements.push(liveText);
 
-        return new GoogToolBox(elements, cleanup);
+        return new GoogToolBox(elements, cleanup, held);
     }
 
     public release(): void {

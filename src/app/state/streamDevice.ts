@@ -23,3 +23,28 @@ export function findDeviceForStream(params: ParamsStreamScrcpy): DeviceEntry | u
         return undefined;
     }
 }
+
+/**
+ * The device a stream settings request is for. `deviceKey` names it outright (a device card).
+ * A request from the running stream carries only the serial, so it is resolved through the
+ * stream's socket. With neither, a serial is accepted only when one device has it: picking the
+ * first match would load another host's settings and restart that host's stream.
+ */
+export function findDeviceForSettings(
+    target: { udid: string; deviceKey?: string },
+    stream?: ParamsStreamScrcpy,
+): DeviceEntry | undefined {
+    if (target.deviceKey) {
+        return devices.value.get(target.deviceKey);
+    }
+    if (stream?.udid === target.udid) {
+        const bound = findDeviceForStream(stream);
+        if (bound) {
+            return bound;
+        }
+    }
+    const matches = Array.from(devices.value.values()).filter(
+        (entry) => entry.params.type === 'android' && entry.descriptor.udid === target.udid,
+    );
+    return matches.length === 1 ? matches[0] : undefined;
+}

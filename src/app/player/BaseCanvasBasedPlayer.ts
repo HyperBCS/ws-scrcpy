@@ -28,10 +28,9 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         udid: string,
         displayInfo?: DisplayInfo,
         name = 'Canvas',
-        storageKeyPrefix = 'DummyCanvas',
         protected tag: HTMLCanvasElement = BaseCanvasBasedPlayer.createElement(),
     ) {
-        super(udid, displayInfo, name, storageKeyPrefix, tag);
+        super(udid, displayInfo, name, tag);
     }
 
     protected abstract decode(data: Uint8Array): void;
@@ -55,12 +54,15 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
             }
         }
         this.decodedFrames.push({ width, height, frame });
+        const now = Date.now();
+        // Bounded here for the same reason as `inputBytes` in BasePlayer.pushFrame.
+        BasePlayer.dropOlderThan(this.videoStats, now - BasePlayer.STATS_WINDOW_MS);
         this.videoStats.push({
             decodedFrames: 1,
             droppedFrames: dropped,
             inputBytes: 0,
             inputFrames: 0,
-            timestamp: Date.now(),
+            timestamp: now,
         });
         if (!this.animationFrameId) {
             this.animationFrameId = requestAnimationFrame(this.drawDecoded);
@@ -83,14 +85,10 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
 
     protected calculateMomentumStats(): void {
         const timestamp = Date.now();
-        const oneSecondBefore = timestamp - 1000;
+        const oneSecondBefore = timestamp - BasePlayer.STATS_WINDOW_MS;
 
-        while (this.videoStats.length && this.videoStats[0].timestamp < oneSecondBefore) {
-            this.videoStats.shift();
-        }
-        while (this.inputBytes.length && this.inputBytes[0].timestamp < oneSecondBefore) {
-            this.inputBytes.shift();
-        }
+        BasePlayer.dropOlderThan(this.videoStats, oneSecondBefore);
+        BasePlayer.dropOlderThan(this.inputBytes, oneSecondBefore);
         let decodedFrames = 0;
         let droppedFrames = 0;
         let inputBytes = 0;

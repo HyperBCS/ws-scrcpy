@@ -1,15 +1,14 @@
-import { observeViewport } from '../../client/observeViewport';
 import { BaseClient } from '../../client/BaseClient';
 import { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
 import { GoogToolBox } from '../toolbox/GoogToolBox';
 import VideoSettings from '../../VideoSettings';
-import Size from '../../Size';
 import { ControlMessage } from '../../controlMessage/ControlMessage';
+import { CommandControlMessage } from '../../controlMessage/CommandControlMessage';
 import { ClientsStats, DisplayCombinedInfo } from '../../client/StreamReceiver';
 import Util from '../../Util';
 import { KeyEventListener, KeyInputHandler } from '../KeyInputHandler';
 import { KeyCodeControlMessage } from '../../controlMessage/KeyCodeControlMessage';
-import { BasePlayer, PlayerClass } from '../../player/BasePlayer';
+import { BasePlayer, DecoderErrorEvent, PlayerClass } from '../../player/BasePlayer';
 import {
     FeaturedInteractionHandler,
     InteractionHandlerListener,
@@ -18,7 +17,6 @@ import DeviceMessage from '../DeviceMessage';
 import { DisplayInfo } from '../../DisplayInfo';
 import { ACTION } from '../../../common/Action';
 import { StreamReceiverScrcpy } from './StreamReceiverScrcpy';
-import { getVideoBounds } from '../../ControlBarLayout';
 import { UhidKeyboard } from '../UhidKeyboard';
 import { deviceClipboard, lastFrameAt, streamConnected, streamNotice, streamServiceStopped } from '../../state/stream';
 import { STREAM_SERVICE_STOPPED } from '../../../common/StreamCloseCode';
@@ -29,7 +27,6 @@ type StartParams = {
     udid: string;
     playerName?: string;
     player?: BasePlayer;
-    fitToScreen?: boolean;
     videoSettings?: VideoSettings;
 };
 
@@ -41,6 +38,10 @@ export class StreamClientScrcpy
 {
     public static ACTION = 'stream';
     private static players: Map<string, PlayerClass> = new Map<string, PlayerClass>();
+    /** At most this many encoder restarts are requested for decoder recovery per window. */
+    private static readonly MAX_VIDEO_RESETS = 3;
+    private static readonly VIDEO_RESET_WINDOW_MS = 5 * 60 * 1000;
+    private videoResets: number[] = [];
 
     private controlButtons?: HTMLElement;
     private toolBox?: GoogToolBox;
@@ -49,17 +50,12 @@ export class StreamClientScrcpy
     private deviceName = '';
     private clientId = -1;
     private clientsCount = -1;
-    private joinedStream = false;
-    private requestedVideoSettings?: VideoSettings;
     private touchHandler?: FeaturedInteractionHandler;
     private player?: BasePlayer;
-    private fitToScreen?: boolean;
     private audioSession?: AudioSession;
     private readonly streamReceiver: StreamReceiverScrcpy;
     private readonly container: HTMLElement;
     private deviceView?: HTMLElement;
-    private videoWrapper?: HTMLElement;
-    private stopObservingViewport?: () => void;
 
     public static registerPlayer(playerClass: PlayerClass): void {
         if (playerClass.isSupported()) {
@@ -89,50 +85,25 @@ export class StreamClientScrcpy
         return new playerClass(udid, displayInfo);
     }
 
-    public static getFitToScreen(playerName: string, udid: string, displayInfo?: DisplayInfo): boolean {
-        const playerClass = this.getPlayerClass(playerName);
-        if (!playerClass) {
-            return false;
-        }
-        return playerClass.getFitToScreenStatus(udid, displayInfo);
-    }
-
     public static start(
         query: URLSearchParams | ParamsStreamScrcpy,
         streamReceiver?: StreamReceiverScrcpy,
         player?: BasePlayer,
-        fitToScreen?: boolean,
         videoSettings?: VideoSettings,
         container?: HTMLElement,
     ): StreamClientScrcpy {
         if (query instanceof URLSearchParams) {
             const params = StreamClientScrcpy.parseParameters(query);
-            return new StreamClientScrcpy(params, streamReceiver, player, fitToScreen, videoSettings, container);
+            return new StreamClientScrcpy(params, streamReceiver, player, videoSettings, container);
         } else {
-            return new StreamClientScrcpy(query, streamReceiver, player, fitToScreen, videoSettings, container);
+            return new StreamClientScrcpy(query, streamReceiver, player, videoSettings, container);
         }
-    }
-
-    private static createVideoSettingsWithBounds(old: VideoSettings, newBounds: Size): VideoSettings {
-        return new VideoSettings({
-            crop: old.crop,
-            bitrate: old.bitrate,
-            bounds: newBounds,
-            maxFps: old.maxFps,
-            iFrameInterval: old.iFrameInterval,
-            sendFrameMeta: old.sendFrameMeta,
-            lockedVideoOrientation: old.lockedVideoOrientation,
-            displayId: old.displayId,
-            codecOptions: old.codecOptions,
-            encoderName: old.encoderName,
-        });
     }
 
     protected constructor(
         params: ParamsStreamScrcpy,
         streamReceiver?: StreamReceiverScrcpy,
         player?: BasePlayer,
-        fitToScreen?: boolean,
         videoSettings?: VideoSettings,
         // A view hosting this client can pass its own container to mount into (see
         // `views/StreamView.tsx`); direct/legacy callers keep working against `document.body`.
@@ -151,14 +122,9 @@ export class StreamClientScrcpy
             this.streamReceiver = new StreamReceiverScrcpy(this.params);
         }
 
+        BasePlayer.removeStoredVideoSettings();
         const { udid, player: playerName } = this.params;
-        // Allow the stream deep link to start already fit to screen
-        // (?fitToScreen=1), so an embedded/auto-started stream can request it
-        // without going through the Configure screen.
-        if (typeof fitToScreen !== 'boolean') {
-            fitToScreen = this.params.fitToScreen;
-        }
-        this.startStream({ udid, player, playerName, fitToScreen, videoSettings });
+        this.startStream({ udid, player, playerName, videoSettings });
         this.setBodyClass('stream');
     }
 
@@ -181,7 +147,6 @@ export class StreamClientScrcpy
             // NB `Util.parseBoolean`'s third argument is `required`, NOT a default -- passing
             // `true` there makes every stream deep link throw "Missing required parameter".
             captureKeyboard: params.has('captureKeyboard') ? Util.parseBoolean(params, 'captureKeyboard') : true,
-            fitToScreen: params.has('fitToScreen') ? Util.parseBoolean(params, 'fitToScreen') : undefined,
         };
     }
 
@@ -220,8 +185,7 @@ export class StreamClientScrcpy
         if (!this.player) {
             return;
         }
-        let currentSettings = this.player.getVideoSettings();
-        const displayId = currentSettings.displayId;
+        const displayId = this.player.getVideoSettings().displayId;
         const info = infoArray.find((value) => {
             return value.displayInfo.displayId === displayId;
         });
@@ -233,52 +197,17 @@ export class StreamClientScrcpy
         }
         const { videoSettings, screenInfo } = info;
         this.player.setDisplayInfo(info.displayInfo);
-        if (typeof this.fitToScreen !== 'boolean') {
-            this.fitToScreen = this.player.getFitToScreenStatus();
-        }
-        if (this.fitToScreen) {
-            const newBounds = this.getMaxSize();
-            if (newBounds) {
-                currentSettings = StreamClientScrcpy.createVideoSettingsWithBounds(currentSettings, newBounds);
-                this.player.setVideoSettings(currentSettings, this.fitToScreen, false);
-            }
-        }
         if (!videoSettings || !screenInfo) {
-            this.joinedStream = true;
-            // this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(currentSettings));
             return;
         }
 
         this.clientsCount = info.connectionCount;
-        let min = VideoSettings.copy(videoSettings);
-        const oldInfo = this.player.getScreenInfo();
-        if (!screenInfo.equals(oldInfo)) {
+        // Sent again when the device rotates: the picture size changes mid-stream.
+        if (!screenInfo.equals(this.player.getScreenInfo())) {
             this.player.setScreenInfo(screenInfo);
         }
-
-        if (!videoSettings.equals(currentSettings)) {
-            const bounds = this.fitToScreen ? this.getMaxSize() : undefined;
-            const localSettings = bounds
-                ? StreamClientScrcpy.createVideoSettingsWithBounds(videoSettings, bounds)
-                : videoSettings;
-            this.applyNewVideoSettings(localSettings, videoSettings.equals(this.requestedVideoSettings));
-        }
-        if (!oldInfo) {
-            const bounds = currentSettings.bounds;
-            const videoSize: Size = screenInfo.videoSize;
-            const onlyOneClient = this.clientsCount === 0;
-            const smallerThenCurrent = bounds && (bounds.width < videoSize.width || bounds.height < videoSize.height);
-            if (onlyOneClient || smallerThenCurrent) {
-                min = currentSettings;
-            }
-            const minBounds = currentSettings.bounds?.intersect(min.bounds);
-            if (minBounds && !minBounds.equals(min.bounds)) {
-                min = StreamClientScrcpy.createVideoSettingsWithBounds(min, minBounds);
-            }
-        }
-        if (!min.equals(videoSettings) || !this.joinedStream) {
-            this.joinedStream = true;
-            // this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(min));
+        if (!videoSettings.equals(this.player.getVideoSettings())) {
+            this.player.setVideoSettings(videoSettings);
         }
     };
 
@@ -297,12 +226,39 @@ export class StreamClientScrcpy
         this.clientId = -1;
         // A replacement scrcpy process has no virtual keyboard, even if capture remains on.
         this.uhidKeyboard?.reset();
+        // Nor can a held toolbar button be released any more: the server lifts it on the device.
+        this.toolBox?.forgetHeldButtons();
         this.player?.pause();
     };
 
     public onConnected = (): void => {
         streamConnected.value = true;
         streamServiceStopped.value = false;
+    };
+
+    // The socket stays up through a decoder failure, so nothing else on screen says that the
+    // picture stopped. Brief failures the player recovers from are not announced.
+    private onDecoderError = ({ recovering }: DecoderErrorEvent): void => {
+        if (!recovering) {
+            streamNotice.value =
+                'The video decoder in this browser stopped. If the picture does not come back, reopen the stream or choose another video player in Settings.';
+        }
+    };
+
+    /**
+     * A rebuilt decoder needs a keyframe, and on a still screen the device may not send one for
+     * a long time. RESET_VIDEO restarts the device's encoder, which then sends its parameter sets
+     * and a keyframe to every viewer. It is rationed because it interrupts the other viewers too.
+     */
+    private onKeyframeRequest = (): void => {
+        const now = Date.now();
+        const { VIDEO_RESET_WINDOW_MS, MAX_VIDEO_RESETS } = StreamClientScrcpy;
+        this.videoResets = this.videoResets.filter((time) => now - time < VIDEO_RESET_WINDOW_MS);
+        if (this.videoResets.length >= MAX_VIDEO_RESETS) {
+            return;
+        }
+        this.videoResets.push(now);
+        this.sendMessage(new CommandControlMessage(ControlMessage.TYPE_RESET_VIDEO));
     };
 
     // Tears down the DOM this client owns and stops the underlying receiver/player. Wired up as
@@ -318,17 +274,13 @@ export class StreamClientScrcpy
         this.streamReceiver.off('displayInfo', this.onDisplayInfo);
         this.streamReceiver.off('disconnected', this.onDisconnected);
         this.streamReceiver.off('connected', this.onConnected);
+        this.player?.off('decoder-error', this.onDecoderError);
+        this.player?.off('keyframe-request', this.onKeyframeRequest);
 
         this.container.removeEventListener('dragover', this.onFileDragOver);
         this.container.removeEventListener('drop', this.onFileDrop);
         this.touchHandler?.release();
         this.touchHandler = undefined;
-        this.stopObservingViewport?.();
-        this.stopObservingViewport = undefined;
-        if (this.resizeTimeoutId !== undefined) {
-            clearTimeout(this.resizeTimeoutId);
-            this.resizeTimeoutId = undefined;
-        }
         this.detachKeyboard();
         this.toolBox?.release();
         this.toolBox = undefined;
@@ -340,14 +292,13 @@ export class StreamClientScrcpy
             }
             this.deviceView = undefined;
         }
-        this.videoWrapper = undefined;
         this.streamReceiver.stop();
         if (this.player) {
             this.player.stop();
         }
     };
 
-    public startStream({ udid, player, playerName, videoSettings, fitToScreen }: StartParams): void {
+    public startStream({ udid, player, playerName, videoSettings }: StartParams): void {
         if (!udid) {
             throw Error(`Invalid udid value: "${udid}"`);
         }
@@ -356,7 +307,6 @@ export class StreamClientScrcpy
         lastFrameAt.value = undefined;
         streamConnected.value = this.streamReceiver.isReady();
         deviceClipboard.value = undefined;
-        this.fitToScreen = fitToScreen;
         if (!player) {
             if (typeof playerName !== 'string') {
                 throw Error('Must provide BasePlayer instance or playerName');
@@ -369,13 +319,9 @@ export class StreamClientScrcpy
             if (!p) {
                 throw Error(`Unsupported player: "${playerName}"`);
             }
-            if (typeof fitToScreen !== 'boolean') {
-                fitToScreen = StreamClientScrcpy.getFitToScreen(playerName, udid, displayInfo);
-            }
             player = p;
         }
         this.player = player;
-        this.fitToScreen = fitToScreen;
         this.setTouchListeners(player);
 
         if (!videoSettings) {
@@ -401,20 +347,14 @@ export class StreamClientScrcpy
         this.toolBox = googToolBox;
         this.controlButtons = googToolBox.getHolderElement();
 
-        const video = (this.videoWrapper = document.createElement('div'));
+        const video = document.createElement('div');
         video.className = 'video';
         deviceView.appendChild(video);
         player.setParent(video);
         player.pause();
 
         this.container.appendChild(deviceView);
-        if (fitToScreen) {
-            const newBounds = this.getMaxSize();
-            if (newBounds) {
-                videoSettings = StreamClientScrcpy.createVideoSettingsWithBounds(videoSettings, newBounds);
-            }
-        }
-        this.applyNewVideoSettings(videoSettings, false);
+        player.setVideoSettings(videoSettings);
         const element = player.getTouchableElement();
         element.tabIndex = 0;
         element.setAttribute('aria-label', 'Remote device screen');
@@ -439,11 +379,9 @@ export class StreamClientScrcpy
         streamReceiver.on('displayInfo', this.onDisplayInfo);
         streamReceiver.on('disconnected', this.onDisconnected);
         streamReceiver.on('connected', this.onConnected);
+        player.on('decoder-error', this.onDecoderError);
+        player.on('keyframe-request', this.onKeyframeRequest);
         console.log(TAG, player.getName(), udid);
-
-        // Fit changes browser playback bounds; encoder changes require a server restart.
-        this.stopObservingViewport?.();
-        this.stopObservingViewport = observeViewport(video, this.onWindowResize);
     }
 
     private onFileDragOver = (event: DragEvent): void => {
@@ -457,36 +395,6 @@ export class StreamClientScrcpy
             event.preventDefault();
             streamNotice.value = 'To upload files, open Files from the device list.';
         }
-    };
-
-    private resizeTimeoutId?: ReturnType<typeof setTimeout>;
-
-    private onWindowResize = (): void => {
-        if (!this.videoWrapper) {
-            return;
-        }
-        if (this.resizeTimeoutId !== undefined) {
-            clearTimeout(this.resizeTimeoutId);
-        }
-        this.resizeTimeoutId = setTimeout(this.applyFitToScreenBounds, 300);
-    };
-
-    private applyFitToScreenBounds = (): void => {
-        this.resizeTimeoutId = undefined;
-        if (!this.player || !this.fitToScreen) {
-            return;
-        }
-        const newBounds = this.getMaxSize();
-        if (!newBounds) {
-            return;
-        }
-        const current = this.player.getVideoSettings();
-        if (current.bounds && current.bounds.equals(newBounds)) {
-            return;
-        }
-        const updated = StreamClientScrcpy.createVideoSettingsWithBounds(current, newBounds);
-        this.player.setVideoSettings(updated, true, false);
-        this.sendNewVideoSetting(updated);
     };
 
     public sendMessage(message: ControlMessage): void {
@@ -616,11 +524,6 @@ export class StreamClientScrcpy
         this.sendMessage(event);
     }
 
-    public sendNewVideoSetting(videoSettings: VideoSettings): void {
-        this.requestedVideoSettings = videoSettings;
-        // this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(videoSettings));
-    }
-
     public getClientId(): number {
         return this.clientId;
     }
@@ -629,53 +532,11 @@ export class StreamClientScrcpy
         return this.clientsCount;
     }
 
-    public getMaxSize(): Size | undefined {
-        // Its layout already accounts for the mount's padding and the desktop controls slot.
-        return this.videoWrapper ? getVideoBounds(this.videoWrapper) : undefined;
-    }
-
     // Exposed for `SettingsSheet`'s "Playback" group -- player choice goes through `navigate()`
-    // (it remounts the whole `StreamView`), but fit-to-screen and the quality-stats overlay are
-    // client-side-only and act on the already-running player instance in place.
+    // (it remounts the whole `StreamView`), but the quality-stats overlay is client-side-only and
+    // acts on the already-running player instance in place.
     public getPlayer(): BasePlayer | undefined {
         return this.player;
-    }
-
-    // Keep the live value across viewport changes; saved preferences are keyed by viewport
-    // size, so reading them after rotation can accidentally undo an explicit session choice.
-    public isFitToScreen(): boolean {
-        return this.fitToScreen ?? false;
-    }
-
-    // Toggles fit-to-screen for the *current* player/session instantly, with no reconnect. Stock
-    // scrcpy has no live video-settings channel (see `sendNewVideoSetting` below), so this only
-    // resizes the local canvas/bounds the player already uses to fit the container, exactly like
-    // `applyFitToScreenBounds` does on resize. `saveToStorage: true` persists the choice so it
-    // sticks across reloads and future resizes.
-    public setFitToScreen(enabled: boolean): void {
-        if (!this.player) {
-            return;
-        }
-        this.fitToScreen = enabled;
-        if (enabled) {
-            const newBounds = this.getMaxSize();
-            if (newBounds) {
-                const updated = StreamClientScrcpy.createVideoSettingsWithBounds(
-                    this.player.getVideoSettings(),
-                    newBounds,
-                );
-                this.player.setVideoSettings(updated, true, true);
-                this.sendNewVideoSetting(updated);
-                return;
-            }
-        }
-        const nativeSize = this.player.getScreenInfo()?.videoSize;
-        const settings = this.player.getVideoSettings();
-        this.player.setVideoSettings(
-            nativeSize ? StreamClientScrcpy.createVideoSettingsWithBounds(settings, nativeSize) : settings,
-            false,
-            true,
-        );
     }
 
     private setTouchListeners(player: BasePlayer): void {
@@ -683,12 +544,5 @@ export class StreamClientScrcpy
             return;
         }
         this.touchHandler = new FeaturedInteractionHandler(player, this);
-    }
-
-    private applyNewVideoSettings(videoSettings: VideoSettings, saveToStorage: boolean): void {
-        const fitToScreen = this.fitToScreen ?? false;
-        if (this.player) {
-            this.player.setVideoSettings(videoSettings, fitToScreen, saveToStorage);
-        }
     }
 }

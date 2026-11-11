@@ -8,6 +8,10 @@ import { ControlMessage } from '../../app/controlMessage/ControlMessage';
 type BroadcastListener = (data: Buffer, videoKind?: VideoFrameKind) => void;
 // Allow the bounded 16 MiB bootstrap, then reconnect viewers that cannot keep up.
 const MAX_BUFFERED_BYTES = 20 * 1024 * 1024;
+// scrcpy INJECT_KEYCODE: type(1) action(1) keycode(4) repeat(4) metaState(4).
+const KEYCODE_MESSAGE_LENGTH = 14;
+const KEY_ACTION_DOWN = 0;
+const KEY_ACTION_UP = 1;
 
 /**
  * Device details used to fill the synthetic `scrcpy_initial` packet. Supplied by the caller
@@ -29,6 +33,8 @@ export class WebsocketProxy extends Mw {
     private static nextClientId = 0;
     private clientId?: number;
     private keyboardCreated = false;
+    /** Android keycodes this viewer has sent down and not yet up. */
+    private readonly heldKeys = new Set<number>();
     private broadcast?: Broadcast;
     private broadcastListener?: BroadcastListener;
     private controlSocketCloseListener?: () => void;
@@ -69,8 +75,8 @@ export class WebsocketProxy extends Mw {
             return;
         }
 
-        // craftInitialInfoPacket reports videoWidth/videoHeight, which are 0 until the 16-byte
-        // codec header has been consumed. The client latches that ScreenInfo permanently, so
+        // craftInitialInfoPacket reports videoWidth/videoHeight, which are 0 until the first
+        // session packet has been read. The client latches that ScreenInfo permanently, so
         // wait for it rather than advertising a 0x0 screen.
         if (!(await broadcast.whenReady())) {
             this.ws.close(4006, 'Stream ended before it was ready');
@@ -123,8 +129,24 @@ export class WebsocketProxy extends Mw {
             waitingForKeyframe = !broadcast.hasCompleteVideoBootstrap();
         }
 
+        const clientId = this.clientId;
         const listener: BroadcastListener = (data, videoKind) => {
             if (this.ws.readyState === this.ws.OPEN) {
+                if (videoKind === 'session') {
+                    // The device rotated or its encoder restarted. The client takes the picture
+                    // size from `scrcpy_initial` alone, so send it again with the new size. The
+                    // new session's own config packet and keyframe follow.
+                    waitingForKeyframe = true;
+                    this.sendPacket(
+                        broadcast.craftInitialInfoPacket(
+                            meta?.deviceName || udid,
+                            meta?.encoders ?? [],
+                            clientId,
+                            true,
+                        ),
+                    );
+                    return;
+                }
                 if (videoKind === 'config') {
                     waitingForKeyframe = true;
                 } else if (videoKind === 'key') {
@@ -180,11 +202,42 @@ export class WebsocketProxy extends Mw {
                 this.keyboardCreated = false;
             }
         }
+        this.trackHeldKey(buffer);
         controlSocket.write(buffer);
+    }
+
+    /**
+     * Remembers a key this viewer has pressed and not released. A toolbar button sends its
+     * down and up as separate one-message frames: type, action, keycode, repeat, meta state.
+     * Frames that carry several messages hold complete down/up pairs and are not tracked.
+     */
+    private trackHeldKey(buffer: Buffer): void {
+        if (buffer.length !== KEYCODE_MESSAGE_LENGTH || buffer[0] !== ControlMessage.TYPE_KEYCODE) {
+            return;
+        }
+        const keycode = buffer.readInt32BE(2);
+        if (buffer[1] === KEY_ACTION_DOWN) {
+            this.heldKeys.add(keycode);
+        } else if (buffer[1] === KEY_ACTION_UP) {
+            this.heldKeys.delete(keycode);
+        }
     }
 
     public release(): void {
         this.released = true;
+        const heldKeys = Array.from(this.heldKeys);
+        this.heldKeys.clear();
+        if (heldKeys.length && this.broadcast?.getControlSocket().readyState === 'open') {
+            // The browser went away with a key down, for example Power held when the network
+            // dropped. Its release never arrives, and Android would read a long press.
+            for (const keycode of heldKeys) {
+                const up = Buffer.alloc(KEYCODE_MESSAGE_LENGTH);
+                up[0] = ControlMessage.TYPE_KEYCODE;
+                up[1] = KEY_ACTION_UP;
+                up.writeInt32BE(keycode, 2);
+                this.broadcast.getControlSocket().write(up);
+            }
+        }
         if (this.clientId !== undefined) {
             const control = this.broadcast?.getControlSocket();
             if (this.keyboardCreated && control?.readyState === 'open') {

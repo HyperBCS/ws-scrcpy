@@ -5,7 +5,8 @@ import { BottomSheet } from '../ui/BottomSheet';
 import { VolumeSlider } from '../ui/SheetControls';
 import { closeSettingsSheet, settingsSheetTarget } from '../state/settingsSheet';
 import { activeStream } from '../state/stream';
-import { devices, deviceName, findDeviceByUdid } from '../state/devices';
+import { deviceName } from '../state/devices';
+import { findDeviceForSettings } from '../state/streamDevice';
 import { activeAudioSession, audioAvailability, isAudioAvailable } from '../state/audio';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import { ControlCenterCommand } from '../../common/ControlCenterCommand';
@@ -78,11 +79,8 @@ export function SettingsSheet() {
     }
     // Retain content through the closing animation. Each opening gets a fresh request below.
     const renderTarget = target ?? previousTarget.current;
-    const entry = renderTarget?.deviceKey
-        ? devices.value.get(renderTarget.deviceKey)
-        : renderTarget
-          ? findDeviceByUdid(renderTarget.udid)
-          : undefined;
+    // The stream opens this sheet with a serial alone, and two hosts can each have that serial.
+    const entry = renderTarget ? findDeviceForSettings(renderTarget, session?.params) : undefined;
     const tracker = target ? entry?.tracker : undefined;
     const client: StreamClientScrcpy | undefined =
         renderTarget && session?.params.udid === renderTarget.udid ? session.client : undefined;
@@ -96,7 +94,6 @@ export function SettingsSheet() {
     const [confirming, setConfirming] = useState(false);
     const [applyError, setApplyError] = useState<string>();
     const [appliedNote, setAppliedNote] = useState<string>();
-    const [fitToScreen, setFitToScreenState] = useState(false);
     const [captureKeyboard, setCaptureKeyboard] = useState(true);
     const [useUhid, setUseUhid] = useState(true);
     const [showStats, setShowStats] = useState(false);
@@ -191,7 +188,6 @@ export function SettingsSheet() {
     }, [target, tracker, reload]);
 
     useEffect(() => {
-        setFitToScreenState(client?.isFitToScreen() ?? false);
         setShowStats(client?.getPlayer()?.getShowQualityStats() ?? false);
         setCaptureKeyboard(client?.isKeyboardCaptured() ?? true);
         setUseUhid(client?.isUsingUhidKeyboard() ?? true);
@@ -302,7 +298,6 @@ export function SettingsSheet() {
             udid: session.params.udid,
             player: (event.currentTarget as HTMLSelectElement).value,
             ws: session.params.ws,
-            fitToScreen: client?.isFitToScreen(),
             captureKeyboard: captureKeyboard,
         });
     };
@@ -676,19 +671,6 @@ export function SettingsSheet() {
                                         </option>
                                     ))}
                                 </select>
-                            </label>
-                            <label class="settings-sheet-row settings-toggle-row">
-                                <span>
-                                    Fit screen<small>Keep the full device visible</small>
-                                </span>
-                                <input
-                                    type="checkbox"
-                                    checked={fitToScreen}
-                                    onChange={(event) => {
-                                        setFitToScreenState(event.currentTarget.checked);
-                                        client.setFitToScreen(event.currentTarget.checked);
-                                    }}
-                                />
                             </label>
                             <label class="settings-sheet-row settings-toggle-row">
                                 <span>

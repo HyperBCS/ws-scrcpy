@@ -3,6 +3,7 @@ import { Mw, RequestParameters, SocketMessageEvent } from '../../mw/Mw';
 import { ACTION } from '../../../common/Action';
 import {
     COREDEVICE_FRAME_AUDIO,
+    CoreDeviceButton,
     CoreDeviceContact,
     CoreDeviceClientMessage,
     CoreDeviceServerMessage,
@@ -80,6 +81,8 @@ export class CoreDeviceProxy extends Mw {
     private contacts: CoreDeviceContact[] = [];
     private keyboardPressed = false;
     private keyboardBusy = false;
+    /** Buttons this viewer sent `down` for and has not released (a held Siri or Lock). */
+    private readonly heldButtons = new Set<CoreDeviceButton>();
     private readonly runner = CoreDeviceRunner.getInstance();
     private readonly udid: string;
     private stream?: NodeJS.ReadableStream & { destroy?: () => void };
@@ -615,6 +618,11 @@ export class CoreDeviceProxy extends Mw {
                     DeviceStateMonitor.getInstance().pokeButton(this.udid);
                     return;
                 }
+                if (state === 'down') {
+                    // Counted before the request: one that fails or times out may still have
+                    // reached the phone, and `release()` must then lift the button.
+                    this.heldButtons.add(message.name);
+                }
                 const reply = await this.runner.request(
                     this.udid,
                     'POST',
@@ -623,6 +631,9 @@ export class CoreDeviceProxy extends Mw {
                     INPUT_COMPLETION_TIMEOUT_MS,
                 );
                 if (reply.status !== 200) throw Error('The phone rejected the button press');
+                if (state === 'up') {
+                    this.heldButtons.delete(message.name);
+                }
                 if (state !== 'down') {
                     // Lock sleeps or wakes the phone, Home leaves the lock screen once unlocked.
                     DeviceStateMonitor.getInstance().pokeButton(this.udid);
@@ -751,7 +762,8 @@ export class CoreDeviceProxy extends Mw {
         };
         if (
             CoreDeviceProxy.touchOwners.get(this.udid) === this ||
-            CoreDeviceProxy.keyboardOwners.get(this.udid) === this
+            CoreDeviceProxy.keyboardOwners.get(this.udid) === this ||
+            this.heldButtons.size
         ) {
             void this.inputChain
                 .then(async () => {
@@ -769,6 +781,20 @@ export class CoreDeviceProxy extends Mw {
                             )
                             .catch(() => undefined);
                     }
+                    // The viewer left with a button down: its `up` was lost with the socket, or
+                    // was still queued and is skipped now. Nothing else would release it.
+                    for (const name of Array.from(this.heldButtons)) {
+                        await this.runner
+                            .request(
+                                this.udid,
+                                'POST',
+                                '/button',
+                                JSON.stringify({ name, state: 'up' }),
+                                INPUT_COMPLETION_TIMEOUT_MS,
+                            )
+                            .catch(() => undefined);
+                    }
+                    this.heldButtons.clear();
                     try {
                         await this.detachKeyboard();
                     } catch {

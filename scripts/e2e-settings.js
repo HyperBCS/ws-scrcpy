@@ -40,7 +40,7 @@ async function fixture(page, { onApply, onStreamMessage, initialPacket, onStream
                 packet.writeInt32BE(1, 86);
                 socket.send(initialPacket || packet);
                 const sendAudioError = () => socket.send(audioError());
-                if (onStreamReady) onStreamReady({ sendAudioError, close: () => socket.close() });
+                if (onStreamReady) onStreamReady({ sendAudioError, send: (data) => socket.send(data), close: () => socket.close() });
                 else sendAudioError();
             }, 100);
             return;
@@ -204,6 +204,9 @@ async function main() {
                 });
             });
             await dialog.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+            const playback = await dialog.locator('.settings-playback').textContent();
+            assert(/Show quality stats/.test(playback), label + ': playback settings are listed');
+            assert(!/Fit screen/i.test(playback), label + ': no Fit screen toggle, the picture always fits');
             await geometry(page, label + ' all sections');
             await page.screenshot({ path: path.join(OUT, label + '-quality.png') });
             await page.locator('.settings-audio').evaluate((el) => {

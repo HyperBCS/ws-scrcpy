@@ -25,7 +25,6 @@ import { buildHevcInitSegment, buildHevcMediaSegment, concat, hevcMimeCandidates
  * live-edge chasing needs.
  */
 export class MseHevcPlayer extends BasePlayer {
-    public static readonly storageKeyPrefix = 'MseHevcPlayer';
     public static readonly playerFullName = 'MSE HEVC';
     public static readonly playerCodeName = 'mse';
     public static readonly preferredVideoSettings: VideoSettings = new VideoSettings({
@@ -93,21 +92,13 @@ export class MseHevcPlayer extends BasePlayer {
     private decodedFrames = 0;
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = MseHevcPlayer.playerFullName) {
-        super(udid, displayInfo, name, MseHevcPlayer.storageKeyPrefix, MseHevcPlayer.createElement());
+        super(udid, displayInfo, name, MseHevcPlayer.createElement());
         this.tag.addEventListener('resize', this.onVideoResize);
         this.tag.addEventListener('loadedmetadata', this.onVideoResize);
         this.tag.addEventListener('error', this.onVideoError);
     }
 
     public getPreferredVideoSetting(): VideoSettings {
-        return MseHevcPlayer.preferredVideoSettings;
-    }
-
-    public getFitToScreenStatus(): boolean {
-        return true;
-    }
-
-    public loadVideoSettings(): VideoSettings {
         return MseHevcPlayer.preferredVideoSettings;
     }
 
@@ -168,7 +159,7 @@ export class MseHevcPlayer extends BasePlayer {
             this.enqueue(this.initSegment);
             this.startChasing();
         } catch (error) {
-            this.emit('decoder-error' as never, error as never);
+            this.emit('decoder-error', { message: (error as Error).message, recovering: true });
         }
     };
 
@@ -202,7 +193,7 @@ export class MseHevcPlayer extends BasePlayer {
                 return;
             }
             console.error(`[${this.name}]`, error);
-            this.emit('decoder-error' as never, error as never);
+            this.emit('decoder-error', { message: (error as Error).message, recovering: true });
         }
     }
 
@@ -311,7 +302,7 @@ export class MseHevcPlayer extends BasePlayer {
     private onVideoError = (): void => {
         const error = this.tag.error;
         console.error(`[${this.name}]`, error?.code, error?.message);
-        this.emit('decoder-error' as never, (error || new Error('MediaSource error')) as never);
+        this.emit('decoder-error', { message: error?.message || 'MediaSource error', recovering: true });
         // The element is dead after a MEDIA_ERR_DECODE; rebuild on the next key frame.
         this.needsResync = true;
         this.resetSource();
