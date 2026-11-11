@@ -96,6 +96,9 @@ export function ToolView({ params }: { params: URLSearchParams }) {
     const routeRef = useRef(params);
     routeRef.current = params;
     const [error, setError] = useState('');
+    // The tool's code could not be downloaded, usually because a deploy replaced it. Only a
+    // reload of the page fetches the new names; reconnecting would ask for the old ones again.
+    const [codeMissing, setCodeMissing] = useState(false);
     const [loaded, setLoaded] = useState(false);
     const [connected, setConnected] = useState(false);
     const [lost, setLost] = useState<Lost>('');
@@ -133,6 +136,7 @@ export function ToolView({ params }: { params: URLSearchParams }) {
         let wasConnected = retrying;
         const openedAt = Date.now();
         setError('');
+        setCodeMissing(false);
         setLoaded(false);
         setConnected(false);
         setLost(retrying ? 'reconnecting' : '');
@@ -154,7 +158,12 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                 setConnected(client.hasConnection());
             })
             .catch((failure: Error) => {
-                if (!cancelled) setError(failure.message || 'This tool could not open. Try again.');
+                if (cancelled) return;
+                if (failure.name === 'ChunkLoadError') {
+                    setCodeMissing(true);
+                    return;
+                }
+                setError(failure.message || 'This tool could not open. Try again.');
             });
         const connectionCheck = window.setInterval(() => {
             const ready = mounted?.hasConnection() ?? false;
@@ -224,14 +233,19 @@ export function ToolView({ params }: { params: URLSearchParams }) {
     };
 
     // The banner keeps its last wording while it collapses.
-    const showBanner = !!error || lost === 'closed' || lost === 'ended';
+    const showBanner = codeMissing || !!error || lost === 'closed' || lost === 'ended';
     const bannerRef = useRef({ text: '', button: 'Reconnect' });
     if (showBanner) {
-        bannerRef.current = error
-            ? { text: error, button: 'Reconnect' }
-            : lost === 'ended'
-              ? { text: 'The shell session ended.', button: 'New session' }
-              : { text: 'Connection lost.', button: 'Reconnect' };
+        bannerRef.current = codeMissing
+            ? {
+                  text: `${tool?.title || 'This tool'} could not be loaded. Reload the page to try again.`,
+                  button: 'Reload',
+              }
+            : error
+              ? { text: error, button: 'Reconnect' }
+              : lost === 'ended'
+                ? { text: 'The shell session ended.', button: 'New session' }
+                : { text: 'Connection lost.', button: 'Reconnect' };
     }
 
     const switchTool = (nextAction: ACTION, nextEntry = entry) => {
@@ -322,7 +336,7 @@ export function ToolView({ params }: { params: URLSearchParams }) {
             <section class="tool-workspace" aria-label={tool?.title}>
                 <Presence show={showBanner} kind="collapse" class="tool-error" role="status">
                     <span>{bannerRef.current.text}</span>
-                    <button type="button" onClick={reconnect}>
+                    <button type="button" onClick={codeMissing ? () => location.reload() : reconnect}>
                         {bannerRef.current.button}
                     </button>
                 </Presence>

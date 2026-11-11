@@ -276,7 +276,39 @@ async function main() {
             console.log('PASS',name,'in-app tools, status transitions, shell input, switching, cleanup and viewport');
             await context.close();
         }
+        await missingCode(browser);
     } finally { await browser.close(); }
+}
+// After a deploy the page still names the old content-hashed chunks, which are gone. Reconnecting
+// would ask for the same names again, so the tool page offers a reload instead.
+async function missingCode(browser) {
+    const context = await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+    const page = await context.newPage(), errors=[];
+    page.on('pageerror', error=>errors.push(error.message));
+    await fixtures(page);
+    let blocked = false;
+    await page.route('**/*.js', async route => {
+        const response = await route.fetch();
+        // The Shell chunk is the one that builds the terminal container.
+        if (!route.request().url().endsWith('/bundle.js') && (await response.text()).includes('terminal-container')) {
+            blocked = true;
+            return route.fulfill({status:404,body:'gone'});
+        }
+        return route.fulfill({response});
+    });
+    await page.goto(BASE);
+    const card = page.locator('.device').filter({hasText:'Phone A'});
+    await card.getByRole('link',{name:'Shell',exact:true}).click();
+    const banner = page.locator('.tool-error');
+    await banner.getByText('Shell could not be loaded. Reload the page to try again.',{exact:true}).waitFor();
+    assert(blocked,'the fixture refused the Shell chunk');
+    assert.equal(await banner.getByRole('button').innerText(),'Reload','the banner offers a reload, not a reconnect');
+    await page.unroute('**/*.js');
+    await Promise.all([page.waitForEvent('load'), banner.getByRole('button',{name:'Reload',exact:true}).click()]);
+    await page.locator('.terminal-container .xterm').waitFor();
+    assert.deepEqual(errors,[]);
+    console.log('PASS a tool whose code is gone after a deploy offers Reload, which opens it');
+    await context.close();
 }
 if(require.main===module) main().catch(error=>{ console.error(error); process.exitCode=1; });
 module.exports={fixtures,descriptor,frame};
