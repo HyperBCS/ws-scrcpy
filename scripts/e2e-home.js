@@ -431,7 +431,7 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         assert.equal(rows.find((row) => row.name === 'Google Galaxy Tab S9').status, 'Shell →', 'a sleeping screen does not matter to Shell');
         await page.screenshot({ path: path.join(OUT, `switcher-shell-${label}.png`) });
         await sheet.getByRole('button', { name: /Google Pixel 8/ }).click();
-        await page.waitForFunction(() => location.hash.includes('action=shell') && location.hash.includes('HOME-LOCKED-0003'));
+        await page.waitForFunction(() => location.hash.includes('view=shell') && location.hash.includes('HOME-LOCKED-0003'));
         await page.waitForFunction(() => document.title === 'Google Pixel 8 · Shell · ws-scrcpy');
 
         // Files: the switcher names Files. On a desktop Ctrl+K opens it, but not from a text field.
@@ -496,7 +496,7 @@ async function toolLinkForIphone(browser, { width, height, mobile, colorScheme }
             assert.equal(await noOverflow(page), true);
             await page.screenshot({ path: path.join(OUT, `tool-refused-${action}-${label}.png`) });
             await page.getByRole('link', { name: 'Open screen', exact: true }).click();
-            await page.waitForFunction((udid) => location.hash.includes('action=stream-coredevice') && location.hash.includes(udid), LINKED);
+            await page.waitForFunction((udid) => location.hash.includes('view=screen') && location.hash.includes(udid), LINKED);
             await page.locator('.stream-view').waitFor();
             await page.goBack();
             await page.getByRole('button', { name: 'Back to devices', exact: true }).last().click();
