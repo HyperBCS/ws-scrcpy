@@ -112,7 +112,7 @@ async function fixture(browser, options = {}) {
             userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
         } : {}),
     });
-    await context.addInitScript(({ subscription, registered, storedSources, storedReceiver, ios, standalone, displayedKeys, workerHang, subscribedKey }) => {
+    await context.addInitScript(({ subscription, registered, storedSources, storedReceiver, ios, standalone, displayedKeys, workerHang, subscribedKey, subscribeNeedsGesture }) => {
         if (storedSources !== undefined) localStorage.setItem('notification-sources', JSON.stringify(storedSources));
         if (storedReceiver !== undefined) localStorage.setItem('notification-receiver-source', storedReceiver);
         if (ios) Object.defineProperty(navigator, 'standalone', { configurable: true, value: standalone });
@@ -126,6 +126,8 @@ async function fixture(browser, options = {}) {
                 return result;
             };
         }
+        window.__lastTap = -Infinity;
+        addEventListener('click', event => { if (event.isTrusted) window.__lastTap = performance.now(); }, true);
         window.__notificationBadges = [];
         window.__closedNotifications = [];
         window.__notificationWorkerCalls = { getRegistration: 0, getNotifications: 0 };
@@ -153,6 +155,9 @@ async function fixture(browser, options = {}) {
         PushManager.prototype.getSubscription = async () => active;
         PushManager.prototype.subscribe = async settings => {
             counters.subscribeCalls++;
+            // Safari refuses to subscribe outside a tap, even with permission granted.
+            if (subscribeNeedsGesture && !(performance.now() - window.__lastTap < 1000))
+                throw new DOMException('Subscribing for push requires a user gesture', 'NotAllowedError');
             if (subscribedKey) renewals++;
             const key = settings.applicationServerKey;
             active = makeSubscription(subscribedKey && key.buffer.slice(key.byteOffset, key.byteOffset + key.byteLength));
@@ -180,13 +185,13 @@ async function fixture(browser, options = {}) {
             permission = 'granted';
             return permission;
         };
-    }, { subscription, registered: options.registered ?? true, storedSources: options.storedSources, storedReceiver: options.storedReceiver, ios: !!options.ios, standalone: !!options.standalone, displayedKeys: options.displayedKeys || [], workerHang: options.workerHang || '', subscribedKey: options.subscribedKey || '' });
+    }, { subscription, registered: options.registered ?? true, storedSources: options.storedSources, storedReceiver: options.storedReceiver, ios: !!options.ios, standalone: !!options.standalone, displayedKeys: options.displayedKeys || [], workerHang: options.workerHang || '', subscribedKey: options.subscribedKey || '', subscribeNeedsGesture: !!options.subscribeNeedsGesture });
     const page = await context.newPage();
     if (options.clock) await page.clock.install();
     const state = {
         context, page, sources: options.sources ?? phones(), errors: [], saved: [], tests: [], removed: [],
         disabled: 0, statusPolls: 0, pairingOpen: false, pairingRejected: !!options.pairingRejected, subscriptionError: options.subscriptionError || '',
-        receivers: options.receivers, removedEndpoints: [],
+        receivers: options.receivers, removedEndpoints: [], registeredEndpoints: new Set(),
         missingSubscription: !!options.missingSubscription, testError: '', operations: [],
         historyFetches: [], statuses: options.statuses || {}, feedError: options.feedError || '', publicKey: options.publicKey || subscription.keys.p256dh,
         notifications: structuredClone(options.notifications || []), readRequests: [], dismissed: [], actions: [], iconRequests: [], actionError: '', dismissError: '', summaryPolls: 0, bulkDismissed: [], bulkActions: [], bulkActionResult: null, restored: [], holdNextMutation: false, releaseMutation: null,
@@ -230,7 +235,8 @@ async function fixture(browser, options = {}) {
                 publicKey: state.publicKey, sources: state.sources, bluetooth: [],
                 statuses: Object.fromEntries(state.sources.map(s => [s.id, state.statuses[s.id] ?? 'Receiving notifications'])), pairing: null,
                 pairingOpen: state.pairingOpen, pairingRejected: state.pairingRejected, error: state.feedError, delivery: { sent: 0, failed: 0, lastError: '' },
-                ...(state.receivers ? { receivers: state.receivers } : {}),
+                // 'saved': the devices the page registered, as the server would list them.
+                ...(state.receivers === 'saved' ? { receivers: [...state.registeredEndpoints].map(endpoint => ({ id: crypto.createHash('sha256').update(endpoint).digest('hex'), provider: 'Apple', sent: 0, failed: 0, lastError: '' })) } : state.receivers ? { receivers: state.receivers } : {}),
                 historyRevision: revision, storedBySource: Object.fromEntries(state.sources.map(s => [s.id, state.notifications.filter(n => n.source === s.id).length])),
                 unread, unreadBySource, retentionDays: 30, publicUrl: 'https://phone.example',
             };
@@ -286,10 +292,14 @@ async function fixture(browser, options = {}) {
         } else if (pathname.endsWith('/subscriptions') && request.method() === 'POST') {
             state.saved.push(request.postDataJSON());
             if (state.subscriptionError) { status = 400; reply = { error: state.subscriptionError }; }
-            else state.missingSubscription = false;
+            else {
+                state.missingSubscription = false;
+                state.registeredEndpoints.add(state.saved.at(-1).subscription.endpoint);
+            }
         } else if (pathname.endsWith('/subscriptions') && request.method() === 'DELETE') {
             state.disabled++;
             state.removedEndpoints.push(request.postDataJSON().endpoint);
+            state.registeredEndpoints.delete(request.postDataJSON().endpoint);
         }
         else if (pathname.endsWith('/test') && request.method() === 'POST') {
             state.tests.push(request.postDataJSON());
@@ -611,6 +621,62 @@ async function subscriptionRepairedOnLoad(browser) {
         await f.page.getByRole('alert').filter({ hasText: 'This device could not be registered with the server: Subscription limit reached' }).waitFor();
     } finally { await f.context.close(); }
     console.log('PASS the push subscription is registered again on load, replaced when the server key changed, and reported per device');
+}
+
+async function subscriptionStateOnReturn(browser) {
+    const counters = f => f.page.evaluate(() => window.__notificationFixture);
+    const noRecord = f => f.page.getByText('The server has no record of this device', { exact: false });
+    // Enabling shows no warning that the server lacks this device while the status catches up.
+    let f = await fixture(browser, { registered: false, storedSources: ['phone-a'], storedReceiver: '', receivers: 'saved' });
+    try {
+        await f.page.getByRole('button', { name: 'Enable on this device', exact: true }).click();
+        await f.page.getByText('Notifications enabled on this device.', { exact: true }).waitFor();
+        await sleep(300);
+        assert.equal(await noRecord(f).count(), 0);
+        await openDetails(f.page, 'Delivery details');
+        assert.equal(await f.page.locator('.notification-receivers li').filter({ hasText: 'This device' }).count(), 1, 'listed without waiting for the next poll');
+        await assertClean(f);
+    } finally { await f.context.close(); }
+
+    // Turned off here after the app sent the subscription on load, the page says so after
+    // leaving and coming back.
+    f = await fixture(browser, { storedSources: ['phone-a'], storedReceiver: '', receivers: 'saved' });
+    try {
+        await until(() => f.saved.length === 1, 'the subscription is sent on load');
+        await openDetails(f.page, 'Choose phones and delivery options');
+        await f.page.getByRole('button', { name: 'Turn off on this device', exact: true }).click();
+        await f.page.getByRole('button', { name: 'Enable on this device', exact: true }).waitFor();
+        await f.page.evaluate(() => { location.hash = '!'; });
+        await f.page.locator('#devices').waitFor();
+        await f.page.evaluate(() => { location.hash = '!action=notifications'; });
+        await f.page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+        await f.page.getByText('Notifications off', { exact: true }).waitFor();
+        await sleep(300);
+        assert.equal(await f.page.getByText('Notifications on', { exact: true }).count(), 0, 'a stale subscription is not shown again');
+        await assertClean(f);
+    } finally { await f.context.close(); }
+
+    // Safari needs a tap to subscribe. When the server's keys changed, the old subscription is
+    // gone and the page asks for that tap instead of showing notifications as on.
+    // It opens on the inbox, so no tap happens before the repair runs.
+    f = await fixture(browser, { history: true, notifications: historyItems(), storedSources: ['phone-a'], storedReceiver: '', subscribedKey: Buffer.alloc(65, 9).toString('base64url'), subscribeNeedsGesture: true });
+    try {
+        await until(() => f.removedEndpoints.length === 1, 'the subscription for the old keys is removed');
+        await f.page.waitForFunction(() => window.__notificationFixture.subscribeCalls === 1);
+        await f.page.getByRole('button', { name: 'Setup & delivery', exact: true }).click();
+        const notice = f.page.getByRole('alert').filter({ hasText: 'Notifications stopped on this device because the server’s keys changed. Tap Enable on this device to turn them on again.' });
+        await notice.waitFor();
+        await f.page.getByText('Notifications off', { exact: true }).waitFor();
+        assert.deepEqual(f.saved, []);
+        const enable = f.page.getByRole('button', { name: 'Enable on this device', exact: true });
+        assert.equal(await enable.isEnabled(), true);
+        await enable.click();
+        await f.page.getByText('Notifications enabled on this device.', { exact: true }).waitFor();
+        assert.equal(f.saved.at(-1).subscription.endpoint, `${subscription.endpoint}-renewed-1`);
+        assert.equal((await counters(f)).subscribeCalls, 2, 'one refused without a tap, one made by the tap');
+        await assertClean(f);
+    } finally { await f.context.close(); }
+    console.log('PASS the page shows the browser’s subscription after a repair, a turn-off and a refused resubscribe');
 }
 
 async function perDeviceHistory(browser) {
@@ -1594,7 +1660,7 @@ async function main() {
     const browser = await ({ chromium, webkit }[browserName] || chromium).launch({ headless: true });
     try {
         const cases = [onboarding, missedPairingRequest, configuredReceiver, receiverChoicesAndUnlink, enablingReceiver, errorsSurvivePolling,
-            iosInstallGate, recoverMissingServerSubscription, subscriptionRepairedOnLoad, perDeviceHistory, historyFetchedOnChange, dismissKeepsHistory, labeledPhoneActions, confirmPromptLayouts,
+            iosInstallGate, recoverMissingServerSubscription, subscriptionRepairedOnLoad, subscriptionStateOnReturn, perDeviceHistory, historyFetchedOnChange, dismissKeepsHistory, labeledPhoneActions, confirmPromptLayouts,
             notificationDeepLink, bulkDismissHere, bulkDismissPhone, compactLongNotification, stickyBarsReachScrollTop, accessibleActionMenus, richNotificationMedia,
             searchAndFilters, bulkRespectsFilters, swipeAndUndo, swipeMotionAndFailure, delayedActionDoesNotCrossDevices, standaloneTouchNotifications,
             compatibilityPointerEventsDoNotDoubleAct, nativeTouchCancellationAndMultifinger, hangingRegistrationCleanup,

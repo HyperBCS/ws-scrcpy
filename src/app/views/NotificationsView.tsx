@@ -266,11 +266,13 @@ export function NotificationsView() {
         const timer = window.setInterval(poll, 5000);
         navigator.serviceWorker?.addEventListener('message', poll);
         document.addEventListener('visibilitychange', poll);
-        if (supported)
-            void registerNotificationWorker()
+        if (supported) {
+            let synced = false;
+            const registration = registerNotificationWorker();
+            void registration
                 .then((r) => r.pushManager.getSubscription())
                 .then((s) => {
-                    if (alive) setSubscription(s);
+                    if (alive && !synced) setSubscription(s);
                 })
                 .catch((e) => {
                     if (alive) setError(`Could not check notifications on this device: ${e.message}`);
@@ -278,14 +280,25 @@ export function NotificationsView() {
                 .finally(() => {
                     if (alive) setWorkerLoaded(true);
                 });
-        else setWorkerLoaded(true);
-        // The app sends this device's subscription to the server again when it loads. Show a
-        // subscription it had to replace, and say so when the server could not be told.
-        void syncPushSubscription(true).then((result) => {
-            if (!alive) return;
-            if (result.subscription) setSubscription(result.subscription);
-            if (result.error) setError(`This device could not be registered with the server: ${result.error}`);
-        });
+            // The app sends this device's subscription to the server again when it loads, and
+            // may replace it. The result is shared by every visit to this page, so the
+            // subscription shown is read from the browser afterwards, never from that result.
+            void syncPushSubscription(true).then(async (result) => {
+                const current = await registration
+                    .then((r) => r.pushManager.getSubscription())
+                    .catch(() => undefined);
+                if (!alive) return;
+                synced = true;
+                if (current !== undefined) setSubscription(current);
+                if (result.lost)
+                    setError(
+                        'Notifications stopped on this device because the server’s keys changed. Tap Enable on this device to turn them on again.',
+                    );
+                else if (result.error) setError(`This device could not be registered with the server: ${result.error}`);
+                // Delivery details list this device once the server has it again.
+                else if (result.sent) void refresh().catch(() => undefined);
+            });
+        } else setWorkerLoaded(true);
         return () => {
             alive = false;
             mounted.current = false;
@@ -328,6 +341,8 @@ export function NotificationsView() {
         localStorage.setItem('notification-sources', JSON.stringify(selected));
         localStorage.setItem('notification-receiver-source', receiver);
         setSavedChoices(choicesKey(selected, receiver));
+        // The delivery details must list this device before they are shown again.
+        await refresh().catch(() => undefined);
     };
     const enable = () => {
         // Safari requires this call in the original button gesture, before any awaits.

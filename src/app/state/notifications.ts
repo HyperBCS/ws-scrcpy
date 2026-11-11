@@ -78,9 +78,12 @@ export async function pushReceiverId(endpoint: string): Promise<string> {
 }
 
 export interface PushSync {
-    // Set when the subscription was sent to the server.
-    subscription?: PushSubscription;
+    // The subscription reached the server.
+    sent?: boolean;
     error?: string;
+    // The old subscription was removed but a new one could not be made without a tap (Safari
+    // asks for one). The device receives nothing until notifications are enabled again.
+    lost?: boolean;
 }
 let pushSync: Promise<PushSync> | undefined;
 let pushSyncFailed = false;
@@ -106,8 +109,9 @@ export function syncPushSubscription(retry = false): Promise<PushSync> {
             Notification.permission !== 'granted'
         )
             return {};
+        let registration: ServiceWorkerRegistration | undefined;
         try {
-            const registration = await navigator.serviceWorker.getRegistration(base.href);
+            registration = await navigator.serviceWorker.getRegistration(base.href);
             if (!registration || !(await registration.pushManager.getSubscription())) return {};
             const status = await notificationRequest<{ publicKey: string; sources: Array<{ id: string }> }>('status');
             const subscription = await pushSubscriptionFor(registration, status.publicKey, false);
@@ -119,10 +123,11 @@ export function syncPushSubscription(retry = false): Promise<PushSync> {
                 sources: sources.filter((id) => linked.has(id)),
                 receiverSource: linked.has(receiver) ? receiver : '',
             });
-            return { subscription };
+            return { sent: true };
         } catch (error) {
             pushSyncFailed = true;
-            return { error: (error as Error).message };
+            const current = await registration?.pushManager.getSubscription().catch(() => undefined);
+            return { error: (error as Error).message, lost: current === null };
         }
     })();
     return pushSync;
