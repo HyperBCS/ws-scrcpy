@@ -1,5 +1,4 @@
 import { ToolBoxButton } from './ToolBoxButton';
-import SvgImage from '../ui/SvgImage';
 import { AudioSession, audioAvailability, listenStateLabel } from '../state/audio';
 import { streamNotice } from '../state/stream';
 
@@ -16,13 +15,15 @@ export function createSoundButton(
     onUnavailable: (message: string) => void,
     cleanup: (() => void)[],
 ): ToolBoxButton {
-    const toggle = new ToolBoxButton('Listen', SvgImage.Icon.HEADPHONES);
+    const toggle = new ToolBoxButton('Listen', 'headphones');
     const button = toggle.getElement();
     button.dataset.control = 'audio';
+    // A control that stays on: it says whether it is, also before a session reports.
+    button.setAttribute('aria-pressed', 'false');
     // `FloatingToolbar` captions every button once from its title. This caption changes with the
     // playback state, so the button brings its own.
     const caption = document.createElement('span');
-    caption.className = 'floating-control-label';
+    caption.className = 'kit-icon-button-caption';
     caption.setAttribute('aria-hidden', 'true');
     caption.textContent = 'Listen';
     button.appendChild(caption);

@@ -2,6 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { deviceSwitcherOpen, liveTextOpen, streamConnected, toolsSheetOpen, unlockSheetOpen } from '../state/stream';
 import { applSettingsSheetTarget, settingsSheetTarget } from '../state/settingsSheet';
 import '../../style/views/FloatingToolbar.css';
+import '../../style/kit/IconButtonCaption.css';
+import { Icon } from '../ui/Icon';
+import { iconButtonClass } from '../ui/IconButton';
 import { useOverlayHistory } from '../ui/overlayHistory';
 import { usePresence } from '../ui/Presence';
 
@@ -136,9 +139,10 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
                 const label = button.title || button.getAttribute('aria-label');
                 if (label) {
                     button.setAttribute('aria-label', label);
-                    if (!button.querySelector('.floating-control-label')) {
+                    button.classList.add('kit-icon-button-captioned');
+                    if (!button.querySelector('.kit-icon-button-caption')) {
                         const caption = document.createElement('span');
-                        caption.className = 'floating-control-label';
+                        caption.className = 'kit-icon-button-caption';
                         caption.textContent = label === 'Take screenshot' ? 'Screenshot' : label;
                         caption.setAttribute('aria-hidden', 'true');
                         button.appendChild(caption);
@@ -373,20 +377,14 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
                     role="group"
                     aria-label="Device controls"
                 >
-                    {mobile && (
-                        <div class="floating-toolbar-heading">
-                            <div>
-                                <strong>Device controls</strong>
-                            </div>
-                        </div>
-                    )}
+                    {mobile && <div class="floating-toolbar-heading">Device controls</div>}
                     <div ref={hostRef} />
                 </div>
                 {mobile && (
                     <button
                         ref={fabRef}
                         type="button"
-                        class="floating-toolbar-fab"
+                        class={`${iconButtonClass()} floating-toolbar-fab`}
                         onPointerDown={onPointerDown}
                         onPointerMove={onPointerMove}
                         onPointerUp={endDrag}
@@ -418,26 +416,7 @@ export function FloatingToolbar({ client }: FloatingToolbarProps) {
                         aria-label={open ? 'Hide controls' : 'Show controls'}
                         title="Drag to move, tap for controls"
                     >
-                        <svg
-                            class="floating-toolbar-glyph"
-                            width="24"
-                            height="24"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            aria-hidden="true"
-                        >
-                            <g class="toolbar-close-glyph">
-                                <path d="m6 6 12 12M6 18 18 6" />
-                            </g>
-                            <g class="toolbar-controls-glyph">
-                                <path d="M4 6h16M4 12h16M4 18h16" />
-                                <circle cx="9" cy="6" r="2" />
-                                <circle cx="15" cy="12" r="2" />
-                                <circle cx="9" cy="18" r="2" />
-                            </g>
-                        </svg>
+                        <Icon name={open ? 'close' : 'grid'} />
                     </button>
                 )}
             </div>

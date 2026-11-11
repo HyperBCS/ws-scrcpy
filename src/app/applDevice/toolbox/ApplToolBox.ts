@@ -1,7 +1,7 @@
 import { ToolBox } from '../../toolbox/ToolBox';
 import { ToolBoxButton } from '../../toolbox/ToolBoxButton';
 import { ToolBoxElement } from '../../toolbox/ToolBoxElement';
-import SvgImage, { Icon } from '../../ui/SvgImage';
+import type { IconName } from '../../ui/icons';
 import { CoreDeviceButton } from '../../../common/CoreDeviceProtocol';
 import { closeAllSheets, openSheet, streamNotice } from '../../state/stream';
 import { openApplSettingsSheet } from '../../state/settingsSheet';
@@ -20,13 +20,13 @@ export interface ApplToolBoxOptions {
 // with the session controls. `hold` marks buttons that can be held, which the server sends as
 // down/up. There is no app-switcher button: iOS offers no way to open the switcher from here that
 // works on a Face ID phone (docs/HANDOFF.md), and one that silently did nothing was worse.
-const BUTTONS: { title: string; name: CoreDeviceButton; icon: Icon; hold: boolean }[] = [
-    { title: 'Home', name: 'home', icon: SvgImage.Icon.HOME, hold: true },
-    { title: 'Lock', name: 'lock', icon: SvgImage.Icon.POWER, hold: true },
-    { title: 'Volume down', name: 'volume-down', icon: SvgImage.Icon.VOLUME_DOWN, hold: true },
-    { title: 'Mute device', name: 'mute', icon: SvgImage.Icon.VOLUME_OFF, hold: true },
-    { title: 'Volume up', name: 'volume-up', icon: SvgImage.Icon.VOLUME_UP, hold: true },
-    { title: 'Siri', name: 'siri', icon: SvgImage.Icon.MIC, hold: true },
+const BUTTONS: { title: string; name: CoreDeviceButton; icon: IconName; hold: boolean }[] = [
+    { title: 'Home', name: 'home', icon: 'home', hold: true },
+    { title: 'Lock', name: 'lock', icon: 'power', hold: true },
+    { title: 'Volume down', name: 'volume-down', icon: 'volDown', hold: true },
+    { title: 'Mute device', name: 'mute', icon: 'volMute', hold: true },
+    { title: 'Volume up', name: 'volume-up', icon: 'volUp', hold: true },
+    { title: 'Siri', name: 'siri', icon: 'mic', hold: true },
 ];
 
 export class ApplToolBox extends ToolBox {
@@ -130,25 +130,25 @@ export class ApplToolBox extends ToolBox {
             ),
         );
 
-        const screenshot = new ToolBoxButton('Take screenshot', SvgImage.Icon.CAMERA);
+        const screenshot = new ToolBoxButton('Take screenshot', 'camera');
         screenshot.addEventListener('click', () => {
             client.getPlayer()?.createScreenshot(client.getDeviceName());
         });
         elements.push(screenshot);
 
-        const actions = new ToolBoxButton('Actions', SvgImage.Icon.MORE);
+        const actions = new ToolBoxButton('Actions', 'bolt');
         actions.addEventListener('click', () => openSheet('tools'));
         elements.push(actions);
 
         // The scheduled unlock and its stored passcode. The Devices card was the only way in.
-        const settings = new ToolBoxButton('Settings', SvgImage.Icon.SETTINGS);
+        const settings = new ToolBoxButton('Settings', 'sliders');
         settings.addEventListener('click', () => {
             closeAllSheets();
             openApplSettingsSheet(client.getDeviceUdid());
         });
         elements.push(settings);
 
-        const liveText = new ToolBoxButton('Type text', SvgImage.Icon.KEYBOARD);
+        const liveText = new ToolBoxButton('Type text', 'text');
         liveText.addEventListener('click', () => openSheet('liveText'));
         elements.push(liveText);
 
