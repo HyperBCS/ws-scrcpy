@@ -9,17 +9,15 @@
     box-sizing: border-box;
     padding-left: env(safe-area-inset-left, 0px);
     padding-right: env(safe-area-inset-right, 0px);
-}
-
-.live-text-backdrop {
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.08);
+    /* Only the bar takes input. Presses beside it reach the phone picture, so the next text
+       field can be chosen while the bar stays open. */
+    pointer-events: none;
 }
 
 .live-text-bar {
     position: relative;
     z-index: 1;
+    pointer-events: auto;
     display: flex;
     flex-direction: column;
     gap: 12px;

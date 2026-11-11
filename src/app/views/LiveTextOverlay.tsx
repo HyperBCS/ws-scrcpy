@@ -67,6 +67,8 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     const [feedbackError, setFeedbackError] = useState(false);
     const [viewportStyle, setViewportStyle] = useState(typingViewport);
     const connected = streamConnected.value;
+    const openRef = useRef(open);
+    openRef.current = open;
     const close = () => {
         liveTextOpen.value = false;
     };
@@ -130,7 +132,18 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
         viewport?.addEventListener('scroll', schedule);
         window.addEventListener('resize', schedule);
         input?.focus({ preventScroll: true });
+        // A press on the picture goes to the phone, so the next field can be chosen without
+        // closing this bar. The Android screen takes focus when it is pressed; take it straight
+        // back, in the same press, so the keyboard stays up and typing continues.
+        const keepFocus = (event: FocusEvent) => {
+            const target = event.target;
+            if (openRef.current && target instanceof Element && target.matches('.touch-layer')) {
+                input?.focus({ preventScroll: true });
+            }
+        };
+        stream?.addEventListener('focusin', keepFocus);
         return () => {
+            stream?.removeEventListener('focusin', keepFocus);
             cancelAnimationFrame(frame);
             observer.disconnect();
             viewport?.removeEventListener('resize', schedule);
@@ -274,12 +287,11 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     if (!present) return null;
     return (
         <div data-exiting={!open || undefined} class="live-text-overlay" ref={overlayRef} style={viewportStyle}>
-            <div class="live-text-backdrop" onClick={close} />
             <div
                 class="live-text-bar"
                 ref={panelRef}
+                // Not modal: the picture behind it stays usable while typing.
                 role="dialog"
-                aria-modal="true"
                 aria-labelledby="live-text-title"
                 aria-describedby="live-text-hint"
                 onKeyDown={onKeyDown}
