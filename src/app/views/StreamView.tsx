@@ -15,6 +15,7 @@ import {
 } from '../state/stream';
 import { findDeviceForStream } from '../state/streamDevice';
 import { deviceName } from '../state/devices';
+import { NotificationsLink } from '../ui/NotificationsLink';
 import { goToDeviceList } from '../state/router';
 import { ActionsSheet } from './ActionsSheet';
 import { FloatingToolbar } from './FloatingToolbar';
@@ -116,6 +117,7 @@ export function StreamView({ params }: StreamViewProps) {
                     </span>
                     <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
                 </div>
+                <NotificationsLink compact />
                 <button
                     type="button"
                     class="stream-header-switch"

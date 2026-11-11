@@ -378,6 +378,11 @@ async function narrowFlow(browser) {
         const row = page.locator(`[data-device-key="ios:${UDID}"] .device-primary-actions`);
         const button = row.getByRole('button', { name: 'Settings for iPhone fixture', exact: true });
         await button.waitFor();
+        // The card has a Notifications button only for an iPhone that sends its notifications here.
+        await page.route('**/api/notifications/summary', (route) =>
+            route.fulfill({ status: 200, json: { sources: [{ id: UDID, name: 'iPhone fixture' }], unread: 0, unreadBySource: {} } }));
+        await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+        await row.locator('.device-notification-history').waitFor();
         const geometry = await row.evaluate((el) => ({
             rowOverflow: el.scrollWidth > el.clientWidth + 1,
             pageOverflow: document.documentElement.scrollWidth > innerWidth + 1,
@@ -385,7 +390,7 @@ async function narrowFlow(browser) {
         }));
         assert.equal(geometry.rowOverflow, false, 'the action row does not overflow at 320px');
         assert.equal(geometry.pageOverflow, false, 'no horizontal page scroll at 320px');
-        assert.equal(geometry.children.length, 3, 'Open screen, Settings and Notifications');
+        assert.equal(geometry.children.length, 3, 'Open screen, Notifications and Settings');
         for (const box of geometry.children) {
             assert.ok(box.left >= -1 && box.right <= 321, `every action stays inside the viewport: ${JSON.stringify(box)}`);
             assert.ok(box.height >= 44, 'actions keep a 44px touch target');

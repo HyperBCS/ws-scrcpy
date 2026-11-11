@@ -28,6 +28,7 @@ import { isToolAction } from './ToolView';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { hasRunningStreamService } from '../state/streamService';
 import { notificationSummary } from '../state/notifications';
+import { isNotificationSource } from '../state/notificationsTarget';
 import { UnreadBadge } from './NotificationHistory';
 import { DeviceIcon } from '../ui/DeviceIcon';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
@@ -465,12 +466,17 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         Settings
                     </button>
                 )}
-                <a
-                    class="ui-button device-notification-history"
-                    href={`#!${new URLSearchParams({ action: 'notifications', source: descriptor.udid })}`}
-                >
-                    Notifications <UnreadBadge count={notificationSummary.value.unreadBySource[descriptor.udid] || 0} />
-                </a>
+                {/* Only for an iPhone that sends its notifications here. Any other iPhone has no
+                    inbox to open; setup is reached from Notifications in the page header. */}
+                {isNotificationSource(notificationSummary.value, descriptor.udid) && (
+                    <a
+                        class="ui-button device-notification-history"
+                        href={`#!${new URLSearchParams({ action: 'notifications', source: descriptor.udid })}`}
+                    >
+                        Notifications{' '}
+                        <UnreadBadge count={notificationSummary.value.unreadBySource[descriptor.udid] || 0} />
+                    </a>
+                )}
             </div>
             <AnimatedDetails class="device-details">
                 <summary>Connection &amp; tools</summary>

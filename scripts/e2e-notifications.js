@@ -566,15 +566,16 @@ async function perDeviceHistory(browser) {
         await f.page.getByRole('link', { name: '← Devices', exact: true }).click();
         await f.page.getByRole('heading', { name: 'Devices', exact: true }).waitFor();
         await until(() => f.summaryPolls > 0, 'Devices loads the lightweight unread summary');
-        assert.equal(await f.page.locator('.device-list-header a[href*=notifications]').count(), 0, 'Devices has no global Notifications link');
+        const headerLink = f.page.locator('.device-list-header a[href*=notifications]');
+        assert.equal(await headerLink.getAttribute('href'), '#!action=notifications', 'Devices has a Notifications link that does not depend on a card');
+        assert.equal(await headerLink.locator('.notification-unread-count').textContent(), '1', 'the header shows the total unread count');
         const card = id => f.page.locator(`article.device[data-device-key$=":${id}"]`);
         await card('phone-b').locator('.device-notification-history').waitFor();
         assert.equal(await card('phone-a').locator('.notification-unread-count').count(), 0);
         assert.equal(await card('phone-b').locator('.notification-unread-count').textContent(), '1');
-        await card('phone-c').locator('.device-notification-history').click();
-        await f.page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
-        assert.equal(await f.page.locator('#notification-history-heading').count(), 0, 'an unconfigured device opens setup, never another phone’s feed');
-        await f.page.getByRole('link', { name: '← Devices', exact: true }).click();
+        // An iPhone that does not send notifications here has no inbox, so its card has no button.
+        await card('phone-c').waitFor();
+        assert.equal(await card('phone-c').locator('.device-notification-history').count(), 0, 'an unconfigured device offers no inbox');
         await card('phone-b').locator('.device-notification-history').click();
         await f.page.locator('#notification-history-heading').waitFor();
         assert.equal(await f.page.getByRole('combobox', { name: 'Device', exact: true }).inputValue(), 'phone-b');

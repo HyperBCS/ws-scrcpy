@@ -15,6 +15,7 @@ import {
     streamNotice,
 } from '../state/stream';
 import { deviceName, findDeviceByUdid } from '../state/devices';
+import { NotificationsLink } from '../ui/NotificationsLink';
 import { goToDeviceList } from '../state/router';
 import { FloatingToolbar } from './FloatingToolbar';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
@@ -133,6 +134,7 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                         {statusText}
                     </span>
                 </div>
+                <NotificationsLink compact udid={params.udid} />
                 <button
                     type="button"
                     class="stream-header-switch"

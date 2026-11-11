@@ -10,6 +10,7 @@ import { goToDeviceList } from '../state/router';
 import { closeAllSheets, openSheet } from '../state/stream';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
+import { NotificationsLink } from '../ui/NotificationsLink';
 import '../../style/views/StreamView.css';
 import '../../style/views/ToolView.css';
 
@@ -198,6 +199,7 @@ export function ToolView({ params }: { params: URLSearchParams }) {
                     <strong>{entry ? deviceName(entry) : udid}</strong>
                     <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
                 </div>
+                <NotificationsLink compact />
                 <button type="button" class="stream-header-switch" onClick={() => openSheet('devices')}>
                     Switch
                 </button>

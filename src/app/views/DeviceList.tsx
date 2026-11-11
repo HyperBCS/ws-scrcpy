@@ -3,6 +3,7 @@ import { devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/de
 import { hostsError, hostsStatus } from '../state/hosts';
 import { DeviceCard } from './DeviceCard';
 import { DeviceIcon } from '../ui/DeviceIcon';
+import { NotificationsLink } from '../ui/NotificationsLink';
 import '../../style/views/DeviceList.css';
 
 interface HostGroup {
@@ -58,6 +59,7 @@ export function DeviceList() {
                               ? 'No devices available'
                               : 'Waiting for devices'}
                     </div>
+                    <NotificationsLink />
                 </header>
 
                 {!entries.length ? (

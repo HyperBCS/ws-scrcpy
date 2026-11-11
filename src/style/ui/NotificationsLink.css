@@ -1,0 +1,63 @@
+.notifications-link,
+.notifications-link:visited {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    box-sizing: border-box;
+    min-width: 44px;
+    height: 44px;
+    padding: 0 0.7rem;
+    border: 1px solid var(--device-border-color);
+    border-radius: var(--radius-control);
+    background: var(--device-list-default-color);
+    color: var(--text-color);
+    font: 600 0.9rem/1 var(--font-stack);
+    text-decoration: none;
+    cursor: pointer;
+}
+.notifications-link svg {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+}
+/* The stream and tool header: the same surface as its Back button, with the count on the corner. */
+.notifications-link.compact,
+.notifications-link.compact:visited {
+    width: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: 9px;
+    background: var(--header-bg-color);
+}
+.notifications-link.compact .notification-unread-count {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+}
+/* A 320px header has no room for it beside the device name, its status lines and Switch. The
+   Devices header keeps the link at every width. */
+@media (max-width: 359px) {
+    .notifications-link.compact {
+        display: none;
+    }
+}
+@media (max-width: 479px) {
+    .notifications-link:not(.compact) {
+        padding: 0 0.6rem;
+    }
+    .notifications-link-label {
+        display: none;
+    }
+}
+@media (hover: hover) {
+    .notifications-link:hover {
+        border-color: var(--button-text-color);
+    }
+}
