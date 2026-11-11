@@ -22,6 +22,25 @@ const { AdbUtils } = require('../src/server/goog-device/AdbUtils');
 const { AdbExtended } = require('../src/server/goog-device/adb');
 const { ExtendedClient } = require('../src/server/goog-device/adb/ExtendedClient');
 const { ExtendedSync } = require('../src/server/goog-device/adb/ExtendedSync');
+const { Device } = require('../src/server/goog-device/Device');
+const { ControlCenter: AndroidControlCenter } = require('../src/server/goog-device/services/ControlCenter');
+const { DeviceTracker: AndroidDeviceTracker } = require('../src/server/goog-device/mw/DeviceTracker');
+
+// Nothing in this file may reach a real adb server. Every Device and ControlCenter built here
+// gets this client in place of adbkit's, and it refuses every call. Tests that need adb to
+// answer replace `createClient` themselves; when they end, this one is back.
+const noAdb = new Proxy(
+    {},
+    {
+        get: (_target, name) => {
+            if (name === 'then') return undefined;
+            return () => {
+                throw Error(`adb must not be used in this test (${String(name)})`);
+            };
+        },
+    },
+);
+AdbExtended.createClient = () => noAdb;
 
 after(() => {
     fs.rmSync(temporary, { recursive: true, force: true });
@@ -260,4 +279,137 @@ test('a failed forward is reported and does not block the next one', async (t) =
     failing.forwardNoRebind = forwardNoRebind;
     assert.equal(await AdbUtils.forward('phone-b', 'localabstract:scrcpy_0000aaaa'), 8000);
     assert.equal(adb.forwards.length, 1);
+});
+
+// A browser socket as a middleware sees it.
+class BrowserSocket extends EventEmitter {
+    OPEN = 1;
+    CLOSING = 2;
+    CLOSED = 3;
+    readyState = 1;
+    sent = [];
+    closes = [];
+    addEventListener(name, listener) {
+        this.on(name, listener);
+    }
+    removeEventListener(name, listener) {
+        this.off(name, listener);
+    }
+    send(data) {
+        assert.equal(this.readyState, this.OPEN, 'never send after close');
+        this.sent.push(data);
+    }
+    close(code = 1000, reason = '') {
+        if (this.readyState === this.CLOSED) return;
+        this.closes.push({ code, reason });
+        this.readyState = this.CLOSED;
+        this.emit('close', { code, reason });
+    }
+    messages() {
+        return this.sent.filter((item) => typeof item === 'string').map((item) => JSON.parse(item));
+    }
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// The adb server as ControlCenter sees it. No Device here ever reaches a real adb: the state
+// change that would start its polling is replaced.
+function trackerFixture(t) {
+    const adb = { down: false, devices: [], trackers: [], opened: 0 };
+    t.mock.method(Device.prototype, 'setState', function (state) {
+        this.descriptor.state = state;
+        this.connected = state === 'device';
+        this.emit('update', this);
+    });
+    // An open device list switches new devices to fast polling, which would read from adb.
+    t.mock.method(Device.prototype, 'setRuntimeStatePollActive', () => {});
+    const center = new AndroidControlCenter();
+    center.waitAfterError = 5;
+    center.client = {
+        trackDevices: async () => {
+            adb.opened++;
+            await tick();
+            if (adb.down) throw Error('connect ECONNREFUSED 127.0.0.1:5037');
+            const tracker = new EventEmitter();
+            tracker.ended = false;
+            tracker.end = () => (tracker.ended = true);
+            adb.trackers.push(tracker);
+            return tracker;
+        },
+        listDevices: async () => {
+            await tick();
+            if (adb.down) throw Error('connect ECONNREFUSED 127.0.0.1:5037');
+            return adb.devices.map((id) => ({ id, type: 'device' }));
+        },
+    };
+    t.after(() => center.release());
+    return { adb, center };
+}
+
+test('a phone that is gone after the adb tracker restarts becomes disconnected', async (t) => {
+    const { adb, center } = trackerFixture(t);
+    adb.devices = ['usb-phone', 'wifi-phone'];
+    await center.start();
+    assert.equal(center.getDevice('usb-phone').descriptor.state, 'device');
+    assert.equal(center.getDevice('wifi-phone').descriptor.state, 'device');
+    // adb restarts. The new tracker never saw the Wi-Fi phone, so it cannot report it removed.
+    adb.devices = ['usb-phone'];
+    adb.trackers[0].emit('end');
+    await wait(40);
+    assert.equal(adb.trackers.length, 2, 'the tracker was restarted');
+    assert.equal(adb.trackers[0].ended, true);
+    assert.equal(center.getDevice('wifi-phone').descriptor.state, 'disconnected');
+    assert.equal(center.getDevice('wifi-phone').isConnected(), false);
+    assert.equal(center.getDevice('usb-phone').descriptor.state, 'device');
+});
+
+test('callers that start the tracker together open one adb tracker', async (t) => {
+    const { adb, center } = trackerFixture(t);
+    await Promise.all([center.init(), center.init(), center.init()]);
+    assert.equal(adb.opened, 1);
+    assert.equal(adb.trackers.length, 1);
+    assert.equal(adb.trackers[0].listenerCount('changeSet'), 1);
+    await center.init();
+    assert.equal(adb.opened, 1, 'a running tracker is not started again');
+});
+
+test('a device list opened while adb is down receives the phones when adb returns', async (t) => {
+    const { adb, center } = trackerFixture(t);
+    t.mock.method(AndroidControlCenter, 'getInstance', () => center);
+    adb.down = true;
+    await center.start();
+    assert.equal(center.isAdbAvailable(), false);
+
+    const socket = new BrowserSocket();
+    const list = new AndroidDeviceTracker(socket);
+    assert.deepEqual(
+        socket.messages().map((message) => message.type),
+        ['devicelist', 'tracker_status'],
+        'the list answers at once',
+    );
+    assert.deepEqual(socket.messages()[0].data.list, []);
+    assert.equal(socket.messages()[1].data.available, false, 'and says that adb is unavailable');
+
+    adb.down = false;
+    adb.devices = ['usb-phone'];
+    await wait(80);
+    // The first update of a new device is sent before the list can hear it; any later one is.
+    center.getDevice('usb-phone').emit('update', center.getDevice('usb-phone'));
+    const later = socket.messages().slice(2);
+    assert.ok(
+        later.some((message) => message.type === 'device' && message.data.device.udid === 'usb-phone'),
+        'the phone reaches the list that was already open',
+    );
+    assert.equal(later.filter((message) => message.type === 'tracker_status').at(-1).data.available, true);
+    assert.equal(adb.trackers.length, 1, 'recovery opened one tracker');
+
+    socket.close();
+    list.release();
+    adb.trackers[0].emit('end');
+    await tick();
+    assert.equal(
+        socket.messages().filter((message) => message.type === 'tracker_status').length,
+        2,
+        'a closed list is no longer told about adb',
+    );
 });

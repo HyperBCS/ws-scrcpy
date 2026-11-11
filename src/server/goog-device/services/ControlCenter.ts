@@ -18,6 +18,10 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     private static instance?: ControlCenter;
 
     private initialized = false;
+    private initializing?: Promise<void>;
+    // False from the moment the adb device tracker fails until it is running again.
+    private adbAvailable = true;
+    private adbListeners: Set<(available: boolean) => void> = new Set();
     private released = false;
     private client: AdbKitClient = AdbExtended.createClient();
     private tracker?: Tracker;
@@ -46,7 +50,11 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     }
 
     private restartTracker = (): void => {
-        if (this.released || this.restartTimeoutId) {
+        if (this.released) {
+            return;
+        }
+        this.setAdbAvailable(false);
+        if (this.restartTimeoutId) {
             return;
         }
         console.log(`Device tracker is down. Will try to restart in ${this.waitAfterError}ms`);
@@ -104,18 +112,63 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
         }
     }
 
-    public async init(): Promise<void> {
+    /** Callers that arrive while a start is in flight share it, so only one adb tracker opens. */
+    public init(): Promise<void> {
         if (this.initialized || this.released) {
-            return;
+            return Promise.resolve();
         }
-        this.tracker = await this.startTracker();
+        if (!this.initializing) {
+            this.initializing = this.initNow().finally(() => {
+                this.initializing = undefined;
+            });
+        }
+        return this.initializing;
+    }
+
+    private async initNow(): Promise<void> {
+        const tracker = await this.startTracker();
+        this.tracker = tracker;
         const list = await this.client.listDevices();
         if (this.released) return;
+        if (this.tracker !== tracker) {
+            // The tracker failed and was stopped while the list was being read.
+            throw new Error('Device tracker stopped');
+        }
         list.forEach((device) => {
             const { id, type } = device;
             this.handleConnected(id, type);
         });
+        // A new adb tracker reports only what it sees from now on. A phone that left while the
+        // old one was down is never reported as removed, so it is marked here.
+        const present = new Set(list.map((device) => device.id));
+        this.deviceMap.forEach((_device, udid) => {
+            if (!present.has(udid)) {
+                this.handleConnected(udid, DeviceState.DISCONNECTED);
+            }
+        });
         this.initialized = true;
+        this.setAdbAvailable(true);
+    }
+
+    /** Whether the adb device tracker is running. Device lists show a notice while it is not. */
+    public isAdbAvailable(): boolean {
+        return this.adbAvailable;
+    }
+
+    /** Calls `listener` on every change. Returns the function that stops it. */
+    public onAdbAvailability(listener: (available: boolean) => void): () => void {
+        this.adbListeners.add(listener);
+        return () => {
+            this.adbListeners.delete(listener);
+        };
+    }
+
+    private setAdbAvailable(available: boolean): void {
+        if (this.adbAvailable === available) {
+            return;
+        }
+        this.adbAvailable = available;
+        this.adbListeners.forEach((listener) => listener(available));
     }
 
     private async startTracker(): Promise<Tracker> {
@@ -203,6 +256,7 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
         this.deviceMap.clear();
         this.descriptors.clear();
         this.trackerClients = 0;
+        this.adbListeners.clear();
     }
 
     public async runCommand(command: ControlCenterCommand): Promise<string | void> {
