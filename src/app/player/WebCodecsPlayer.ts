@@ -283,6 +283,10 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 optimizeForLatency: true,
             } as VideoDecoderConfig;
             this.decoder.configure(config);
+            // New parameter sets replace anything still waiting for a keyframe, such as the
+            // cached copy a rebuilt decoder was primed with.
+            this.buffer = undefined;
+            this.bufferedPPS = false;
             this.bufferedSPS = true;
             this.addToBuffer(data);
             this.hadIDR = false;

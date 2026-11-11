@@ -422,6 +422,17 @@ test('a new SPS mid-stream still reconfigures the decoder and replaces the cache
     assert.equal(decoders[1].configs[0].codec, 'avc1.42C00B', 'recovery uses the latest SPS');
     player.pushFrame(packet(IDR));
     assert.deepEqual(Buffer.from(decoders[1].chunks[0].data), Buffer.concat([rotated, IDR]));
+
+    // RESET_VIDEO after a reset: the encoder's new parameter sets replace the cached copy.
+    decoders[1].fail();
+    player.pushFrame(packet(CONFIG));
+    player.pushFrame(packet(IDR));
+    assert.equal(decoders[2].configs.at(-1).codec, 'avc1.42C00A');
+    assert.deepEqual(
+        Buffer.from(decoders[2].chunks[0].data),
+        Buffer.concat([CONFIG, IDR]),
+        'one set of parameter sets in front of the keyframe, not the old and the new',
+    );
 });
 
 test('the H264 Converter player reports a media error and starts again at the next SPS', (t) => {
