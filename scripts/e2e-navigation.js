@@ -140,7 +140,7 @@ async function backFromEveryPage(browser, viewport) {
             shown: (page) => page.locator('.stream-view').waitFor(),
         },
         {
-            name: 'Files', route: `action=list-files&udid=${PIXEL}`,
+            name: 'Files', route: `action=device&udid=${PIXEL}&view=files`,
             open: (page) => card(page, `android:${PIXEL}`).getByRole('link', { name: 'Files', exact: true }).click(),
             shown: (page) => page.locator('.tool-view-list-files').waitFor(),
         },
@@ -335,8 +335,8 @@ async function linksOpenOnce(browser) {
     for (const [link, address, title, selector, channel] of [
         [`action=shell&udid=${PIXEL}`, `#!action=device&udid=${PIXEL}&view=shell`, 'Google Pixel 9 · Shell · ws-scrcpy', '.tool-view-shell', 'SHEL'],
         [`action=device&udid=${PIXEL}&view=shell`, `#!action=device&udid=${PIXEL}&view=shell`, 'Google Pixel 9 · Shell · ws-scrcpy', '.tool-view-shell', 'SHEL'],
-        [`action=list-files&udid=${PIXEL}&path=sdcard`, `#!action=list-files&udid=${PIXEL}&path=`, 'Google Pixel 9 · Files · ws-scrcpy', '.tool-view-list-files', 'FSLS'],
-        [`action=device&udid=${PIXEL}&view=files&path=sdcard`, `#!action=list-files&udid=${PIXEL}&path=`, 'Google Pixel 9 · Files · ws-scrcpy', '.tool-view-list-files', 'FSLS'],
+        [`action=list-files&udid=${PIXEL}&path=sdcard`, `#!action=device&udid=${PIXEL}&view=files&path=`, 'Google Pixel 9 · Files · ws-scrcpy', '.tool-view-list-files', 'FSLS'],
+        [`action=device&udid=${PIXEL}&view=files&path=sdcard`, `#!action=device&udid=${PIXEL}&view=files&path=`, 'Google Pixel 9 · Files · ws-scrcpy', '.tool-view-list-files', 'FSLS'],
         [`action=notifications&source=${IPHONE}&notification=history-key`, `#!action=notifications&source=${IPHONE}&notification=history-key`, 'Notifications · ws-scrcpy', '.notifications-page'],
         ['action=', '#!action=', 'Devices · ws-scrcpy', '#devices'],
     ]) {

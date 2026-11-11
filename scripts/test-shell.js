@@ -242,3 +242,165 @@ test('letters and the punctuation with a control code map as a Ctrl key would', 
     assert.equal(withControl('?'), '\x7f');
     assert.equal(withControl('é'), 'é');
 });
+
+// ------------------------------------------------------------------ the terminal while its tab is hidden
+//
+// The phone's page keeps Shell mounted while it shows another tab and tells it with setActive.
+// xterm, the page and the socket are stand-ins that record what is done to them.
+
+/** Opens a terminal 800 px wide on a desktop (`fine`) or on a phone. Ten pixels are one column. */
+function openTerminal(t, fine = true) {
+    const made = {};
+    class Terminal {
+        constructor(options) {
+            Object.assign(this, { options: { ...options }, cols: 80, rows: 24, written: [], focused: 0, blurred: 0 });
+            made.term = this;
+        }
+        loadAddon(addon) {
+            addon.term = this;
+        }
+        open() {}
+        onData() {}
+        onBinary() {}
+        onResize(listener) {
+            this.resized = listener;
+        }
+        focus() {
+            this.focused++;
+        }
+        blur() {
+            this.blurred++;
+        }
+        write(data) {
+            this.written.push(data);
+        }
+        dispose() {}
+    }
+    class FitAddon {
+        constructor() {
+            this.fits = 0;
+            made.fit = this;
+        }
+        fit() {
+            this.fits++;
+            const cols = Math.floor(made.container.clientWidth / 10);
+            if (cols !== this.term.cols) {
+                this.term.cols = cols;
+                this.term.resized();
+            }
+        }
+    }
+    const stub = (name, exports) => {
+        const id = require.resolve(name);
+        const before = require.cache[id];
+        require.cache[id] = { id, filename: id, loaded: true, exports };
+        t.after(() => (before ? (require.cache[id] = before) : delete require.cache[id]));
+    };
+    stub('@xterm/xterm', { Terminal });
+    stub('@xterm/addon-fit', { FitAddon });
+    require.extensions['.css'] = () => {};
+    const timers = new Map();
+    const globals = {
+        window: {
+            matchMedia: () => ({ matches: fine }),
+            setTimeout: (run) => timers.set(timers.size + 1, run).size,
+            clearTimeout: (id) => timers.delete(id),
+        },
+        document: {
+            createElement: () => (made.container = { clientWidth: 800, clientHeight: 400, remove: () => undefined }),
+        },
+        location: new URL('http://phones.test:8000/'),
+        ResizeObserver: class {
+            constructor(listener) {
+                made.observed = listener;
+            }
+            observe() {}
+            disconnect() {}
+        },
+    };
+    const before = Object.fromEntries(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(global, key)]));
+    Object.entries(globals).forEach(([key, value]) => Object.defineProperty(global, key, { value, configurable: true, writable: true }));
+    const socket = { OPEN: 1, readyState: 1, sent: [], closed: 0, send: (data) => socket.sent.push(data), close: () => socket.closed++ };
+    const { ManagerClient } = require('../src/app/client/ManagerClient');
+    const { ShellClient } = require('../src/app/googDevice/client/ShellClient');
+    t.mock.method(ManagerClient.prototype, 'openNewConnection', function () {
+        this.ws = socket;
+        return socket;
+    });
+    const client = ShellClient.start({ action: 'shell', udid: 'fixture' }, { appendChild: () => undefined });
+    client.onSocketOpen();
+    t.after(() => {
+        client.stop();
+        delete require.cache[require.resolve('../src/app/googDevice/client/ShellClient')];
+        Object.entries(before).forEach(([key, descriptor]) =>
+            descriptor ? Object.defineProperty(global, key, descriptor) : delete global[key],
+        );
+    });
+    /** Runs the timers that are due and returns the messages sent as binary frames. */
+    const sizesSent = () => {
+        [...timers.values()].forEach((run) => run());
+        timers.clear();
+        return socket.sent.filter((data) => typeof data !== 'string').map((data) => JSON.parse(Buffer.from(data)).data);
+    };
+    return { client, socket, timers, sizesSent, ...made };
+}
+
+test('a hidden Shell keeps its session, takes no focus and is not fitted until it is shown again', (t) => {
+    const { client, socket, term, fit, container, observed, timers, sizesSent } = openTerminal(t);
+    assert.deepEqual(JSON.parse(socket.sent[0]).data, { type: 'start', rows: 24, cols: 80, udid: 'fixture' });
+    assert.equal(term.focused, 1, 'a desktop focuses the terminal on open');
+    const fits = fit.fits;
+
+    // A resize is waiting to be sent when the tab is left: it is dropped with the tab.
+    term.resized();
+    assert.equal(timers.size, 1);
+    client.setActive(false);
+    assert.equal(timers.size, 0, 'no size is sent from a hidden terminal');
+    assert.equal(term.blurred, 1, 'the terminal gives up the keyboard');
+
+    // The page hides the terminal and the window changes size meanwhile.
+    container.clientWidth = 600;
+    observed();
+    client.focus();
+    assert.equal(fit.fits, fits, 'not fitted while hidden');
+    assert.equal(term.focused, 1, 'no focus while hidden');
+    client.onSocketMessage({ data: 'still running\r\n' });
+    assert.deepEqual(term.written, ['still running\r\n'], 'output is still written');
+    assert.equal(socket.closed, 0, 'the session stays open');
+    assert.equal(client.hasConnection(), true);
+    assert.equal(client.sessionEnded(), false);
+    assert.deepEqual(sizesSent(), []);
+
+    client.setActive(true);
+    assert.equal(fit.fits, fits + 1, 'fitted to the size it has now');
+    assert.equal(term.focused, 2, 'and focused as on open');
+    assert.deepEqual(sizesSent(), [{ type: 'resize', cols: 60, rows: 24 }], 'the phone is told the new size');
+    assert.equal(socket.sent.filter((data) => typeof data === 'string').length, 1, 'in the same session: no second start');
+    client.setActive(true);
+    assert.equal(fit.fits, fits + 1, 'a repeated call does nothing');
+});
+
+test('a size that was waiting when the tab was left is sent when it is shown again', (t) => {
+    const { client, container, observed, timers, sizesSent } = openTerminal(t);
+    // The window narrows just before the tab is left: the terminal is fitted, the size waits.
+    container.clientWidth = 600;
+    observed();
+    assert.equal(timers.size, 1);
+    client.setActive(false);
+    assert.deepEqual(sizesSent(), []);
+    // Shown again at the same width: the fit changes nothing, and the phone still has 80 columns.
+    client.setActive(true);
+    const resized = [{ type: 'resize', cols: 60, rows: 24 }];
+    assert.deepEqual(sizesSent(), resized);
+    client.setActive(false);
+    client.setActive(true);
+    assert.deepEqual(sizesSent(), resized, 'a size the phone already has is not sent again');
+});
+
+test('showing Shell again on a phone does not open the keyboard', (t) => {
+    const { client, term } = openTerminal(t, false);
+    assert.equal(term.focused, 0, 'opening it does not either');
+    client.setActive(false);
+    client.setActive(true);
+    assert.equal(term.focused, 0);
+});
