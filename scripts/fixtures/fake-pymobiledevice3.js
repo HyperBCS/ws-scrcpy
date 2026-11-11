@@ -130,8 +130,7 @@ if (command === 'lockstate.py') {
     const captions = LOCK_SCENES[process.env.FAKE_LOCK || 'locked'] || LOCK_SCENES.locked;
     const decide = (caption) => {
         const lowered = caption.toLowerCase();
-        if (lowered.includes('locked') && !lowered.includes('unlocked')) return true;
-        if (lowered.includes('enter passcode')) return true;
+        if (lowered === 'locked' || lowered === 'enter passcode') return true;
         if (lowered === 'unlocked') return false;
         return null;
     };
