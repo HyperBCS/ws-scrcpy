@@ -1,4 +1,3 @@
-/* eslint-disable */
 const { chromium } = require('/home/brandon/ws-scrcpy/node_modules/playwright');
 const BASE = process.argv[2] || 'http://127.0.0.1:8000/';
 

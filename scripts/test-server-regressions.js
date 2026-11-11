@@ -4,7 +4,6 @@ const assert = require('node:assert/strict');
 const { test, after } = require('node:test');
 const { EventEmitter, once } = require('node:events');
 const { Socket, createServer } = require('node:net');
-const { PassThrough } = require('node:stream');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');

@@ -1,4 +1,3 @@
-/* eslint-disable */
 // E2E_OUT=/tmp/ws-scrcpy-confirm node scripts/test-browser.js confirm
 // The shared confirm prompt (src/app/ui/ConfirmAction.tsx) on every destructive or phone-side
 // action outside the notifications page, and the shield under the floating controls panel.

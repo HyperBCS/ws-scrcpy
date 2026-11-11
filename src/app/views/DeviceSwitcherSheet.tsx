@@ -2,10 +2,8 @@ import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/devices';
 import { activeStream, deviceSwitcherOpen, activeCoreDeviceStream } from '../state/stream';
-import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
-import { buildInterfaceOptions, pickDefaultInterfaceName } from '../googDevice/client/deviceInterfaces';
-import Util from '../Util';
+import { streamSocketUrl } from '../googDevice/client/deviceInterfaces';
 import { ACTION } from '../../common/Action';
 import { buildLinkHref, isLocalLink } from '../state/links';
 import { getDeviceStatusInfo } from '../state/deviceStatus';
@@ -45,20 +43,6 @@ export function DeviceSwitcherSheet({ currentDeviceKey, onSelectDevice }: Device
                 deviceName(a).localeCompare(deviceName(b)),
         );
 
-    const getSelection = (entry: DeviceEntry) => {
-        if (entry.params.type === 'ios') {
-            // iOS streams have one route (the CoreDevice proxy), no adb interfaces to pick from.
-            return undefined;
-        }
-        const descriptor = entry.descriptor as GoogDeviceDescriptor;
-        const options = buildInterfaceOptions(descriptor, entry.params);
-        const selectedName = pickDefaultInterfaceName(
-            descriptor,
-            `${entry.trackerId}_${Util.escapeUdid(descriptor.udid)}`,
-        );
-        return options.find((option) => option.name === selectedName) ?? options[options.length - 1];
-    };
-
     const onSelect = (entry: DeviceEntry) => {
         if (onSelectDevice) {
             deviceSwitcherOpen.value = false;
@@ -75,13 +59,12 @@ export function DeviceSwitcherSheet({ currentDeviceKey, onSelectDevice }: Device
             }
             return;
         }
-        const selected = getSelection(entry);
         const players = StreamClientScrcpy.getPlayers();
         const player =
             players.find((candidate) => candidate.playerCodeName === session?.params.player) ??
             players.find((candidate) => candidate.playerCodeName === 'webcodecs') ??
             players[0];
-        if (!selected || !player) {
+        if (!player) {
             return;
         }
         const href = buildLinkHref(
@@ -89,7 +72,7 @@ export function DeviceSwitcherSheet({ currentDeviceKey, onSelectDevice }: Device
                 action: ACTION.STREAM_SCRCPY,
                 udid: entry.descriptor.udid,
                 player: player.playerCodeName,
-                ws: selected.url,
+                ws: streamSocketUrl(entry.descriptor.udid, entry.params),
                 fitToScreen: 'true',
             },
             entry.params,
@@ -141,12 +124,11 @@ export function DeviceSwitcherSheet({ currentDeviceKey, onSelectDevice }: Device
                 tabIndex={0}
             >
                 {visible.map((entry) => {
-                    const selected = getSelection(entry);
                     const isCurrent = onSelectDevice
                         ? entry.key === currentDeviceKey
                         : entry.params.type === 'ios'
                           ? entry.descriptor.udid === activeCoreDeviceStream.value?.params.udid
-                          : entry.descriptor.udid === session?.params.udid && selected?.url === session.params.ws;
+                          : entry.descriptor.udid === session?.params.udid;
                     const available = isDeviceAvailable(entry);
                     const info = getDeviceStatusInfo(entry);
                     return (

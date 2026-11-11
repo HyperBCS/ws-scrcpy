@@ -19,6 +19,18 @@ export class StreamReceiverScrcpy extends StreamReceiver<ParamsStreamScrcpy> {
         };
     }
     protected buildDirectWebSocketUrl(): URL {
-        return new URL((this.params as ParamsStreamScrcpy).ws);
+        const { ws, useProxy } = this.params as ParamsStreamScrcpy;
+        const url = new URL(ws);
+        if (useProxy) {
+            // Wrapped in this server's proxy, which connects to configured hosts only.
+            return url;
+        }
+        // `ws` comes from the link. Control input, and the lock-screen code with it, goes down
+        // this socket, so the link may not point it at another host.
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        if (url.protocol !== protocol || url.host !== location.host || url.username || url.password) {
+            throw Error('This link connects to another server. Open the device from the Devices page.');
+        }
+        return url;
     }
 }

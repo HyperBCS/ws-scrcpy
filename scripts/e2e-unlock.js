@@ -1,4 +1,3 @@
-/* eslint-disable */
 // BASE=http://127.0.0.1:8000 node scripts/e2e-unlock.js
 // All sockets and credentials are fixtures. Never contacts, locks, or unlocks a real device.
 const assert = require('node:assert/strict');

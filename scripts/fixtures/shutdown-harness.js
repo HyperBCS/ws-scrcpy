@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable */
 // A stand-in for src/server/index.ts, for scripts/test-coredevice.js: one fake iPhone session, the
 // real CoreDeviceRunner and the real Shutdown handlers, ended the way the mode says.
 //   throw   an uncaught exception

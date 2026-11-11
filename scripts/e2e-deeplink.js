@@ -1,4 +1,3 @@
-/* eslint-disable */
 /**
  * Reloading a stream URL must behave the same as navigating to it from the device list. The
  * device list is what used to start the host tracker, so a direct load left the device store

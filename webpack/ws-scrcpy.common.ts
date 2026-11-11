@@ -110,7 +110,8 @@ const front: webpack.Configuration = {
             inject: 'head',
             hash: true,
         }),
-        new MiniCssExtractPlugin(),
+        // The hash query HtmlWebpackPlugin adds covers main.css; lazy styles need their own.
+        new MiniCssExtractPlugin({ chunkFilename: '[name].[contenthash].css' }),
         new webpack.ProvidePlugin({
             Buffer: ['buffer', 'Buffer'],
         }),
@@ -140,7 +141,13 @@ const front: webpack.Configuration = {
     },
     output: {
         filename: 'bundle.js',
+        // A page left open across a deploy still has the old runtime. With a fixed name it loaded
+        // the new build's chunk into old code; with the hash in the name the request fails cleanly.
+        chunkFilename: '[name].[contenthash].js',
         path: CLIENT_DIST_PATH,
+        // Chunks of earlier builds, development ones included, are not served for ever. Only this
+        // directory is cleaned: the server keeps its data next to dist/index.js by default.
+        clean: true,
     },
 };
 

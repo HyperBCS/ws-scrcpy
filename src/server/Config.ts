@@ -28,6 +28,7 @@ export class Config {
             announceApplTracker: false,
             server,
             remoteHostList: [],
+            allowedHosts: [],
         };
         /// #if INCLUDE_GOOG
         defaultConfig.runGoogTracker = true;
@@ -156,6 +157,12 @@ export class Config {
 
     public get announceLocalApplTracker(): boolean {
         return this.fullConfig.announceApplTracker;
+    }
+
+    /** Extra host names accepted in the Host header (see requestOrigin.ts). */
+    public get allowedHosts(): string[] {
+        const list = this.fullConfig.allowedHosts;
+        return Array.isArray(list) ? list.filter((item) => typeof item === 'string') : [];
     }
 
     public get servers(): ServerItem[] {

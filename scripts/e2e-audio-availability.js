@@ -1,4 +1,3 @@
-/* eslint-disable */
 // BASE=http://127.0.0.1:8000 node scripts/e2e-audio-availability.js
 // Every WebSocket is mocked. Checks desktop Sound access and recovery when audio cannot load,
 // without reaching hardware, changing its capture settings, or requiring browser WebCodecs.

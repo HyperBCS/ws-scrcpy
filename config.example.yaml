@@ -19,6 +19,12 @@ server:
       certPath: /Users/example/ssl/STAR_example_com.crt
       keyPath: /Users/example/ssl/STAR_example_com.key
 
+# Extra host names the server answers to. A request whose Host header is not an IP address,
+# localhost, this machine's name, the WS_PUBLIC_URL host or one of these names gets 403.
+# The WS_ALLOWED_HOSTS environment variable (comma separated) adds to this list.
+allowedHosts:
+  - first-mobile-stand.example.com
+
 # Announce remote device trackers. The server doesn't check their availability.
 remoteHostList:
   - useProxy: true   # optional, default: false

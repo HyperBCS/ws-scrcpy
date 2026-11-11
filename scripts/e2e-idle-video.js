@@ -1,4 +1,3 @@
-/* eslint-disable */
 // BASE=http://127.0.0.1:8000 SERIAL=<optional udid> node scripts/e2e-idle-video.js
 // Mock mode sends config + exactly one red IDR and then stays silent. SERIAL additionally joins
 // the real device with both players; it never sends touches/keys or changes device state.

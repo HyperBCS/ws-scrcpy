@@ -1,4 +1,3 @@
-/* eslint-disable */
 // BASE=http://127.0.0.1:8000 SERIAL=<udid> node scripts/e2e-files-device.js
 //
 // The only Files test that touches real hardware. Every listing is compared against `adb ls`, and

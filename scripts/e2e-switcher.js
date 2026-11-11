@@ -1,4 +1,3 @@
-/* eslint-disable */
 // BASE=http://127.0.0.1:8000 E2E_OUT=/tmp/ws-scrcpy-switcher node scripts/e2e-switcher.js
 // All sockets are intercepted; native touch scrolls real device-row buttons without hardware input.
 const assert = require('node:assert/strict');

@@ -1,5 +1,4 @@
 const { settleMotion } = require('./ui-motion');
-/* eslint-disable */
 // BASE=http://127.0.0.1:8000 node scripts/e2e-ios-typing.js
 // The iOS "Type text" overlay against fixture sockets: every HID report is captured in the
 // browser, nothing reaches a phone. Covers the phone layout, live typing order, editing keys,

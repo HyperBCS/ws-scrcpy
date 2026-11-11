@@ -1,4 +1,3 @@
-/* eslint-disable */
 /** The "Type text" overlay must actually reach the device (it routes via UHID, not INJECT_TEXT). */
 const { chromium } = require('/home/brandon/ws-scrcpy/node_modules/playwright');
 

@@ -11,6 +11,7 @@ import {
 } from '../state/notifications';
 import { NotificationHistory, UnreadBadge } from './NotificationHistory';
 import { route } from '../state/router';
+import { privateAppUrl } from '../state/privateApp';
 import type { NotificationSource } from '../../common/Notification';
 import '../../style/views/Notifications.css';
 
@@ -193,9 +194,7 @@ export function NotificationsView() {
     const blockedPermission = supported && Notification.permission === 'denied';
     const enabled = !!subscription && !blockedPermission;
     const canEnable = supported && (!ios || installed) && workerLoaded && initialized && effectiveSources.length > 0;
-    const privateApp = new URL(status?.publicUrl || 'https://mini-nuc.tailea1801.ts.net/');
-    privateApp.hash = '!action=notifications';
-    const privateUrl = privateApp.href;
+    const privateUrl = privateAppUrl(status?.publicUrl);
 
     const refresh = (force = true): Promise<Status> => {
         if (!force && pendingStatus.current) return pendingStatus.current.promise;
@@ -631,10 +630,21 @@ export function NotificationsView() {
                                 </div>
                                 {!window.isSecureContext ? (
                                     <div class="notification-notice">
-                                        <p>Open the secure app with Tailscale connected to receive alerts here.</p>
-                                        <a class="ui-button" href={privateUrl}>
-                                            Open private app
-                                        </a>
+                                        {privateUrl ? (
+                                            <>
+                                                <p>
+                                                    Open the secure app with Tailscale connected to receive alerts here.
+                                                </p>
+                                                <a class="ui-button" href={privateUrl}>
+                                                    Open private app
+                                                </a>
+                                            </>
+                                        ) : (
+                                            <p>
+                                                Alerts need this app's secure (HTTPS) address.
+                                                {status && ' Set WS_PUBLIC_URL on the server to link to it from here.'}
+                                            </p>
+                                        )}
                                     </div>
                                 ) : ios && !installed ? (
                                     <div class="notification-notice">

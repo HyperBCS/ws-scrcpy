@@ -20,3 +20,8 @@ jobs:
       - run: npm run check
       - run: npm run test:browser
       - run: BROWSER=webkit npm run test:browser -- review-polish notifications motion
+      # The build flags in webpack/default.build.config.json. Each platform must also build on its own.
+      - name: Build without Android
+        run: echo '{"INCLUDE_GOOG": false}' > build.config.override.json && npm run dist
+      - name: Build without iPhone
+        run: echo '{"INCLUDE_APPL": false}' > build.config.override.json && npm run dist

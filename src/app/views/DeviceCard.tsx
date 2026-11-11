@@ -12,12 +12,7 @@ import { Tool, ToolEntry } from '../client/Tool';
 import { DeviceTracker as GoogDeviceTracker } from '../googDevice/client/DeviceTracker';
 import { DeviceTracker as ApplDeviceTracker } from '../applDevice/client/DeviceTracker';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
-import {
-    buildInterfaceOptions,
-    pickDefaultInterfaceName,
-    rememberSelectedInterface,
-} from '../googDevice/client/deviceInterfaces';
-import Util from '../Util';
+import { streamSocketUrl } from '../googDevice/client/deviceInterfaces';
 import { buildLinkHref, isLocalLink } from '../state/links';
 import { NavigateParams } from '../state/router';
 import { DeviceStatusInfo, getDeviceStatusInfo, isDeviceStarting, markStarting } from '../state/deviceStatus';
@@ -149,19 +144,17 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const isActive = descriptor.state === DeviceState.DEVICE;
     const hasPid = hasRunningStreamService(descriptor.pid);
     const isStarting = !hasPid && isDeviceStarting(entry.key);
-    const fullName = `${entry.trackerId}_${Util.escapeUdid(descriptor.udid)}`;
     const statusInfo = getDeviceStatusInfo(entry);
     const isAsleep = statusInfo.status === 'asleep';
-    const options = useMemo(() => buildInterfaceOptions(descriptor, params), [descriptor, params]);
-    const [selectedName, setSelectedName] = useState(() => pickDefaultInterfaceName(descriptor, fullName));
-    const selected = options.find((option) => option.name === selectedName) ?? options[options.length - 1];
+    // Every Android stream goes through the server, which reaches the phone over adb.
+    const socketUrl = useMemo(() => streamSocketUrl(descriptor.udid, params), [descriptor.udid, params]);
     const players = StreamClientScrcpy.getPlayers();
     const primaryPlayer = players.find((player) => player.playerCodeName === 'webcodecs') ?? players[0];
     const tools = collectTools(GoogDeviceTracker.tools, descriptor);
     const streamEntry = (player: typeof primaryPlayer, title: string): ToolEntry => ({
         title,
         action: ACTION.STREAM_SCRCPY,
-        params: { udid: descriptor.udid, player: player.playerCodeName, ws: selected?.url, fitToScreen: 'true' },
+        params: { udid: descriptor.udid, player: player.playerCodeName, ws: socketUrl, fitToScreen: 'true' },
     });
     const confirm = useArmedAction<'stop'>();
     const onAction = () => {
@@ -194,8 +187,8 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                 <div class="device-asleep-banner">
                     <span aria-hidden="true">☾</span>
                     <span>Screen is asleep.</span>
-                    {hasPid && selected && (
-                        <button class="wake-button" onClick={() => sendWakeKey(descriptor.udid, selected.url)}>
+                    {hasPid && (
+                        <button class="wake-button" onClick={() => sendWakeKey(descriptor.udid, socketUrl)}>
                             Wake
                         </button>
                     )}
@@ -203,7 +196,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             )}
             {!isActive && <UnavailableHint info={statusInfo} />}
             <div class="services device-primary-actions">
-                {isActive && selected && primaryPlayer ? (
+                {isActive && primaryPlayer ? (
                     <NavLink
                         className="desc-block stream primary"
                         params={params}
@@ -232,46 +225,21 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         <p class="device-serial" title="Device serial">
                             {descriptor.udid}
                         </p>
-                        <label class="device-interface">
+                        <div class="device-interface">
                             <span>Connection</span>
-                            <select
-                                aria-label={`Connection for ${deviceName(entry)}`}
-                                value={selected?.name}
-                                onChange={(event) => {
-                                    const name = event.currentTarget.value;
-                                    setSelectedName(name);
-                                    rememberSelectedInterface(fullName, name);
-                                }}
-                            >
-                                {options.map((option) => (
-                                    <option key={option.name} value={option.name}>
-                                        {option.name === 'proxy' ? 'Automatic · via server' : option.label}
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
+                            <span class="device-connection-value">Automatic · via server</span>
+                        </div>
                         <div class="services device-secondary-actions">
-                            <button
-                                class="action-button update-interfaces-button"
-                                onClick={() =>
-                                    tracker.sendCommand(ControlCenterCommand.UPDATE_INTERFACES, {
-                                        udid: descriptor.udid,
-                                    })
-                                }
-                            >
-                                Refresh connection
-                            </button>
-                            {selected &&
-                                players
-                                    .filter((player) => player !== primaryPlayer)
-                                    .map((player) => (
-                                        <NavLink
-                                            key={player.playerCodeName}
-                                            className="desc-block stream alternative"
-                                            params={params}
-                                            entry={streamEntry(player, `Open with ${player.playerFullName}`)}
-                                        />
-                                    ))}
+                            {players
+                                .filter((player) => player !== primaryPlayer)
+                                .map((player) => (
+                                    <NavLink
+                                        key={player.playerCodeName}
+                                        className="desc-block stream alternative"
+                                        params={params}
+                                        entry={streamEntry(player, `Open with ${player.playerFullName}`)}
+                                    />
+                                ))}
                             {tools.map((tool, index) => (
                                 <NavLink
                                     key={`${tool.action}_${index}`}

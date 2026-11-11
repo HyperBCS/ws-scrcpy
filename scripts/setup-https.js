@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable */
 // Generates a self-signed certificate for this machine and a run configuration that serves
 // ws-scrcpy over HTTPS on 8443 next to the plain HTTP 8000 listener.
 //

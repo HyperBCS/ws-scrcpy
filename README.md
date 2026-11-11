@@ -14,6 +14,10 @@ Server:
 * Node.js v10+
 * node-gyp ([installation](https://github.com/nodejs/node-gyp#installation))
 * `adb` executable must be available in the PATH environment variable
+* A running adb server on the host (`adb start-server`). The server never starts
+  one: in a container it would have no USB access and would hold port 5037, so
+  the host's own adb server could not start. Until one answers, no Android
+  device is listed and the log says the adb server is not running.
 * For [iOS](#ios): Python 3.10+ and `usbmuxd` running on the host
   (`apt install usbmuxd` on Debian/Ubuntu); `pymobiledevice3` talks to it over
   `/var/run/usbmuxd` and fails outright without it.
@@ -341,10 +345,6 @@ You can customize project before build by overriding the
 in the browser via WebCodecs). **Off by default**: it requires Android 11+, and
 enabling it changes how many sockets scrcpy opens, so treat it as experimental.
 Audio must also be enabled per-device in the stream settings sheet.
-* `SCRCPY_LISTENS_ON_ALL_INTERFACES` - WebSocket server in `scrcpy-server.jar`
-will listen for connections on all available interfaces. When `true`, it allows
-connecting to device directly from a browser. Otherwise, the connection must be
-established over adb.
 
 ## Run configuration
 
@@ -360,8 +360,6 @@ Configuration file example: [config.example.yaml](/config.example.yaml).
 
 ## Known issues
 
-* The server on the Android Emulator listens on the internal interface and not
-available from the outside. Select `proxy over adb` from the interfaces list.
 * MsePlayer reports too many dropped frames in quality statistics: needs
 further investigation.
 * On Safari file upload does not show progress (it works in one piece).
@@ -389,12 +387,9 @@ of that device (they reconnect automatically).
 ## Security warning
 Be advised and keep in mind:
 * There is no encryption between browser and node.js server (you can [configure](#run-configuration) HTTPS).
-* There is no encryption between browser and WebSocket server on android device.
 * There is no authorization on any level.
-* The modified version of scrcpy with integrated WebSocket server is listening
-for connections on all network interfaces (see [custom build](#custom-build)).
-* The modified version of scrcpy will keep running after the last client
-disconnected.
+* Every Android connection goes through the node.js server, which reaches the
+phone over adb. The stock scrcpy server on the phone does not listen on the network.
 
 ## Related projects
 * [Genymobile/scrcpy][scrcpy]
@@ -450,6 +445,15 @@ BlueZ D-Bus calls and callbacks needed for pairing and notifications. The compos
 file mounts the system bus socket and persists settings in `ws-scrcpy-data`.
 On a host without AppArmor, omit the compose `security_opt` entries. Do not run
 another Bluetooth daemon for this container or remove existing device bonds.
+
+The server in the container runs as the unprivileged `node` user (uid 1000). The
+entrypoint, `config/docker-entrypoint.sh`, starts as root only to hand the data
+volume over to that user, then drops root. Compose adds the host's bluetooth
+group for hosts whose D-Bus policy lets only that group talk to BlueZ: check the
+number with `getent group bluetooth` and set `BLUETOOTH_GID` in `.env` if it is
+not 111. `docker ps` shows the result of a loopback health check, and
+`docker stop` waits 80 seconds so the iPhone screen sessions can be returned.
+The image built before this change still reads the same volume.
 
 Safari on iOS/iPadOS 16.4+ requires a trusted HTTPS origin and installation using
 **Share → Add to Home Screen** for background push. A certificate warning or the
@@ -576,7 +580,18 @@ The app has no login, setup key, session cookie, trusted-network setting or API
 credential. Device connections, notifications and downloads open directly.
 The server listens on port 8000 on the host network.
 
-Browser requests retain same-origin validation. Remote WebSocket and download
+Browser requests retain same-origin validation. The server also checks the
+`Host` header of every request and WebSocket upgrade, so a page on another site
+cannot reach it through a DNS name that was pointed at its address. It answers to
+IP addresses, `localhost`, the machine's own name (also with `.local`) and the
+`WS_PUBLIC_URL` host (also its first label, the MagicDNS short name). Any other
+name gets `403 Host not allowed`: add it to
+`allowedHosts` in the configuration file, or to the comma-separated
+`WS_ALLOWED_HOSTS` environment variable. Every response forbids framing by other
+sites and limits the page's connections to this server and the hosts in
+`remoteHostList`. A stream link cannot name another host for its socket.
+
+Remote WebSocket and download
 proxies connect only to hosts listed in `remoteHostList`; no per-host access key
 is needed. Existing notification sources, receiver subscriptions and Web Push
 keys survive updates. Keep the data volume when rebuilding.

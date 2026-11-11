@@ -139,7 +139,6 @@ export class NotificationService implements Service {
     private get delivery() {
         return this.push.stats;
     }
-    private requestRates = new Map<string, { count: number; reset: number }>();
 
     getName(): string {
         return 'Bluetooth notifications and Web Push';
@@ -601,16 +600,9 @@ export class NotificationService implements Service {
         router.use(express.json({ limit: '64kb', inflate: false }));
         router.use((req, res, next) => {
             res.setHeader('Cache-Control', 'no-store');
-            const ip = req.socket.remoteAddress || 'unknown';
-            let rate = this.requestRates.get(ip);
-            if (!rate || rate.reset < Date.now()) {
-                rate = { count: 0, reset: Date.now() + 60000 };
-                this.requestRates.set(ip, rate);
-            }
-            if (++rate.count > 180) {
-                res.sendStatus(429);
-                return;
-            }
+            // No request limit here. Behind Tailscale Serve every HTTPS client arrives from
+            // 127.0.0.1, so a limit per address was one budget for all of them, and running out
+            // of it showed "Connection interrupted" on every notifications page.
             if (this.disabled && req.method !== 'GET') {
                 res.status(503).json({ error: this.disabled });
                 return;

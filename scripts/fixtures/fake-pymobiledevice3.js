@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable */
 // A stand-in for the `pymobiledevice3` CLI, for tests that run without an iPhone. It answers the
 // handful of commands the server uses and, for `display serve-web`, runs a loopback HTTP server
 // with the same routes and framing as the real one (see CoreDeviceProtocol.ts).

@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Phone-first layout and interaction regression checks against an attached device.
 // BASE=http://127.0.0.1:8000 SERIAL=<adb serial> node scripts/e2e-ux.js
 const assert = require('node:assert/strict');

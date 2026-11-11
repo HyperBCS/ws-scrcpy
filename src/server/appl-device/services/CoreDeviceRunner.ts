@@ -215,7 +215,12 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         ]).finally(() => clearTimeout(timer));
     }
 
-    /** The longest a stop can take: the wait for the signal handler, the grace, and a margin. */
+    /**
+     * The longest a stop can take: the wait for the signal handler, the grace, and a margin.
+     * 70 s with the defaults. `stop_grace_period` in docker-compose.yml has to stay above it, or
+     * Docker sends SIGKILL while serve-web is still returning the phone's sessions; a test in
+     * scripts/test-web-security.js fails when it does not.
+     */
     public static shutdownBudgetMs(): number {
         return CoreDeviceRunner.signalReadyTimeoutMs() + SIGKILL_GRACE_MS + 5000;
     }

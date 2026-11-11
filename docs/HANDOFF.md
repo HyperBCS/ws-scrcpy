@@ -1677,8 +1677,10 @@ signalled it, and the next `acquire()` mounted and spawned while the old process
 orderly shutdown (bounded steps of 2+2+3+3+3+6 s). The runner now keeps a per-phone promise that
 resolves on the old child's `close`, and a new session waits for it ("Waiting for the previous
 session to stop"). `SIGKILL_GRACE_MS` went from 15 s to 30 s to cover the 19 s worst case, and
-`stop_grace_period` in docker-compose.yml from 25 s to 40 s. A stop that lands inside a slow
-preflight can still need longer than 40 s; Docker then kills it, which is one SIGKILL.
+`stop_grace_period` in docker-compose.yml from 25 s to 40 s, and then to 80 s: a stop that lands
+inside a slow preflight waits up to 35 s for the signal handler before the 30 s grace starts, so
+the server's own budget (`CoreDeviceRunner.shutdownBudgetMs()`) is 70 s. The compose value is that
+plus 10 s, and `scripts/test-web-security.js` fails if it drops below.
 
 **Ports are reserved, not just probed.** serve-web binds after its preflight, so for up to 25 s a
 free-port probe says the port is free. A second phone opened in that window got the same port; its

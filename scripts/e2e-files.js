@@ -1,5 +1,4 @@
 const { settleMotion } = require('./ui-motion');
-/* eslint-disable */
 // BASE=http://127.0.0.1:8000 E2E_OUT=/tmp/ws-scrcpy-files node scripts/e2e-files.js
 // Exercises the real nested FSLS/SEND protocol against an in-memory fixture only. Folder
 // operations (MKDR/MOVE/COPY/DELE) are answered by the fixture: no device is touched.

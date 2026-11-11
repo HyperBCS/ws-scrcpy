@@ -1,4 +1,3 @@
-/* eslint-disable */
 // BASE=http://127.0.0.1:8000 E2E_OUT=/tmp/ws-scrcpy-sheets node scripts/e2e-sheets.js
 // Every socket is mocked. Native CDP touch events exercise browser gesture arbitration;
 // the deferred Apply reply never reaches a device or changes real configuration.

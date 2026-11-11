@@ -1,4 +1,3 @@
-/* eslint-disable */
 /**
  * Proves a tap in the browser actually moves the DEVICE, not merely that a control message left
  * the page.

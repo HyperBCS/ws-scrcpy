@@ -10,7 +10,6 @@ import { FileStats } from '../../types/FileStats';
 import Protocol from '@dead50f7/adbkit/lib/adb/protocol';
 import { Multiplexer } from '../../packages/multiplexer/Multiplexer';
 import { ReadStream } from 'fs';
-import { spawn } from 'child_process';
 import { Duplex } from 'stream';
 import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
 import { sendFileDownload } from './filePush/FileDownload';
@@ -142,22 +141,11 @@ export class AdbUtils {
         const client = AdbExtended.createClient();
         const forwards = await client.listForwards(serial);
 
+        // Over the adb protocol, not the adb CLI: a spawned client starts an adb server of its own
+        // when none answers, and replaces a server of another version.
         const removals = forwards
             .filter((forward) => forward.serial === serial && forward.local.includes('localfilesystem:'))
-            .map((forward) => {
-                return new Promise<void>((resolve, reject) => {
-                    const adb = spawn('adb', ['-s', serial, 'forward', '--remove', forward.local]);
-                    adb.on('close', (code) => {
-                        if (code === 0) {
-                            resolve();
-                        } else {
-                            reject(new Error(`Failed to remove forward: ${forward.local}`));
-                        }
-                    });
-
-                    adb.on('error', reject);
-                });
-            });
+            .map((forward) => client.killForward(serial, forward.local));
 
         await Promise.all(removals);
     }
