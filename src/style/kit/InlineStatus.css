@@ -1,0 +1,31 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* A short outcome line under the control that caused it (`ui/InlineStatus.tsx`). The words stay
+   in the text colour; the icon carries the tone. A neutral line has no icon and is muted. */
+.kit-status {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-8);
+    margin: var(--space-8) var(--space-4) 0;
+    color: var(--text);
+    font-size: var(--font-size-13);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+.kit-status > .kit-icon {
+    margin-top: 1px;
+}
+.kit-status-neutral {
+    color: var(--text-muted);
+}
+.kit-status-success > .kit-icon {
+    color: var(--success-text);
+}
+.kit-status-warning > .kit-icon {
+    color: var(--warning-text);
+}
+.kit-status-error > .kit-icon {
+    color: var(--danger-text);
+}
+}

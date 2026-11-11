@@ -1,0 +1,136 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* The bar at the top of a page in the kit look (`ui/AppBar.tsx` with `kit`): back, title with
+   one status line, actions. The actions are `kit-icon-button kit-icon-button-bare` or a compact
+   button. `kit-bar-root` is the bar of the list: no back control and a larger title. */
+.kit-bar {
+    position: relative;
+    z-index: var(--z-header);
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-4);
+    box-sizing: border-box;
+    min-height: calc(60px + env(safe-area-inset-top, 0px));
+    padding: calc(var(--space-8) + env(safe-area-inset-top, 0px)) max(var(--space-8), env(safe-area-inset-right, 0px))
+        var(--space-8) max(var(--space-8), env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-raised);
+    color: var(--text);
+}
+.kit-bar-root {
+    gap: var(--space-8);
+    padding-right: max(var(--space-12), env(safe-area-inset-right, 0px));
+    padding-left: max(var(--space-16), env(safe-area-inset-left, 0px));
+}
+@media (min-width: 1024px) {
+    .kit-bar {
+        padding-right: max(var(--space-24), env(safe-area-inset-right, 0px));
+        padding-left: max(var(--space-24), env(safe-area-inset-left, 0px));
+    }
+}
+
+.kit-bar-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    gap: var(--space-4);
+    box-sizing: border-box;
+    min-width: var(--control-height);
+    height: var(--control-height);
+    margin: 0;
+    padding: 0 var(--space-4);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--accent-text);
+    font-family: inherit;
+    font-size: var(--font-size-15);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.25;
+    cursor: pointer;
+    transition: background-color var(--motion-fast) ease;
+}
+/* The name of the page behind is shown where there is room for it. */
+.kit-bar-back-label {
+    display: none;
+}
+@media (min-width: 1024px) {
+    .kit-bar-back-label {
+        display: inline;
+        padding-right: var(--space-4);
+    }
+}
+
+.kit-bar-title {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    justify-content: center;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: var(--control-height);
+    margin: 0;
+    padding: 0 var(--space-8);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    text-align: left;
+}
+button.kit-bar-title {
+    cursor: pointer;
+    transition: background-color var(--motion-fast) ease;
+}
+.kit-bar-name-line {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    min-width: 0;
+}
+.kit-bar-name {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    font-size: var(--font-size-17);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.kit-bar-root .kit-bar-name {
+    font-size: var(--font-size-20);
+}
+.kit-bar-status {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-regular);
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.kit-bar-root .kit-bar-status {
+    font-size: var(--font-size-13);
+}
+
+@media (hover: hover) {
+    .kit-bar-back:hover,
+    button.kit-bar-title:hover {
+        background: var(--surface-sunken);
+    }
+}
+.kit-bar-back:active,
+button.kit-bar-title:active {
+    background: var(--surface-sunken);
+}
+.kit-bar-back:focus-visible,
+button.kit-bar-title:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: calc(var(--focus-ring-offset) * -1);
+}
+}

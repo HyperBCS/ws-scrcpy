@@ -1,6 +1,29 @@
 import { ComponentChildren, JSX, toChildArray } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { animate, finished } from './motion';
+import '../../style/kit/Disclosure.css';
+
+interface DisclosureProps {
+    title: ComponentChildren;
+    /** A few words after the title, such as the current value. */
+    note?: ComponentChildren;
+    open?: boolean;
+    class?: string;
+    children: ComponentChildren;
+}
+
+/** A disclosure in the kit look: a card whose first line opens it. The content is rows. */
+export function Disclosure({ title, note, open, class: className = '', children }: DisclosureProps) {
+    return (
+        <AnimatedDetails class={`kit-disclosure ${className}`.trim()} open={open}>
+            <summary>
+                <span class="kit-disclosure-title">{title}</span>
+                {note && <span class="kit-disclosure-note">{note}</span>}
+            </summary>
+            {children}
+        </AnimatedDetails>
+    );
+}
 
 export function AnimatedDetails({
     children,

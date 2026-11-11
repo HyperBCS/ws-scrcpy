@@ -1,0 +1,160 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* Groups of rows, for sheets and settings pages (`ui/SheetControls.tsx` with `kit`):
+   <section class="kit-group">
+     <h3 class="kit-group-title">Sound</h3>
+     <div class="kit-card kit-list">
+       <div class="kit-row"> <div class="kit-row-text"> title, description </div> control </div>
+     </div>
+     <p class="kit-group-hint">...</p>
+   </section> */
+.kit-group {
+    min-width: 0;
+    margin: 0 0 var(--space-20);
+}
+.kit-group:last-child {
+    margin-bottom: 0;
+}
+.kit-group-title {
+    margin: 0 var(--space-4) var(--space-8);
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.4;
+}
+.kit-group-hint {
+    margin: var(--space-8) var(--space-4) 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+/* A raised surface with an outline. `kit-list` is a card that holds rows. */
+.kit-card {
+    box-sizing: border-box;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    color: var(--text);
+}
+.kit-list {
+    overflow: hidden;
+}
+
+/* A row draws the line above itself. The card cuts the line of its first row off, so rows need
+   not be next to each other in the markup. */
+.kit-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 56px;
+    padding: var(--space-8) var(--space-16);
+    box-shadow: 0 -1px 0 var(--border);
+    color: var(--text);
+    font-size: var(--font-size-15);
+    line-height: 1.4;
+}
+/* The control under the text. */
+.kit-row-stack {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-8);
+    padding: var(--space-12) var(--space-16);
+}
+.kit-row-toggle {
+    cursor: pointer;
+}
+.kit-row-text {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+.kit-row-title {
+    font-weight: var(--font-weight-semibold);
+    overflow-wrap: anywhere;
+}
+.kit-row-desc {
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    overflow-wrap: anywhere;
+}
+.kit-row-control {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex: none;
+    gap: var(--space-8);
+    min-width: 0;
+}
+.kit-row-stack > .kit-row-control {
+    flex-wrap: wrap;
+    justify-content: stretch;
+}
+.kit-row-stack > .kit-row-control > * {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+/* A select at the end of a row gives way to the text on a narrow phone. */
+.kit-row-control-select {
+    flex: 0 1 180px;
+}
+.kit-row-control-select > .kit-select {
+    flex: 1 1 auto;
+}
+/* A value that is only shown, such as the system version. */
+.kit-row-value {
+    flex: none;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    white-space: nowrap;
+}
+/* Two buttons: beside the text, and under it on a narrow phone. */
+@media (max-width: 599px) {
+    .kit-row-pair {
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--space-8);
+        padding: var(--space-12) var(--space-16);
+    }
+    .kit-row-pair > .kit-row-control {
+        justify-content: stretch;
+    }
+    .kit-row-pair > .kit-row-control > * {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+}
+
+/* The slider with its value beside it. */
+.kit-volume {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    min-width: 0;
+}
+.kit-volume > output {
+    flex: 0 0 44px;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+/* The actions of a sheet, under its last group. The buttons share the line, and each takes a
+   line of its own where their labels do not fit side by side. */
+.kit-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+    padding-top: var(--space-16);
+}
+.kit-footer > .kit-button {
+    flex: 1 1 auto;
+}
+}

@@ -136,14 +136,9 @@
 }
 .settings-advanced summary::after,
 .settings-playback summary::after {
-    content: '+';
     margin-left: auto;
     font-size: 16.8px;
     color: var(--text-color-light);
-}
-.settings-advanced[open] summary::after,
-.settings-playback[open] summary::after {
-    content: '−';
 }
 .settings-playback summary > span {
     color: var(--text-color-light);

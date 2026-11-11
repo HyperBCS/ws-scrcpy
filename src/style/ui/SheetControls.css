@@ -231,14 +231,11 @@
 .sheet-details > summary::-webkit-details-marker {
     display: none;
 }
+/* The marker itself is drawn by the one rule in kit/Disclosure.css. */
 .sheet-details > summary::after {
-    content: '+';
     margin-left: auto;
     font-size: 16.8px;
     color: var(--text-color-light);
-}
-.sheet-details[open] > summary::after {
-    content: '−';
 }
 .sheet-details > summary > span {
     font-size: 13.02px;

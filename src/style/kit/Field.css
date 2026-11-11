@@ -1,0 +1,128 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* One style for an input, a select and a textarea (`ui/Field.tsx`). The text is 16px, so iOS
+   does not zoom the page on focus, and the border is 3:1 against the surface around it.
+   A select sits in a `kit-select` span with a chevron icon after it. */
+.kit-field {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    height: var(--control-height);
+    margin: 0;
+    padding: 0 var(--space-12);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    color: var(--text);
+    font-family: inherit;
+    font-size: var(--font-size-input);
+    font-weight: var(--font-weight-regular);
+    line-height: 1.25;
+    transition: border-color var(--motion-fast) ease;
+}
+.kit-field::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+}
+textarea.kit-field {
+    height: auto;
+    min-height: calc(var(--control-height) * 2);
+    padding: var(--space-8) var(--space-12);
+    line-height: 1.4;
+    resize: vertical;
+}
+/* For a short value such as a time of day, at the end of a row. */
+.kit-field-short {
+    width: 96px;
+    text-align: center;
+}
+.kit-field:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+}
+.kit-field:disabled {
+    opacity: var(--disabled-opacity);
+    cursor: default;
+}
+.kit-field[aria-invalid='true'] {
+    border-color: var(--danger-text);
+}
+
+.kit-select {
+    position: relative;
+    display: block;
+    min-width: 0;
+}
+.kit-select > .kit-field {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: calc(var(--space-12) * 2 + 16px);
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.kit-select > .kit-icon {
+    position: absolute;
+    top: 50%;
+    right: var(--space-12);
+    margin-top: -8px;
+    color: var(--text-muted);
+    pointer-events: none;
+}
+
+/* A slider keeps the browser's own track and thumb, in the accent colour. */
+.kit-range {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    height: var(--control-height);
+    margin: 0;
+    background: transparent;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+.kit-range:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+    border-radius: var(--radius-sm);
+}
+.kit-range:disabled {
+    opacity: var(--disabled-opacity);
+    cursor: default;
+}
+
+/* A field with its label above and a hint or an error under it. */
+.kit-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-width: 0;
+}
+.kit-field-label {
+    color: var(--text);
+    font-size: var(--font-size-13);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.4;
+}
+.kit-field-hint,
+.kit-field-error {
+    margin: 0;
+    font-size: var(--font-size-13);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+.kit-field-hint {
+    color: var(--text-muted);
+}
+.kit-field-error {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+    color: var(--danger-text);
+}
+.kit-field-error > .kit-icon {
+    margin-top: 1px;
+}
+}

@@ -1,0 +1,80 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* A button that shows only an icon (`ui/IconButton.tsx`). On plain markup it needs an
+   `aria-label`. Classes: kit-icon-button, plus -bare, -danger and -compact. */
+.kit-icon-button {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    box-sizing: border-box;
+    width: var(--control-height);
+    height: var(--control-height);
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    color: var(--text);
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+        background-color var(--motion-fast) ease,
+        border-color var(--motion-fast) ease,
+        transform var(--motion-fast) var(--ease-out);
+}
+.kit-icon-button-bare {
+    border-color: transparent;
+    background: transparent;
+}
+.kit-icon-button-danger {
+    color: var(--danger-text);
+}
+.kit-icon-button-compact {
+    width: var(--control-height-compact);
+    height: var(--control-height-compact);
+}
+@media (pointer: coarse) {
+    .kit-icon-button-compact {
+        width: var(--control-height);
+        height: var(--control-height);
+    }
+}
+
+/* A control that stays on, such as Sound while this browser plays the phone's sound. */
+.kit-icon-button[aria-pressed='true'] {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+}
+
+@media (hover: hover) {
+    .kit-icon-button:hover:not(:disabled, [aria-disabled='true']) {
+        background: var(--surface-sunken);
+    }
+    .kit-icon-button[aria-pressed='true']:hover:not(:disabled, [aria-disabled='true']) {
+        border-color: var(--accent-pressed);
+        background: var(--accent-pressed);
+    }
+}
+.kit-icon-button:active:not(:disabled, [aria-disabled='true']) {
+    background: var(--surface-sunken);
+    transform: scale(0.97);
+}
+.kit-icon-button[aria-pressed='true']:active:not(:disabled, [aria-disabled='true']) {
+    border-color: var(--accent-pressed);
+    background: var(--accent-pressed);
+}
+
+.kit-icon-button:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+}
+.kit-icon-button:disabled,
+.kit-icon-button[aria-disabled='true'] {
+    opacity: var(--disabled-opacity);
+    cursor: default;
+}
+}

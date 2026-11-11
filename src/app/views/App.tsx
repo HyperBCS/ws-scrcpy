@@ -21,6 +21,8 @@ import { ErrorBoundary, ScreenFailed } from '../ui/ErrorBoundary';
 import { goUp, onPageChange } from '../state/router';
 import { clientParams, LIST_PAGE_NAME, parseRoute } from '../state/routes';
 import { closeAllSheets } from '../state/stream';
+// Last, so that it moves no stylesheet of the views above to an earlier place in the bundle.
+import { KitPage } from './KitPage';
 
 // The sheets are signals, not history entries, and several are mounted here, above the pages.
 // They close with the page they were opened on. Before this, a sheet opened from the list stayed
@@ -53,7 +55,10 @@ export function App() {
     const params = route.value;
     const page = parseRoute(params);
     let view;
-    if (page.page === 'notifications') {
+    if (params.get('action') === 'kit') {
+        // The development page of the shared controls. Nothing links to it.
+        view = <KitPage />;
+    } else if (page.page === 'notifications') {
         view = <NotificationsView />;
     } else if (
         page.page === 'device' &&

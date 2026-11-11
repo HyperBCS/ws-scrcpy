@@ -245,33 +245,8 @@ details {
 details > summary {
     -webkit-tap-highlight-color: transparent;
 }
-:where(.device-details, .settings-advanced, .settings-playback, .sheet-details, .notification-details)
-    > summary::after {
-    content: '' !important;
-    width: 7px;
-    height: 7px;
-    flex: 0 0 7px;
-    margin-left: auto;
-    margin-right: 4px;
-    border: solid currentColor;
-    border-width: 0 1.5px 1.5px 0;
-    transform: rotate(45deg);
-    transition: transform var(--motion-settle) var(--ease-out);
-}
-:where(.device-details, .settings-advanced, .settings-playback, .sheet-details, .notification-details)[open]
-    > summary::after {
-    transform: rotate(225deg);
-}
-:where(
-        .device-details,
-        .settings-advanced,
-        .settings-playback,
-        .sheet-details,
-        .notification-details
-    )[data-expanded='false']
-    > summary::after {
-    transform: rotate(45deg);
-}
+/* The disclosure marker is in kit/Disclosure.css. This hides the older marker that
+   views/Notifications.css still draws before the summary; the two rules go together. */
 .notification-details > summary::before {
     display: none;
 }

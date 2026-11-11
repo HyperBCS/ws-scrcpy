@@ -1,0 +1,10 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* One icon of the set in `ui/icons.ts`. The stroke and its colour are attributes of the svg, so
+   an icon written as a string looks the same before this file loads. */
+.kit-icon {
+    display: block;
+    flex: none;
+}
+}
