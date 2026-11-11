@@ -78,6 +78,30 @@ body.file-listing-page {
     gap: 2px;
 }
 
+/* A phone's selection bar. It takes the history row's place while anything is selected (see
+   the narrow layout); a wider screen has the same commands in its toolbar. */
+.fx-selection-bar {
+    display: none;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+}
+
+.fx-selection-count {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0 6px;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+/* The row whose ⋮ menu is open. The menu acts on it alone, whatever is selected. */
+.fx-row.fx-menu-for {
+    background: var(--device-list-hover-color);
+    box-shadow: inset 3px 0 0 var(--fx-accent);
+}
+
 .fx-button {
     display: inline-flex;
     align-items: center;
@@ -344,10 +368,47 @@ body.file-listing-page {
     border-bottom: 1px solid var(--device-border-color);
 }
 
+/* "Uploading 3 of 40, 45%" and Cancel all stay in view above the rows. */
+.fx-transfer-summary {
+    position: sticky;
+    top: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--fx-gap);
+    padding: 2px 0;
+    background: var(--main-bg-color);
+    font-weight: 650;
+}
+
+.fx-transfer-total {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 .file-listing-upload-progress {
-    padding: 3px 0;
+    display: flex;
+    align-items: center;
+    gap: var(--fx-gap);
+    padding: 2px 0;
     color: var(--text-color-light);
-    overflow-wrap: anywhere;
+}
+
+.fx-upload-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-color);
+}
+
+.fx-upload-state {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.file-listing-upload-progress.error .fx-upload-state {
+    color: var(--status-unauthorized-color);
 }
 
 .fx-items {
@@ -417,13 +478,30 @@ body.file-listing-page {
     color: var(--text-color);
 }
 
-.fx-col-size,
+/* Size and Modified are as wide as their longest text ("1023 KB", "2026-09-21 14:05") at any
+   window width; Name takes the rest. A share of the table cut the time off below 1180px. */
+.fx-col-size {
+    width: calc(8ch + 20px);
+}
+
 .fx-col-time {
-    width: 12%;
+    width: calc(16ch + 20px);
 }
 
 .fx-col-type {
-    width: 14%;
+    width: 124px;
+}
+
+/* Type is the first column to go when the list itself is narrow. */
+.fx-main {
+    container: fx-main / inline-size;
+}
+
+@container fx-main (max-width: 720px) {
+    .file-explorer[data-view='details'] .fx-col-type,
+    .file-explorer[data-view='details'] .entry-type {
+        display: none;
+    }
 }
 
 .fx-cell-select,
@@ -440,7 +518,21 @@ body.file-listing-page {
     white-space: nowrap;
 }
 
-.fx-row.selected {
+/* Keyboard focus is drawn inside the row. The cells clip their contents, so the app's usual
+   outline, 3px outside the element, was never visible here. */
+.file-explorer .entry-name a:focus-visible,
+.fx-row-menu:focus-visible,
+.fx-sort:focus-visible {
+    outline-offset: -3px;
+    border-radius: 6px;
+}
+
+.fx-row:has(:focus-visible) {
+    background: var(--device-list-hover-color);
+}
+
+.fx-row.selected,
+.fx-row.selected:has(:focus-visible) {
     background: var(--fx-selected);
 }
 
@@ -544,13 +636,37 @@ body.file-listing-page {
     white-space: normal !important;
 }
 
-.file-listing-progress {
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    height: 2px;
-    max-width: 100%;
-    background: var(--fx-accent);
+/* A folder that could not be listed says so where the list would be. */
+.fx-failed-box {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    max-width: 440px;
+    margin: 0 auto;
+    padding: 10px 0;
+    line-height: 1.45;
+}
+
+.fx-failed-box strong {
+    color: var(--text-color);
+    font-size: 1.1em;
+}
+
+.fx-failed-reason,
+.fx-failed-path {
+    overflow-wrap: anywhere;
+}
+
+.fx-failed-path {
+    font-family: var(--font-stack-mono);
+}
+
+.fx-failed-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 6px;
 }
 
 /* ------------------------------------------------------------------ list and tile views */
@@ -670,6 +786,12 @@ body.file-listing-page {
     grid-column: 1 / -1;
 }
 
+/* The message spans the list in every layout; as a lone cell it shrank to its text. */
+.file-explorer[data-view='list'] .fx-empty,
+.file-explorer[data-view='tiles'] .fx-empty {
+    flex: 1 1 auto;
+}
+
 .file-explorer[data-view='list'] .fx-row.selected,
 .file-explorer[data-view='tiles'] .fx-row.selected {
     border-color: var(--fx-accent);
@@ -677,11 +799,17 @@ body.file-listing-page {
 
 /* ------------------------------------------------------------------ menu */
 
+/* The tool frame clips whatever leaves it, so a menu taller than the explorer scrolls inside
+   itself. `openMenu` and `refreshMenu` keep it within the same 4px margin. */
 .fx-menu {
     position: absolute;
     z-index: 20;
+    box-sizing: border-box;
     min-width: 156px;
     max-width: min(240px, 90%);
+    max-height: calc(100% - 8px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 4px;
     border: 1px solid var(--button-border-color);
     border-radius: 9px;
@@ -844,6 +972,17 @@ body.file-listing-page {
     font-size: 16px;
 }
 
+.fx-dialog-error {
+    margin: -4px 0 0;
+    color: var(--status-unauthorized-color);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.fx-dialog-field input[aria-invalid] {
+    border-color: var(--status-unauthorized-color);
+}
+
 .fx-dialog-actions {
     display: flex;
     justify-content: flex-end;
@@ -986,6 +1125,25 @@ body.file-listing-page {
         order: 3;
         margin-left: auto;
     }
+    /* While anything is selected, the history row becomes the selection bar: the count and the
+       commands for the selection, with the Actions menu for the rest. */
+    .file-explorer.fx-selecting .fx-history,
+    .file-explorer.fx-selecting .fx-mobile-tools [data-command='filter-toggle'] {
+        display: none;
+    }
+    .file-explorer.fx-selecting .fx-selection-bar {
+        display: flex;
+        order: 2;
+    }
+    @media (max-width: 380px) {
+        .fx-selection-word {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip-path: inset(50%);
+        }
+    }
     .fx-commands {
         display: none;
         order: 4;
@@ -1066,13 +1224,14 @@ body.file-listing-page {
         font-size: 0.86em;
         line-height: 1.2;
     }
-    .file-explorer[data-view='details'] .fx-empty-row {
+    .file-explorer[data-view='details'] .fx-empty-row,
+    .file-explorer[data-view='details'] .fx-empty-row > .fx-empty {
         display: block;
     }
 }
 
 @media (hover: hover) {
-    .fx-table tbody tr:hover {
+    .fx-table tbody tr:not(.fx-empty-row):hover {
         background: var(--device-list-hover-color);
     }
     .fx-row.selected:hover {

@@ -10,6 +10,10 @@ const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-files';
 const UDID = 'files-fixture';
 const ROOT = '/data/local/tmp';
+const LARGE = '/data/local/large';
+const SHARED = '/sdcard/Download';
+// The name the page header shows for the fixture phone; destructive questions repeat it.
+const DEVICE = 'Fixture Files test phone';
 function frame(type, id, payload = Buffer.alloc(0)) {
     const buffer = Buffer.alloc(5 + payload.length);
     buffer[0] = type;
@@ -65,10 +69,30 @@ async function fixture(page) {
         [ROOT + '/photo.png', Buffer.alloc(2048)],
         [ROOT + '/.hidden-cache', Buffer.from('x')],
     ]);
-    const dirs = new Set(['/', '/data', '/data/local', ROOT, ROOT + '/empty', ROOT + '/denied', ROOT + '/archive']);
+    const dirs = new Set(['/', '/data', '/data/local', ROOT, ROOT + '/empty', ROOT + '/denied', ROOT + '/archive', LARGE, '/sdcard', SHARED, SHARED + '/Camera']);
+    files.set(SHARED + '/notes.txt', Buffer.from('Shared notes\n'));
+    // Shared storage ignores case in names; everything else on the device does not.
+    const folded = (target) => (target.startsWith('/sdcard/') ? target.toLowerCase() : target);
+    const taken = (target) => {
+        for (const file of files.keys()) if (folded(file) === folded(target)) return { file };
+        for (const directory of dirs) if (folded(directory) === folded(target)) return { directory };
+        return undefined;
+    };
+    // True sizes of files too large to hold in memory. LIST states them modulo 4 GiB, as adb does.
+    const sizes = new Map([[LARGE + '/film.mkv', 5 * 1024 ** 3 + 7]]);
+    files.set(LARGE + '/film.mkv', Buffer.alloc(0));
+    files.set(LARGE + '/clip.mp4', Buffer.alloc(64));
     const traffic = {
         requests: [], operations: [], closed: [], fsChannels: 0, uploads: [], starts: [], hold: false, pending: null,
         holdList: false, releaseList: null, holdStat: false, releaseStat: null,
+        // Uploads between START and their end, the most there ever were at once, and CANCELs.
+        sending: new Set(), mostSending: 0, cancels: [],
+        // While set, APPEND acknowledgements wait in `heldAppends` until `releaseAppends()`.
+        holdAppends: false, heldAppends: [],
+        releaseAppends() {
+            const held = traffic.heldAppends.splice(0);
+            held.forEach((release) => release());
+        },
     };
     await page.routeWebSocket('**', (socket) => {
         const fileRoots = new Set();
@@ -119,6 +143,7 @@ async function fixture(page) {
                 const end = (code = 1000) => socket.send(frame(64, id, close(channel, code)));
                 if (innerType === 8) {
                     traffic.closed.push({ root: id, channel });
+                    traffic.sending.delete(channel);
                     return;
                 }
                 if (innerType === 4) {
@@ -222,12 +247,22 @@ async function fixture(page) {
                                 send(dent(path.posix.basename(directory), DIR));
                         for (const [file, bytes] of files)
                             if (path.posix.dirname(file) === destination)
-                                send(dent(path.posix.basename(file), FILE, bytes.length));
+                                send(dent(path.posix.basename(file), FILE, (sizes.get(file) ?? bytes.length) % 2 ** 32));
                         if (destination === ROOT)
                             send(dent('a_very_long_file_name_'.repeat(5) + '.txt', FILE, 123456));
                         end(0);
-                    } else if (cmd === 'RECV') {
-                        send(Buffer.concat([Buffer.from('DATA'), files.get(destination) || Buffer.alloc(0)]));
+                    } else if (cmd === 'SIZE') {
+                        for (const [file, size] of sizes) {
+                            if (path.posix.dirname(file) !== destination) continue;
+                            const name = Buffer.from(path.posix.basename(file));
+                            const record = Buffer.alloc(16 + name.length);
+                            record.write('SIZE');
+                            record.writeUInt32LE(size % 2 ** 32, 4);
+                            record.writeUInt32LE(Math.floor(size / 2 ** 32), 8);
+                            record.writeUInt32LE(name.length, 12);
+                            name.copy(record, 16);
+                            send(record);
+                        }
                         send(Buffer.from('DONE'));
                         end();
                     }
@@ -254,26 +289,38 @@ async function fixture(page) {
                         traffic.uploads.push(upload.path);
                         traffic.starts.push({ path: upload.path, overwrite });
                         // Like the server: START is refused, with the reason in the close frame.
-                        if (dirs.has(upload.path) || (files.has(upload.path) && !overwrite)) {
+                        const existing = taken(upload.path);
+                        if (existing?.directory || (existing?.file && !overwrite)) {
                             socket.send(
                                 frame(64, id, close(channel, 4013, 'An item with this name already exists.')),
                             );
                             return;
                         }
+                        traffic.sending.add(channel);
+                        traffic.mostSending = Math.max(traffic.mostSending, traffic.sending.size);
                         reply(0);
                     } else if (state === 2) {
                         upload.chunks.push(data.subarray(8, 8 + data.readUInt32BE(4)));
-                        reply(0);
+                        if (traffic.holdAppends) traffic.heldAppends.push(() => reply(0));
+                        else reply(0);
                     } else if (state === 3) {
+                        // A replace removes the file that held the name, however it was spelled.
+                        const replaced = taken(upload.path)?.file;
+                        if (replaced) files.delete(replaced);
                         files.set(upload.path, Buffer.concat(upload.chunks));
+                        traffic.sending.delete(channel);
                         reply(0);
                         end();
+                    } else if (state === 4) {
+                        // Like the server: a cancelled upload is dropped, and nothing is saved.
+                        traffic.cancels.push(upload.path);
+                        traffic.sending.delete(channel);
                     }
                 }
             }
         });
     });
-    return { files, dirs, traffic };
+    return { files, dirs, sizes, traffic };
 }
 
 const row = (page, name) => page.locator(`.fx-row[data-name="${name}"]`);
@@ -297,6 +344,14 @@ async function fillFilter(page, text) {
     await input.fill(text);
 }
 
+// Types a path into the address bar.
+async function goTo(page, target) {
+    await page.getByRole('button', { name: 'Type a folder path', exact: true }).click();
+    await page.locator('.fx-address-input').fill(target);
+    await page.locator('.fx-address-input').press('Enter');
+    await page.locator(`.file-explorer[data-listing="ready"] .fx-crumb[aria-current="page"]`).filter({ hasText: path.posix.basename(target) }).waitFor();
+}
+
 // A mouse selects on one click and opens on two; a touch tap opens immediately.
 async function open(page, name) {
     const anchor = page.locator(`.fx-row[data-name="${name}"] .entry-name a`);
@@ -315,7 +370,9 @@ async function select(page, ...names) {
 }
 
 // The name-conflict dialog: its title, the answers on offer, and where the keyboard starts.
-async function conflict(page, title, answers) {
+async function conflict(page, question, answers) {
+    // "Replace “a”?" is asked as "Replace “a” on <device>?".
+    const title = question.endsWith('?') ? `${question.slice(0, -1)} on ${DEVICE}?` : `${question} on ${DEVICE}`;
     const dialog = page.locator('.fx-dialog[open]');
     await dialog.getByRole('heading', { name: title, exact: true }).waitFor();
     assert.deepEqual(await dialog.locator('.fx-dialog-actions button').allInnerTexts(), answers);
@@ -569,7 +626,8 @@ async function main() {
             await row(page, 'notes.txt').waitFor();
             await open(page, 'denied');
             await page.getByRole('alert').filter({ hasText: 'Permission denied by fixture' }).waitFor();
-            await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
+            // The failed folder offers its own Up button; this is the toolbar's.
+            await page.locator('.fx-history').getByRole('button', { name: 'Up one folder', exact: true }).click();
             await row(page, 'notes.txt').waitFor();
 
             // Home navigates to the root, and the folder switch keeps the old rows on screen until
@@ -611,6 +669,30 @@ async function main() {
             await page.locator('.fx-crumb[aria-current="page"]').filter({ hasText: 'archive' }).waitFor();
             assert.equal(await addressInput.isVisible(), false, 'the field leaves once the path is entered');
             await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
+            await row(page, 'notes.txt').waitFor();
+
+            // A file of 4 GiB or more: the listing wraps its size, and the explorer corrects it.
+            await goTo(page, LARGE);
+            await row(page, 'film.mkv').waitFor();
+            await page.waitForFunction(
+                () => document.querySelector('.fx-row[data-name="film.mkv"] .entry-size')?.textContent === '5.0 GB',
+            );
+            assert.equal(await row(page, 'clip.mp4').locator('.entry-size').innerText(), '64 B');
+            await select(page, 'film.mkv');
+            await row(page, 'film.mkv').locator('.fx-row-menu').click();
+            await page.getByRole('menuitem', { name: 'Properties', exact: true }).click();
+            assert(
+                (await page.locator('.fx-properties').innerText()).includes((5 * 1024 ** 3 + 7).toLocaleString('en-US')),
+                'Properties shows the full byte count',
+            );
+            await page.getByRole('button', { name: 'Close', exact: true }).click();
+            await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+            // A large file downloads the same way as a small one, and says that it started.
+            const largeDownload = page.waitForEvent('download');
+            await open(page, 'film.mkv');
+            assert.equal((await largeDownload).suggestedFilename(), 'film.mkv');
+            await page.getByText('Download of film.mkv started in your browser.', { exact: true }).waitFor();
+            await goTo(page, ROOT);
             await row(page, 'notes.txt').waitFor();
 
             // New folder, rename and delete each send one framed operation and re-list.
@@ -705,6 +787,10 @@ async function main() {
             await select(page, 'notes.txt');
             await command(page, 'Delete');
             await page.getByText('This cannot be undone.', { exact: false }).waitFor();
+            await page
+                .locator('.fx-dialog[open]')
+                .getByRole('heading', { name: `Delete “notes.txt” from ${DEVICE}?`, exact: true })
+                .waitFor();
             // Cancel is the default, and the red button ignores presses for the first 500 ms.
             assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Cancel', 'Cancel is focused');
             assert.equal(await page.locator('.fx-dialog [value="confirm"]').isDisabled(), true, 'Delete starts guarded');
@@ -747,7 +833,8 @@ async function main() {
             await page.locator('.fx-row[data-name="photo.png"]').waitFor({ state: 'detached' });
             assert.deepEqual(new Set(traffic.operations.at(-1).paths), new Set([ROOT + '/photo.png', ROOT + '/empty']));
             assert.equal(traffic.operations.at(-1).cmd, 'DELE');
-            await command(page, 'Select', 'Select items');
+            // The delete ended selection mode: no checkboxes, and a tap opens again.
+            await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
 
             // Properties reads the stat data already in the listing.
             await page.locator('.fx-row[data-name="notes.txt"] .fx-row-menu').click();
@@ -758,16 +845,26 @@ async function main() {
             await page.getByRole('button', { name: 'Close', exact: true }).click();
             await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
 
-            // Download and upload keep the original byte-level protocol.
+            // Every download goes through the browser, whatever its size, and says that it started.
+            const requestsBeforeDownload = traffic.requests.length;
             const downloadPromise = page.waitForEvent('download');
             await open(page, 'notes.txt');
             const download = await downloadPromise;
             assert.equal(download.suggestedFilename(), 'notes.txt');
+            // A download is a browser navigation, which page.route cannot answer. The fixture
+            // server in test-browser.js answers with the device and path it was asked for.
             assert.equal(
                 fs.readFileSync(await download.path(), 'utf8'),
-                'Mock download contents\n',
-                'download bytes preserved',
+                `fixture download ${UDID} ${ROOT}/notes.txt`,
+                'the browser asks the download endpoint for this device and path',
             );
+            await page.getByText('Download of notes.txt started in your browser.', { exact: true }).waitFor();
+            assert.equal(
+                traffic.requests.slice(requestsBeforeDownload).filter((request) => request.cmd === 'RECV').length,
+                0,
+                'no bytes travel over the Files channel',
+            );
+            assert.equal(await page.locator('.file-listing-progress').count(), 0, 'the browser shows the progress');
             const chooserPromise = page.waitForEvent('filechooser');
             await command(page, 'Upload files to this folder', 'Upload files');
             const chooser = await chooserPromise;
@@ -903,7 +1000,7 @@ async function main() {
             await row(page, 'late.txt').waitFor();
             await settled(page);
             assert.equal(
-                await page.locator('.fx-status[role="alert"]').innerText(),
+                await page.locator('.app-toast[role="alert"] .toast-message').innerText(),
                 'late.txt: An item with this name already exists.',
             );
             await pick(['late.txt', 'Browser copy']);
@@ -915,7 +1012,7 @@ async function main() {
             await uploaded('on-time.txt');
             await settled(page);
             assert.equal(
-                await page.locator('.fx-status[role="alert"]').innerText(),
+                await page.locator('.app-toast[role="alert"] .toast-message').innerText(),
                 'later.txt: An item with this name already exists.',
                 'the failure is still shown after the folder is listed again',
             );
@@ -961,7 +1058,12 @@ async function main() {
             await page.waitForFunction(() =>
                 document.querySelector('.file-listing-upload-progress')?.textContent.includes('pending-upload'),
             );
+            // Leaving with an upload in progress asks first, and stops it only when told to.
             await page.getByRole('button', { name: 'Back to devices', exact: true }).click();
+            const leave = page.locator('.fx-dialog[open]');
+            await leave.getByRole('heading', { name: `Stop the upload to ${DEVICE}?`, exact: true }).waitFor();
+            await page.waitForTimeout(550);
+            await leave.getByRole('button', { name: 'Stop and leave', exact: true }).click();
             await page.locator('.file-listing-client').waitFor({ state: 'detached' });
             assert(traffic.pending, 'fixture left allocation pending');
             assert(
@@ -998,4 +1100,4 @@ if (require.main === module)
         process.exitCode = 1;
     });
 
-module.exports = { fixture };
+module.exports = { fixture, DEVICE, SHARED };

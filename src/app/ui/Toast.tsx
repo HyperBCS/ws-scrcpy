@@ -63,7 +63,7 @@ export function Toast({
         <Presence
             show={!!message}
             kind="toast"
-            class={`app-toast ${tone === 'error' ? 'error' : ''} ${className}`}
+            class={`app-toast ${tone === 'error' ? 'toast-error ' : ''}${className}`}
             role={tone === 'error' ? 'alert' : 'status'}
             onPointerEnter={(event) => {
                 if (event.pointerType === 'mouse') {
@@ -94,7 +94,7 @@ export function Toast({
                 stroke-width="1.8"
                 aria-hidden="true"
             >
-                <path d={tone === 'error' ? 'M12 4 2.5 20h19L12 4zm0 6v4.5m0 2.5v.5' : 'm5 12 4 4L19 6'} />
+                <path d={tone === 'error' ? 'M12 8v5m0 3.5v.01M12 3 2.5 19.5h19z' : 'm5 12 4 4L19 6'} />
             </svg>
             <span class="toast-message" key={String(identity)}>
                 {message}

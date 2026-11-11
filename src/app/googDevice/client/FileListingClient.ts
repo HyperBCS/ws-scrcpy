@@ -1,4 +1,3 @@
-import { FileDownloads } from './FileDownloads';
 import { trapDialogTab } from '../../ui/dialogFocus';
 import { CONFIRM_GUARD_MS } from '../../ui/ConfirmAction';
 import { transitionVisibility, cancelVisibility } from '../../ui/motion';
@@ -18,22 +17,39 @@ import { ChannelCode } from '../../../common/ChannelCode';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import FilePushHandler, { DragAndPushListener, PlannedUpload, PushUpdateParams } from '../filePush/FilePushHandler';
 import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
-import { ConflictAnswer, ConflictChoice, Resolution, resolveNameConflicts } from '../filePush/nameConflicts';
-import { fileListingTool } from './deviceTools';
-import { pushRoute } from '../../state/router';
+import {
+    ConflictAnswer,
+    ConflictChoice,
+    ExistingItem,
+    nameKey,
+    Resolution,
+    resolveNameConflicts,
+} from '../filePush/nameConflicts';
+import { DEFAULT_FILES_PATH, fileListingTool } from './deviceTools';
+import { clearLeaveGuard, LeaveGuard, pushRoute, replaceRoute, setLeaveGuard } from '../../state/router';
 import { formatMode, formatModified, formatSize, iconMarkup, kindOf, typeLabel } from './fileTypes';
+import { h, render } from 'preact';
+import { Toast } from '../../ui/Toast';
+import { deviceName } from '../../state/devices';
+import { findDeviceForTool } from '../../state/toolDevice';
 
 type Request = {
-    kind: 'stat' | 'list' | 'download' | 'mutate';
+    kind: 'stat' | 'list' | 'mutate' | 'sizes';
     path: string;
     generation: number;
-    entry?: Entry;
-    received: number;
     completed: boolean;
     failed: boolean;
-    /** Mutating requests reload the folder and report this once the device answers DONE. */
-    success?: string;
+    /** Why it failed, in the device's words when it gave any. */
+    error?: string;
+    /** Folder operations only: what to say when the device answers DONE, or when it does not. */
+    outcome?: Outcome;
 };
+
+/**
+ * How one folder operation is reported. `failure` names the item ("Could not rename “a”") and
+ * the device's reason is added to it. `many` sums up a batch in which several items succeeded.
+ */
+type Outcome = { success: string; failure: string; many?: (count: number) => string };
 
 type ViewMode = 'details' | 'list' | 'tiles';
 type SortKey = 'name' | 'size' | 'type' | 'modified';
@@ -153,26 +169,41 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private readonly dialog: HTMLDialogElement;
     private readonly picker: HTMLInputElement;
     private readonly buttons = new Map<string, HTMLButtonElement>();
+    /** The phone's selection bar. Its buttons run the same commands as the toolbar's. */
+    private readonly barButtons = new Map<string, HTMLButtonElement>();
+    private readonly selectionCount: HTMLElement;
+    /**
+     * The items a row's ⋮ menu acts on: that row alone. The menu never changes the selection,
+     * so the selection bar and the Actions menu keep acting on what the owner selected.
+     */
+    private menuTargets?: string[];
 
     private filePushHandler?: FilePushHandler;
     private readonly requests = new Map<Multiplexer, Request>();
-    /** Progress rows by upload key: two uploads may carry the same file name. */
-    private readonly uploads = new Map<number, HTMLElement>();
+    /** Uploads that have not ended, by key: two uploads may carry the same file name. */
+    private readonly uploads = new Map<number, { row: HTMLElement; name: string; sent: number; size: number }>();
     /** Failures in the current batch of uploads, shown together when the last one ends. */
     private uploadErrors: string[] = [];
+    private uploadsDone: string[] = [];
+    /** The batch so far, for "Uploading 3 of 40, 45%". */
+    private uploadBatch = { total: 0, ended: 0, cancelled: 0, bytes: 0, endedBytes: 0 };
+    private readonly transferSummary: HTMLElement;
+    /** Which tool page this explorer belongs to; any other address leaves it. */
+    private readonly identity: string;
+    /** The open "Stop uploading?" question, so a second Back does not ask twice. */
+    private leaving?: Promise<boolean>;
+    private readonly leaveGuard: LeaveGuard = {
+        blocks: (next) => this.uploads.size > 0 && FileListingClient.identityOf(next) !== this.identity,
+        ask: () => this.confirmLeave(),
+    };
+    /** Results of the folder operations in flight, reported together when the last one answers. */
+    private batch: { done: string[]; failed: string[]; many?: (count: number) => string } = { done: [], failed: [] };
+    /** Set while the list shows a folder that could not be opened, in place of its rows. */
+    private listingError?: string;
+    private readonly toastHost: HTMLElement;
+    private toastCount = 0;
     /** True while the owner is answering name conflicts; nothing else may start meanwhile. */
     private resolving = false;
-    private readonly fileDownloads = new FileDownloads((destination) => {
-        const direct = this.buildDirectWebSocketUrl();
-        const endpoint = new URL('api/files/download', new URL('.', location.href));
-        endpoint.searchParams.set('udid', this.params.udid);
-        endpoint.searchParams.set('path', destination);
-        if (this.params.useProxy) endpoint.searchParams.set('remote', direct.toString());
-        return endpoint;
-    });
-    /** Live downloads by device path, so progress survives a re-render (sorting, filtering, polling). */
-    private readonly downloads = new Map<string, { received: number; size: number }>();
-
     private entries: Entry[] = [];
     private selection = new Set<string>();
     private anchorName?: string;
@@ -180,8 +211,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private filter = '';
     private preferences = readPreferences();
     private selectionMode = false;
-    private backStack: string[] = [];
-    private forwardStack: string[] = [];
+    /**
+     * The browser's history is the only history. Each entry this explorer creates is tagged with
+     * its position, so the toolbar knows whether Back and Forward have somewhere to go; the
+     * buttons themselves call `history.back()` and `history.forward()`.
+     */
+    private historyId = '';
+    private historyIndex = 0;
+    private historyTop = 0;
     private readonly historyKey: string;
     private generation = 0;
     private loading = false;
@@ -193,31 +230,27 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private longPressedAt = 0;
     /** Rebuilds the open menu after a setting inside it changes, keeping any Back item. */
     private menuBuilder?: () => string[];
+    /** Where the open menu was asked for, in viewport coordinates. */
+    private menuAnchor = { x: 0, y: 0 };
     private typeAhead = { text: '', at: 0 };
+    /**
+     * The one row that Tab stops on. The arrow keys move between rows, so the list is a single
+     * stop: this row's name, then its menu button.
+     */
+    private rovingName?: string;
     private path: string;
     private pendingPath?: string;
     private closeMenuListener?: (event: Event) => void;
-    /**
-     * A refused folder operation still refreshes the listing, and that refresh would otherwise
-     * replace the device's own explanation with an item count. Hold the message and report it
-     * once the listing it triggered has settled.
-     */
-    private operationError?: string;
+    /** Checks the open dialog's field. A message keeps the dialog open and is shown under the field. */
+    private dialogCheck?: () => string;
 
     constructor(params: ParamsFileListing, mount?: HTMLElement) {
         super(params);
         this.serial = params.udid;
         this.path = path.resolve('/', params.path);
         this.historyKey = `ws-scrcpy.files.history.${this.serial}`;
-        try {
-            const stored = JSON.parse(sessionStorage.getItem(this.historyKey) || '{}');
-            const paths = (list: unknown) =>
-                Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string') : [];
-            this.backStack = paths(stored.back);
-            this.forwardStack = paths(stored.forward);
-        } catch {
-            // Session storage can be unavailable; history then simply starts empty.
-        }
+        this.identity = FileListingClient.identityOf(new URLSearchParams(location.hash.replace(/^#!/, '')));
+        this.adoptHistory();
         const fragment = html`<section class="file-listing-client file-explorer" aria-label="Device files">
             <div class="fx-chrome">
                 <div class="fx-history">
@@ -267,6 +300,48 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                         aria-expanded="false"
                         aria-label="Quick access"
                         title="Quick access"
+                    ></button>
+                </div>
+                <div class="fx-selection-bar" role="toolbar" aria-label="Selected items">
+                    <button
+                        type="button"
+                        class="fx-button fx-icon-button"
+                        data-command="end-selection"
+                        aria-label="Close selection"
+                        title="Close selection"
+                    ></button>
+                    <span class="fx-selection-count"></span>
+                    <button
+                        type="button"
+                        class="fx-button fx-icon-button"
+                        data-command="download"
+                        aria-label="Download selected files"
+                        title="Download"
+                        disabled
+                    ></button>
+                    <button
+                        type="button"
+                        class="fx-button fx-icon-button"
+                        data-command="copy"
+                        aria-label="Copy selected items"
+                        title="Copy"
+                        disabled
+                    ></button>
+                    <button
+                        type="button"
+                        class="fx-button fx-icon-button"
+                        data-command="cut"
+                        aria-label="Move selected items"
+                        title="Move"
+                        disabled
+                    ></button>
+                    <button
+                        type="button"
+                        class="fx-button fx-icon-button fx-danger"
+                        data-command="delete"
+                        aria-label="Delete selected items"
+                        title="Delete"
+                        disabled
                     ></button>
                 </div>
                 <div class="fx-address" data-command="edit-path">
@@ -360,7 +435,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             <div class="fx-body">
                 <nav class="fx-places" aria-label="Quick access"></nav>
                 <div class="fx-main">
-                    <div class="fx-transfers" aria-label="Transfers" hidden></div>
+                    <div class="fx-transfers" role="group" aria-label="Uploads" hidden>
+                        <div class="fx-transfer-summary">
+                            <span class="fx-transfer-total"></span>
+                            <button type="button" class="fx-button" data-upload-cancel="all">Cancel all</button>
+                        </div>
+                    </div>
                     <div class="fx-items" tabindex="0" role="group" aria-label="Folder contents">
                         <table class="fx-table file-listing-table">
                             <thead>
@@ -408,6 +488,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             </div>
             <div class="fx-menu" role="menu" hidden></div>
             <dialog class="fx-dialog"></dialog>
+            <div class="fx-toast-host"></div>
             <input type="file" multiple hidden aria-label="Choose files to upload" />
         </section>`.content;
         this.wrapper = fragment.querySelector('section') as HTMLElement;
@@ -421,15 +502,19 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.status = this.wrapper.querySelector('.fx-status') as HTMLElement;
         this.counts = this.wrapper.querySelector('.fx-counts') as HTMLElement;
         this.transfers = this.wrapper.querySelector('.fx-transfers') as HTMLElement;
+        this.transferSummary = this.wrapper.querySelector('.fx-transfer-total') as HTMLElement;
         this.menu = this.wrapper.querySelector('.fx-menu') as HTMLElement;
+        this.toastHost = this.wrapper.querySelector('.fx-toast-host') as HTMLElement;
         this.dialog = this.wrapper.querySelector('.fx-dialog') as HTMLDialogElement;
         this.dialog.addEventListener('cancel', this.onDialogCancel);
         this.dialog.addEventListener('submit', this.onDialogSubmit);
         this.dialog.addEventListener('keydown', this.onDialogKeyDown);
         this.picker = this.wrapper.querySelector('input[type="file"]') as HTMLInputElement;
         this.wrapper.querySelectorAll<HTMLButtonElement>('[data-command]').forEach((button) => {
-            this.buttons.set(button.dataset.command as string, button);
+            const map = button.closest('.fx-selection-bar') ? this.barButtons : this.buttons;
+            map.set(button.dataset.command as string, button);
         });
+        this.selectionCount = this.wrapper.querySelector('.fx-selection-count') as HTMLElement;
         this.wrapper.dataset.listing = 'loading';
         this.decorateIcons();
         this.renderBreadcrumb();
@@ -440,6 +525,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.wrapper.addEventListener('dblclick', this.onDoubleClick);
         this.wrapper.addEventListener('contextmenu', this.onContextMenu);
         this.wrapper.addEventListener('keydown', this.onKeyDown);
+        this.tableBody.addEventListener('focusin', this.onRowFocus);
         this.tableBody.addEventListener('pointerdown', this.onPointerDown);
         this.tableBody.addEventListener('pointerup', this.cancelLongPress);
         this.tableBody.addEventListener('pointercancel', this.cancelLongPress);
@@ -497,12 +583,22 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             actions:
                 '<circle cx="12" cy="5.5" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="18.5" r="1.7" fill="currentColor" stroke="none"/>',
         };
-        Object.entries(shapes).forEach(([command, shape]) => {
-            const button = this.buttons.get(command);
-            if (button) {
-                button.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shape}</svg>`;
-            }
-        });
+        const bar: Record<string, string> = {
+            'end-selection': '<path d="M6 6l12 12M18 6 6 18"/>',
+            download: '<path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/>',
+            copy: '<rect x="8.5" y="8.5" width="11" height="11.5" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v8.5a2 2 0 0 0 2 2h2"/>',
+            cut: '<path d="M3.5 7h5l1.5 2h10v10h-16zM3.5 7v12"/><path d="M10 14h6.5m-2.5-2.5 2.5 2.5-2.5 2.5"/>',
+            delete: '<path d="M5 7h14M10 7V4.5h4V7M7 7l1 13h8l1-13"/>',
+        };
+        const draw = (map: Map<string, HTMLButtonElement>, list: Record<string, string>) =>
+            Object.entries(list).forEach(([command, shape]) => {
+                const button = map.get(command);
+                if (button) {
+                    button.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shape}</svg>`;
+                }
+            });
+        draw(this.buttons, shapes);
+        draw(this.barButtons, bar);
     }
 
     private renderPlaces(): void {
@@ -609,17 +705,19 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 : undefined;
         const list = this.visible();
         const cut = this.clipboard?.mode === 'cut' && this.clipboard.dir === this.path ? this.clipboard.names : [];
+        const shown = (name?: string) =>
+            name !== undefined && list.some((entry) => entry.name === name) ? name : undefined;
+        this.rovingName = shown(focusedName) ?? shown(this.rovingName) ?? list[0]?.name;
+        // With rows to stop on, the container itself is reached by script only.
+        this.items.tabIndex = list.length ? -1 : 0;
         const rows = list.map((entry) => {
             const index = this.entries.indexOf(entry);
             const directory = entry.isDirectory();
             const selected = this.selection.has(entry.name);
-            const download = this.downloads.get(path.join(this.path, entry.name));
-            const percent = download
-                ? Math.min(100, download.size ? (download.received * 100) / download.size : 100)
-                : 0;
             const name = esc(entry.name);
-            return `<tr class="fx-row${selected ? ' selected' : ''}${
-                cut.includes(entry.name) ? ' fx-cut' : ''
+            const tabIndex = entry.name === this.rovingName ? 0 : -1;
+            return `<tr class="fx-row${selected ? ' selected' : ''}${cut.includes(entry.name) ? ' fx-cut' : ''}${
+                this.menuTargets?.includes(entry.name) ? ' fx-menu-for' : ''
             }" data-name="${name}" data-index="${index}" data-kind="${kindOf(entry)}" aria-selected="${selected}">
                 <td class="fx-cell-select"><input type="checkbox" class="fx-check" tabindex="-1" aria-label="Select ${name}"${
                     selected ? ' checked' : ''
@@ -627,18 +725,33 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 <td class="entry-name">
                     <a class="${directory ? 'dir' : 'file'}" href="${esc(
                         this.link(path.join(this.path, entry.name)),
-                    )}" data-name="${name}" data-entry-id="${index}" aria-label="${
+                    )}" data-name="${name}" data-entry-id="${index}" tabindex="${tabIndex}" aria-label="${
                         entry.isFile() ? 'Download' : 'Open'
                     } ${name}">${iconMarkup(kindOf(entry))}<span class="fx-name">${name}</span></a>
-                    ${download ? `<span class="file-listing-progress" style="width:${percent}%" aria-hidden="true"></span>` : ''}
                 </td>
                 <td class="entry-size" data-label="Size">${directory ? '—' : esc(formatSize(entry.size))}</td>
                 <td class="entry-type" data-label="Type">${esc(typeLabel(entry))}</td>
                 <td class="entry-time" data-label="Modified">${esc(formatModified(entry.mtime))}</td>
-                <td class="fx-cell-menu"><button type="button" class="fx-row-menu" tabindex="-1" aria-haspopup="menu" aria-label="Actions for ${name}"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg></button></td>
+                <td class="fx-cell-menu"><button type="button" class="fx-row-menu" tabindex="${tabIndex}" aria-haspopup="menu" aria-label="Actions for ${name}"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg></button></td>
             </tr>`;
         });
-        if (!rows.length) {
+        if (!rows.length && this.listingError && !this.loading) {
+            // The failure is shown where the rows would be, with the two ways out of it. An
+            // empty list next to a small error line read as "this folder is empty".
+            rows.push(`<tr class="fx-empty-row"><td colspan="6" class="fx-empty"><div class="fx-failed-box" role="alert">
+                <strong>This folder could not be opened</strong>
+                <span class="fx-failed-reason">${esc(this.listingError)}</span>
+                <span class="fx-failed-path">${esc(this.path)}</span>
+                <span class="fx-failed-actions">
+                    <button type="button" class="fx-button" data-command="refresh">Retry</button>
+                    ${
+                        this.path === '/'
+                            ? ''
+                            : '<button type="button" class="fx-button" data-command="up">Up one folder</button>'
+                    }
+                </span>
+            </div></td></tr>`);
+        } else if (!rows.length) {
             const message = this.loading
                 ? 'Loading folder…'
                 : this.entries.length
@@ -678,12 +791,36 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.updateControls();
     }
 
+    /** Moves the list's Tab stop to the row that took focus. */
+    private onRowFocus = (event: FocusEvent): void => {
+        const name = (event.target as Element | null)?.closest<HTMLElement>('tr[data-name]')?.dataset.name;
+        if (name === undefined || name === this.rovingName) {
+            return;
+        }
+        const stops = (rowName: string | undefined, tabIndex: number) => {
+            if (rowName === undefined) {
+                return;
+            }
+            this.tableBody
+                .querySelectorAll<HTMLElement>(
+                    `tr[data-name="${CSS.escape(rowName)}"] .entry-name a, tr[data-name="${CSS.escape(rowName)}"] .fx-row-menu`,
+                )
+                .forEach((element) => (element.tabIndex = tabIndex));
+        };
+        stops(this.rovingName, -1);
+        this.rovingName = name;
+        stops(name, 0);
+    };
+
     private renderStatus(): void {
         const list = this.visible();
         const selected = list.filter((entry) => this.selection.has(entry.name));
         const bytes = selected.reduce((total, entry) => total + (entry.isDirectory() ? 0 : entry.size), 0);
         const hidden = this.hiddenCount();
-        const parts = [this.filter ? `${list.length} of ${this.entries.length} items` : `${this.entries.length} items`];
+        const parts =
+            this.listingError && !this.loading
+                ? []
+                : [this.filter ? `${list.length} of ${this.entries.length} items` : `${this.entries.length} items`];
         if (hidden) {
             parts.push(`${hidden} hidden`);
         }
@@ -698,6 +835,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
     }
 
+    /**
+     * The status line: what is in progress, next to the counts. Results and failures go to
+     * `toast`, where the whole message fits and stays long enough to read.
+     */
     private report(message: string, error = false): void {
         if (this.stopped) {
             return;
@@ -705,6 +846,28 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.status.textContent = message;
         this.status.classList.toggle('error', error);
         this.status.setAttribute('role', error ? 'alert' : 'status');
+    }
+
+    /** The app's toast: the result of an action, or why it failed, naming the item. */
+    private toast(message: string, error = false): void {
+        if (this.stopped) {
+            return;
+        }
+        this.toastCount++;
+        this.renderToast(message, error);
+    }
+
+    private renderToast(message: string, error: boolean): void {
+        render(
+            h(Toast, {
+                message,
+                identity: this.toastCount,
+                tone: error ? 'error' : 'success',
+                duration: error ? 12000 : 6000,
+                onDismiss: () => this.renderToast('', error),
+            }),
+            this.toastHost,
+        );
     }
 
     private canModify(): boolean {
@@ -723,13 +886,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const selected = this.selectedEntries();
         const files = selected.filter((entry) => entry.isFile());
         const enable = (command: string, value: boolean) => {
-            const button = this.buttons.get(command);
-            if (button) {
-                button.disabled = !value;
-            }
+            [this.buttons.get(command), this.barButtons.get(command)].forEach((button) => {
+                if (button) {
+                    button.disabled = !value;
+                }
+            });
         };
-        enable('back', !!this.backStack.length);
-        enable('forward', !!this.forwardStack.length);
+        enable('back', this.historyIndex > 0);
+        enable('forward', this.historyIndex < this.historyTop);
         enable('up', this.path !== '/');
         enable('refresh', !this.stopped && this.hasConnection() && !this.loading);
         enable('upload', ready);
@@ -741,12 +905,27 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         enable('copy', ready && selected.length > 0);
         enable('paste', ready && !!this.clipboard?.names.length);
         this.buttons.get('selection-mode')?.setAttribute('aria-pressed', String(this.selectionMode));
-        this.wrapper.classList.toggle('fx-selecting', this.selectionMode || this.selection.size > 0);
+        this.wrapper.classList.toggle('fx-selecting', this.selecting());
+        // A narrow phone shows the number alone; the word stays for screen readers.
+        this.selectionCount.innerHTML = `${selected.length}<span class="fx-selection-word"> selected</span>`;
         this.wrapper.setAttribute('aria-busy', String(this.loading));
     }
 
     private selectedEntries(): Entry[] {
         return this.entries.filter((entry) => this.selection.has(entry.name));
+    }
+
+    /** Selection mode, or anything selected: the checkboxes show and the selection bar replaces history. */
+    private selecting(): boolean {
+        return this.selectionMode || this.selection.size > 0;
+    }
+
+    /** What a command acts on: the row a ⋮ menu was opened for, or else the selection. */
+    private targetEntries(targets?: string[]): Entry[] {
+        if (!targets) {
+            return this.selectedEntries();
+        }
+        return this.entries.filter((entry) => targets.includes(entry.name));
     }
 
     // ---------------------------------------------------------------- input
@@ -760,6 +939,17 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (menuItem) {
             event.preventDefault();
             this.runMenuItem(menuItem);
+            return;
+        }
+        const cancelUpload = target.closest<HTMLElement>('[data-upload-cancel]');
+        if (cancelUpload) {
+            event.preventDefault();
+            const key = cancelUpload.dataset.uploadCancel;
+            if (key === 'all') {
+                this.filePushHandler?.cancelAll();
+            } else {
+                this.filePushHandler?.cancel(Number(key));
+            }
             return;
         }
         const place = target.closest<HTMLElement>('[data-place]');
@@ -796,11 +986,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         if (target.closest('.fx-row-menu')) {
+            // The menu acts on its own row and leaves the selection as it is.
             event.preventDefault();
-            if (!this.selection.has(name)) {
-                this.selectOnly(name);
-            }
-            this.openRowMenu(target.closest('.fx-row-menu') as HTMLElement);
+            this.openRowMenu(target.closest('.fx-row-menu') as HTMLElement, name);
             return;
         }
         if (target.closest('.fx-check')) {
@@ -901,6 +1089,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     };
 
     private onKeyDown = (event: KeyboardEvent): void => {
+        // Keys pressed in a dialog bubble up to here. They belong to the dialog: Escape must
+        // close it, not clear the selection behind it.
+        if (this.dialog.open) {
+            return;
+        }
         if (!this.menu.hidden && !this.menu.inert && this.onMenuKeyDown(event)) {
             return;
         }
@@ -957,7 +1150,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         } else if (event.key === 'End') {
             event.preventDefault();
             focusAt(list.length - 1);
-        } else if (event.key === ' ' && current) {
+        } else if (event.key === ' ' && current && !target?.closest('button')) {
+            // Space on the row's menu button presses that button.
             event.preventDefault();
             this.toggleSelection(current);
         } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
@@ -1077,8 +1271,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     // ---------------------------------------------------------------- menus
 
-    private itemMenuItems(): string[] {
-        const selected = this.selectedEntries();
+    private itemMenuItems(selected = this.selectedEntries()): string[] {
         const single = selected.length === 1 ? selected[0] : undefined;
         const files = selected.filter((entry) => entry.isFile()).length;
         const items: string[] = [];
@@ -1184,16 +1377,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private openMenu(build: () => string[], clientX: number, clientY: number): void {
+        this.forgetMenuTargets();
         this.menuBuilder = build;
+        this.menuAnchor = { x: clientX, y: clientY };
         this.menu.innerHTML = build().join('');
         this.menu.hidden = false;
-        const bounds = this.wrapper.getBoundingClientRect();
-        const size = this.menu.getBoundingClientRect();
-        const left = Math.max(4, Math.min(clientX - bounds.left, bounds.width - size.width - 4));
-        const top = Math.max(4, Math.min(clientY - bounds.top, bounds.height - size.height - 4));
-        this.menu.style.left = `${left}px`;
-        this.menu.style.top = `${top}px`;
-        this.menu.style.transformOrigin = `${clientX - bounds.left - left}px ${clientY - bounds.top - top}px`;
+        this.menu.scrollTop = 0;
+        this.placeMenu();
         transitionVisibility(this.menu, true);
         this.menu.querySelector<HTMLElement>('button:not([disabled])')?.focus();
         if (!this.closeMenuListener) {
@@ -1208,9 +1398,32 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
     }
 
-    private openRowMenu(button: HTMLElement): void {
+    /** Keeps the whole menu inside the explorer, whatever it holds now. */
+    private placeMenu(): void {
+        const { x, y } = this.menuAnchor;
+        const bounds = this.wrapper.getBoundingClientRect();
+        // Layout size, not the painted one: the menu scales while it opens.
+        const width = this.menu.offsetWidth;
+        const height = this.menu.offsetHeight;
+        const left = Math.max(4, Math.min(x - bounds.left, bounds.width - width - 4));
+        const top = Math.max(4, Math.min(y - bounds.top, bounds.height - height - 4));
+        this.menu.style.left = `${left}px`;
+        this.menu.style.top = `${top}px`;
+        this.menu.style.transformOrigin = `${x - bounds.left - left}px ${y - bounds.top - top}px`;
+    }
+
+    private openRowMenu(button: HTMLElement, name: string): void {
         const rect = button.getBoundingClientRect();
-        this.openMenu(() => this.itemMenuItems(), rect.left, rect.bottom);
+        const targets = [name];
+        this.openMenu(() => this.itemMenuItems(this.targetEntries(targets)), rect.left, rect.bottom);
+        // Set after `openMenu`, which forgets the targets of the menu it replaces.
+        this.menuTargets = targets;
+        button.closest('tr')?.classList.add('fx-menu-for');
+    }
+
+    private forgetMenuTargets(): void {
+        this.menuTargets = undefined;
+        this.tableBody.querySelectorAll('.fx-menu-for').forEach((row) => row.classList.remove('fx-menu-for'));
     }
 
     private refreshMenu(focus?: string): void {
@@ -1218,6 +1431,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         this.menu.innerHTML = this.menuBuilder().join('');
+        // The new contents may be taller (View options inside Actions).
+        this.placeMenu();
         const target = focus ? this.menu.querySelector<HTMLElement>(focus) : null;
         (target || this.menu.querySelector<HTMLElement>('button:not([disabled])'))?.focus();
     }
@@ -1230,6 +1445,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             this.menu.innerHTML = '';
         });
         this.menuBuilder = undefined;
+        this.forgetMenuTargets();
         ['view-menu', 'places', 'actions'].forEach((command) =>
             this.buttons.get(command)?.setAttribute('aria-expanded', 'false'),
         );
@@ -1263,8 +1479,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const kind = item.dataset.menu;
         const value = item.dataset.value || '';
         if (kind === 'command') {
+            const targets = this.menuTargets;
             this.closeMenu();
-            this.runCommand(value);
+            this.runCommand(value, targets);
             return;
         }
         if (kind === 'place') {
@@ -1305,7 +1522,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     // ---------------------------------------------------------------- commands
 
-    private runCommand(command: string): void {
+    /**
+     * `targets` names the row a ⋮ menu was opened for. Without it, item commands act on the
+     * selection, and a command that is done with the selection ends selection mode: the
+     * checkboxes go away and a tap opens a folder again.
+     */
+    private runCommand(command: string, targets?: string[]): void {
         // Keyboard shortcuts reach the same commands as the (already disabled) buttons do.
         const MODIFYING = ['upload', 'download', 'new-folder', 'rename', 'delete', 'paste'];
         if (MODIFYING.includes(command) && !this.canModify()) {
@@ -1324,12 +1546,18 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 | 'actions'
                 | 'filter-toggle'
                 | 'selection-mode'
+                | 'end-selection'
         ) {
             case 'back':
-                this.step(this.backStack);
+                // Never past the entry Files was opened on: that Back belongs to the browser.
+                if (this.historyIndex > 0) {
+                    history.back();
+                }
                 return;
             case 'forward':
-                this.step(this.forwardStack);
+                if (this.historyIndex < this.historyTop) {
+                    history.forward();
+                }
                 return;
             case 'up':
                 if (this.path !== '/') {
@@ -1374,41 +1602,59 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 }
                 this.paintSelection();
                 return;
+            case 'end-selection':
+                this.clearSelection();
+                return;
             case 'select-all':
                 this.visible().forEach((entry) => this.selection.add(entry.name));
+                // On touch the selection is a mode: taps now add and remove rows.
+                if (matchMedia(COARSE_POINTER).matches) {
+                    this.selectionMode = true;
+                }
                 this.paintSelection();
                 return;
             case 'upload':
                 this.picker.click();
                 return;
             case 'open': {
-                const [entry] = this.selectedEntries();
+                const [entry] = this.targetEntries(targets);
                 if (entry) {
                     this.open(entry.name);
                 }
                 return;
             }
-            case 'download':
-                this.selectedEntries()
-                    .filter((entry) => entry.isFile())
-                    .forEach((entry) => this.download(path.join(this.path, entry.name), entry));
+            case 'download': {
+                const files = this.targetEntries(targets).filter((entry) => entry.isFile());
+                files.forEach((entry) => this.download(path.join(this.path, entry.name), entry, files.length === 1));
+                if (files.length > 1) {
+                    this.toast(`Downloads of ${files.length} files started in your browser.`);
+                }
+                this.doneWithSelection(targets);
                 return;
+            }
             case 'copy-path': {
-                const paths = this.selectedEntries().map((entry) => path.join(this.path, entry.name));
+                const paths = this.targetEntries(targets).map((entry) => path.join(this.path, entry.name));
                 void this.copyText(paths.join('\n'));
+                this.doneWithSelection(targets);
                 return;
             }
             case 'cut':
             case 'copy': {
-                const selected = this.selectedEntries();
+                const selected = this.targetEntries(targets);
                 const names = selected.map((entry) => entry.name);
                 if (!names.length) {
                     return;
                 }
                 const folders = selected.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
                 this.clipboard = { mode: command as Clipboard['mode'], dir: this.path, names, folders };
-                this.report(`${names.length} item${names.length === 1 ? '' : 's'} ready to paste.`);
+                const count = `${names.length} item${names.length === 1 ? '' : 's'}`;
+                this.toast(
+                    command === 'cut'
+                        ? `${count} ready to move. Open the destination folder and choose Paste.`
+                        : `${count} ready to paste.`,
+                );
                 this.paintSelection();
+                this.doneWithSelection(targets);
                 return;
             }
             case 'paste':
@@ -1418,21 +1664,21 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 void this.createFolder();
                 return;
             case 'rename':
-                void this.rename();
+                void this.rename(this.targetEntries(targets));
                 return;
             case 'delete':
-                void this.remove();
+                void this.remove(this.targetEntries(targets));
                 return;
             case 'properties':
-                this.showProperties();
+                this.showProperties(this.targetEntries(targets));
                 return;
         }
     }
 
-    private step(stack: string[]): void {
-        const destination = stack[stack.length - 1];
-        if (destination) {
-            this.navigate(destination);
+    /** A command that acted on the selection ends selection mode. A ⋮ menu leaves it alone. */
+    private doneWithSelection(targets?: string[]): void {
+        if (!targets) {
+            this.clearSelection();
         }
     }
 
@@ -1449,10 +1695,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private async copyText(text: string): Promise<void> {
         try {
             await navigator.clipboard.writeText(text);
-            this.report('Copied to the clipboard.');
+            this.toast('Copied to the clipboard.');
         } catch {
             // Insecure origins and denied permissions both land here; show the path to copy by hand.
-            this.report(text);
+            this.toast(text);
         }
     }
 
@@ -1462,22 +1708,21 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             label: 'Folder name',
             value: 'New folder',
             confirm: 'Create',
+            check: (value) => this.checkName(value),
         });
         if (!name) {
             return;
         }
-        const problem = this.checkName(name);
-        if (problem) {
-            this.report(problem, true);
-            return;
-        }
         const destination = path.join(this.path, name);
-        this.mutate(this.stringCommand(FileCommand.MKDIR, destination), `Creating ${name}…`, `Created ${name}.`);
+        this.mutate(this.stringCommand(FileCommand.MKDIR, destination), `Creating ${name}…`, {
+            success: `Created ${name}.`,
+            failure: `Could not create “${name}”`,
+        });
     }
 
-    private async rename(): Promise<void> {
-        const [entry] = this.selectedEntries();
-        if (!entry) {
+    private async rename(entries: Entry[]): Promise<void> {
+        const [entry] = entries;
+        if (!entry || entries.length !== 1) {
             return;
         }
         const name = await this.prompt({
@@ -1486,34 +1731,35 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             value: entry.name,
             confirm: 'Rename',
             selectBase: entry.isFile(),
+            // Keeping the name is not an error; it just renames nothing.
+            check: (value) => (value === entry.name ? '' : this.checkName(value)),
         });
         if (!name || name === entry.name) {
-            return;
-        }
-        const problem = this.checkName(name);
-        if (problem) {
-            this.report(problem, true);
             return;
         }
         this.mutate(
             this.pairCommand(FileCommand.MOVE, path.join(this.path, entry.name), path.join(this.path, name)),
             `Renaming ${entry.name}…`,
-            `Renamed to ${name}.`,
+            { success: `Renamed ${entry.name} to ${name}.`, failure: `Could not rename “${entry.name}”` },
         );
     }
 
-    private async remove(): Promise<void> {
-        const selected = this.selectedEntries();
+    private async remove(selected: Entry[]): Promise<void> {
         if (!selected.length) {
             return;
         }
         const label = selected.length === 1 ? `“${selected[0].name}”` : `${selected.length} items`;
         const folders = selected.filter((entry) => entry.isDirectory()).length;
+        // The question names the item and the device, as the app's other destructive prompts do.
         const confirmed = await this.confirm({
-            title: 'Delete',
-            message: `Delete ${label} from the device?${
-                folders ? ' Folders are deleted with everything inside them.' : ''
-            } This cannot be undone.`,
+            title: `Delete ${label} from ${this.deviceLabel()}?`,
+            message: `${
+                folders
+                    ? selected.length === 1
+                        ? 'The folder is deleted with everything inside it. '
+                        : 'Folders are deleted with everything inside them. '
+                    : ''
+            }This cannot be undone.`,
             confirm: 'Delete',
             danger: true,
         });
@@ -1534,8 +1780,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             payload.write(item, offset, 'utf-8');
             offset += length;
         });
-        this.selection.clear();
-        this.mutate(payload, `Deleting ${label}…`, `Deleted ${label}.`);
+        this.mutate(payload, `Deleting ${label}…`, {
+            success: `Deleted ${label}.`,
+            failure: `Could not delete ${label}`,
+        });
     }
 
     private async paste(): Promise<void> {
@@ -1544,7 +1792,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         if (clipboard.dir === this.path && clipboard.mode === 'cut') {
-            this.report('These items are already in this folder.');
+            this.toast('These items are already in this folder.');
             return;
         }
         // A copy made in its own folder has nothing to replace: the source is the existing item.
@@ -1557,11 +1805,16 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const command = clipboard.mode === 'cut' ? FileCommand.MOVE : FileCommand.COPY;
         const verb = clipboard.mode === 'cut' ? 'Moving' : 'Copying';
         const done = clipboard.mode === 'cut' ? 'Moved' : 'Copied';
+        const failed = clipboard.mode === 'cut' ? 'move' : 'copy';
         items.forEach(({ name, target, replace }) => {
             this.mutate(
                 this.pairCommand(command, path.join(clipboard.dir, name), path.join(this.path, target), replace),
                 `${verb} ${name}…`,
-                target === name ? `${done} ${name}.` : `${done} ${name} as ${target}.`,
+                {
+                    success: target === name ? `${done} ${name}.` : `${done} ${name} as ${target}.`,
+                    failure: `Could not ${failed} “${name}”`,
+                    many: (count) => `${done} ${count} items.`,
+                },
             );
         });
         if (clipboard.mode === 'cut') {
@@ -1580,7 +1833,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         const folder = this.path;
         const incomingFolders = new Set(folders);
-        const existing = new Map(this.entries.map((entry) => [entry.name, { isFolder: entry.isDirectory() }]));
+        // Compared the way this folder's storage compares names: on /sdcard, case is ignored.
+        const key = nameKey(folder);
+        const existing = new Map(
+            this.entries.map((entry) => [key(entry.name), { isFolder: entry.isDirectory(), name: entry.name }]),
+        );
         this.resolving = true;
         this.updateControls();
         try {
@@ -1589,13 +1846,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 existing,
                 replaceable,
                 async (name, item, canReplace, remaining) => {
-                    const answer = await this.askConflict(name, item.isFolder, canReplace, remaining);
+                    const answer = await this.askConflict(name, item, canReplace, remaining);
                     return this.stopped || this.path !== folder ? undefined : answer;
                 },
                 (name) => incomingFolders.has(name),
+                key,
             );
             if (!resolved.length && !this.stopped && this.path === folder) {
-                this.report(names.length === 1 ? `Skipped ${names[0]}.` : `Skipped ${names.length} items.`);
+                this.toast(names.length === 1 ? `Skipped ${names[0]}.` : `Skipped ${names.length} items.`);
             }
             return resolved;
         } finally {
@@ -1608,12 +1866,15 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         // The answers are about this folder's listing, so the files go to this folder even if
         // the explorer has moved on by the time they start.
         const folder = this.path;
+        const key = nameKey(folder);
         const chosen = new Map<string, File>();
+        const taken = new Set<string>();
         const repeated = new Set<string>();
         files.forEach((file) => {
-            if (chosen.has(file.name)) {
+            if (taken.has(key(file.name))) {
                 repeated.add(file.name);
             } else {
+                taken.add(key(file.name));
                 chosen.set(file.name, file);
             }
         });
@@ -1631,16 +1892,25 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     ? `“${first}” was added more than once. Only the first one is uploaded.`
                     : `${repeated.size} names were added more than once. Only the first file of each is uploaded.`;
             if (plan.length) {
-                // The uploads that follow refresh the folder; show this once that has settled.
-                this.operationError = message;
+                // Reported with the outcome of the uploads that follow, not replaced by it.
+                this.uploadErrors.push(message);
             } else {
-                this.report(message, true);
+                this.toast(message, true);
             }
         }
         return plan;
     };
 
+    /** The device's name as the page header shows it. */
+    private deviceLabel(): string {
+        const entry = findDeviceForTool(this.params);
+        return entry ? deviceName(entry) : this.serial;
+    }
+
     private checkName(name: string): string {
+        if (!name) {
+            return 'Enter a name.';
+        }
         if (name.includes('/')) {
             return 'A name cannot contain “/”.';
         }
@@ -1651,15 +1921,19 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (/[\x00-\x1f\x7f]/.test(name)) {
             return 'This name contains characters that cannot be used on the device.';
         }
-        if (this.entries.some((entry) => entry.name === name)) {
-            return `“${name}” already exists in this folder.`;
+        const key = nameKey(this.path);
+        const taken = this.entries.find((entry) => key(entry.name) === key(name));
+        if (taken) {
+            return taken.name === name
+                ? `“${name}” already exists in this folder.`
+                : `This storage treats “${name}” and “${taken.name}” as the same name.`;
         }
         return '';
     }
 
-    private showProperties(): void {
-        const [entry] = this.selectedEntries();
-        if (!entry) {
+    private showProperties(entries: Entry[]): void {
+        const [entry] = entries;
+        if (!entry || entries.length !== 1) {
             return;
         }
         const rows: [string, string][] = [
@@ -1695,20 +1969,38 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         value: string;
         confirm: string;
         selectBase?: boolean;
+        /** Returns what is wrong with the name, or nothing. The dialog stays open on a problem. */
+        check?: (value: string) => string;
     }): Promise<string | undefined> {
-        this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form">
+        this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form" novalidate>
             <h2>${esc(options.title)}</h2>
             <label class="fx-dialog-field">
                 <span>${esc(options.label)}</span>
-                <input type="text" name="value" spellcheck="false" autocapitalize="off" autocomplete="off" required />
+                <input type="text" name="value" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="fx-dialog-error" />
             </label>
+            <p class="fx-dialog-error" id="fx-dialog-error" role="alert" hidden></p>
             <div class="fx-dialog-actions">
                 <button type="button" class="fx-button" data-dialog="cancel">Cancel</button>
                 <button type="submit" class="fx-button fx-primary" value="confirm">${esc(options.confirm)}</button>
             </div>
         </form>`;
         const input = this.dialog.querySelector('input[name="value"]') as HTMLInputElement;
+        const error = this.dialog.querySelector('.fx-dialog-error') as HTMLElement;
         input.value = options.value;
+        input.addEventListener('input', () => {
+            error.hidden = true;
+            input.removeAttribute('aria-invalid');
+        });
+        this.dialogCheck = () => {
+            const problem = options.check?.(input.value.trim()) || '';
+            error.textContent = problem;
+            error.hidden = !problem;
+            input.toggleAttribute('aria-invalid', !!problem);
+            if (problem) {
+                input.focus();
+            }
+            return problem;
+        };
         return this.showDialog(() => {
             const dot = options.selectBase ? options.value.lastIndexOf('.') : -1;
             input.focus();
@@ -1716,12 +2008,18 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }).then((result) => (result === 'confirm' ? input.value.trim() : undefined));
     }
 
-    private confirm(options: { title: string; message: string; confirm: string; danger?: boolean }): Promise<boolean> {
+    private confirm(options: {
+        title: string;
+        message: string;
+        confirm: string;
+        cancel?: string;
+        danger?: boolean;
+    }): Promise<boolean> {
         this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form">
             <h2>${esc(options.title)}</h2>
             <p class="fx-dialog-message">${esc(options.message)}</p>
             <div class="fx-dialog-actions">
-                <button type="button" class="fx-button" data-dialog="cancel">Cancel</button>
+                <button type="button" class="fx-button" data-dialog="cancel">${esc(options.cancel || 'Cancel')}</button>
                 <button type="submit" class="fx-button ${
                     options.danger ? 'fx-danger-solid' : 'fx-primary'
                 }" value="confirm">${esc(options.confirm)}</button>
@@ -1733,14 +2031,21 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 confirm?.focus();
                 return;
             }
-            // The same rule as the app's other destructive actions: Cancel is the default, and the
-            // red button waits out a double tap or a repeated key on whatever opened the dialog.
+            // The same rule as the app's other destructive actions: Cancel is the default.
             this.dialog.querySelector<HTMLButtonElement>('[data-dialog="cancel"]')?.focus();
-            if (confirm) {
-                confirm.disabled = true;
-                setTimeout(() => (confirm.disabled = false), CONFIRM_GUARD_MS);
-            }
+            this.guard(confirm);
         }).then((result) => result === 'confirm');
+    }
+
+    /**
+     * The red answer ignores presses for `CONFIRM_GUARD_MS`, like `ConfirmPrompt`'s button, so a
+     * double tap or a repeated key on whatever opened the dialog cannot also answer it.
+     */
+    private guard(button: HTMLButtonElement | null): void {
+        if (button) {
+            button.disabled = true;
+            setTimeout(() => (button.disabled = false), CONFIRM_GUARD_MS);
+        }
     }
 
     /**
@@ -1750,16 +2055,21 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
      */
     private askConflict(
         name: string,
-        folder: boolean,
+        item: ExistingItem,
         canReplace: boolean,
         remaining: number,
     ): Promise<ConflictAnswer> {
-        const title = canReplace ? `Replace “${name}”?` : `“${name}” already exists`;
-        const message = canReplace
-            ? 'This folder already has a file with this name. Replacing it cannot be undone.'
-            : folder
-              ? 'This folder already has a folder with this name. Folders are not replaced.'
-              : 'This folder already has an item with this name.';
+        const device = this.deviceLabel();
+        // The item that is there, which is what a replace removes. Its name can differ by case.
+        const existing = item.name ?? name;
+        const title = canReplace ? `Replace “${existing}” on ${device}?` : `“${existing}” already exists on ${device}`;
+        const sameName = existing === name ? '' : ` This storage treats “${name}” and “${existing}” as the same name.`;
+        const message =
+            (canReplace
+                ? 'This folder already has a file with this name. Replacing it cannot be undone.'
+                : item.isFolder
+                  ? 'This folder already has a folder with this name. Folders are not replaced.'
+                  : 'This folder already has an item with this name.') + sameName;
         const others = remaining === 1 ? 'the other conflict' : `the other ${remaining} conflicts`;
         this.dialog.innerHTML = `<form method="dialog" class="fx-dialog-form fx-conflict">
             <h2>${esc(title)}</h2>
@@ -1782,12 +2092,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const all = this.dialog.querySelector<HTMLInputElement>('input[name="all"]');
         return this.showDialog(() => {
             this.dialog.querySelector<HTMLButtonElement>('[value="keep"]')?.focus();
-            // Replace waits out a double tap on whatever opened the dialog, as Delete does.
-            const replace = this.dialog.querySelector<HTMLButtonElement>('[value="replace"]');
-            if (replace) {
-                replace.disabled = true;
-                setTimeout(() => (replace.disabled = false), CONFIRM_GUARD_MS);
-            }
+            this.guard(this.dialog.querySelector<HTMLButtonElement>('[value="replace"]'));
         }).then((result) => ({
             choice: (result === 'replace' || result === 'keep' ? result : 'skip') as ConflictChoice,
             // Closing the dialog answers for this one item only.
@@ -1815,13 +2120,19 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private onDialogSubmit = (event: SubmitEvent): void => {
         event.preventDefault();
         const submitter = event.submitter;
-        this.closeDialog(submitter instanceof HTMLButtonElement ? submitter.value : '');
+        // Enter in the field submits without a submitter; it means the same as the main button.
+        const value = submitter instanceof HTMLButtonElement ? submitter.value : this.dialogCheck ? 'confirm' : '';
+        if (value === 'confirm' && this.dialogCheck?.()) {
+            return;
+        }
+        this.closeDialog(value);
     };
 
     private showDialog(onOpen: () => void): Promise<string> {
         return new Promise((resolve) => {
             const finish = () => {
                 this.dialog.removeEventListener('close', finish);
+                this.dialogCheck = undefined;
                 resolve(this.dialog.returnValue);
             };
             this.dialog.returnValue = '';
@@ -1861,25 +2172,40 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         return payload;
     }
 
-    private mutate(payload: Buffer, pending: string, success: string): void {
+    private mutate(payload: Buffer, pending: string, outcome: Outcome): void {
         // Callers gate on `canModify()`; a multi-item paste must not block itself after its own
         // first operation raises the pending count.
         if (this.stopped || !this.hasConnection()) {
             return;
         }
+        // Every folder operation ends selection mode; the folder is listed again afterwards.
+        this.selection.clear();
+        this.selectionMode = false;
+        this.anchorName = undefined;
+        this.paintSelection();
         this.report(pending);
-        this.operationError = undefined;
         this.operations++;
         this.updateControls();
-        this.send('mutate', payload, this.path, undefined, success);
+        this.send('mutate', payload, this.path, outcome);
     }
 
-    private request(kind: Request['kind'], destination: string, entry?: Entry): void {
-        const cmd = kind === 'stat' ? Protocol.STAT : kind === 'list' ? Protocol.LIST : Protocol.RECV;
-        this.send(kind, this.stringCommand(cmd, destination), destination, entry);
+    /** One toast for the whole batch: a failure is never replaced by a later success. */
+    private reportBatch(): void {
+        const { done, failed, many } = this.batch;
+        this.batch = { done: [], failed: [] };
+        if (failed.length) {
+            const total = done.length + failed.length;
+            this.toast(total === 1 ? failed[0] : `${failed.length} of ${total} items failed. ${failed[0]}`, true);
+        } else if (done.length) {
+            this.toast(done.length > 1 && many ? many(done.length) : done[done.length - 1]);
+        }
     }
 
-    private send(kind: Request['kind'], payload: Buffer, destination: string, entry?: Entry, success?: string): void {
+    private request(kind: 'stat' | 'list', destination: string): void {
+        this.send(kind, this.stringCommand(kind === 'stat' ? Protocol.STAT : Protocol.LIST, destination), destination);
+    }
+
+    private send(kind: Request['kind'], payload: Buffer, destination: string, outcome?: Outcome): void {
         if (this.stopped || !(this.ws instanceof Multiplexer) || !this.hasConnection()) {
             return;
         }
@@ -1888,16 +2214,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             kind,
             path: destination,
             generation: this.generation,
-            entry,
-            received: 0,
             completed: false,
             failed: false,
-            success,
+            outcome,
         };
         this.requests.set(channel, request);
-        // Only listings belong to a generation: a download or a folder operation must survive the
-        // navigation that a completed operation itself triggers.
-        const stale = () => kind !== 'download' && kind !== 'mutate' && request.generation !== this.generation;
+        // Only listings belong to a generation: a folder operation must survive the navigation
+        // that a completed operation itself triggers.
+        const stale = () => kind !== 'mutate' && request.generation !== this.generation;
         const onMessage = (event: MessageEvent) => {
             if (this.stopped || stale()) {
                 return;
@@ -1906,7 +2230,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 this.handleReply(channel, request, Buffer.from(event.data));
             } catch {
                 request.failed = true;
-                this.report('Could not read this folder or file. Refresh to try again.', true);
+                request.error = 'The answer from the device could not be read.';
                 channel.close();
             }
         };
@@ -1914,15 +2238,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             channel.removeEventListener('message', onMessage);
             channel.removeEventListener('close', onClose);
             this.requests.delete(channel);
-            if (kind === 'download') {
-                this.fileDownloads.cancel(request.path);
-                this.downloads.delete(request.path);
-                this.scheduleRender();
-            }
             if (kind === 'mutate') {
                 this.operations = Math.max(0, this.operations - 1);
             }
-            if (this.stopped || stale()) {
+            if (this.stopped || stale() || kind === 'sizes') {
+                // A size correction that does not arrive leaves the listing as it was.
                 return;
             }
             if (
@@ -1931,21 +2251,22 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     ((kind === 'stat' || kind === 'mutate') && !request.completed))
             ) {
                 request.failed = true;
-                this.report('The file request was interrupted. Refresh to try again.', true);
+                request.error = 'The connection to the device was interrupted.';
             }
-            if (kind === 'list' || (kind === 'stat' && !request.completed)) {
+            if (kind === 'list' || (kind === 'stat' && (!request.completed || request.failed))) {
                 this.finishListing(request);
             }
-            if (kind === 'download' && !request.completed && !request.failed) {
-                this.report('The download was interrupted. Select the file to try again.', true);
-            }
-            if (kind === 'mutate') {
-                if (request.completed && !request.failed) {
-                    this.report(request.success || 'Done.');
+            if (kind === 'mutate' && request.outcome) {
+                if (request.failed) {
+                    this.batch.failed.push(`${request.outcome.failure}: ${request.error || 'no reason given.'}`);
+                } else {
+                    this.batch.done.push(request.outcome.success);
+                    this.batch.many = request.outcome.many;
                 }
-                // Reload once the last operation of a batch has answered, so a multi-item paste
-                // does not re-list the folder for every item.
+                // Report and reload once the last operation of a batch has answered, so a
+                // multi-item paste does not re-list the folder for every item.
                 if (!this.operations) {
+                    this.reportBatch();
                     this.reload();
                 }
             }
@@ -1960,15 +2281,25 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             throw Error('Truncated reply');
         }
         const code = data.subarray(0, 4).toString('ascii');
-        if (code === Protocol.FAIL) {
-            request.failed = true;
-            const message = data.subarray(8, 8 + data.readUInt32LE(4)).toString('utf8');
-            this.report(message || 'The device could not open this folder or file.', true);
-            if (request.kind === 'mutate') {
-                this.operationError = message || 'The device refused this operation.';
-            } else if (request.kind !== 'download') {
-                this.finishListing(request);
+        if (request.kind === 'sizes') {
+            if (code === FileCommand.SIZES && data.length >= 16) {
+                const name = data.subarray(16, 16 + data.readUInt32LE(12)).toString('utf8');
+                const index = this.entries.findIndex((item) => item.name === name);
+                if (index >= 0) {
+                    const entry = this.entries[index];
+                    const size = data.readUInt32LE(4) + data.readUInt32LE(8) * 0x100000000;
+                    this.entries[index] = new Entry(name, entry.mode, size, entry.mtime.getTime() / 1000);
+                    this.scheduleRender();
+                }
             }
+            return;
+        }
+        if (code === Protocol.FAIL) {
+            // The close that follows reports it: in the list for a folder, in a toast otherwise.
+            request.failed = true;
+            request.error =
+                data.subarray(8, 8 + data.readUInt32LE(4)).toString('utf8') ||
+                (request.kind === 'mutate' ? 'The device refused it.' : 'The device gave no reason.');
             channel.close();
         } else if (code === Protocol.STAT) {
             request.completed = true;
@@ -1980,17 +2311,17 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             );
             if (!entry.mode) {
                 request.failed = true;
-                this.report('This path is unavailable. Choose another folder or refresh.', true);
-                this.finishListing(request);
+                request.error = 'There is no such folder on the device, or it cannot be read.';
+                channel.close();
             } else if (entry.isDirectory()) {
-                this.list(request.path);
+                this.list(request.path, request.path);
             } else if (entry.isFile()) {
                 this.download(request.path, entry);
-                this.list(path.dirname(request.path));
+                this.list(path.dirname(request.path), request.path);
             } else {
                 request.failed = true;
-                this.report('This item is not a regular file or folder.', true);
-                this.finishListing(request);
+                request.error = 'This item is not a regular file or folder.';
+                channel.close();
             }
         } else if (code === Protocol.DENT && request.kind === 'list') {
             const entry = new Entry(
@@ -2003,40 +2334,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 this.entries.push(entry);
                 this.scheduleRender();
             }
-        } else if (code === Protocol.DATA && request.kind === 'download') {
-            const received = this.fileDownloads.append(request.path, data.subarray(4));
-            if (received === undefined) {
-                request.completed = true;
-                channel.close();
-                return;
-            }
-            request.received = received;
-            const progress = this.downloads.get(request.path);
-            if (progress) {
-                progress.received = request.received;
-                this.updateProgressBar(request);
-            }
         } else if (code === Protocol.DONE) {
             request.completed = true;
-            if (request.kind === 'download') {
-                this.finishDownload(request);
-            } else if (request.kind !== 'mutate') {
+            if (request.kind !== 'mutate') {
                 this.finishListing(request);
             }
-        }
-    }
-
-    /** Updates the existing bar in place: a re-render per data packet would fight scrolling. */
-    private updateProgressBar(request: Request): void {
-        const name = path.basename(request.path);
-        const bar = this.tableBody.querySelector<HTMLElement>(
-            `tr[data-name="${CSS.escape(name)}"] .file-listing-progress`,
-        );
-        if (bar) {
-            const size = request.entry?.size || 0;
-            bar.style.width = `${Math.min(100, size ? (request.received * 100) / size : 100)}%`;
-        } else {
-            this.scheduleRender();
         }
     }
 
@@ -2046,38 +2348,136 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         this.loading = false;
         this.wrapper.dataset.listing = request.failed ? 'error' : 'ready';
-        this.renderItems();
-        if (request.failed) {
-            return;
-        }
-        if (this.operationError) {
-            this.report(this.operationError, true);
-            this.operationError = undefined;
-            return;
-        }
         this.report('');
+        if (request.failed) {
+            // The place that failed is the place shown: its own path in the address bar, so
+            // Up and Retry mean what they say, and no rows from the folder before it.
+            if (request.kind === 'stat') {
+                this.enter(request.path, request.path);
+            }
+            this.entries = [];
+            this.selection.clear();
+            this.listingError = request.error || 'The device gave no reason.';
+            this.renderItems();
+            return;
+        }
+        this.renderItems();
+        // The listing states sizes in 32 bits. Ask for the true size of anything larger.
+        if (request.kind === 'list' && this.entries.some((entry) => entry.isFile())) {
+            this.send('sizes', this.stringCommand(FileCommand.SIZES, this.path), this.path);
+        }
     }
 
-    private list(destination: string): void {
+    private list(destination: string, requested: string): void {
+        this.enter(destination, requested);
+        // The old rows stay, dimmed and inert, until the new folder has rows of its own; wiping
+        // them first made every folder change flash an empty list.
+        this.wrapper.classList.add('fx-loading');
+        this.request('list', destination);
+    }
+
+    /**
+     * Makes `destination` the place the explorer shows: the address bar, the browser's address
+     * and an empty selection. `requested` is the path that was asked for; a file's path shows
+     * the folder it is in.
+     */
+    private enter(destination: string, requested: string): void {
         this.path = destination;
         this.entries = [];
         this.selection.clear();
         this.anchorName = undefined;
         this.renderBreadcrumb();
-        // The old rows stay, dimmed and inert, until the new folder has rows of its own; wiping
-        // them first made every folder change flash an empty list.
-        this.wrapper.classList.add('fx-loading');
         this.updateControls();
-        const params = new URLSearchParams(location.hash.replace(/^#!/, ''));
-        if (
-            params.get('action') === ACTION.FILE_LISTING &&
-            params.get('udid') === this.serial &&
-            params.get('path') !== destination
-        ) {
+        const params = this.routeParams();
+        const shown = params?.get('path');
+        if (params && shown !== destination) {
             params.set('path', destination);
-            pushRoute(params);
+            if (path.resolve('/', shown || DEFAULT_FILES_PATH) === requested) {
+                // The address already asked for this place; it only spells it differently (a
+                // trailing slash, or a file inside the folder). Correct it without a new entry.
+                replaceRoute(params);
+            } else {
+                this.historyIndex++;
+                this.historyTop = this.historyIndex;
+                pushRoute(params, this.historyState());
+                this.storeHistory();
+            }
+            this.updateControls();
         }
-        this.request('list', destination);
+    }
+
+    /** The current address, when it is this device's Files route. */
+    private routeParams(): URLSearchParams | undefined {
+        const params = new URLSearchParams(location.hash.replace(/^#!/, ''));
+        return params.get('action') === ACTION.FILE_LISTING && params.get('udid') === this.serial ? params : undefined;
+    }
+
+    private historyState(): unknown {
+        return { ...(history.state || {}), files: { id: this.historyId, index: this.historyIndex } };
+    }
+
+    private storeHistory(): void {
+        try {
+            sessionStorage.setItem(this.historyKey, JSON.stringify({ id: this.historyId, top: this.historyTop }));
+        } catch {
+            // Without it Forward is only forgotten by a page reload.
+        }
+    }
+
+    /**
+     * Picks up where this tab's history stands. An entry tagged by an earlier explorer in this
+     * tab (a reload, or Back into Files) continues that run; anything else starts a new one
+     * with nothing behind it.
+     */
+    private adoptHistory(): void {
+        const tag = history.state?.files;
+        let stored: { id?: unknown; top?: unknown } = {};
+        try {
+            stored = JSON.parse(sessionStorage.getItem(this.historyKey) || '{}') || {};
+        } catch {
+            // Session storage can be unavailable; Forward then starts disabled.
+        }
+        if (tag && typeof tag.id === 'string' && Number.isInteger(tag.index) && tag.index >= 0) {
+            this.historyId = tag.id;
+            this.historyIndex = tag.index;
+            this.historyTop =
+                stored.id === tag.id && typeof stored.top === 'number' ? Math.max(stored.top, tag.index) : tag.index;
+            return;
+        }
+        this.historyId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+        this.historyIndex = 0;
+        this.historyTop = 0;
+        const params = this.routeParams();
+        if (params) {
+            replaceRoute(params, this.historyState());
+        }
+        this.storeHistory();
+    }
+
+    /**
+     * Called for every path change. The browser's Back and Forward land on a tagged entry; an
+     * entry without this run's tag was pushed by something else (a typed address, a link), so
+     * it counts as one step forward and is tagged now.
+     */
+    private syncHistory(): void {
+        const tag = history.state?.files;
+        if (tag && typeof tag.id === 'string' && Number.isInteger(tag.index)) {
+            if (tag.id !== this.historyId) {
+                // An entry from an earlier run in this tab: continue that run from here.
+                this.historyId = tag.id;
+                this.historyTop = tag.index;
+            }
+            this.historyIndex = tag.index;
+            this.historyTop = Math.max(this.historyTop, tag.index);
+            return;
+        }
+        const params = this.routeParams();
+        if (params) {
+            this.historyIndex++;
+            this.historyTop = this.historyIndex;
+            replaceRoute(params, this.historyState());
+            this.storeHistory();
+        }
     }
 
     private link(destination: string): string {
@@ -2088,25 +2488,27 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         return url.toString();
     }
 
-    private download(destination: string, entry: Entry): void {
-        if (
-            Array.from(this.requests.values()).some(
-                (request) => request.kind === 'download' && request.path === destination,
-            )
-        ) {
-            return;
+    /**
+     * Every download is a plain HTTP request that the browser saves to disk itself: it shows the
+     * progress, and a file of any size never passes through this page's memory.
+     */
+    private download(destination: string, entry: Entry, announce = true): void {
+        const direct = this.buildDirectWebSocketUrl();
+        const endpoint = new URL('api/files/download', new URL('.', location.href));
+        endpoint.searchParams.set('udid', this.params.udid);
+        endpoint.searchParams.set('path', destination);
+        if (this.params.useProxy) {
+            endpoint.searchParams.set('remote', direct.toString());
         }
-        this.report(`Downloading ${entry.name}…`);
-        if (!this.fileDownloads.start(destination, entry.size)) return;
-        this.downloads.set(destination, { received: 0, size: entry.size });
-        this.scheduleRender();
-        this.request('download', destination, entry);
-    }
-
-    private finishDownload(request: Request): void {
-        const name = request.entry?.name || path.basename(request.path);
-        this.fileDownloads.finish(request.path, name);
-        this.report(`Downloaded ${name}.`);
+        const link = document.createElement('a');
+        link.href = endpoint.href;
+        link.download = entry.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        if (announce) {
+            this.toast(`Download of ${entry.name} started in your browser.`);
+        }
     }
 
     // ---------------------------------------------------------------- navigation
@@ -2120,41 +2522,25 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     /**
-     * Every path change funnels through here: shortcut clicks, the address bar, the history
-     * buttons and the browser's own Back/Forward (which reach it through the hash router). The
-     * destination tells the stacks apart -- matching the top of one stack means the user went
-     * that way, anything else is a new visit.
+     * Every path change funnels through here: shortcut clicks, the address bar, and the
+     * browser's Back and Forward (which reach it through the hash router, as the toolbar's
+     * Back and Forward do too).
      */
     public navigate(destination: string): void {
         const normalized = path.resolve('/', destination);
         if (this.stopped) {
             return;
         }
+        this.syncHistory();
         if (!this.hasConnection()) {
             this.path = normalized;
             this.renderBreadcrumb();
+            this.updateControls();
             return;
         }
         if (normalized === this.path) {
+            this.updateControls();
             return;
-        }
-        if (this.backStack[this.backStack.length - 1] === normalized) {
-            this.backStack.pop();
-            this.forwardStack.push(this.path);
-        } else if (this.forwardStack[this.forwardStack.length - 1] === normalized) {
-            this.forwardStack.pop();
-            this.backStack.push(this.path);
-        } else {
-            this.backStack.push(this.path);
-            this.forwardStack = [];
-        }
-        try {
-            sessionStorage.setItem(
-                this.historyKey,
-                JSON.stringify({ back: this.backStack.slice(-50), forward: this.forwardStack.slice(-50) }),
-            );
-        } catch {
-            // Remembering history is a convenience; a full or blocked store must not stop navigation.
         }
         this.load(normalized);
     }
@@ -2169,13 +2555,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         if (this.uploads.size) {
             this.pendingPath = destination;
-            this.report('Wait for uploads to finish before changing folders.');
+            this.toast('Wait for uploads to finish before changing folders.');
             return;
         }
         this.pendingPath = undefined;
         this.closeMenu();
         this.generation++;
         this.loading = true;
+        this.listingError = undefined;
         this.setFiltering(false);
         // A settled listing needs an observable marker: "no rows yet" and "this folder is empty"
         // look identical from the outside, which is exactly how a fixture reads a half-loaded
@@ -2212,7 +2599,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.enterCount = 0;
         this.wrapper.classList.remove('file-listing-drop');
         if (!this.canModify()) {
-            this.report('Wait for the current folder or upload to finish before adding files.');
+            this.toast('Wait for the current folder or upload to finish before adding files.');
             return false;
         }
         return true;
@@ -2221,47 +2608,155 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (this.stopped) {
             return;
         }
-        let row = this.uploads.get(data.key);
-        if (!row) {
-            row = document.createElement('div');
+        let upload = this.uploads.get(data.key);
+        if (!upload) {
+            if (data.finished && data.size === undefined) {
+                // Refused before it was queued (an unsupported type): there is no row to end.
+                this.uploadErrors.push(`${data.fileName}: ${data.message}`);
+                this.endBatchIfDone();
+                return;
+            }
+            const row = document.createElement('div');
             row.className = 'file-listing-upload-progress';
+            row.innerHTML = `<span class="fx-upload-name">${esc(data.fileName)}</span><span class="fx-upload-state"></span><button type="button" class="fx-button fx-upload-cancel" data-upload-cancel="${
+                data.key
+            }" aria-label="${esc(`Cancel the upload of ${data.fileName}`)}">Cancel</button>`;
             this.transfers.appendChild(row);
+            upload = { row, name: data.fileName, sent: 0, size: data.size || 0 };
+            this.uploads.set(data.key, upload);
+            if (!this.uploadBatch.total) {
+                // The first upload of a batch: leaving the tool or the page now asks first.
+                setLeaveGuard(this.leaveGuard);
+                window.addEventListener('beforeunload', this.onBeforeUnload);
+            }
+            this.uploadBatch.total++;
+            this.uploadBatch.bytes += upload.size;
             this.transfers.hidden = false;
-            this.uploads.set(data.key, row);
         }
-        row.textContent = `${data.fileName} · ${data.message}`;
-        row.classList.toggle('error', data.error);
+        upload.sent = data.sent ?? upload.sent;
+        (upload.row.querySelector('.fx-upload-state') as HTMLElement).textContent = data.message;
+        upload.row.classList.toggle('error', data.error);
+        (upload.row.querySelector('.fx-upload-cancel') as HTMLElement).hidden = data.cancellable === false;
         if (data.finished) {
-            row.remove();
+            upload.row.remove();
             this.uploads.delete(data.key);
-            this.transfers.hidden = !this.transfers.childElementCount;
-            const outcome = data.error ? `${data.fileName}: ${data.message}` : `Uploaded ${data.fileName}.`;
-            if (data.error) {
-                this.uploadErrors.push(outcome);
+            this.uploadBatch.ended++;
+            this.uploadBatch.endedBytes += upload.size;
+            if (data.cancelled) {
+                this.uploadBatch.cancelled++;
+            } else if (data.error) {
+                this.uploadErrors.push(`${data.fileName}: ${data.message}`);
+            } else {
+                this.uploadsDone.push(data.fileName);
             }
-            this.report(outcome, data.error);
-            if (!this.uploads.size) {
-                // A later success must not hide an earlier failure, so the failures are shown
-                // again once the folder is listed. The folder is listed even after a failure: a
-                // refused name means the listing was out of date, and a second try must see it.
-                const failures = this.uploadErrors;
-                this.uploadErrors = [];
-                if (failures.length) {
-                    const summary =
-                        failures.length === 1 ? failures[0] : `${failures.length} uploads failed. ${failures[0]}`;
-                    this.operationError = this.operationError ? `${this.operationError} ${summary}` : summary;
-                }
-                if (this.pendingPath) {
-                    this.load(this.pendingPath);
-                } else {
-                    this.reload();
-                }
-            }
+            this.endBatchIfDone();
         }
+        this.renderTransferSummary();
         this.updateControls();
     }
+
+    /** "Uploading 3 of 40, 45%": the file the batch is on and how much of all of it is sent. */
+    private renderTransferSummary(): void {
+        const { total, ended, bytes, endedBytes } = this.uploadBatch;
+        this.transfers.hidden = !this.uploads.size;
+        if (!this.uploads.size) {
+            return;
+        }
+        let sent = endedBytes;
+        this.uploads.forEach((upload) => (sent += upload.sent));
+        const percent = bytes ? Math.floor((sent * 100) / bytes) : 0;
+        this.transferSummary.textContent =
+            total === 1 ? `Uploading 1 file, ${percent}%` : `Uploading ${ended + 1} of ${total}, ${percent}%`;
+    }
+
+    /** When the last upload of a batch ends: one toast for all of it, then the folder again. */
+    private endBatchIfDone(): void {
+        if (this.uploads.size) {
+            return;
+        }
+        // One toast for the batch, so a later success does not hide an earlier failure. The
+        // folder is listed even after a failure: a refused name means the listing was out of
+        // date, and a second try must see it.
+        const failures = this.uploadErrors;
+        const done = this.uploadsDone;
+        const { cancelled } = this.uploadBatch;
+        this.uploadErrors = [];
+        this.uploadsDone = [];
+        this.uploadBatch = { total: 0, ended: 0, cancelled: 0, bytes: 0, endedBytes: 0 };
+        this.releaseLeaveGuard();
+        const stopped = cancelled ? `Cancelled ${cancelled} upload${cancelled === 1 ? '' : 's'}.` : '';
+        if (failures.length) {
+            this.toast(failures.length === 1 ? failures[0] : `${failures.length} uploads failed. ${failures[0]}`, true);
+        } else if (done.length) {
+            const uploaded = done.length === 1 ? `Uploaded ${done[0]}.` : `Uploaded ${done.length} files.`;
+            this.toast(stopped ? `${uploaded} ${stopped}` : uploaded);
+        } else if (stopped) {
+            this.toast(stopped);
+        }
+        if (this.pendingPath) {
+            this.load(this.pendingPath);
+        } else {
+            this.reload();
+        }
+    }
+
+    private releaseLeaveGuard(): void {
+        clearLeaveGuard(this.leaveGuard);
+        window.removeEventListener('beforeunload', this.onBeforeUnload);
+    }
+
+    /** Closing or reloading the page while files upload asks first; the browser words the question. */
+    private onBeforeUnload = (event: BeforeUnloadEvent): void => {
+        if (this.uploads.size) {
+            event.preventDefault();
+            event.returnValue = '';
+        }
+    };
+
+    /**
+     * Asked before anything takes the owner away from Files while files upload: a tool tab,
+     * the device switcher, Back. Leaving stops the uploads that have not finished.
+     */
+    private confirmLeave(): Promise<boolean> {
+        if (!this.uploads.size || this.stopped) {
+            return Promise.resolve(true);
+        }
+        if (this.leaving) {
+            // The question is already on screen.
+            return Promise.resolve(false);
+        }
+        if (this.dialog.open) {
+            cancelVisibility(this.dialog);
+            this.dialog.close('');
+        }
+        const count = this.uploads.size;
+        this.leaving = this.confirm({
+            title: `Stop ${count === 1 ? 'the upload' : `${count} uploads`} to ${this.deviceLabel()}?`,
+            message:
+                count === 1
+                    ? 'Leaving Files stops the upload, and the file is not saved on the device.'
+                    : 'Leaving Files stops the uploads that have not finished, and those files are not saved on the device.',
+            confirm: 'Stop and leave',
+            cancel: 'Keep uploading',
+            danger: true,
+        }).then((leave) => {
+            this.leaving = undefined;
+            if (leave) {
+                this.filePushHandler?.cancelAll();
+            }
+            return leave;
+        });
+        return this.leaving;
+    }
+
+    /** The parts of an address that pick the tool page; the folder is not one of them. */
+    private static identityOf(params: URLSearchParams): string {
+        return ['action', 'udid', 'hostname', 'port', 'pathname', 'secure', 'useProxy']
+            .map((key) => params.get(key))
+            .join('\n');
+    }
     public onError(error: string | Error): void {
-        this.report(typeof error === 'string' ? error : error.message, true);
+        this.toast(typeof error === 'string' ? error : error.message, true);
     }
 
     // ---------------------------------------------------------------- lifecycle
@@ -2292,8 +2787,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         this.requests.clear();
         this.uploads.clear();
-        this.downloads.clear();
-        this.fileDownloads.release();
+        this.releaseLeaveGuard();
+        render(null, this.toastHost);
         this.picker.value = '';
         this.wrapper.removeEventListener('click', this.onClick);
         this.wrapper.removeEventListener('dblclick', this.onDoubleClick);
@@ -2315,7 +2810,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             ...typed,
             action: ACTION.FILE_LISTING,
             udid: Util.parseString(params, 'udid', true),
-            path: params.get('path') || '/data/local/tmp',
+            path: params.get('path') || DEFAULT_FILES_PATH,
         };
     }
     protected buildDirectWebSocketUrl(): URL {
@@ -2336,6 +2831,18 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         this.filePushHandler?.release();
+        // The uploads ended with the connection; say so instead of leaving their rows behind.
+        this.uploads.forEach((upload, key) =>
+            this.onFilePushUpdate({
+                key,
+                pushId: 0,
+                fileName: upload.name,
+                message: 'The connection to the device was lost.',
+                progress: -1,
+                error: true,
+                finished: true,
+            }),
+        );
         this.loading = false;
         this.updateControls();
         this.report('Connection lost. Return to your devices and open Files again.', true);

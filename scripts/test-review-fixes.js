@@ -205,15 +205,16 @@ test('HTTP downloads stream bytes with attachment headers and cancel ADB when th
     const app = express(); mountFileDownloads(app, '/');
     const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
     const url = `http://127.0.0.1:${server.address().port}/api/files/download?udid=fake&path=/sdcard/example.txt`;
-    const original = AdbUtils.pipePullFile; let stream;
+    const original = AdbUtils.pipePullFile, originalSize = AdbUtils.fileSize; let stream;
     AdbUtils.pipePullFile = async () => { stream = pull(); process.nextTick(() => stream.write('bytes')); return stream; };
+    AdbUtils.fileSize = async () => undefined;
     try {
         const response = await fetch(url);
         assert.equal(response.status, 200); assert.match(response.headers.get('content-disposition'), /attachment; filename="example.txt"/);
         const reader = response.body.getReader(); assert.equal(Buffer.from((await reader.read()).value).toString(), 'bytes');
         await reader.cancel(); await new Promise(resolve => setTimeout(resolve, 25)); assert.equal(stream.destroyed, true); assert.equal(stream.cancelled, 1);
         const next = await fetch(url); stream.end('done'); assert.equal(await next.text(), 'bytesdone');
-    } finally { AdbUtils.pipePullFile = original; server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+    } finally { AdbUtils.pipePullFile = original; AdbUtils.fileSize = originalSize; server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
 
 test('a service completing after shutdown is released again before startup continues', async () => {
@@ -221,22 +222,6 @@ test('a service completing after shutdown is released again before startup conti
     const service = { start: () => new Promise(resolve => finish = resolve), release: () => releases++ };
     const work = startServices([{ getInstance: () => service }], [], () => stopping);
     stopping = true; finish(); await work; assert.equal(releases, 1);
-});
-
-test('file download buffers include pending Blob URLs in their memory bound', () => {
-    const { FileDownloads } = require('../src/app/googDevice/client/FileDownloads');
-    const previous = global.document, links = [];
-    global.document = { body: { appendChild() {} }, createElement: () => ({ click() { links.push(this.href); }, remove() {} }) };
-    const downloads = new FileDownloads(file => new URL(`https://example.test/api/files/download?path=${encodeURIComponent(file)}`));
-    try {
-        assert.equal(downloads.start('/one', 2), true); assert.equal(downloads.append('/one', Buffer.from('ok')), 2);
-        downloads.finish('/one', 'one');
-        assert.equal(downloads.start('/two', 2), true);
-        assert.equal(downloads.start('/three', 2), false, 'completed Blob URLs still count toward the bound');
-        assert.equal(downloads.start('/large', 17 * 1024 * 1024), false, 'large files stream directly');
-        assert.equal(downloads.append('/two', Buffer.alloc(17 * 1024 * 1024)), undefined, 'a growing file switches to native streaming');
-        assert.equal(downloads.buffers.size, 0); assert.equal(links.filter(link => link.startsWith('https:')).length, 3);
-    } finally { downloads.release(); global.document = previous; }
 });
 
 test('ADB pull ownership is returned before bytes arrive and supports an empty file', async () => {

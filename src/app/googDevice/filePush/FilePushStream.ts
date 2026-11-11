@@ -20,5 +20,7 @@ export abstract class FilePushStream extends TypedEmitter<FilePushStreamEvents> 
     }): void;
     public abstract sendEventFinish(params: { id: number }): void;
     public abstract sendEventAppend(params: { id: number; chunk: Uint8Array }): void;
+    /** Stops one upload. The device discards what it received; nothing more is reported for it. */
+    public abstract sendEventCancel(params: { id: number }): void;
     public abstract release(): void;
 }

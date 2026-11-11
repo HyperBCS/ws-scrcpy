@@ -59,6 +59,21 @@ export class AdbkitFilePushStream extends FilePushStream {
         channel.send(CommandControlMessage.createPushFileCommand(finishParams).toBuffer());
     }
 
+    /**
+     * Sends CANCEL and closes the upload's channel. The server cancels the adb transfer and
+     * removes the partial file on either, so the order they arrive in does not matter.
+     */
+    public sendEventCancel({ id }: { id: number }): void {
+        const channel = this.channels.get(id);
+        if (!channel) {
+            return;
+        }
+        // The close that follows is the expected end of this upload, not an error to report.
+        this.completed.add(id);
+        channel.send(CommandControlMessage.createPushFileCommand({ id, state: FilePushState.CANCEL }).toBuffer());
+        channel.close();
+    }
+
     public sendEventNew({ id }: { id: number }): void {
         if (!this.hasConnection()) return;
         let pushId = id;

@@ -110,6 +110,11 @@ export class FileListing extends Mw {
                     );
                     break;
                 }
+                case FileCommand.SIZES: {
+                    const { value } = FileListing.readString(data, 4);
+                    FileListing.sendLargeSizes(serial, value, channel);
+                    break;
+                }
                 case FileCommand.DELETE: {
                     if (data.length < 8) {
                         throw Error('Invalid message. Missing count');
@@ -148,6 +153,36 @@ export class FileListing extends Mw {
         if (cmd === Protocol.RECV) {
             return AdbUtils.pipePullFileToStream(serial, pathString, channel);
         }
+    }
+
+    /**
+     * Answers with one `SIZE low(u32 LE) high(u32 LE) nameLength(u32 LE) name` record per file
+     * of 4 GiB or more, then DONE. A folder that cannot be searched answers with DONE alone.
+     */
+    private static sendLargeSizes(serial: string, folder: string, channel: Multiplexer): void {
+        // eslint-disable-next-line no-control-regex
+        if (!folder.startsWith('/') || /[\x00-\x1f\x7f]/.test(folder)) {
+            throw Error('Only absolute device paths are allowed.');
+        }
+        AdbUtils.largeFileSizes(serial, folder)
+            .catch(() => new Map<string, number>())
+            .then((sizes) => {
+                if (channel.readyState !== channel.OPEN) {
+                    return;
+                }
+                sizes.forEach((size, name) => {
+                    const length = Buffer.byteLength(name, 'utf-8');
+                    const record = Buffer.alloc(16 + length);
+                    record.write(FileCommand.SIZES, 0, 'ascii');
+                    record.writeUInt32LE(size % 0x100000000, 4);
+                    record.writeUInt32LE(Math.floor(size / 0x100000000), 8);
+                    record.writeUInt32LE(length, 12);
+                    record.write(name, 16, 'utf-8');
+                    channel.send(record);
+                });
+                channel.send(Buffer.from(Protocol.DONE, 'ascii'));
+                channel.close();
+            });
     }
 
     /** Mutating commands answer with a single DONE or FAIL, so the client can report either. */

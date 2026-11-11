@@ -30,10 +30,10 @@
     flex: 0 0 22px;
     color: var(--status-ready-color);
 }
-.app-toast.error {
+.app-toast.toast-error {
     border-color: color-mix(in srgb, var(--status-unauthorized-color) 45%, transparent);
 }
-.app-toast.error .toast-icon {
+.app-toast.toast-error .toast-icon {
     color: var(--status-unauthorized-color);
 }
 .toast-message {

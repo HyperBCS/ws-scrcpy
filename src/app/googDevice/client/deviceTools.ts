@@ -16,5 +16,12 @@ function deviceTool(title: string, action: ACTION, params: Record<string, string
     };
 }
 
+/**
+ * Where Files opens when a link names no folder. No trailing slash: the explorer normalises the
+ * path it shows, and a link that differs from it only by a slash used to add a second history
+ * entry for the same folder.
+ */
+export const DEFAULT_FILES_PATH = '/data/local/tmp';
+
 export const shellTool = deviceTool('Shell', ACTION.SHELL);
-export const fileListingTool = deviceTool('Files', ACTION.FILE_LISTING, { path: '/data/local/tmp/' });
+export const fileListingTool = deviceTool('Files', ACTION.FILE_LISTING, { path: DEFAULT_FILES_PATH });

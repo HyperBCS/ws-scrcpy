@@ -309,6 +309,41 @@ export class AdbUtils {
     }
 
     /**
+     * The size of one file in bytes, or undefined when the device does not say. adb sync `STAT`
+     * carries 32 bits, so it reports a file of 4 GiB or more as its size modulo 4 GiB.
+     */
+    public static async fileSize(serial: string, pathString: string): Promise<number | undefined> {
+        try {
+            const { code, output } = await AdbUtils.shellExec(serial, `stat -L -c %s -- ${AdbUtils.quote(pathString)}`);
+            return code === 0 && /^\d+$/.test(output) ? Number(output) : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /**
+     * The files directly inside `folder` that are 4 GiB or larger, with their true sizes. adb
+     * sync `LIST` states sizes in 32 bits, so these are the entries it gets wrong. Nothing here
+     * is fatal: a folder that cannot be searched simply yields no corrections.
+     */
+    public static async largeFileSizes(serial: string, folder: string): Promise<Map<string, number>> {
+        const sizes = new Map<string, number>();
+        // The trailing slash makes find enter a folder that is a symlink, such as /sdcard.
+        const root = AdbUtils.quote(folder.replace(/\/+$/, '') + '/');
+        const { output } = await AdbUtils.shellExec(
+            serial,
+            `find ${root} -maxdepth 1 -type f -size +4294967295c -exec stat -c '%s %n' {} +`,
+        ).catch(() => ({ output: '' }));
+        for (const line of output.split('\n')) {
+            const match = /^(\d+) (.*\/)?([^/]+)$/.exec(line);
+            if (match && Number(match[1]) > 0xffffffff) {
+                sizes.set(match[3], Number(match[1]));
+            }
+        }
+        return sizes;
+    }
+
+    /**
      * The guards every replacing operation shares: only a file may be replaced, and only by a
      * file. `mv -f` and `cp` would otherwise merge into, or move inside, an existing folder.
      */
