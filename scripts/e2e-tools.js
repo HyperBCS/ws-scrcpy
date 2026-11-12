@@ -184,13 +184,15 @@ async function main() {
             assert.deepEqual(await page.locator('h1').evaluateAll(list=>list.map(h1=>h1.className)),['kit-bar-name'],'one h1, the name in the bar');
             fs.mkdirSync('/tmp/ws-scrcpy-tools', {recursive:true});
             await page.screenshot({path:`/tmp/ws-scrcpy-tools/${name}-shell.png`});
-            await page.locator('.stream-service-status[data-stream-service="running"]').waitFor();
+            // The header names the stream service only while it does not run (p5-screen-shell).
+            const service = page.locator('.kit-bar .stream-service-status');
+            assert.equal(await service.count(),0,'a running service has no line in the header');
             state.update({pid:-1});
             await page.locator('.stream-service-status[data-stream-service="stopped"]').waitFor();
             state.update({pid:0});
             await page.locator('.stream-service-status[data-stream-service="unknown"]').waitFor();
             state.update({pid:123,'screen.power':'off','device.awake':false});
-            await page.locator('.stream-service-status[data-stream-service="running"]').waitFor();
+            await service.waitFor({state:'detached'});
             await page.getByRole('button',{name:'Tab',exact:true}).click();
             const ctrl = page.getByRole('button',{name:'Ctrl',exact:true});
             // Ctrl is one-shot. Left on, it would turn "ls" and Enter into ^L ^S, which clears
@@ -319,12 +321,13 @@ async function missingCode(browser) {
     await page.goto(BASE);
     const card = page.locator('.device').filter({hasText:'Phone A'});
     await card.getByRole('link',{name:'Shell',exact:true}).click();
-    const banner = page.locator('.tool-error');
-    await banner.getByText('Shell could not be loaded. Reload the page to try again.',{exact:true}).waitFor();
+    // The page's state card in place of the tool (p5-screen-shell).
+    const offer = page.locator('.tool-state .stream-state-card');
+    await offer.getByRole('heading',{name:'Shell could not be loaded',exact:true}).waitFor();
     assert(blocked,'the fixture refused the Shell chunk');
-    assert.equal(await banner.getByRole('button').innerText(),'Reload','the banner offers a reload, not a reconnect');
+    assert.equal(await offer.getByRole('button').innerText(),'Reload','the card offers a reload, not a reconnect');
     await page.unroute('**/*.js');
-    await Promise.all([page.waitForEvent('load'), banner.getByRole('button',{name:'Reload',exact:true}).click()]);
+    await Promise.all([page.waitForEvent('load'), offer.getByRole('button',{name:'Reload',exact:true}).click()]);
     await page.locator('.terminal-container .xterm').waitFor();
     assert.deepEqual(errors,[]);
     console.log('PASS a tool whose code is gone after a deploy offers Reload, which opens it');

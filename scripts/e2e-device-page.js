@@ -253,6 +253,41 @@ async function checkChrome(page, label, current, viewport, { entered = false } =
     return boxes;
 }
 
+/** The colour a role token draws in this theme. */
+function colourOf(page, token) {
+    return page.evaluate((name) => {
+        const probe = document.createElement('span');
+        probe.style.color = `var(${name})`;
+        document.body.append(probe);
+        const colour = getComputedStyle(probe).color;
+        probe.remove();
+        return colour;
+    }, token);
+}
+
+/** Which colour the tool chip takes in each tone, read on the chip of the tool that is shown. */
+function chipColours(page) {
+    return page.locator('.tool-view:not([hidden]) .tool-connection').evaluate((chip) => {
+        const probe = document.createElement('span');
+        document.body.append(probe);
+        const token = (name) => {
+            probe.style.color = `var(${name})`;
+            return getComputedStyle(probe).color;
+        };
+        const names = { text: token('--text'), muted: token('--text-muted'), warning: token('--warning-text'), danger: token('--danger-text') };
+        probe.remove();
+        const tone = chip.getAttribute('data-tone');
+        const found = {};
+        for (const next of ['success', 'warning', 'error', 'neutral']) {
+            chip.setAttribute('data-tone', next);
+            const colour = getComputedStyle(chip).color;
+            found[next] = Object.keys(names).find((name) => names[name] === colour);
+        }
+        chip.setAttribute('data-tone', tone);
+        return found;
+    });
+}
+
 /** The icon of the one set each control of the screen shows, by the control's title. */
 const CONTROL_ICONS = {
     Back: 'navBack', Home: 'home', Overview: 'square', 'Volume down': 'volDown', 'Mute phone': 'volMute', 'Volume up': 'volUp',
@@ -380,21 +415,12 @@ async function androidTabs(browser, viewport, colorScheme) {
         assert.equal(await page.locator('.tool-view, .file-explorer, .terminal-container').count(), 0, 'and not mounted');
         assert.equal(await page.evaluate(() => document.body.className), 'stream');
         await checkLinks(page, `${label} Screen`);
-        // What is laid over the picture starts below the tabs, not over them, and takes no
-        // room from the picture: a notice hangs from a place without height above the stage.
-        const notice = await page.evaluate(() => {
-            const stage = document.querySelector('.stream-stage');
-            const before = stage.getBoundingClientRect().top;
-            const probe = document.createElement('div');
-            probe.className = 'stream-notice-anchor';
-            probe.innerHTML = '<div class="kit-banner stream-notice">A notice</div>';
-            stage.before(probe);
-            const result = { top: probe.firstChild.getBoundingClientRect().top, moved: stage.getBoundingClientRect().top - before };
-            probe.remove();
-            return result;
-        });
-        assert.ok(notice.top >= screen.strip.bottom, `${label}: a notice shows below the tabs (${notice.top})`);
-        assert.equal(notice.moved, 0, `${label}: a notice does not move the picture`);
+        // The one place for banners is under the tabs. With nothing to say it has no height,
+        // and the stage starts under it: a banner takes its room from the stage, never lies over it.
+        const slot = await page.locator('.stream-banners').boundingBox();
+        assert.ok(Math.abs(slot.y - screen.strip.bottom) <= 1, `${label}: the banner slot is under the tabs (${slot.y})`);
+        assert.equal(slot.height, 0, `${label}: an empty slot takes no room`);
+        assert.ok(Math.abs(stage.y - (slot.y + slot.height)) <= 1, `${label}: the stage starts under the slot`);
         await shot('screen');
 
         // Files: the stream stops at once. The entry is replaced.
@@ -423,6 +449,9 @@ async function androidTabs(browser, viewport, colorScheme) {
         await tab(page, 'Shell').click();
         await page.locator('.tool-view-shell').waitFor();
         await page.locator('.tool-connection.connected').waitFor();
+        // The chip at the end of the tabs is in the colour of its tone, as the screen's header
+        // line: Connected in the text colour, and each other tone as the header draws it.
+        assert.deepEqual(await chipColours(page), { success: 'text', warning: 'warning', error: 'danger', neutral: 'muted' }, `${label}: the chip's tones`);
         await until(async () => (await terminalText(page)).includes('Fixture terminal 1 ready'), 'the shell starts');
         const rows = await terminalRows(page);
         assert.equal(await hash(page), `#!action=device&udid=${PIXEL}&view=shell`);
@@ -779,18 +808,25 @@ async function reloadOfferOnATab(browser) {
         await card(page, `android:${PIXEL}`).getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.getByText('Connected', { exact: true }).first().waitFor();
         await tab(page, 'Shell').click();
-        const banner = page.locator('.tool-error');
-        await banner.getByText('Shell could not be loaded. Reload the page to try again.', { exact: true }).waitFor();
+        // The page's state card, in place of the tool, with the one thing that helps.
+        const offer = page.locator('.tool-state .stream-state-card');
+        await offer.getByRole('heading', { name: 'Shell could not be loaded', exact: true }).waitFor();
         assert.ok(blocked, 'the fixture refused the Shell chunk');
-        assert.equal(await banner.getByRole('button').innerText(), 'Reload');
+        assert.equal(await offer.locator('.stream-state-message').textContent(), 'Reload the page to try again.');
+        assert.deepEqual(await offer.locator('button').evaluateAll((list) => list.map((button) => [button.textContent, button.className])), [['Reload', 'kit-button kit-button-primary']], 'Reload is the one action');
+        assert.equal(await page.locator('.tool-error').count(), 0, 'and no banner says it again');
+        assert.equal(await page.locator('.tool-connection').innerText(), 'Unable to connect');
+        assert.equal(await page.locator('.tool-connection').evaluate((chip) => getComputedStyle(chip).color), await colourOf(page, '--danger-text'), 'a tool that failed is red on the chip');
+        await settleMotion(page);
+        await page.screenshot({ path: path.join(OUT, 'reload-offer.png') });
         await checkChrome(page, 'missing code', 'Shell', PHONE);
         await tab(page, 'Screen').click();
         await page.getByText('Connected', { exact: true }).first().waitFor();
-        assert.equal(await page.locator('.tool-error:visible').count(), 0, 'the banner belongs to the Shell tab');
+        assert.equal(await page.locator('.tool-state:visible').count(), 0, 'the card belongs to the Shell tab');
         await tab(page, 'Shell').click();
-        await banner.waitFor();
+        await offer.waitFor();
         await page.unroute('**/*.js');
-        await Promise.all([page.waitForEvent('load'), banner.getByRole('button', { name: 'Reload', exact: true }).click()]);
+        await Promise.all([page.waitForEvent('load'), offer.getByRole('button', { name: 'Reload', exact: true }).click()]);
         await page.locator('.terminal-container .xterm').waitFor();
         assert.equal(await hash(page), `#!action=device&udid=${PIXEL}&view=shell`);
         assert.deepEqual(test.errors, []);

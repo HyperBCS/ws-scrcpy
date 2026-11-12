@@ -117,6 +117,17 @@ button.kit-bar-title {
 .kit-bar-root .kit-bar-status {
     font-size: var(--font-size-13);
 }
+/* The line takes the tone of its state: Failed red, Connecting and Reconnecting amber, Connected
+   in the colour of the text. Offline and Stopped (neutral) keep the muted colour. */
+.kit-bar-status[data-tone='error'] {
+    color: var(--danger-text);
+}
+.kit-bar-status[data-tone='warning'] {
+    color: var(--warning-text);
+}
+.kit-bar-status[data-tone='success'] {
+    color: var(--text);
+}
 
 @media (hover: hover) {
     .kit-bar-back:hover,

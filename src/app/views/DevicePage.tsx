@@ -6,11 +6,11 @@ import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import { streamSocketUrl } from '../googDevice/client/deviceInterfaces';
 import { DEFAULT_FILES_PATH } from '../googDevice/client/deviceTools';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
-import { deviceName, findDeviceByUdid } from '../state/devices';
+import { deviceName, findDeviceByUdid, phoneName } from '../state/devices';
+import { capabilities } from '../state/capabilities';
 import { goUp, switchRoute } from '../state/router';
 import {
     clientParams,
-    DEVICE_TABS,
     deviceRoute,
     DeviceView,
     LIST_PAGE_NAME,
@@ -38,13 +38,14 @@ const HOST_KEYS = ['hostname', 'port', 'pathname', 'secure', 'useProxy'];
 const TAB_DROPS = ['action', 'udid', 'view', 'ws', 'path'];
 
 /**
- * The tabs of an Android phone's page: the screen, and the tools this build has. An iPhone has
- * the screen only and shows no tabs.
+ * The tabs of a phone's page: the screen, and each tool the phone can run (`capabilities`) and
+ * this build has. A page with the screen only (an iPhone) shows no tabs.
  */
-const PHONE_TABS: ReadonlyArray<Tab<DeviceView>> = DEVICE_TABS.android.flatMap(({ view, title }) => {
-    const tool = deviceTools.find((item) => item.view === view);
-    return view === 'screen' || tool ? [{ id: view, title, hint: tool?.hint }] : [];
-});
+function phoneTabs(platform: Platform): ReadonlyArray<Tab<DeviceView>> {
+    const can = capabilities(platform);
+    const tools = deviceTools.filter(({ view }) => view !== 'screen' && can[view]);
+    return [{ id: 'screen', title: 'Screen' }, ...tools.map(({ view, title, hint }) => ({ id: view, title, hint }))];
+}
 
 /**
  * The server a phone's link points at, as its tracker describes it. A link names another host
@@ -93,7 +94,8 @@ function PhoneNotListed({ udid }: { udid: string }) {
     }, []);
     return (
         <main class="tool-unavailable">
-            <AppBar title={udid} />
+            {/* A name the page saw earlier, else the serial. */}
+            <AppBar title={phoneName(udid)} />
             <section class="tool-unavailable-body" role="status">
                 <h2>This phone is not connected</h2>
                 <p>It is not in the list of phones. This page shows its screen when it is connected.</p>
@@ -202,9 +204,12 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
         }
         switchRoute(deviceRoute(udid, next, extra));
     };
+    // Files and Shell run over adb, so a tool's page is an Android phone's until the list says
+    // otherwise (`ToolRoute` refuses an iPhone).
+    const tabList = useMemo(() => phoneTabs(platform ?? 'android'), [platform]);
     const tabs = (status?: ComponentChildren) =>
-        PHONE_TABS.length > 1 ? (
-            <TabStrip label="Phone views" tabs={PHONE_TABS} current={view} onSelect={selectTab}>
+        tabList.length > 1 ? (
+            <TabStrip label="Phone views" tabs={tabList} current={view} onSelect={selectTab}>
                 {status}
             </TabStrip>
         ) : null;
@@ -212,7 +217,7 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
     return (
         <>
             {android && <StreamView params={android} tabs={tabs()} />}
-            {ios && <CoreDeviceStreamView params={ios} />}
+            {ios && <CoreDeviceStreamView params={ios} tabs={tabs()} />}
             {view === 'screen' &&
                 !android &&
                 !ios &&

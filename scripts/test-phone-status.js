@@ -315,23 +315,26 @@ test('the connection has one word per state, a red failure, a grey missing phone
 });
 
 test('the header and the card over the picture print the same connection value', () => {
-    for (const file of ['src/app/views/StreamView.tsx', 'src/app/views/CoreDeviceStreamView.tsx']) {
-        const source = read(file);
-        assert.match(source, /const connection = screenConnection\(\{/, `${file} derives its connection once`);
-        assert.match(source, /<AppBarStatus tone=\{connection\.tone\}>\{connection\.label\}<\/AppBarStatus>/, `${file}: the header prints it`);
-        assert.match(source, /<SleepOverlay[^>]*connection=\{connection\}/, `${file}: the card over the picture prints it`);
+    // One screen view for both kinds of phone; each platform's adapter derives the value once.
+    const view = read('src/app/views/ScreenView.tsx');
+    assert.match(view, /<AppBarStatus tone=\{connection\.tone\}>\{connection\.label\}<\/AppBarStatus>/, 'ScreenView: the header prints it');
+    assert.match(view, /<StateCard[^>]*connection=\{connection\}/, 'ScreenView: the card on the stage prints it');
+    const adapters = ['src/app/views/screen/android.tsx', 'src/app/views/screen/iphone.tsx'];
+    for (const file of adapters) {
+        assert.match(read(file), /const connection = screenConnection\(\{/, `${file} derives its connection once`);
     }
     // The screen fact comes from the model on the card and on the screen alike. No view reads the
     // screen's descriptor fields to decide that a phone is asleep.
-    for (const file of ['src/app/views/StreamView.tsx', 'src/app/views/CoreDeviceStreamView.tsx', 'src/app/views/DeviceCard.tsx', 'src/app/views/DeviceSwitcherSheet.tsx', 'src/app/views/SleepOverlay.tsx']) {
-        assert.doesNotMatch(read(file), /\['screen\.power'\]|\['device\.awake'\]/, `${file} reads the screen from the model`);
+    for (const file of [view, ...adapters, 'src/app/views/screen/StateCard.tsx', 'src/app/views/DeviceCard.tsx', 'src/app/views/DeviceSwitcherSheet.tsx']) {
+        const source = file === view ? view : read(file);
+        assert.doesNotMatch(source, /\['screen\.power'\]|\['device\.awake'\]/, `${file === view ? 'ScreenView' : file} reads the screen from the model`);
     }
-    for (const file of ['src/app/views/StreamView.tsx', 'src/app/views/CoreDeviceStreamView.tsx']) {
+    for (const file of adapters) {
         assert.match(read(file), /const screenOff = [^;]*getDeviceStatusInfo\(entry\)\.screen === 'asleep'/, `${file}: the sleep card follows the screen fact`);
     }
-    const overlay = read('src/app/views/SleepOverlay.tsx');
-    assert.match(overlay, /\{connection\.label\}/);
-    assert.doesNotMatch(overlay, /hasConnected/, 'the card keeps no connection state of its own');
+    const card = read('src/app/views/screen/StateCard.tsx');
+    assert.match(card, /title: connection\.label/);
+    assert.doesNotMatch(card, /hasConnected/, 'the card keeps no connection state of its own');
     assert.match(read('src/app/views/ToolView.tsx'), /\{connection\.label\}/);
 });
 
@@ -358,7 +361,7 @@ test('a phone that drops out of the list keeps its last name', () => {
     assert.equal(devices.phoneName('NEVER-LISTED'), 'NEVER-LISTED');
     devices.devices.value = new Map();
     // The headers and the tab title choose the name with it.
-    for (const file of ['src/app/views/StreamView.tsx', 'src/app/views/CoreDeviceStreamView.tsx', 'src/app/views/ToolView.tsx', 'src/app/state/pageTitle.ts']) {
+    for (const file of ['src/app/views/screen/android.tsx', 'src/app/views/screen/iphone.tsx', 'src/app/views/ToolView.tsx', 'src/app/views/DevicePage.tsx', 'src/app/state/pageTitle.ts']) {
         assert.match(read(file), /phoneName\(/, `${file} names the phone with phoneName`);
     }
 });

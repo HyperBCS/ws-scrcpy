@@ -198,6 +198,9 @@ async function stoppedStream(browser, layout, label) {
     // Longer than the first reconnect delays of the stream receiver (1 s, then 1.5 s).
     await pause(3500);
     assert.equal(state.streams.length, 1, 'the viewer does not reconnect, which would start the service again');
+    // One card on the stage: no Reconnecting spinner under the stopped card.
+    assert.equal(await page.locator('.stream-state-card').count(), 1, `${label}: the stopped card is the one card`);
+    assert.equal(await page.locator('.stream-state-spinner').count(), 0, `${label}: and it has no spinner`);
     await fits(page, panel, `${label} stopped panel`);
     for (const name of ['Start again', 'Phones']) {
         const box = await panel.getByRole('button', { name, exact: true }).boundingBox();
@@ -217,7 +220,7 @@ async function stoppedStream(browser, layout, label) {
     state.streams[1].close({ code: 4007, reason: 'Stream restarted' });
     await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.trim() !== 'Connected');
     await status.getByText('Reconnecting…', { exact: true }).waitFor();
-    await page.locator('.sleep-overlay-label').getByText('Reconnecting…', { exact: true }).waitFor();
+    await page.locator('.stream-state-card .stream-state-title').getByText('Reconnecting…', { exact: true }).waitFor();
     assert.equal(await status.getAttribute('data-tone'), 'warning');
     await status.getByText('Connected', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(state.streams.length, 3);
@@ -227,17 +230,17 @@ async function stoppedStream(browser, layout, label) {
 }
 
 /**
- * A phone whose screen is off, on its page: the card over the picture has the kit's Wake button,
- * which sends one wake key to the phone and hides the card. The header and the tabs stay above
- * the dimmed picture and take a press.
+ * A phone whose screen is off, on its page: the card on the stage has the kit's Wake button,
+ * which sends one wake key to the phone and hides the card. The card covers neither the header
+ * nor the tabs, which take a press.
  */
 async function sleepCard(browser, layout, label) {
     const device = phone({ pid: 123 });
     const { context, page, state } = await start(browser, { ...layout, device });
     await page.goto(`${BASE}#!action=device&udid=${UDID}&view=screen`);
     await page.locator('.kit-bar-status').getByText('Connected', { exact: true }).waitFor();
-    const overlay = page.locator('.sleep-overlay');
-    const card = overlay.locator('.sleep-overlay-card');
+    const overlay = page.locator('.stream-state');
+    const card = overlay.locator('.stream-state-card');
     await card.getByText('Screen is asleep', { exact: true }).waitFor();
     const wake = card.getByRole('button', { name: 'Wake', exact: true });
     assert.deepEqual(
@@ -250,7 +253,7 @@ async function sleepCard(browser, layout, label) {
     const box = await wake.boundingBox();
     assert(box.height >= 44 && box.width >= 44, `${label}: Wake is a 44px target`);
     await fits(page, card, `${label} sleep card`);
-    // Drawn over the overlay, not dimmed under it.
+    // The card lies on the stage only.
     const above = await page.evaluate(() => {
         const hits = (element) => {
             const rect = element.getBoundingClientRect();
@@ -263,7 +266,7 @@ async function sleepCard(browser, layout, label) {
             tabs: [...document.querySelectorAll('nav.kit-tabs .kit-tab')].every(hits),
         };
     });
-    assert.deepEqual(above, { back: true, switch: true, tabs: true }, `${label}: the header and the tabs take a press over the overlay`);
+    assert.deepEqual(above, { back: true, switch: true, tabs: true }, `${label}: the header and the tabs take a press beside the card`);
     await page.screenshot({ path: path.join(OUT, `${label}-sleep-card.png`) });
 
     state.keys.length = 0;

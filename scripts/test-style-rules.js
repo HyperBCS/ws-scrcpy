@@ -27,11 +27,9 @@ const ORDER = `@layer ${LAYERS.join(', ')};`;
 const ALLOWED = {
     // The order of what lies over the picture: the controls (8) and their shield (4).
     'views/FloatingToolbar.css': { zIndex: 2 },
-    // The sleep overlay over the picture, one step under the header (4).
-    'views/SleepOverlay.css': { zIndex: 1 },
-    // The black behind the picture, twice, and the order of the picture, its touch layer and
-    // the two failure cards.
-    'views/StreamView.css': { colours: 2, zIndex: 4 },
+    // The black behind the picture, twice, and the order of the picture (1), its touch layer (2)
+    // and the one state card on the stage (5, over the controls' shield).
+    'views/StreamView.css': { colours: 2, zIndex: 3 },
     // The black around the terminal, the colour xterm draws it in.
     'views/ToolView.css': { colours: 1 },
 };

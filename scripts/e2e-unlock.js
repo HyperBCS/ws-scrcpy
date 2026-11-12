@@ -217,13 +217,14 @@ async function androidFlow(browser, mobile) {
     const box = await notice(page).boundingBox();
     const stage = await page.locator('.stream-stage').boundingBox();
     assert(box.y + box.height <= stage.y + 1, 'Lock notice does not cover the controllable stream');
-    const awakeNotice = await notice(page).screenshot({ animations: 'disabled' });
     test.update({ 'screen.power': 'off', 'device.awake': false });
     await page.getByText('Screen is asleep', { exact: true }).waitFor();
-    const asleepNotice = await notice(page).screenshot({ animations: 'disabled' });
-    assert(awakeNotice.equals(asleepNotice), 'The lock notice is equally bright while the phone is asleep');
-    await open(page);
+    // While the screen is asleep the stage shows the card with Wake and the lock notice
+    // waits; it shows again once the screen is on (p5-screen-shell).
+    await notice(page).waitFor({ state: 'detached' });
     test.update({ 'screen.power': 'on', 'device.awake': true });
+    await notice(page).waitFor();
+    await open(page);
     await sameSheet(page, label);
     // The field, and the choice of PIN or password, are Android's.
     assert.equal(await dialog(page).getByRole('radio', { name: 'PIN', exact: true }).isChecked(), true);
@@ -774,7 +775,7 @@ async function main() {
         await sent(keyboard.page);
         assert.deepEqual(keyboard.texts, [PIN], 'The visible keyboard-adjacent action submits exactly once');
         await keyboard.context.close();
-        console.log('PASS bright/clickable asleep lock notice and keyboard viewports350/320/250 with native touch scrolling');
+        console.log('PASS lock notice held back while asleep, and keyboard viewports 350/320/250 with native touch scrolling');
 
         for (const holdQuery of [1, 2]) {
             const test = await start(browser, { holdQuery });

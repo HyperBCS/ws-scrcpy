@@ -10,9 +10,10 @@ export interface StreamSession {
     client: StreamClientScrcpy;
 }
 
-// The currently mounted stream, if any. `StreamView` owns the lifecycle (create on mount, stop on
-// unmount) and mirrors the handle here so other views can read/act on it (a device-switcher sheet,
-// a later "sleeping stream" overlay, ...) without prop-drilling through the router.
+// The currently mounted Android stream, if any. `ScreenView` owns the lifecycle through its
+// Android adapter (`views/screen/android.tsx`: create on mount, stop on unmount) and mirrors the
+// handle here so other views can read/act on it (a device-switcher sheet, the Actions sheet, ...)
+// without prop-drilling through the router.
 export const activeStream = signal<StreamSession | undefined>(undefined);
 
 export interface CoreDeviceStreamSession {
@@ -20,8 +21,8 @@ export interface CoreDeviceStreamSession {
     client: StreamClientCoreDevice;
 }
 
-// The mounted iOS stream, if any (`CoreDeviceStreamView`). Kept apart from `activeStream` so the
-// Android-only views keep their precise client type.
+// The mounted iOS stream, if any (`ScreenView` with `views/screen/iphone.tsx`). Kept apart from
+// `activeStream` so the Android-only views keep their precise client type.
 export const activeCoreDeviceStream = signal<CoreDeviceStreamSession | undefined>(undefined);
 
 // Whether the stream's WebSocket is currently up. This is the liveness signal: `StreamReceiver`

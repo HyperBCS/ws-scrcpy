@@ -406,7 +406,21 @@ async function phoneNotListed(browser) {
             } finally { await test.context.close(); }
         }
     }
-    console.log('PASS a link for a phone that is not connected says so under the shared header, on a phone and a desktop, light and dark');
+    // A phone the list showed earlier and that has since left it: the page says it is not
+    // connected under the name it had, not its serial.
+    const test = await start(browser);
+    try {
+        const { page } = test;
+        await card(page, `android:${PIXEL_2}`).waitFor();
+        test.trackers.android([ANDROIDS[0]]);
+        await card(page, `android:${PIXEL_2}`).waitFor({ state: 'detached' });
+        await page.evaluate((udid) => { location.hash = `#!action=device&udid=${udid}&view=screen`; }, PIXEL_2);
+        await page.getByRole('heading', { name: 'This phone is not connected', exact: true }).waitFor();
+        assert.equal(await page.locator('h1.kit-bar-name').textContent(), 'Google Pixel 8', 'the name the page saw, not the serial');
+        assert.deepEqual(test.streams, []);
+        assert.deepEqual(test.errors, []);
+    } finally { await test.context.close(); }
+    console.log('PASS a link for a phone that is not connected says so under the shared header, on a phone and a desktop, light and dark, with a name the page saw');
 }
 
 /** A sheet opened from the list is mounted above the pages. It closes when the page under it changes. */

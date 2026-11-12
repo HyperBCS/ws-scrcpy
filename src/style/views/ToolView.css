@@ -11,7 +11,8 @@
 }
 
 /* The connection state of the open tool, at the end of the tab row. The row gives it its size
-   and colour. It keeps to the right edge, and the ellipsis is for a narrow phone. */
+   and the muted colour, which the tones below replace. It keeps to the right edge, and the
+   ellipsis is for a narrow phone. */
 .tool-connection {
     flex: 0 1 auto;
     margin-left: auto;
@@ -19,6 +20,17 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+/* In the tone of its state, as the status line of a screen's header: Failed red, Connecting and
+   Reconnecting amber, Connected in the colour of the text, Offline and Stopped muted. */
+.tool-connection[data-tone='error'] {
+    color: var(--danger-text);
+}
+.tool-connection[data-tone='warning'] {
+    color: var(--warning-text);
+}
+.tool-connection[data-tone='success'] {
+    color: var(--text);
 }
 
 .tool-workspace {
@@ -38,6 +50,18 @@
 /* The banner for a tool that lost its connection. `Presence` collapses this wrapper. */
 .tool-error {
     flex: none;
+}
+
+/* A tool whose code could not be loaded: the screen's state card (`screen/StateCard.tsx`) in
+   place of the tool, centred in the workspace. */
+.tool-state {
+    display: flex;
+    flex: 1 1 0;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    box-sizing: border-box;
+    padding: var(--space-16);
 }
 
 .tool-mount {

@@ -73,8 +73,9 @@ export function AppBar({
 }
 
 /**
- * The status line of the bar: one muted line. `tone` is the tone of the state it says
- * (`state/phoneStatus.ts`), kept as `data-tone` for the browser checks; the line does not show it.
+ * The status line of the bar: one line in the tone of the state it says (`state/phoneStatus.ts`).
+ * A failure is red and a wait amber; Connected is in the colour of the text, and a phone that is
+ * not there, or a line without a tone, stays muted.
  */
 export function AppBarStatus({ tone, children }: { tone?: ChipTone; children: ComponentChildren }) {
     return (

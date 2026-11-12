@@ -1,15 +1,19 @@
 import { DeviceEntry, phoneName } from './devices';
-import { DeviceView, LIST_PAGE_NAME, parseRoute } from './routes';
+import { capabilities } from './capabilities';
+import { DeviceView, LIST_PAGE_NAME, parseRoute, Platform } from './routes';
 
 /** The one name of the app: tab titles, the manifest, index.html and push banners use it. */
 export const APP_NAME = 'ws-scrcpy';
 
-/** The view of a phone's page as the title names it, and the platform that has it. */
-const VIEWS: Record<DeviceView, { label: string; type?: 'android' | 'ios' }> = {
-    screen: { label: 'Screen' },
-    files: { label: 'Files', type: 'android' },
-    shell: { label: 'Shell', type: 'android' },
-};
+/** The view of a phone's page as the title names it. */
+const VIEWS: Record<DeviceView, string> = { screen: 'Screen', files: 'Files', shell: 'Shell' };
+const PLATFORMS: readonly Platform[] = ['android', 'ios'];
+
+/** The one kind of phone that has a view (`capabilities`), or undefined when every kind has it. */
+function platformOf(view: DeviceView): Platform | undefined {
+    const having = PLATFORMS.filter((platform) => view === 'screen' || capabilities(platform)[view]);
+    return having.length === 1 ? having[0] : undefined;
+}
 
 /**
  * The tab title of a route. Every page uses this, so browser history and the task switcher read
@@ -31,11 +35,10 @@ export function pageTitle(route: URLSearchParams, list: Iterable<DeviceEntry>): 
     if (custom) {
         return custom;
     }
-    const screen = VIEWS[page.view];
     // The device of the page's platform first. A Files or Shell link that names an iPhone is
     // refused, and that page is still titled with the iPhone's name. An older screen address
     // names its platform; the current one does not, and the first device with the serial is it.
-    const type = screen.type ?? page.platform;
+    const type = platformOf(page.view) ?? page.platform;
     let match: DeviceEntry | undefined;
     for (const entry of list) {
         if (entry.descriptor.udid !== page.udid) {
@@ -47,5 +50,5 @@ export function pageTitle(route: URLSearchParams, list: Iterable<DeviceEntry>): 
         }
         match ??= entry;
     }
-    return `${phoneName(page.udid, match)} · ${screen.label} · ${APP_NAME}`;
+    return `${phoneName(page.udid, match)} · ${VIEWS[page.view]} · ${APP_NAME}`;
 }

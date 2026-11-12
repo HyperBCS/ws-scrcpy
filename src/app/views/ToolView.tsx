@@ -17,6 +17,7 @@ import { Button } from '../ui/Button';
 import { IconButton } from '../ui/IconButton';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
+import { StateCardBody } from './screen/StateCard';
 import { NotificationsLink } from '../ui/NotificationsLink';
 import '../../style/views/StreamView.css';
 import '../../style/views/ToolView.css';
@@ -301,20 +302,16 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
         }
     };
 
-    // The banner keeps its last wording while it collapses.
-    const showBanner = codeMissing || !!error || lost === 'closed' || lost === 'ended';
+    // The banner keeps its last wording while it collapses. A tool whose code is missing has a
+    // card of its own instead (below).
+    const showBanner = !codeMissing && (!!error || lost === 'closed' || lost === 'ended');
     const bannerRef = useRef({ text: '', button: 'Reconnect' });
     if (showBanner) {
-        bannerRef.current = codeMissing
-            ? {
-                  text: `${tool?.title || 'This tool'} could not be loaded. Reload the page to try again.`,
-                  button: 'Reload',
-              }
-            : error
-              ? { text: error, button: 'Reconnect' }
-              : lost === 'ended'
-                ? { text: 'The shell session ended.', button: 'New session' }
-                : { text: 'Connection lost.', button: 'Reconnect' };
+        bannerRef.current = error
+            ? { text: error, button: 'Reconnect' }
+            : lost === 'ended'
+              ? { text: 'The shell session ended.', button: 'New session' }
+              : { text: 'Connection lost.', button: 'Reconnect' };
     }
 
     /** A key of the row under the terminal, sent as the terminal would send it. */
@@ -349,7 +346,11 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
             {active && (
                 <AppBar
                     title={phoneName(udid, entry)}
-                    status={<StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />}
+                    status={
+                        descriptor && (
+                            <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} unlessRunning />
+                        )
+                    }
                 >
                     <NotificationsLink compact />
                     <Button size="compact" onClick={() => openSheet('devices')}>
@@ -369,16 +370,27 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                 )}
             <section ref={workspaceRef} class="tool-workspace" aria-label={tool?.title}>
                 <Presence show={showBanner} kind="collapse" class="tool-error">
-                    <Banner
-                        action={{
-                            label: bannerRef.current.button,
-                            run: codeMissing ? () => location.reload() : reconnect,
-                        }}
-                    >
+                    <Banner action={{ label: bannerRef.current.button, run: reconnect }}>
                         {bannerRef.current.text}
                     </Banner>
                 </Presence>
-                <div key="tool-mount" ref={mountRef} class="tool-mount" />
+                {/* The tool's code could not be downloaded, after a deploy: the page's state card
+                    with the one thing that helps. Nothing is mounted under it. */}
+                {codeMissing && (
+                    <div class="tool-state">
+                        <StateCardBody
+                            content={{
+                                state: connection.state,
+                                problem: 'code-missing',
+                                icon: 'errorCircle',
+                                title: `${tool?.title || 'This tool'} could not be loaded`,
+                                message: 'Reload the page to try again.',
+                                action: { label: 'Reload', run: () => location.reload() },
+                            }}
+                        />
+                    </div>
+                )}
+                <div key="tool-mount" ref={mountRef} class="tool-mount" hidden={codeMissing} />
                 {action === ACTION.SHELL && (
                     <div class="shell-shortcuts" role="group" aria-label="Terminal keys">
                         <IconButton

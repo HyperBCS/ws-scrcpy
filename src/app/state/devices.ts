@@ -148,7 +148,7 @@ export function updateTrackerDevice(
     devices.value = next;
 }
 
-// Used by stream-side views (`SleepOverlay`, ...) that only know the udid they are streaming, not
+// Used by stream-side views (`views/screen/iphone.tsx`, ...) that only know the udid they show, not
 // which tracker it came from -- the merged map is keyed `${trackerId}:${udid}` so a direct lookup
 // isn't possible there.
 export function findDeviceByUdid(udid: string): DeviceEntry | undefined {
