@@ -769,10 +769,25 @@ async function focusFollowsTheTabs(browser) {
     try {
         await card(page, `android:${PIXEL}`).getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.getByText('Connected', { exact: true }).first().waitFor();
+        // The terminal takes the focus when it is created on a desktop (below). The Shell code is
+        // held back until the focus after the tab change has been read, so this check does not
+        // depend on how fast that code arrives.
+        let release;
+        let waiting = 0;
+        const held = new Promise((resolve) => { release = resolve; });
+        const chunk = /\/\d+\.[0-9a-f]+\.js(\?|$)/;
+        await page.route(chunk, async (route) => {
+            waiting++;
+            await held;
+            await route.continue();
+        });
         await tab(page, 'Shell').focus();
         await page.keyboard.press('Enter');
         await page.locator('.tool-view-shell').waitFor();
         assert.deepEqual(await focused(), { text: 'Shell', current: 'page', inStrip: true, inHiddenTool: false }, 'the tab that was pressed keeps the focus in the next view');
+        await until(() => waiting > 0, 'the Shell code is asked for and held back');
+        release();
+        await page.unroute(chunk);
         // The terminal takes the focus when it is created on a desktop, and when it is clicked.
         await page.locator('.tool-connection.connected').waitFor();
         await page.locator('.terminal-container .xterm').click();
