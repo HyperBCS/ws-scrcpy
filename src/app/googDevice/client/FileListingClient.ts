@@ -3149,7 +3149,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.enterCount = 0;
         this.wrapper.classList.remove('file-listing-drop');
         if (!this.canModify()) {
-            this.toast('Wait for the current folder or upload to finish before adding files.');
+            // Uploads run beside each other: only a folder that loads, an operation or a question stops a drop.
+            this.toast('Wait for the current folder or operation to finish before adding files.');
             return false;
         }
         return true;

@@ -1221,6 +1221,17 @@ test('while a file uploads, folders open and folder operations run; the folder i
     assert.equal(phone.asked('LIST').at(-1), '/sdcard/DCIM');
 });
 
+test('files dropped while others upload are taken; a drop while a folder loads is refused and says why', async (t) => {
+    const { client, settle, upload, toasts } = openFiles(t);
+    await settle();
+    upload({ folder: '/sdcard' });
+    assert.equal(client.onDrop(), true, 'a drop during an upload is taken');
+    assert.deepEqual(toasts, []);
+    client.navigate('/sdcard/DCIM');
+    assert.equal(client.onDrop(), false, 'a drop while a folder loads is not');
+    assert.deepEqual(toasts.at(-1), { message: 'Wait for the current folder or operation to finish before adding files.', error: false });
+});
+
 test('an upload row shows the name, a bar, how much of how much is sent, and Cancel', async (t) => {
     const { settle, upload, wrapper } = openFiles(t);
     await settle();
