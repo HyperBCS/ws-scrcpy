@@ -209,7 +209,7 @@ export class AdbUtils {
                 }
             }
         }
-        throw failure ?? Error('No free port for the device connection.');
+        throw failure ?? Error('No free port for the phone connection.');
     }
 
     private static forwardLease(key: string, owned: OwnedForward, port: number): ForwardLease {
@@ -278,7 +278,7 @@ export class AdbUtils {
         return AdbUtils.runFileOperation(
             serial,
             `mkdir -- ${AdbUtils.quote(pathString)}`,
-            'The device refused to create this folder.',
+            'The phone refused to create this folder.',
         );
     }
 
@@ -289,15 +289,15 @@ export class AdbUtils {
      */
     public static checkDevicePath(pathString: string): string {
         if (!pathString.startsWith('/')) {
-            throw Error('Only absolute device paths are allowed.');
+            throw Error('Only absolute phone paths are allowed.');
         }
         // eslint-disable-next-line no-control-regex
         if (/[\x00-\x1f\x7f]/.test(pathString)) {
-            throw Error('This name contains characters that cannot be used on the device.');
+            throw Error('This name contains characters that cannot be used on the phone.');
         }
         const normalized = path.posix.normalize(pathString).replace(/\/+$/, '') || '/';
         if (normalized === '/') {
-            throw Error('The device root cannot be changed.');
+            throw Error('The phone root cannot be changed.');
         }
         return normalized;
     }
@@ -311,7 +311,7 @@ export class AdbUtils {
                 `elif [ -e ${item} ] || [ -L ${item} ]; then echo item; else echo missing; fi`,
         );
         if (code !== 0 || (output !== 'missing' && output !== 'item' && output !== 'folder')) {
-            throw Error(output || 'The device did not say whether this name is in use.');
+            throw Error(output || 'The phone did not say whether this name is in use.');
         }
         return output;
     }
@@ -372,7 +372,7 @@ export class AdbUtils {
             return AdbUtils.runFileOperation(
                 serial,
                 `${AdbUtils.replaceGuards(source, destination)}else mv -fT -- ${source} ${destination}; fi`,
-                'The device refused to replace this item.',
+                'The phone refused to replace this item.',
                 FILE_OPERATION_TIMEOUT,
             );
         }
@@ -382,7 +382,7 @@ export class AdbUtils {
             `if [ -e ${destination} ] || [ -L ${destination} ]; then ${conflict}; ` +
                 `else mv -nT -- ${source} ${destination} && { ` +
                 `if [ -e ${source} ] || [ -L ${source} ]; then ${conflict}; else true; fi; }; fi`,
-            'The device refused to move this item.',
+            'The phone refused to move this item.',
             FILE_OPERATION_TIMEOUT,
         );
     }
@@ -398,7 +398,7 @@ export class AdbUtils {
                 `${AdbUtils.replaceGuards(source, destination)}` +
                     `elif cp -T -- ${source} ${partial} && mv -fT -- ${partial} ${destination}; then true; ` +
                     `else rm -f -- ${partial}; false; fi`,
-                'The device refused to replace this item.',
+                'The phone refused to replace this item.',
                 FILE_OPERATION_TIMEOUT,
             );
         }
@@ -411,7 +411,7 @@ export class AdbUtils {
                 `else report=$(cp -rnTv -- ${source} ${destination} 2>&1); result=$?; ` +
                 `if [ "$result" -ne 0 ]; then printf '%s\\n' "$report"; (exit "$result"); ` +
                 `elif [ -z "$report" ]; then ${conflict}; else true; fi; fi`,
-            'The device refused to copy this item.',
+            'The phone refused to copy this item.',
             FILE_OPERATION_TIMEOUT,
         );
     }
@@ -439,7 +439,7 @@ export class AdbUtils {
             await AdbUtils.runFileOperation(
                 serial,
                 command,
-                'The device refused to delete this item.',
+                'The phone refused to delete this item.',
                 FILE_OPERATION_TIMEOUT,
             );
         };
