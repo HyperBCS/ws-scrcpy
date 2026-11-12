@@ -403,6 +403,17 @@ async function keyRow(page, state, name) {
     await clipboard('');
     await key('Copy').click();
     await toast.getByText('Copied the text on screen.',{exact:true}).waitFor();
+    // The toast stands above the row: every key in view can still be pressed.
+    await settleMotion(page);
+    const covered = await row.evaluate(el=>{
+        const box = el.getBoundingClientRect();
+        return Array.from(el.querySelectorAll('button')).filter(button=>{
+            const r = button.getBoundingClientRect();
+            const x = r.x + r.width/2, y = r.y + r.height/2;
+            return x>box.left && x<box.right && !button.contains(document.elementFromPoint(x,y));
+        }).map(button=>button.getAttribute('aria-label') || button.textContent);
+    });
+    assert.deepEqual(covered,[],'the toast covers no key');
     const shown = await page.evaluate(()=>navigator.clipboard.readText());
     const rows = await page.locator('.terminal-container .xterm-rows > div').count();
     assert(shown.includes('Fixture terminal ready'),'the visible output is copied');

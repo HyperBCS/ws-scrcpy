@@ -102,6 +102,14 @@
     flex: none;
     min-width: var(--control-height);
 }
+/* A toast from the row (Paste, Copy) stands above it, so the keys stay in reach while it shows.
+   The row is at most a key and 16px high above the bottom inset. */
+.kit-toast.shell-keys-toast {
+    bottom: calc(
+        var(--control-height) + var(--space-24) +
+            max(env(safe-area-inset-bottom, 0px), var(--viewport-bottom-inset, 0px))
+    );
+}
 
 @media (min-width: 1000px) {
     .tool-workspace {

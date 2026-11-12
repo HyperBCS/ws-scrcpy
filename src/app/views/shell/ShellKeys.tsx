@@ -163,6 +163,7 @@ export function ShellKeys({ connected, control, onControl, terminal }: ShellKeys
                 message={toast.message}
                 identity={toast.count}
                 tone={toast.error ? 'error' : 'success'}
+                className="shell-keys-toast"
                 onDismiss={() => setToast((last) => ({ ...last, message: '' }))}
             />
         </>
