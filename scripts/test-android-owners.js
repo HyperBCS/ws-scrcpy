@@ -1,7 +1,7 @@
 // Direct Android shell, poller and session races. Every transport is a fixture.
 const assert = require('node:assert/strict');
 const { test, after } = require('node:test');
-const { EventEmitter } = require('node:events');
+const { EventEmitter, getEventListeners } = require('node:events');
 const { PassThrough } = require('node:stream');
 const net = require('node:net');
 const cp = require('node:child_process');
@@ -23,6 +23,9 @@ const { AdbUtils } = require('../src/server/goog-device/AdbUtils');
 const { DeviceStatePoller } = require('../src/server/goog-device/DeviceStatePoller');
 const { ScrcpySession } = require('../src/server/goog-device/ScrcpySession');
 const { ScrcpyServer } = require('../src/server/goog-device/ScrcpyServer');
+const { ScrcpyInstance } = require('../src/server/goog-device/ScrcpyInstance');
+const { streamConfig } = require('../src/server/goog-device/StreamConfig');
+const { LOCK_STATE_COMMAND } = require('../src/server/goog-device/LockState');
 const { Device } = require('../src/server/goog-device/Device');
 const { broadcastManager } = require('../src/common/BroadcastManager');
 const originalClient = AdbExtended.createClient.bind(AdbExtended);
@@ -391,8 +394,11 @@ for (const audio of [false, true]) test(`aborting ${audio ? 'three' : 'two'} sta
     const udid = `pending-${audio}`;
     const rejected = assert.rejects(broadcastManager.startBroadcast(udid, 18999, audio, undefined, controller.signal), /cancel startup/);
     assert.equal(sockets.length, audio ? 3 : 2);
-    controller.abort(Error('cancel startup')); await rejected;
+    assert.equal(getEventListeners(controller.signal, 'abort').length, 1);
+    controller.abort(Error('cancel startup'));
     assert.ok(sockets.every((socket) => socket.destroyed));
+    await rejected;
+    assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
     for (const socket of sockets) {
         assert.equal(socket.listenerCount('connect'), 0);
         socket.emit('connect'); socket.emit('error', Error('late startup error'));
@@ -404,6 +410,7 @@ test('an old startup signal and old teardown leave the replacement broadcast alo
     const sockets = fakeSockets(t), oldSignal = new AbortController();
     const first = broadcastManager.startBroadcast('identity-fixture', 18999, false, undefined, oldSignal.signal);
     sockets[0].emit('connect'); const old = await first;
+    assert.equal(getEventListeners(oldSignal.signal, 'abort').length, 0, 'the registered broadcast releases its startup listener');
     assert.equal(sockets[1].listenerCount('connect'), 1, 'successful video keeps control diagnostic logging');
     broadcastManager.stopBroadcast('identity-fixture', old);
     const second = broadcastManager.startBroadcast('identity-fixture', 18999, true);
@@ -430,6 +437,27 @@ test('disconnect during broadcast connection closes every startup socket and nev
     f.session.setConnected(false); await starting;
     assert.ok(sockets.every((socket) => socket.destroyed));
     assert.deepEqual(closes, []);
+    assert.equal(f.session.launch, undefined);
+});
+
+test('release while a registered Broadcast waits for its header settles readiness and closes all resources', async (t) => {
+    quickSession(t);
+    const f = sessionFixture(t), sockets = fakeSockets(t);
+    let removed = 0;
+    t.mock.method(AdbUtils, 'acquireForward', async () => ({ port: 18999, release: async () => removed++ }));
+    const starting = assert.rejects(f.session.launchServer('fixture', true), /phone connection ended/);
+    await flush(); f.shells[0].emit('data', Buffer.from('starting'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    sockets[0].emit('connect'); await flush();
+    const broadcast = broadcastManager.getBroadcast(f.target.udid);
+    const readiness = broadcast.whenReady();
+    f.session.release(); await starting;
+    assert.equal(await readiness, false);
+    await flush();
+    assert.equal(broadcastManager.getBroadcast(f.target.udid), undefined);
+    assert.ok(sockets.every((socket) => socket.destroyed));
+    assert.equal(f.shells[0].destroyed, true);
+    assert.equal(removed, 1);
     assert.equal(f.session.launch, undefined);
 });
 
@@ -568,4 +596,192 @@ test('a late old lease cannot remove a forward the successor already reused', as
     assert.equal(rows.length, 1, 'repeated old cleanup cannot remove the fresh identity');
     await fresh.release();
     assert.equal(rows.length, 0);
+});
+
+// Keep the public facade and every owner real. Only the adb and TCP boundaries answer here.
+function facadeTransport(t, udid) {
+    const commands = [], launches = [], rows = [], removed = [], killed = [], uploads = [], diagnostics = [];
+    let model = 'Fixture phone', current, nextPid = 400;
+    let pendingInfo;
+    const lock = 'lock.currentUser=0\nkeyguard.showing=true\nkeyguard.occluded=false\n' +
+        'keyguard.screenState=SCREEN_STATE_ON\ntrust.user=0 (current) deviceLocked=true\nlock.currentUserAfter=0';
+    const client = {
+        shell: async (serial, command) => {
+            assert.equal(serial, udid);
+            commands.push(command);
+            if (command === 'getprop' && pendingInfo) return pendingInfo.promise;
+            let output;
+            if (command === 'getprop') output = `${props(model)}\n[ro.product.manufacturer]: [Test]\n[ro.build.version.sdk]: [36]`;
+            else if (command.startsWith('ip ')) output = netInfo;
+            else if (command.startsWith('dumpsys power')) output = 'mScreenState=ON\n  level: 84\nUSB powered: true';
+            else if (command === LOCK_STATE_COMMAND) output = lock;
+            else if (command.startsWith('which pidof')) output = '0';
+            else if (command === 'echo $PPID; pidof init') output = '22\n1';
+            else if (command === 'pidof app_process') output = current ? String(current.pid) : '';
+            else if (command.startsWith('cat /proc/')) output = `app_process\0${require('../src/common/Constants').SERVER_PACKAGE}\0version\0scid=${ScrcpyInstance.getScid()}\0`;
+            else if (command.startsWith('kill ')) {
+                killed.push(Number(command.slice(5)));
+                current?.shell.destroy(); current = undefined; output = '';
+            } else if (command.startsWith('input keyevent 224')) output = '__rc=0';
+            else if (command.includes('list_encoders=true')) output = "--video-codec=h264 --video-encoder='fixture.encoder' (hw)";
+            else if (command.startsWith('CLASSPATH=')) {
+                assert.equal(uploads.at(-1).ended, true, 'the jar finishes before the streaming shell opens');
+                const shell = new PassThrough();
+                current = { pid: ++nextPid, shell, command, sockets: [] };
+                launches.push(current);
+                queueMicrotask(() => shell.write('[server] INFO: starting\n'));
+                return shell;
+            } else assert.fail(`Unexpected fixture command: ${command}`);
+            const socket = shellAnswer(output);
+            diagnostics.push(socket);
+            return socket;
+        },
+        push: async (serial, _contents, destination) => {
+            assert.equal(serial, udid);
+            assert.equal(destination, '/data/local/tmp/scrcpy-server.jar');
+            const transfer = new EventEmitter();
+            uploads.push(transfer);
+            setImmediate(() => { transfer.ended = true; transfer.emit('end'); });
+            return transfer;
+        },
+        listForwards: async () => rows.slice(),
+        forwardNoRebind: async (serial, local, remote) => rows.push({ serial, local, remote }),
+        killForward: async (serial, local) => {
+            assert.equal(serial, udid); removed.push(local);
+            rows.splice(rows.findIndex((row) => row.local === local), 1);
+        },
+    };
+    t.mock.method(AdbExtended, 'createClient', () => client);
+    t.mock.method(require('portfinder'), 'getPortPromise', async () => 19101);
+    t.mock.method(cp, 'spawn', () => assert.fail('No Android child process'));
+    t.mock.method(net, 'connect', () => {
+        assert.ok(current, 'tracking alone never connects a stream');
+        const socket = rawShell(), first = current.sockets.length === 0;
+        current.sockets.push(socket);
+        queueMicrotask(() => {
+            if (socket.destroyed) return;
+            socket.emit('connect');
+            if (first) {
+                const header = Buffer.alloc(16);
+                header.writeUInt32BE(0x68323634); // h264
+                header.writeUInt32BE(0x80000000, 4); // scrcpy session flag
+                header.writeUInt32BE(1080, 8); header.writeUInt32BE(1920, 12);
+                socket.emit('data', header);
+            }
+        });
+        return socket;
+    });
+    return { commands, launches, rows, removed, killed, uploads, diagnostics,
+        setModel: (value) => { model = value; }, setPendingInfo: (value) => { pendingInfo = value; } };
+}
+
+test('public Device wires initial state, cache, tracker cadence, reconnect and release through real owners', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100000 });
+    const f = facadeTransport(t, 'facade-state');
+    const device = new Device('facade-state', 'device');
+    t.after(() => device.release());
+    const updates = [];
+    device.on('update', (value) => updates.push({ ...value.descriptor }));
+    await flush(); t.mock.timers.tick(301); await flush();
+    assert.equal(device.getDeviceName(), 'Test Fixture phone');
+    assert.equal(device.descriptor['battery.level'], 84);
+    assert.equal(device.descriptor['device.locked'], true);
+    assert.equal(device.descriptor.pid, -1);
+    assert.deepEqual(device.descriptor.interfaces, [{ name: 'wlan0', ipv4: '192.0.2.4' }]);
+    assert.ok(updates.some((state) => state['ro.product.model'] === 'Fixture phone' && state.pid === -1));
+    assert.equal(f.launches.length, 0, 'tracking populates state without starting scrcpy');
+    assert.equal((await device.getProperties())['ro.product.model'], 'Fixture phone');
+    assert.equal(f.commands.filter((command) => command === 'getprop').length, 1, 'public reads reuse the initialized cache');
+    assert.deepEqual(await device.getNetInterfaces(), device.descriptor.interfaces);
+    assert.deepEqual(await device.updateInterfaces(), device.descriptor.interfaces);
+    const lockReads = f.commands.filter((command) => command === LOCK_STATE_COMMAND).length;
+    assert.equal((await device.refreshLockState())['device.locked'], true);
+    assert.equal(f.commands.filter((command) => command === LOCK_STATE_COMMAND).length, lockReads + 1, 'pre-submit read is fresh');
+    device.setRuntimeStatePollActive(true);
+    t.mock.timers.tick(0); await flush();
+    const activeReads = f.commands.filter((command) => command === LOCK_STATE_COMMAND).length;
+    t.mock.timers.tick(2000); await flush();
+    assert.equal(f.commands.filter((command) => command === LOCK_STATE_COMMAND).length, activeReads + 1);
+    await device.wake(); t.mock.timers.tick(500); await flush();
+    assert.equal(f.launches.length, 0, 'Wake uses the shell and scheduler without opening a stream');
+    device.setState('offline');
+    assert.equal(device.descriptor['device.locked'], 'unknown');
+    assert.equal(device.descriptor.pid, 0);
+    f.setModel('Reconnected phone'); device.setState('device'); await flush();
+    assert.equal(device.getDeviceName(), 'Test Reconnected phone');
+    const late = deferred(); f.setPendingInfo(late);
+    device.setState('offline'); device.setState('device'); await flush();
+    device.release(); const snapshot = { ...device.descriptor }, count = f.commands.length, events = updates.length;
+    const socket = new PassThrough(); late.resolve(socket); await flush();
+    assert.equal(socket.destroyed, true, 'release closes a getprop socket that connects late');
+    t.mock.timers.tick(120000); await flush();
+    assert.equal(f.commands.length, count);
+    assert.equal(updates.length, events);
+    assert.deepEqual(device.descriptor, snapshot);
+    device.setState('device'); assert.equal(device.isConnected(), false);
+});
+
+test('public Device cooperates through shell, jar, forward and Broadcast for viewers and settings', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 200000 });
+    const f = facadeTransport(t, 'facade-session');
+    streamConfig.set('facade-session', { audio: false });
+    const device = new Device('facade-session', 'device');
+    t.after(() => device.release());
+    await flush();
+    const completeStart = async (pending) => {
+        let done = false;
+        pending.finally(() => { done = true; }).catch(() => {});
+        for (let turn = 0; turn < 10 && !done; turn++) {
+            await flush(); t.mock.timers.tick(1000); await flush();
+        }
+        assert.equal(done, true, 'the real owners finish the queued launch');
+        return pending;
+    };
+    const closes = [], viewer = () => ({ close: (code) => closes.push(code) });
+    let leaveFirst = device.addViewer(viewer());
+    const first = device.ensureServer(), second = device.ensureServer();
+    await completeStart(Promise.all([first, second]));
+    assert.equal(f.launches.length, 1);
+    assert.equal(device.descriptor.pid, 401);
+    assert.equal(f.launches[0].sockets.length, 2);
+    assert.equal(await broadcastManager.getBroadcast(device.udid).whenReady(), true);
+    assert.equal((await device.listEncoders())[0].encoderName, 'fixture.encoder');
+    assert.equal(device.getCachedEncoders()[0].hardware, 'hw');
+    const leaveSecond = device.addViewer(viewer()); await device.ensureServer();
+    assert.equal(f.launches.length, 1, 'an additional viewer reuses the launch');
+    leaveFirst(); t.mock.timers.tick(30000); await flush();
+    assert.equal(f.killed.length, 0, 'the remaining viewer retains the stream');
+    leaveSecond(); t.mock.timers.tick(29999); await flush();
+    assert.equal(f.killed.length, 0);
+    leaveFirst = device.addViewer(viewer()); t.mock.timers.tick(1); await flush();
+    assert.equal(f.killed.length, 0, 'return cancels the last-viewer grace');
+    const changing = device.updateStreamConfig({ audio: true });
+    const queuedViewer = device.ensureServer();
+    await completeStart(Promise.all([changing, queuedViewer]));
+    assert.equal(f.launches.length, 2, 'watched settings restart once through the same queue');
+    assert.match(f.launches[1].command, /audio=true/);
+    assert.equal(f.launches[1].sockets.length, 3);
+    assert.equal(device.getLaunchStreamConfig().audio, true);
+    assert.ok(f.launches[0].shell.destroyed);
+    assert.ok(f.launches[0].sockets.every((socket) => socket.destroyed));
+    assert.deepEqual(closes, [], 'settings restarts use ordinary reconnect behavior');
+    await device.killServer(device.descriptor.pid);
+    assert.deepEqual(closes, [4012], 'only owner Stop tells a viewer to stay stopped');
+    leaveFirst();
+    await device.updateStreamConfig({ audio: false });
+    assert.equal(f.launches.length, 2, 'unwatched settings do not start a stream');
+    const leaveLast = device.addViewer(viewer());
+    await completeStart(device.ensureServer());
+    leaveLast(); const beforeGrace = f.killed.length;
+    t.mock.timers.tick(29999); await flush(); assert.equal(f.killed.length, beforeGrace);
+    t.mock.timers.tick(1); await flush(); assert.equal(f.killed.length, beforeGrace + 1);
+    assert.equal(broadcastManager.getBroadcast(device.udid), undefined);
+    assert.ok(f.launches.at(-1).sockets.every((socket) => socket.destroyed));
+    assert.equal(f.rows.length, 0);
+    assert.equal(f.removed.length, 3, 'each completed launch releases its owned forward');
+    assert.deepEqual(closes, [4012], 'idle stop does not send owner Stop');
+    device.setState('offline'); device.setState('device'); await flush();
+    device.release(); await flush();
+    assert.deepEqual(closes, [4012], 'disconnect and shutdown do not send owner Stop');
+    assert.ok(f.launches.every((launch) => launch.shell.destroyed));
 });
