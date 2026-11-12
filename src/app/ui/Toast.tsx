@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'preact/hooks';
 import { Presence } from './Presence';
 import { Icon } from './Icon';
 import { AboveSheet } from './Sheet';
-import '../../style/ui/Toast.css';
 import '../../style/kit/Toast.css';
 
 interface ToastProps {
@@ -16,8 +15,6 @@ interface ToastProps {
     action?: { label: string; run: () => void; disabled?: boolean };
     className?: string;
     dismissLabel?: string;
-    /** The kit look: other class names, the same behaviour. Without it nothing changes. */
-    kit?: boolean;
 }
 
 export function Toast({
@@ -29,7 +26,6 @@ export function Toast({
     action,
     className = '',
     dismissLabel = 'Dismiss message',
-    kit = false,
 }: ToastProps) {
     const dismiss = useRef(onDismiss);
     dismiss.current = onDismiss;
@@ -69,11 +65,7 @@ export function Toast({
         <Presence
             show={!!message}
             kind="toast"
-            class={
-                kit
-                    ? `kit-toast ${className}`.trim()
-                    : `app-toast ${tone === 'error' ? 'toast-error ' : ''}${className}`
-            }
+            class={`kit-toast ${className}`.trim()}
             role={tone === 'error' ? 'alert' : 'status'}
             onPointerEnter={(event) => {
                 if (event.pointerType === 'mouse') {
@@ -96,54 +88,18 @@ export function Toast({
                 }
             }}
         >
-            {kit ? (
-                <>
-                    {tone === 'error' && <Icon name="warning" size={20} />}
-                    <span class="kit-toast-message" key={String(identity)}>
-                        {message}
-                    </span>
-                    {action && (
-                        <button type="button" class="kit-toast-action" disabled={action.disabled} onClick={action.run}>
-                            {action.label}
-                        </button>
-                    )}
-                    <button type="button" class="kit-toast-close" aria-label={dismissLabel} onClick={onDismiss}>
-                        <Icon name="close" size={20} />
-                    </button>
-                </>
-            ) : (
-                <>
-                    <svg
-                        class="toast-icon"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                        aria-hidden="true"
-                    >
-                        <path d={tone === 'error' ? 'M12 8v5m0 3.5v.01M12 3 2.5 19.5h19z' : 'm5 12 4 4L19 6'} />
-                    </svg>
-                    <span class="toast-message" key={String(identity)}>
-                        {message}
-                    </span>
-                    {action && (
-                        <button class="toast-action" disabled={action.disabled} onClick={action.run}>
-                            {action.label}
-                        </button>
-                    )}
-                    <button class="toast-close" aria-label={dismissLabel} onClick={onDismiss}>
-                        <svg
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.8"
-                            aria-hidden="true"
-                        >
-                            <path d="m6 6 12 12M18 6 6 18" />
-                        </svg>
-                    </button>
-                </>
+            {tone === 'error' && <Icon name="warning" size={20} />}
+            <span class="kit-toast-message" key={String(identity)}>
+                {message}
+            </span>
+            {action && (
+                <button type="button" class="kit-toast-action" disabled={action.disabled} onClick={action.run}>
+                    {action.label}
+                </button>
             )}
+            <button type="button" class="kit-toast-close" aria-label={dismissLabel} onClick={onDismiss}>
+                <Icon name="close" size={20} />
+            </button>
         </Presence>
     );
     // A sheet on the native dialog covers the page and makes it inert: a toast raised while one

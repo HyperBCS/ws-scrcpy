@@ -93,10 +93,10 @@ async function start(browser, { mobile = true, dark = false, device = iphone(), 
 }
 
 const prompt = (scope, name) => scope.getByRole('alertdialog', { name, exact: true });
-// The buttons of a prompt, in the kit look (the sheets) and in the older one (the cards).
-const PROMPT_BUTTONS = '.confirm-prompt-button, .kit-confirm-actions .kit-button';
-const READY_PROMPT_BUTTON = '.confirm-prompt-button:not([aria-disabled]), .kit-confirm-go:not([aria-disabled])';
-const READY_DANGER_BUTTON = '.confirm-prompt-button.danger:not([aria-disabled]), .kit-confirm-danger .kit-confirm-go:not([aria-disabled])';
+// The buttons of a prompt, in a sheet or on a card.
+const PROMPT_BUTTONS = '.kit-confirm-actions .kit-button';
+const READY_PROMPT_BUTTON = '.kit-confirm-go:not([aria-disabled])';
+const READY_DANGER_BUTTON = '.kit-confirm-danger .kit-confirm-go:not([aria-disabled])';
 // A trigger can share its name with the confirm button it arms ("Reboot"); this is the trigger.
 const trigger = (scope, name) =>
     scope.getByRole('button', { name, exact: true }).and(scope.page().locator(`:not(:is(${PROMPT_BUTTONS}))`));
@@ -167,7 +167,7 @@ async function openActions(test) {
 async function shot(page, name) {
     fs.mkdirSync(OUT, { recursive: true });
     // An armed prompt is captured once it has been scrolled into view and its guard has passed.
-    if (await page.locator('.confirm-prompt, .kit-confirm').count()) {
+    if (await page.locator('.kit-confirm').count()) {
         await page.locator(READY_DANGER_BUTTON).waitFor({ timeout: 2000 }).catch(() => undefined);
     }
     await settleMotion(page);
@@ -239,7 +239,7 @@ async function powerActions(browser, mobile) {
             await dialog.waitFor();
             assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Cancel');
             await page.keyboard.press('Shift+Tab');
-            assert.equal(await page.evaluate(() => document.activeElement?.className), 'kit-button kit-confirm-go');
+            assert.equal(await page.evaluate(() => document.activeElement?.className), 'kit-button kit-button-danger-solid kit-confirm-go');
             assert.equal(await page.evaluate(() => !!document.activeElement?.closest('.kit-confirm-danger')), true, 'the confirm button of a danger prompt');
             await page.keyboard.press('Enter');
             assert.equal(power(), 0, 'Enter on the confirm button inside the guard sends nothing');

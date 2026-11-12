@@ -93,7 +93,7 @@ function PhoneNotListed({ udid }: { udid: string }) {
     }, []);
     return (
         <main class="tool-unavailable">
-            <AppBar kit title={udid} />
+            <AppBar title={udid} />
             <section class="tool-unavailable-body" role="status">
                 <h2>This phone is not connected</h2>
                 <p>It is not in the list of phones. This page shows its screen when it is connected.</p>
@@ -204,7 +204,7 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
     };
     const tabs = (status?: ComponentChildren) =>
         PHONE_TABS.length > 1 ? (
-            <TabStrip kit label="Phone views" tabs={PHONE_TABS} current={view} onSelect={selectTab}>
+            <TabStrip label="Phone views" tabs={PHONE_TABS} current={view} onSelect={selectTab}>
                 {status}
             </TabStrip>
         ) : null;

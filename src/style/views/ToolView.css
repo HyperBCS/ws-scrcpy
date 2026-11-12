@@ -10,27 +10,6 @@
     background: var(--surface-sunken);
 }
 
-/* The tab row before the kit (`ui/TabStrip.tsx` without `kit`). No page draws it any more; the
-   rules stay with the component until step 4d removes both. */
-.tool-navigation {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 0 0 auto;
-    padding: 5px max(10px, env(safe-area-inset-right, 0px)) 5px max(10px, env(safe-area-inset-left, 0px));
-    border-bottom: 1px solid var(--device-border-color);
-    background: var(--main-bg-color);
-}
-
-.tool-tabs {
-    display: flex;
-    flex: 1 1 auto;
-    gap: 5px;
-    min-width: 0;
-    /* Two tabs stretched across a desktop window read as a banner, not a switcher. */
-    max-width: 420px;
-}
-
 /* The connection state of the open tool, at the end of the tab row. The row gives it its size
    and colour. It keeps to the right edge, and the ellipsis is for a narrow phone. */
 .tool-connection {

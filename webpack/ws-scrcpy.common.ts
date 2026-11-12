@@ -49,10 +49,6 @@ export const common = (esModules = false) => {
                     exclude: /node_modules/,
                 },
                 {
-                    test: /\.svg$/,
-                    loader: 'svg-inline-loader',
-                },
-                {
                     test: /\.(png|jpe?g|gif)$/i,
                     use: [
                         {

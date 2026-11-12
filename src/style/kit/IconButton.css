@@ -25,6 +25,14 @@
         border-color var(--motion-fast) ease,
         transform var(--motion-fast) var(--ease-out);
 }
+/* A long press on a touch screen selects nothing and brings up no callout, on a link too. */
+@media (hover: none) and (pointer: coarse) {
+    .kit-icon-button {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+    }
+}
 .kit-icon-button-bare {
     border-color: transparent;
     background: transparent;
@@ -61,7 +69,7 @@
 }
 .kit-icon-button:active:not(:disabled, [aria-disabled='true']) {
     background: var(--surface-sunken);
-    transform: scale(0.97);
+    transform: var(--press-transform);
 }
 .kit-icon-button[aria-pressed='true']:active:not(:disabled, [aria-disabled='true']) {
     border-color: var(--accent-pressed);

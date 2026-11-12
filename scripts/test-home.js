@@ -280,8 +280,8 @@ test('the installed app has one name and the colours of the page', () => {
     assert.match(html, new RegExp(`<title>${APP_NAME}</title>`));
     assert.match(read('src/public/sw.js'), new RegExp(`message\\.title \\|\\| '${APP_NAME}'`));
 
-    // The page and stream header are painted with --main-bg-color; the browser bar matches it.
-    const [light, dark] = [...tokens.matchAll(/--main-bg-color:\s*(#[0-9a-f]{6});/gi)].map((match) => match[1]);
+    // The page is painted with --surface; the browser bar matches it.
+    const [light, dark] = [...tokens.matchAll(/--surface:\s*(#[0-9a-f]{6});/gi)].map((match) => match[1]);
     assert.ok(light && dark, 'tokens.css defines the page colour for both themes');
     const theme = (scheme) =>
         html.match(new RegExp(`name="theme-color" content="(#[0-9a-f]{6})" media="\\(prefers-color-scheme: ${scheme}\\)"`, 'i'))?.[1];
@@ -379,7 +379,7 @@ test('the list, its cards, the switcher and the notices take their controls, ico
     }
     const styles = [
         'src/style/views/DeviceList.css', 'src/style/views/DeviceSwitcherSheet.css', 'src/style/ui/StreamServiceStatus.css',
-        'src/style/ui/ErrorBoundary.css', 'src/style/ui/NotificationsLink.css', 'src/style/ui/DeviceIcon.css',
+        'src/style/ui/ErrorBoundary.css', 'src/style/ui/DeviceIcon.css',
     ];
     for (const file of styles) {
         const rules = read(file);
@@ -387,12 +387,13 @@ test('the list, its cards, the switcher and the notices take their controls, ico
         assert.equal(/content:\s*'[^']/.test(rules), false, `${file} draws no glyph`);
         assert.equal(/--(device|text-color|main-bg|status-|button-|control-border|header-bg|radius-control|radius-panel|accent-solid|progress)/.test(rules), false, `${file} reads role tokens only`);
     }
-    for (const gone of ['src/style/ui/AsleepBanner.css', 'src/style/ui/TrackerStatusNotice.css']) {
+    // The bell is the kit's icon button and badge. Where it hides on a narrow phone is a rule of the phone's page.
+    for (const gone of ['src/style/ui/AsleepBanner.css', 'src/style/ui/TrackerStatusNotice.css', 'src/style/ui/NotificationsLink.css']) {
         assert.equal(fs.existsSync(path.join(root, gone)), false, `${gone} is deleted`);
     }
     // The header of the list is the kit bar, with the bell and Reload as icon buttons.
     const list = read('src/app/views/DeviceList.tsx');
-    assert.match(list, /<AppBar\s+kit\s+root\s+title=\{LIST_PAGE_NAME\}/);
+    assert.match(list, /<AppBar\s+root\s+title=\{LIST_PAGE_NAME\}/);
     assert.match(list, /<IconButton icon="refresh" label="Reload"/);
     // Messages: a banner for a condition, a status line under the control for an outcome.
     assert.match(read('src/app/ui/AsleepBanner.tsx'), /<Banner tone="info" action=/);
@@ -403,5 +404,6 @@ test('the list, its cards, the switcher and the notices take their controls, ico
     for (const place of ['developer-mode', 'restart-problem', 'refresh', 'restart', 'remount']) {
         assert.match(card, new RegExp(`\\{feedbackAt\\('${place}'\\)\\}`), `the outcome of ${place} shows under its control`);
     }
-    assert.equal((card.match(/<ConfirmPrompt\b/g) || []).length, (card.match(/<ConfirmPrompt\s+kit\b/g) || []).length, 'every prompt on a card is the kit prompt');
+    assert.ok((card.match(/<ConfirmPrompt\b/g) || []).length > 0, 'a card asks with the confirm prompt');
+    assert.doesNotMatch(card, /<ConfirmPrompt\s[^>]*\bkit\b/, 'which takes no kit prop: its look is the only one');
 });

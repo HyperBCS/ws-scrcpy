@@ -391,6 +391,22 @@
     color: var(--text);
 }
 
+/* A sort button, a place in the path and an item of a Files menu give way a little under a
+   press. */
+.fx-sort,
+.files-menu .kit-menu-item {
+    transition:
+        background-color var(--motion-fast),
+        border-color var(--motion-fast),
+        color var(--motion-fast),
+        transform var(--motion-fast) var(--ease-out);
+}
+.fx-sort:active:not(:disabled),
+.fx-crumb:active:not(:disabled),
+.files-menu .kit-menu-item:active:not(:disabled) {
+    transform: var(--press-transform);
+}
+
 /* Size and Modified are as wide as their longest text ("1023 KB", "2026-09-21 14:05") at any
    window width; Name takes the rest. A share of the table cut the time off below 1180px. */
 .fx-col-size {

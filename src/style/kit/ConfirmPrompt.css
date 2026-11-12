@@ -1,12 +1,13 @@
 @layer tokens, base, components, views;
 
 @layer components {
-/* The confirm prompt in the kit look (`ui/ConfirmAction.tsx` with `kit`). Markup:
+/* The confirm prompt (`ui/ConfirmAction.tsx`). Markup:
      div.kit-confirm[role=alertdialog]       plus -stack, -danger and -swapped
        p.kit-confirm-question
        p.kit-confirm-consequence
        div.kit-confirm-actions
-         button.kit-button.kit-confirm-go     kit-button-primary unless the prompt is -danger
+         button.kit-button.kit-confirm-go     kit-button-primary, or kit-button-danger-solid in a
+                                              -danger prompt: a removal is confirmed on that fill
          button.kit-button.kit-confirm-cancel
    The confirm button comes first and Cancel last; -swapped trades their places. */
 .kit-confirm {
@@ -52,14 +53,5 @@
 }
 .kit-confirm-actions > .kit-button {
     min-width: 88px;
-}
-
-/* A removal is confirmed on a solid danger fill. */
-.kit-confirm-danger .kit-button.kit-confirm-go,
-.kit-confirm-danger .kit-button.kit-confirm-go:hover:not(:disabled, [aria-disabled='true']),
-.kit-confirm-danger .kit-button.kit-confirm-go:active:not(:disabled, [aria-disabled='true']) {
-    border-color: var(--danger-fill);
-    background: var(--danger-fill);
-    color: var(--on-accent);
 }
 }

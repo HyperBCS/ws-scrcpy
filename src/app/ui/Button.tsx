@@ -3,7 +3,8 @@ import { Icon } from './Icon';
 import type { IconName } from './icons';
 import '../../style/kit/Button.css';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'quiet' | 'danger';
+/** `danger` is danger words on the raised fill; `danger-solid` is the solid fill a removal is confirmed on. */
+export type ButtonVariant = 'primary' | 'secondary' | 'quiet' | 'danger' | 'danger-solid';
 /** `compact` is 32px high under a mouse, for dense rows. On a touch screen it is 44px like the rest. */
 export type ControlSize = 'default' | 'compact';
 
@@ -49,7 +50,8 @@ interface ButtonProps extends ButtonLook {
 
 /**
  * The one button: primary for the main action of a page or sheet, secondary for the rest, quiet
- * for an action inside a card or a line of text, danger for an action that removes something.
+ * for an action inside a card or a line of text, danger for an action that removes something,
+ * and danger-solid for the answer that confirms a removal.
  */
 export function Button({
     variant,

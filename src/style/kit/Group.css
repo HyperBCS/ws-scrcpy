@@ -1,7 +1,7 @@
 @layer tokens, base, components, views;
 
 @layer components {
-/* Groups of rows, for sheets and settings pages (`ui/SheetControls.tsx` with `kit`):
+/* Groups of rows, for sheets and settings pages (`ui/SheetControls.tsx`):
    <section class="kit-group">
      <h3 class="kit-group-title">Sound</h3>
      <div class="kit-card kit-list">
@@ -100,12 +100,21 @@
     flex: 1 1 auto;
     min-width: 0;
 }
-/* A select at the end of a row gives way to the text on a narrow phone. */
+/* A select at the end of a row is 180px where there is room. On a narrow phone it gives way to
+   the text down to the width of its longest option and no further, unless that option would take
+   more than 70% of the row. */
 .kit-row-control-select {
     flex: 0 1 180px;
+    min-width: auto;
+    max-width: 70%;
 }
 .kit-row-control-select > .kit-select {
     flex: 1 1 auto;
+}
+.kit-row-control-select > .kit-select > .kit-field {
+    width: auto;
+    min-width: 100%;
+    max-width: 100%;
 }
 /* A value that is only shown, such as the system version. */
 .kit-row-value {
@@ -144,17 +153,5 @@
     font-size: var(--font-size-13);
     font-variant-numeric: tabular-nums;
     text-align: right;
-}
-
-/* The actions of a sheet, under its last group. The buttons share the line, and each takes a
-   line of its own where their labels do not fit side by side. */
-.kit-footer {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-8);
-    padding-top: var(--space-16);
-}
-.kit-footer > .kit-button {
-    flex: 1 1 auto;
 }
 }

@@ -63,7 +63,7 @@ interface SelectRowProps {
 /** A setting chosen from a list: the select beside its text, and under it on a phone. */
 function SelectRow({ name, title, description, value, options, disabled, layout = 'pair', onChange }: SelectRowProps) {
     return (
-        <SheetRow kit title={title} description={description} layout={layout} attributes={{ 'data-setting': name }}>
+        <SheetRow title={title} description={description} layout={layout} attributes={{ 'data-setting': name }}>
             <SelectField
                 label={title}
                 labelHidden
@@ -142,15 +142,12 @@ function QualitySection({ config, shown, locked, hasTracker, setFields, onReload
     return (
         <>
             <SheetGroup
-                kit
                 title="Stream quality"
                 status={
                     !loading &&
                     !configKnown &&
                     hasTracker && (
-                        <SheetStatus kit>
-                            Current settings unavailable. Only values you change will be applied.
-                        </SheetStatus>
+                        <SheetStatus>Current settings unavailable. Only values you change will be applied.</SheetStatus>
                     )
                 }
             >
@@ -169,7 +166,6 @@ function QualitySection({ config, shown, locked, hasTracker, setFields, onReload
                     </SheetMessageRow>
                 )}
                 <SheetRow
-                    kit
                     title="Quality"
                     description={
                         !loading &&
@@ -302,9 +298,8 @@ function SoundSection({
         (audioStatus?.state === 'error' || audioStatus?.state === 'disabled') && baseline.audio && !hasChanges;
     return (
         <>
-            <SheetGroup kit title="Sound" class="settings-audio">
+            <SheetGroup title="Sound" class="settings-audio">
                 <SheetToggleRow
-                    kit
                     title="Capture audio"
                     description={
                         audioUnavailableReason ||
@@ -341,7 +336,6 @@ function SoundSection({
                 {audioSession && audioStatus && (
                     <>
                         <SheetRow
-                            kit
                             title="Listen in this browser"
                             description={<span role="status">{audioStatus.message}</span>}
                             // One button sits beside the text, as in the Actions sheet; two go
@@ -368,8 +362,8 @@ function SoundSection({
                                 {muted ? 'Listen' : 'Stop listening'}
                             </Button>
                         </SheetRow>
-                        <SheetRow kit title="Volume" description="Browser volume only." layout="stack">
-                            <VolumeSlider kit session={audioSession} />
+                        <SheetRow title="Volume" description="Browser volume only." layout="stack">
+                            <VolumeSlider session={audioSession} />
                         </SheetRow>
                     </>
                 )}
@@ -432,7 +426,6 @@ function PlaybackSection({ client, opening, player, disabled, onPlayerChange }: 
                 onChange={(value) => onPlayerChange(value, captureKeyboard)}
             />
             <SheetToggleRow
-                kit
                 title="Show quality stats"
                 description="Overlays bitrate, frame rate and decode timing on the video"
                 checked={showStats}
@@ -442,7 +435,6 @@ function PlaybackSection({ client, opening, player, disabled, onPlayerChange }: 
                 }}
             />
             <SheetToggleRow
-                kit
                 title="Physical keyboard"
                 description="Send hardware keystrokes to the phone"
                 checked={captureKeyboard}
@@ -452,7 +444,6 @@ function PlaybackSection({ client, opening, player, disabled, onPlayerChange }: 
                 }}
             />
             <SheetToggleRow
-                kit
                 title="Native keyboard (UHID)"
                 description="Use the phone's keyboard layout · Android 11+"
                 checked={useUhid}

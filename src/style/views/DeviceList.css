@@ -2,17 +2,15 @@
 
 @layer views {
 /* The list of phones (`views/DeviceList.tsx`): the kit bar, then the cards in a scrolling main.
-   The controls on a card are the kit's; this file places them. */
+   The controls on a card are the kit's; this file places them. The bar and the list keep clear
+   of the notch and the screen edges themselves, so the bar's fill reaches the edges; the page
+   keeps the list clear of the home indicator. */
 .devices-page {
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
-    /* `body.list` (app.css) keeps a page clear of the notch and the screen edges with padding.
-       Here the bar and the list do that themselves, so the page takes the padding back at the
-       top and the sides, and the bar's fill reaches the edges. */
-    height: calc(100% + env(safe-area-inset-top, 0px));
-    margin: calc(env(safe-area-inset-top, 0px) * -1) calc(env(safe-area-inset-right, 0px) * -1) 0
-        calc(env(safe-area-inset-left, 0px) * -1);
+    height: 100%;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     background: var(--surface);
     color: var(--text);
 }

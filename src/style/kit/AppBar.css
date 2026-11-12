@@ -1,7 +1,7 @@
 @layer tokens, base, components, views;
 
 @layer components {
-/* The bar at the top of a page in the kit look (`ui/AppBar.tsx` with `kit`): back, title with
+/* The bar at the top of a page (`ui/AppBar.tsx`): back, title with
    one status line, actions. The actions are `kit-icon-button kit-icon-button-bare` or a compact
    button. `kit-bar-root` is the bar of the list: no back control and a larger title. */
 .kit-bar {

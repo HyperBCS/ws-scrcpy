@@ -96,29 +96,25 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
             <div class="actions-sheet">
                 {!connected && <Banner>Reconnecting. Actions that need the stream are paused until it is back.</Banner>}
 
-                <SheetGroup kit title="Sound">
+                <SheetGroup title="Sound">
                     {audioSession ? (
-                        <SoundRows kit session={audioSession} />
+                        <SoundRows session={audioSession} />
                     ) : (
-                        <SheetRow kit title="Listen in this browser" description={audioAvailability.value.message} />
+                        <SheetRow title="Listen in this browser" description={audioAvailability.value.message} />
                     )}
                 </SheetGroup>
 
                 <SheetGroup
-                    kit
                     title="Clipboard"
                     status={
                         draftTooLong ? (
-                            <SheetStatus kit tone="error">
-                                {CLIPBOARD_TOO_LONG_NOTE}
-                            </SheetStatus>
+                            <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
                         ) : (
-                            clipboardNote && <SheetStatus kit>{clipboardNote}</SheetStatus>
+                            clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
                         )
                     }
                 >
                     <SheetRow
-                        kit
                         title="Read the phone's clipboard"
                         description="Copy from the phone to this browser."
                         layout="pair"
@@ -143,7 +139,6 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                         </div>
                     )}
                     <SheetRow
-                        kit
                         title="Paste text on the phone"
                         description="Tap a field on the phone, then paste."
                         layout="stack"
@@ -162,8 +157,8 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup kit title="Phone panels">
-                    <SheetRow kit title="Notifications">
+                <SheetGroup title="Phone panels">
+                    <SheetRow title="Notifications">
                         <Button
                             size="compact"
                             disabled={!connected}
@@ -172,7 +167,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                             Open
                         </Button>
                     </SheetRow>
-                    <SheetRow kit title="Quick settings">
+                    <SheetRow title="Quick settings">
                         <Button
                             size="compact"
                             disabled={!connected}
@@ -181,7 +176,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                             Open
                         </Button>
                     </SheetRow>
-                    <SheetRow kit title="Collapse panels">
+                    <SheetRow title="Collapse panels">
                         <Button
                             size="compact"
                             disabled={!connected}
@@ -192,8 +187,8 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup kit title="Session">
-                    <SheetRow kit title="Stream settings" description="Stream quality and sound capture.">
+                <SheetGroup title="Session">
+                    <SheetRow title="Stream settings" description="Stream quality and sound capture.">
                         <Button
                             size="compact"
                             attributes={{ 'aria-label': 'Open Stream settings' }}
@@ -209,7 +204,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                         </Button>
                     </SheetRow>
                     {lockActive && (
-                        <SheetRow kit title="Unlock device" description="Enter the phone's PIN or password.">
+                        <SheetRow title="Unlock device" description="Enter the phone's PIN or password.">
                             <Button size="compact" disabled={!connected} onClick={() => openSheet('unlock')}>
                                 Unlock
                             </Button>

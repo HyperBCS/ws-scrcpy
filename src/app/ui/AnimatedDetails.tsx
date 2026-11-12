@@ -12,7 +12,7 @@ interface DisclosureProps {
     children: ComponentChildren;
 }
 
-/** A disclosure in the kit look: a card whose first line opens it. The content is rows. */
+/** The disclosure: a card whose first line opens it. The content is rows. */
 export function Disclosure({ title, note, open, class: className = '', children }: DisclosureProps) {
     return (
         <AnimatedDetails class={`kit-disclosure ${className}`.trim()} open={open}>

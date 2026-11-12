@@ -1,7 +1,7 @@
 @layer tokens, base, components, views;
 
 @layer components {
-/* The tabs under the bar in the kit look (`ui/TabStrip.tsx` with `kit`). The open tab carries
+/* The tabs under the bar (`ui/TabStrip.tsx`). The open tab carries
    `aria-current="page"`: accent words over an accent line. On a phone the tabs share the width;
    from 1024px they keep their own. */
 .kit-tabs {

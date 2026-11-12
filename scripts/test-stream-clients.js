@@ -115,7 +115,7 @@ global.document = {
         created.push(element());
         return created.at(-1);
     },
-    querySelector: (selector) => (selector.includes('.bottom-sheet-root') ? openSheet : element()),
+    querySelector: (selector) => (selector.includes('dialog.kit-sheet[open]') ? openSheet : element()),
     body: { ...listenerApi(bodyListeners), classList: { add() {}, remove() {} }, clientWidth: 1000, clientHeight: 800 },
 };
 global.window = global;

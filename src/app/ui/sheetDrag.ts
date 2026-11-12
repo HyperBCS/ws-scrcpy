@@ -1,7 +1,5 @@
 import { animate, finished } from './motion';
 
-export const DESKTOP_DIALOG = '(min-width: 760px) and (min-height: 540px) and (hover: hover) and (pointer: fine)';
-
 /**
  * One gesture for all mobile sheets; body scrolling and embedded controls remain native.
  * `dialog` is the media query under which the sheet is a dialog and does not drag.
@@ -12,7 +10,7 @@ export function bindSheetDrag(
     root: HTMLElement,
     enabled: () => boolean,
     close: () => void,
-    dialog = DESKTOP_DIALOG,
+    dialog: string,
 ): () => void {
     const desktop = window.matchMedia(dialog);
     let drag:

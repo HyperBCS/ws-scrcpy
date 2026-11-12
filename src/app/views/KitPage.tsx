@@ -19,7 +19,6 @@ import { Menu, MenuItem, MenuSeparator } from '../ui/Menu';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Sheet } from '../ui/Sheet';
 import {
-    SheetFooter,
     SheetGroup,
     SheetMessageRow,
     SheetRow,
@@ -40,7 +39,7 @@ import '../../style/views/KitPage.css';
  * `scripts/e2e-kit.js` and `scripts/e2e-kit-sheet.js`, and nothing links to it.
  */
 
-const VARIANTS: ReadonlyArray<ButtonVariant> = ['primary', 'secondary', 'quiet', 'danger'];
+const VARIANTS: ReadonlyArray<ButtonVariant> = ['primary', 'secondary', 'quiet', 'danger', 'danger-solid'];
 const nothing = () => undefined;
 
 function Section({ title, children }: { title: string; children: ComponentChildren }) {
@@ -480,7 +479,6 @@ function Messages() {
                     </Button>
                 </Demo>
                 <Toast
-                    kit
                     message={toast.message}
                     identity={toast.message}
                     tone={toast.tone}
@@ -500,19 +498,14 @@ function Groups() {
         <Section title="Group and Row">
             <div class="kit-demo-sheet">
                 <SheetGroup
-                    kit
                     title="Clipboard"
-                    status={
-                        <SheetStatus kit tone="success">
-                            Copied to this browser.
-                        </SheetStatus>
-                    }
+                    status={<SheetStatus tone="success">Copied to this browser.</SheetStatus>}
                     hint="Text only. Pictures stay on the phone."
                 >
-                    <SheetRow kit title="Read the phone's clipboard" description="Copies it to this browser.">
+                    <SheetRow title="Read the phone's clipboard" description="Copies it to this browser.">
                         <Button size="compact">Read</Button>
                     </SheetRow>
-                    <SheetRow kit title="Paste text on the phone" layout="stack">
+                    <SheetRow title="Paste text on the phone" layout="stack">
                         <textarea
                             class="kit-field"
                             aria-label="Text to paste on the phone"
@@ -520,16 +513,15 @@ function Groups() {
                         />
                         <Button>Paste</Button>
                     </SheetRow>
-                    <SheetRow kit title="Restart the phone" description="Asks before it restarts." layout="pair">
+                    <SheetRow title="Restart the phone" description="Asks before it restarts." layout="pair">
                         <Button size="compact" variant="danger">
                             Restart
                         </Button>
                         <Button size="compact">Shut down</Button>
                     </SheetRow>
                 </SheetGroup>
-                <SheetGroup kit title="Keyboard and video">
+                <SheetGroup title="Keyboard and video">
                     <SheetToggleRow
-                        kit
                         title="Send this keyboard to the phone"
                         description="Ctrl+Alt+K releases it."
                         checked={keys}
@@ -548,25 +540,21 @@ function Groups() {
                     <SheetMessageRow tone="info" action={{ label: 'Clear', run: nothing }}>
                         An older list is still active.
                     </SheetMessageRow>
-                    <SheetRow kit title="System">
+                    <SheetRow title="System">
                         <span class="kit-row-value">Android 16</span>
                     </SheetRow>
                 </SheetGroup>
-                <SheetGroup kit title="Sound">
-                    <SoundRows kit session={sound} />
+                <SheetGroup title="Sound">
+                    <SoundRows session={sound} />
                 </SheetGroup>
                 <Disclosure title="About and troubleshooting" note="Stream service running">
-                    <SheetRow kit title="Stream service" description="Running">
+                    <SheetRow title="Stream service" description="Running">
                         <Button size="compact">Restart</Button>
                     </SheetRow>
-                    <SheetRow kit title="Serial">
+                    <SheetRow title="Serial">
                         <span class="kit-row-value">ATLAS-PIXEL-0001</span>
                     </SheetRow>
                 </Disclosure>
-                <SheetFooter>
-                    <Button>Cancel</Button>
-                    <Button variant="primary">Apply and restart video</Button>
-                </SheetFooter>
             </div>
         </Section>
     );
@@ -712,9 +700,9 @@ function SheetsAndMenu() {
 
                 {/* No subtitle: the sheet is not about one phone. */}
                 <Sheet {...props('long')} title="Long sheet">
-                    <SheetGroup kit title="Rows">
+                    <SheetGroup title="Rows">
                         {SHEET_ROWS.map((row) => (
-                            <SheetRow kit key={row} title={row} />
+                            <SheetRow key={row} title={row} />
                         ))}
                     </SheetGroup>
                 </Sheet>
@@ -777,7 +765,6 @@ function SheetsAndMenu() {
                     </Button>
                     {erase.armed && (
                         <ConfirmPrompt
-                            kit
                             danger
                             action={erase}
                             question="Erase the example?"
@@ -808,7 +795,7 @@ function SheetsAndMenu() {
                 </Sheet>
 
                 {/* Outside every sheet, where a page keeps its toast. */}
-                <Toast kit message={message} identity={message} duration={0} onDismiss={() => setMessage('')} />
+                <Toast message={message} identity={message} duration={0} onDismiss={() => setMessage('')} />
             </Section>
 
             <Section title="Menu">
@@ -839,9 +826,8 @@ function Bars() {
                 <Demo name="a phone's page">
                     <div class="kit-demo-frame">
                         <AppBar
-                            kit
                             title="Pixel 9"
-                            status={<AppBarStatus kit>Connected · Android 16</AppBarStatus>}
+                            status={<AppBarStatus>Connected · Android 16</AppBarStatus>}
                             onBack={nothing}
                             onTitle={nothing}
                             titleLabel="Switch phone. Viewing Pixel 9"
@@ -854,9 +840,8 @@ function Bars() {
                 <Demo name="a page">
                     <div class="kit-demo-frame">
                         <AppBar
-                            kit
                             title="Notifications"
-                            status={<AppBarStatus kit>Receiving from Bench iPhone</AppBarStatus>}
+                            status={<AppBarStatus>Receiving from Bench iPhone</AppBarStatus>}
                             onBack={nothing}
                         >
                             <Button size="compact">Open screen</Button>
@@ -865,12 +850,7 @@ function Bars() {
                 </Demo>
                 <Demo name="root">
                     <div class="kit-demo-frame">
-                        <AppBar
-                            kit
-                            root
-                            title="Phones"
-                            status={<AppBarStatus kit>3 phones, 1 needs attention</AppBarStatus>}
-                        >
+                        <AppBar root title="Phones" status={<AppBarStatus>3 phones, 1 needs attention</AppBarStatus>}>
                             <IconButton icon="bell" label="Notifications" />
                             <IconButton icon="refresh" label="Refresh the list" />
                         </AppBar>
@@ -880,7 +860,7 @@ function Bars() {
             <Section title="TabStrip">
                 <Demo name="kit">
                     <div class="kit-demo-frame">
-                        <TabStrip kit label="Phone views" tabs={TABS} current={tab} onSelect={setTab} />
+                        <TabStrip label="Phone views" tabs={TABS} current={tab} onSelect={setTab} />
                     </div>
                 </Demo>
             </Section>

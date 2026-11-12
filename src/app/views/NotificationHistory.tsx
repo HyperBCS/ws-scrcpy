@@ -17,6 +17,7 @@ import { Button } from '../ui/Button';
 import { SelectField, TextField } from '../ui/Field';
 import { IconButton } from '../ui/IconButton';
 import { InlineStatus } from '../ui/InlineStatus';
+import { badgeText } from '../ui/Badge';
 import { Chip, ChipTone } from '../ui/Chip';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { topSheet } from '../ui/Sheet';
@@ -30,10 +31,12 @@ import '../../style/views/NotificationsInbox.css';
 export type { NotificationHistoryItem as HistoryItem } from '../../common/Notification';
 import type { NotificationHistoryItem as HistoryItem } from '../../common/Notification';
 
+/** The unread count in the bar of Notifications: the kit's badge on its own, not on a button. */
 export function UnreadBadge({ count }: { count: number }) {
-    return count > 0 ? (
-        <span class="notification-unread-count" aria-label={`${count} unread notifications`}>
-            {count > 99 ? '99+' : count}
+    const text = badgeText(count);
+    return text ? (
+        <span class="kit-badge kit-badge-inline notification-unread-count" aria-label={`${count} unread notifications`}>
+            {text}
         </span>
     ) : null;
 }
@@ -738,7 +741,6 @@ export function NotificationHistory({
                 <p class="notification-history-note">Notifications are kept for 30 days, up to 500 per iPhone.</p>
             )}
             <Toast
-                kit
                 className="notification-undo"
                 dismissLabel="Dismiss undo notice"
                 message={!noticesHeld && undo?.source === source?.id ? undo?.label || '' : ''}
@@ -748,14 +750,12 @@ export function NotificationHistory({
                 action={{ label: 'Undo', run: undoLast, disabled: busy }}
             />
             <Toast
-                kit
                 className="notification-phone-result"
                 message={noticesHeld ? '' : phoneResult}
                 identity={phoneResult}
                 onDismiss={() => setPhoneResult('')}
             />
             <Toast
-                kit
                 className="notification-failure"
                 tone="error"
                 dismissLabel="Dismiss error"
@@ -811,7 +811,6 @@ export function NotificationHistory({
                 </Button>
                 {bulkConfirm.armed && confirmation && (
                     <ConfirmPrompt
-                        kit
                         action={bulkConfirm}
                         question={`Clear ${count(confirmation.snapshot.length)} on ${confirmation.name}?`}
                         consequence="They are removed from the iPhone and cannot be brought back there. They stay here, marked as read."
@@ -875,7 +874,6 @@ export function NotificationHistory({
                             </Button>
                             {phoneConfirm.armed === menuItem.key && (
                                 <ConfirmPrompt
-                                    kit
                                     action={phoneConfirm}
                                     question={`${menuItem.negativeActionLabel} on ${source?.name || 'the iPhone'}?`}
                                     consequence={`This runs on the iPhone for “${menuItem.title || menuItem.appName || 'this notification'}” and cannot be undone from here.`}

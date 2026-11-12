@@ -1,10 +1,12 @@
 // Run with: node --test scripts/test-kit.js
 // The shared controls of src/app/ui without a browser: the icon set as data and as strings, the
 // class names code that builds HTML relies on, the refusal of an icon button without a label,
-// the attributes a button carries for its states, and the sheet parts in both looks.
+// the attributes a button carries for its states, and the sheet parts, which have one look.
 // scripts/e2e-kit.js measures the same controls in a browser.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
+const fs = require('node:fs');
+const path = require('node:path');
 
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
 require.extensions['.css'] = () => {};
@@ -15,7 +17,8 @@ const { IconButton, iconButtonClass } = require('../src/app/ui/IconButton');
 const { Switch } = require('../src/app/ui/Switch');
 const { InlineStatus } = require('../src/app/ui/InlineStatus');
 const { Banner } = require('../src/app/ui/Banner');
-const { SheetRow, SheetStatus, SheetMessageRow, SheetFooter } = require('../src/app/ui/SheetControls');
+const SheetControls = require('../src/app/ui/SheetControls');
+const { SheetRow, SheetStatus, SheetMessageRow } = SheetControls;
 
 /** Every element in a Preact tree, as { type, props }. Components without hooks are drawn. */
 function elements(node, found = []) {
@@ -56,6 +59,8 @@ test('the class names of a button for code that builds HTML', () => {
     assert.equal(buttonClass({ variant: 'primary' }), 'kit-button kit-button-primary');
     assert.equal(buttonClass({ variant: 'quiet', size: 'compact' }), 'kit-button kit-button-quiet kit-button-compact');
     assert.equal(buttonClass({ variant: 'danger', full: true }), 'kit-button kit-button-danger kit-button-full');
+    // The answer that confirms a removal has a variant of its own, not a class of the confirm prompt.
+    assert.equal(buttonClass({ variant: 'danger-solid' }), 'kit-button kit-button-danger-solid');
     assert.equal(iconButtonClass(), 'kit-icon-button');
     assert.equal(iconButtonClass({ variant: 'bare', danger: true, size: 'compact' }), 'kit-icon-button kit-icon-button-bare kit-icon-button-danger kit-icon-button-compact');
 });
@@ -129,18 +134,60 @@ test('messages: a status line by tone, and a banner with one action', () => {
     assert.deepEqual(classes(Banner({ children: 'Asleep.' })).slice(0, 1), ['kit-banner']);
 });
 
-test('the sheet parts keep their class names, and take the kit names only when asked', () => {
+test('the sheet parts have the kit class names and no other look', () => {
     const row = { title: 'Restart video', description: 'Use this when the picture is frozen.', children: 'control' };
-    assert.deepEqual(classes(SheetRow(row)), ['sheet-row inline', 'sheet-row-text', 'sheet-row-title', 'sheet-row-desc', 'sheet-row-control']);
-    assert.deepEqual(classes(SheetRow({ ...row, layout: 'stack' }))[0], 'sheet-row stack');
-    assert.deepEqual(classes(SheetRow({ ...row, kit: true })), ['kit-row', 'kit-row-text', 'kit-row-title', 'kit-row-desc', 'kit-row-control']);
-    assert.equal(classes(SheetRow({ ...row, kit: true, layout: 'stack' }))[0], 'kit-row kit-row-stack');
-    assert.equal(classes(SheetRow({ ...row, kit: true, layout: 'pair' }))[0], 'kit-row kit-row-pair');
-    assert.equal(elements(SheetRow({ ...row, kit: true, attributes: { 'data-audio-state': 'muted' } }))[0].props['data-audio-state'], 'muted');
+    assert.deepEqual(classes(SheetRow(row)), ['kit-row', 'kit-row-text', 'kit-row-title', 'kit-row-desc', 'kit-row-control']);
+    assert.equal(classes(SheetRow({ ...row, layout: 'stack' }))[0], 'kit-row kit-row-stack');
+    assert.equal(classes(SheetRow({ ...row, layout: 'pair' }))[0], 'kit-row kit-row-pair');
+    assert.equal(elements(SheetRow({ ...row, attributes: { 'data-audio-state': 'muted' } }))[0].props['data-audio-state'], 'muted');
+    // A kit prop left in a caller would change nothing; the parts do not read one.
+    assert.deepEqual(classes(SheetRow({ ...row, kit: false })), classes(SheetRow(row)));
 
-    assert.deepEqual(classes(SheetStatus({ tone: 'error', children: 'Failed.' })), ['sheet-status error', 'sheet-status-icon']);
-    assert.deepEqual(classes(SheetStatus({ tone: 'error', kit: true, children: 'Failed.' })), ['kit-status kit-status-error', 'kit-icon']);
+    assert.deepEqual(classes(SheetStatus({ tone: 'error', children: 'Failed.' })), ['kit-status kit-status-error', 'kit-icon']);
+    assert.deepEqual(classes(SheetStatus({ children: 'Reading.' })), ['kit-status kit-status-neutral']);
 
     assert.deepEqual(classes(SheetMessageRow({ tone: 'info', children: 'An older list is still active.' })).slice(0, 2), ['kit-row kit-row-stack', 'kit-banner kit-banner-info']);
-    assert.deepEqual(classes(SheetFooter({ children: 'actions' })), ['kit-footer']);
+    // The actions that end a sheet are in the footer of Sheet; the sheet parts have no footer of their own.
+    assert.equal(SheetControls.SheetFooter, undefined);
+});
+
+/** The declarations of the rules of a stylesheet whose selector is exactly `selector`, inside `media` if given. */
+function rule(file, selector, media) {
+    let css = fs.readFileSync(path.join(__dirname, '../src/style', file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    if (media) {
+        const at = css.indexOf(`@media ${media}`);
+        assert.notEqual(at, -1, `${file} has @media ${media}`);
+        css = css.slice(at);
+    }
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = new RegExp(`(?:^|[{}])\\s*${escaped}\\s*\\{([^}]*)\\}`).exec(css);
+    assert.ok(match, `${file} has a rule for ${selector}`);
+    return match[1];
+}
+
+test('a long press on a kit button, a link among them, selects nothing on a touch screen', () => {
+    for (const [file, selector] of [['kit/Button.css', '.kit-button'], ['kit/IconButton.css', '.kit-icon-button']]) {
+        const declarations = rule(file, selector, '(hover: none) and (pointer: coarse)');
+        assert.match(declarations, /(^|\s)user-select: none;/, `${selector} sets user-select`);
+        assert.match(declarations, /-webkit-touch-callout: none;/, `${selector} brings up no callout`);
+    }
+});
+
+test('a select at the end of a row does not shrink under the width of its options', () => {
+    const control = rule('kit/Group.css', '.kit-row-control-select');
+    // A flex item's automatic minimum is its content, clamped by its maximum: the options, up to 70% of the row.
+    assert.match(control, /min-width: auto;/, 'the control does not shrink under its content');
+    assert.match(control, /max-width: 70%;/, 'unless its content would crowd the text out');
+    const select = rule('kit/Group.css', '.kit-row-control-select > .kit-select > .kit-field');
+    assert.match(select, /(^|\s)width: auto;/, 'the content of the control is the select at the width of its options');
+    assert.match(select, /min-width: 100%;/, 'which fills the control where there is room');
+});
+
+test('the unread count of Notifications is the kit badge, on its own in the bar', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../src/app/views/NotificationHistory.tsx'), 'utf8');
+    const badge = /export function UnreadBadge[\s\S]*?\n}\n/.exec(source)?.[0] || '';
+    assert.match(badge, /class="kit-badge kit-badge-inline notification-unread-count"/);
+    assert.match(badge, /badgeText\(count\)/, 'the words of the count are the kit badge\'s');
+    assert.match(rule('kit/Badge.css', '.kit-badge-inline'), /position: static;/);
+    assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '../src/style/app.css'), 'utf8'), /notification-unread-count/, 'app.css has no badge of its own');
 });

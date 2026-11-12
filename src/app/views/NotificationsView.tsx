@@ -95,7 +95,6 @@ function SourceSettings({
             <div class="notification-details-content">
                 {confirm.armed === 'erase-text' && (
                     <ConfirmPrompt
-                        kit
                         action={confirm}
                         question={`Stop storing notification text from ${source.name}?`}
                         consequence={`The text of its ${count} is erased from the server and cannot be restored.`}
@@ -143,7 +142,6 @@ function SourceSettings({
                     </Button>
                     {confirm.armed === 'remove' && (
                         <ConfirmPrompt
-                            kit
                             action={confirm}
                             question={
                                 stored
@@ -407,7 +405,7 @@ export function NotificationsView() {
 
     return (
         <div class="notifications-view">
-            <AppBar kit title="Notifications">
+            <AppBar title="Notifications">
                 <UnreadBadge
                     count={historySource && !unlinkedRequest ? status?.unreadBySource?.[historySource.id] || 0 : 0}
                 />
@@ -435,12 +433,7 @@ export function NotificationsView() {
                     <span class="kit-banner-text">{error}</span>
                 </Presence>
                 {/* Not over a sheet of the inbox: it would cover the sheet's last action. */}
-                <Toast
-                    kit
-                    message={topSheet.value ? '' : message}
-                    identity={message}
-                    onDismiss={() => setMessage('')}
-                />
+                <Toast message={topSheet.value ? '' : message} identity={message} onDismiss={() => setMessage('')} />
                 {!status && !connectionError && (
                     <p role="status" class="notification-empty">
                         Loading…

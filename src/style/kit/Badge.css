@@ -28,4 +28,9 @@
     top: 0;
     right: 0;
 }
+/* A count on its own in a line, such as the unread count beside a page's title. */
+.kit-badge-inline {
+    position: static;
+    flex: none;
+}
 }

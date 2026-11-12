@@ -1,10 +1,10 @@
 import { ComponentChildren } from 'preact';
-import '../../style/views/ToolView.css';
 import '../../style/kit/TabStrip.css';
 
 // Each view of a page draws the strip itself, so a press on a tab removes the strip with its
 // view, and the view shown next draws another. That strip stands in for the one before: it does
-// not play the row's entrance again, and it takes the focus if the pressed tab had it.
+// not play the row's entrance again (`views/StreamView.css`), and it takes the focus if the
+// pressed tab had it.
 const HANDOVER_MS = 1000;
 const pressed = { at: -HANDOVER_MS, focused: false };
 
@@ -40,25 +40,18 @@ interface TabStripProps<T extends string> {
     onSelect: (id: T) => void;
     /** Shown at the end of the row: the connection state of the tab that is open. */
     children?: ComponentChildren;
-    /** The kit look: other class names, the same behaviour. Without it nothing changes. */
-    kit?: boolean;
 }
 
-/**
- * The tabs under the header. This is the tool page's navigation row as a component. It keeps
- * that row's class names; its rules stay in `ToolView.css`, where they share selectors with the
- * rest of the tool page. With `kit` it is the tab row of the design system, with the class
- * names of `style/kit/TabStrip.css`.
- */
-export function TabStrip<T extends string>({ label, tabs, current, onSelect, children, kit }: TabStripProps<T>) {
+/** The tabs under the bar, with the class names of `style/kit/TabStrip.css`. */
+export function TabStrip<T extends string>({ label, tabs, current, onSelect, children }: TabStripProps<T>) {
     return (
-        <nav ref={standIn} class={kit ? 'kit-tabs' : 'tool-navigation'} aria-label={label}>
-            <div class={kit ? 'kit-tabs-list' : 'tool-tabs'}>
+        <nav ref={standIn} class="kit-tabs" aria-label={label}>
+            <div class="kit-tabs-list">
                 {tabs.map((tab) => (
                     <button
                         key={tab.id}
                         type="button"
-                        class={kit ? 'kit-tab' : undefined}
+                        class="kit-tab"
                         title={tab.hint}
                         aria-current={tab.id === current ? 'page' : undefined}
                         ref={tab.id === current ? takeFocus : undefined}

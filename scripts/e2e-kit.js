@@ -9,7 +9,7 @@
 //   keyboard  each control shows the token's focus ring; Switch and SegmentedControl answer to
 //             the keyboard and expose their state
 //   names     an icon button without a label is refused
-//   layout    the page does not scroll sideways
+//   layout    the page does not scroll sideways; a select in a row keeps the width of its options
 // Screenshots go to E2E_OUT. The page needs no phone: every socket is left unanswered.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -404,6 +404,31 @@ async function run(browser, viewport, theme) {
     await check('with an error toast');
     await toast.getByRole('button', { name: 'Dismiss message', exact: true }).click();
     await toast.waitFor({ state: 'detached' });
+
+    // A select at the end of a row is 180px where there is room, and beside a long description it
+    // keeps the width of its options. Measured on a copy of the row, which the page does not draw.
+    const selectRow = await page.evaluate(() => {
+        const row = document.querySelector('.kit-row-control-select').closest('.kit-row');
+        const measure = (description) => {
+            const copy = row.cloneNode(true);
+            copy.querySelector('.kit-row-desc').textContent = description;
+            row.after(copy);
+            const field = copy.querySelector('select');
+            const width = field.getBoundingClientRect().width;
+            field.style.cssText = 'width: max-content; min-width: 0; max-width: none';
+            const options = field.getBoundingClientRect().width;
+            copy.remove();
+            return { width: Math.round(width), options: Math.round(options) };
+        };
+        return {
+            short: measure('Applies when the video restarts.'),
+            long: measure('Applies when the video restarts, which ends the picture for a moment on every screen that shows it.'),
+        };
+    });
+    for (const [which, { width, options }] of Object.entries(selectRow)) {
+        assert.ok(width >= options, `${label}: the select beside a ${which} description is ${width}px, its options need ${options}px`);
+    }
+    if (!viewport.mobile) assert.equal(selectRow.short.width, 180, `${label}: the select is 180px where there is room`);
 
     assert.deepEqual(errors, [], `${label}: no page error`);
     await context.close();

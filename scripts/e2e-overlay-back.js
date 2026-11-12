@@ -118,10 +118,10 @@ async function start(browser, viewport) {
 }
 
 const card = (page, key) => page.locator(`article.device[data-device-key="${key}"]`);
-// Either sheet container: the kit's dialog, and the older one until its last user has moved.
-// A kit sheet that is closing is still shown for its exit; it is not counted as open.
-const sheet = (page) => page.locator('.bottom-sheet-root.open, dialog.kit-sheet[open]:not([data-exiting])');
-const titled = (page, title) => page.locator('.bottom-sheet-title, .kit-sheet-title', { hasText: title });
+// The open sheet: every sheet is the kit's dialog. A sheet that is closing is still shown for its
+// exit; it is not counted as open.
+const sheet = (page) => page.locator('dialog.kit-sheet[open]:not([data-exiting])');
+const titled = (page, title) => page.locator('.kit-sheet-title', { hasText: title });
 /** A sheet on the kit's dialog, by its title. */
 const kitSheet = (page, title) => page.locator('dialog.kit-sheet[open]:not([data-exiting])').filter({ has: page.locator('.kit-sheet-title', { hasText: title }) });
 const at = (page) => page.evaluate(() => ({ index: history.state?.nav?.index, overlay: history.state?.nav?.overlay || 0, hash: location.hash }));
@@ -154,7 +154,7 @@ const keyOnPicture = (page) => page.evaluate(() => {
 
 // Ways a sheet closes by itself.
 const sheetWays = {
-    'the close button': (test) => press(test, sheet(test.page).locator('.bottom-sheet-close, .kit-sheet-close')),
+    'the close button': (test) => press(test, sheet(test.page).locator('.kit-sheet-close')),
     Escape: (test) => test.page.keyboard.press('Escape'),
     // The sheet stops at the bottom edge on a phone and is centred on a desktop: the corner is backdrop.
     'the backdrop': (test) => (test.mobile ? test.page.touchscreen.tap(8, 8) : test.page.mouse.click(8, 8)),
@@ -297,7 +297,7 @@ async function streamPage(browser, viewport, platform) {
         assert.ok(test.keys.length > keysBefore, `${label}: a key pressed on the picture with nothing open reaches the phone`);
 
         // One sheet takes the place of another: the sheet that is open has the one entry.
-        const title = (text) => sheet(page).locator('.bottom-sheet-title, .kit-sheet-title', { hasText: text });
+        const title = (text) => sheet(page).locator('.kit-sheet-title', { hasText: text });
         const swaps = [
             ['Actions to Settings', async () => {
                 await control(test, 'Actions');

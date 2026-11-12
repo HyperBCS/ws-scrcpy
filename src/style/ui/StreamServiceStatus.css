@@ -30,10 +30,4 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-/* The older header of a phone's page, until that page is on the kit bar. The line keeps the
-   height it had there (15.75px), so the stage under the header does not move. */
-.stream-header-device > .stream-service-status {
-    font-size: var(--font-size-12);
-    line-height: 1.3125;
-}
 }

@@ -1012,18 +1012,19 @@ function elements(node, found = []) {
     return found;
 }
 
-test('AppBar and TabStrip are the stream header and the tool tabs, with their class names', () => {
+test('AppBar and TabStrip are the kit bar and the kit tabs, with their class names', () => {
     const { browser } = open('#!');
     const { AppBar, AppBarStatus } = require('../src/app/ui/AppBar');
     const { TabStrip } = require('../src/app/ui/TabStrip');
     const { DEVICE_TABS } = require('../src/app/state/routes');
 
-    const bar = elements(AppBar({ title: 'Pixel 9', status: AppBarStatus({ connected: true, children: 'Connected' }), children: 'actions' }));
+    const bar = elements(AppBar({ title: 'Pixel 9', status: AppBarStatus({ children: 'Connected' }), children: 'actions' }));
     const classes = bar.map((element) => element.props.class).filter(Boolean);
-    assert.deepEqual(classes, ['stream-header', 'stream-header-back', 'stream-header-device', 'stream-header-status connected', 'stream-header-status-dot']);
-    const back = bar.find((element) => element.props.class === 'stream-header-back');
+    assert.deepEqual(classes, ['kit-bar', 'kit-bar-back', 'kit-icon', 'kit-bar-back-label', 'kit-bar-title', 'kit-bar-name', 'kit-bar-status']);
+    const back = bar.find((element) => element.props.class === 'kit-bar-back');
     assert.equal(back.props['aria-label'], 'Phones', 'the back control is named after the list');
-    assert.equal(bar.find((element) => element.type === 'strong').props.children, 'Pixel 9');
+    assert.equal(bar.find((element) => element.type === 'h1').props.children, 'Pixel 9');
+    assert.equal(bar.find((element) => element.props.class === 'kit-bar-status').props.role, 'status');
     // The back control is up: with nothing below this page, the list replaces it.
     browser.location.hash = '#!action=shell&udid=PIXEL';
     browser.settle();
@@ -1045,7 +1046,8 @@ test('AppBar and TabStrip are the stream header and the tool tabs, with their cl
             children: 'Connected',
         }),
     );
-    assert.deepEqual(strip.slice(0, 2).map((element) => [element.type, element.props.class]), [['nav', 'tool-navigation'], ['div', 'tool-tabs']]);
+    assert.deepEqual(strip.slice(0, 2).map((element) => [element.type, element.props.class]), [['nav', 'kit-tabs'], ['div', 'kit-tabs-list']]);
+    assert.ok(strip.filter((element) => element.type === 'button').every((tab) => tab.props.class === 'kit-tab'));
     assert.equal(strip[0].props['aria-label'], 'Device views');
     const tabs = strip.filter((element) => element.type === 'button');
     assert.deepEqual(tabs.map((tab) => [tab.props.children, tab.props['aria-current']]), [['Screen', undefined], ['Files', 'page'], ['Shell', undefined]]);
