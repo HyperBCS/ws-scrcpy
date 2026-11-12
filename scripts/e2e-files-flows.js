@@ -57,7 +57,7 @@ async function open(page, name) {
 async function history(browser, layout) {
     const { page, finish } = await start(browser, layout);
     const card = page.locator('.device').filter({ hasText: 'Files test phone' });
-    await card.locator('summary').click();
+    await card.waitFor();
     const entries = () => page.evaluate(() => history.length);
     const listEntries = await entries();
     await card.getByRole('link', { name: 'Files', exact: true }).click();
@@ -126,7 +126,6 @@ async function history(browser, layout) {
 async function overlays(browser, layout) {
     const { page, finish, traffic } = await start(browser, layout);
     const card = page.locator('.device').filter({ hasText: 'Files test phone' });
-    await card.locator('summary').click();
     await card.getByRole('link', { name: 'Files', exact: true }).click();
     await ready(page);
     // Two folder steps, so that the folder shown has another one behind it: tmp, archive, tmp.
@@ -764,7 +763,6 @@ async function until(page, check, what) {
 async function uploads(browser, layout, name, scheme) {
     const { page, finish, traffic, files } = await start(browser, layout, undefined, scheme);
     const card = page.locator('.device').filter({ hasText: 'Files test phone' });
-    await card.locator('summary').click();
     await card.getByRole('link', { name: 'Files', exact: true }).click();
     await ready(page);
     await row(page, 'notes.txt').waitFor();

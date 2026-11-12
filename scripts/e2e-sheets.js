@@ -117,7 +117,7 @@ async function main() {
                 },
             });
             await page.goto(BASE);
-            const original = page.locator('.device').filter({ hasText: UDID });
+            const original = page.locator(`.device[data-device-key$=":${UDID}"]`);
             await original.waitFor();
             await original.evaluate((card) => {
                 card.dataset.sheetTarget = 'true';
