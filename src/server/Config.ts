@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { createSecureContext } from 'tls';
 import { Configuration, HostItem, HostsItem, ServerItem } from '../types/Configuration';
 import { getSettings, readConfiguration, settingsReport, validateConfiguration } from './Settings';
 
@@ -36,10 +37,10 @@ export class Config {
         /// #endif
         validateConfiguration(userConfig);
         const merged = Object.assign({}, defaultConfig, userConfig);
-        merged.server = merged.server.map((item) => this.parseServerItem(item));
+        merged.server = merged.server.map((item, index) => this.parseServerItem(item, index));
         return merged;
     }
-    private static parseServerItem(config: Partial<ServerItem> = {}): ServerItem {
+    private static parseServerItem(config: Partial<ServerItem> = {}, index = 0): ServerItem {
         const secure = config.secure ?? false;
         const port = config.port ?? (secure ? 443 : 80);
         const options = config.options ? { ...config.options } : undefined;
@@ -58,6 +59,13 @@ export class Config {
                 throw Error(`Can't use "key" and "keyPath" together`);
             }
             options.key = this.readFile(options.keyPath);
+        }
+        if (secure && options) {
+            try {
+                createSecureContext(options);
+            } catch {
+                throw Error(`server[${index}].options must contain valid TLS options and credentials`);
+            }
         }
         const serverItem: ServerItem = {
             secure,

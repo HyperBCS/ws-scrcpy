@@ -1,4 +1,4 @@
-import { getSettings } from '../../Settings';
+import { childEnvironment, getSettings } from '../../Settings';
 import { ChildProcess, spawn } from 'child_process';
 import * as http from 'http';
 import {
@@ -339,7 +339,7 @@ export class CoreDeviceAudioRelay {
               ];
         let decoder: ChildProcess;
         try {
-            decoder = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+            decoder = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env: childEnvironment() });
         } catch (error) {
             this.setMetadata('error', `The audio decoder could not start: ${(error as Error).message}`);
             return undefined;

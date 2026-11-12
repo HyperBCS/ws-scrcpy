@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import net from 'net';
+import tls from 'tls';
 import YAML from 'yaml';
 import type { Configuration } from '../types/Configuration';
 
@@ -78,11 +79,17 @@ function integer(env: NodeJS.ProcessEnv, key: string, fallback: number, minimum 
 function host(value: unknown, field: string): string {
     if (typeof value !== 'string' || !value.trim()) invalid(field, 'a host name or IP address');
     const name = value.trim().toLowerCase();
-    const bare = name.replace(/^\[|\]$/g, '');
-    if (net.isIP(bare)) return name;
+    const bracketed = name.startsWith('[') && name.endsWith(']');
+    const bare = bracketed ? name.slice(1, -1) : name;
+    if (net.isIP(bare) && (!bracketed || net.isIP(bare) === 6)) return name;
     if (name.length > 253 || !name.split('.').every((part) => /^[a-z\d](?:[a-z\d-]*[a-z\d])?$/.test(part)))
         invalid(field, 'a host name or IP address');
     return name;
+}
+
+function authorityHost(value: unknown, field: string): void {
+    const name = host(value, field);
+    if (net.isIP(name) === 6) invalid(field, 'an IPv6 address in brackets');
 }
 
 function url(value: string | undefined, field: string, protocols: string[]): string | undefined {
@@ -117,7 +124,8 @@ function pathname(value: unknown, field: string): string {
 function defaultDataDir(cwd: string, serverDirectory: string): string {
     const root = path.basename(serverDirectory) === 'dist' ? path.dirname(serverDirectory) : cwd;
     const directory = path.join(root, 'data');
-    const legacy = path.join(cwd, 'data');
+    const legacy =
+        path.basename(serverDirectory) === 'dist' ? path.join(serverDirectory, 'data') : path.join(cwd, 'data');
     if (legacy !== directory && fs.existsSync(legacy)) {
         let occupied = true;
         try {
@@ -151,8 +159,8 @@ export function readSettings(
         } catch {
             invalid('IOS_PROBE_ARGS', 'a JSON array of strings');
         }
-        if (!Array.isArray(parsedArgs) || !parsedArgs.every((item) => typeof item === 'string'))
-            invalid('IOS_PROBE_ARGS', 'a JSON array of strings');
+        if (!Array.isArray(parsedArgs) || !parsedArgs.every((item) => typeof item === 'string' && !item.includes('\0')))
+            invalid('IOS_PROBE_ARGS', 'a JSON array of strings without null characters');
     }
     const tunnel = text(env, 'IOS_TUNNEL') || 'userspace';
     if (tunnel !== 'userspace' && tunnel !== 'tunneld') invalid('IOS_TUNNEL', 'userspace or tunneld');
@@ -177,7 +185,7 @@ export function readSettings(
         pushSubject: pushSubject || publicUrl,
         notificationsCollector: bool(env, 'WS_NOTIFICATIONS_COLLECTOR', true),
         bluetoothPython: text(env, 'WS_BLUETOOTH_PYTHON') || '/usr/bin/python3',
-        adbHost: host(text(env, 'ADB_HOST') || '127.0.0.1', 'ADB_HOST'),
+        adbHost: host(text(env, 'ADB_HOST') || '127.0.0.1', 'ADB_HOST').replace(/^\[|\]$/g, ''),
         adbPort: integer(env, 'ADB_PORT', 5037, 1, 65535),
         iosPython: text(env, 'IOS_PYMOBILEDEVICE3'),
         iosPatchCheck: bool(env, 'IOS_PATCH_CHECK', true),
@@ -248,7 +256,7 @@ function tlsOptions(value: unknown, field: string): void {
     const options = record(value, field);
     for (const name of ['certPath', 'keyPath', 'passphrase', 'ciphers', 'minVersion', 'maxVersion'])
         if (options[name] !== undefined && typeof options[name] !== 'string') invalid(`${field}.${name}`, 'a string');
-    for (const name of ['cert', 'key', 'ca', 'pfx']) {
+    for (const name of ['cert', 'ca', 'pfx']) {
         const entry = options[name];
         if (
             entry !== undefined &&
@@ -264,6 +272,26 @@ function tlsOptions(value: unknown, field: string): void {
         invalid(field, 'configured with cert or certPath, not both');
     if (options.key !== undefined && options.keyPath !== undefined)
         invalid(field, 'configured with key or keyPath, not both');
+    for (const name of ['minVersion', 'maxVersion'])
+        if (
+            options[name] !== undefined &&
+            !['TLSv1', 'TLSv1.1', 'TLSv1.2', 'TLSv1.3'].includes(options[name] as string)
+        )
+            invalid(`${field}.${name}`, 'TLSv1, TLSv1.1, TLSv1.2 or TLSv1.3');
+    const versions = ['TLSv1', 'TLSv1.1', 'TLSv1.2', 'TLSv1.3'];
+    if (
+        options.minVersion &&
+        options.maxVersion &&
+        versions.indexOf(options.minVersion as string) > versions.indexOf(options.maxVersion as string)
+    )
+        invalid(field, 'configured with minVersion no higher than maxVersion');
+    try {
+        // Let Node validate the supported TLS values and credential forms without a listener.
+        // Its errors can include certificate contents, so report only the configuration field.
+        tls.createSecureContext(options);
+    } catch {
+        invalid(field, 'valid TLS options and credentials');
+    }
 }
 
 /** Validate the YAML/JSON shape before Config merges defaults or any service starts. */
@@ -297,7 +325,7 @@ export function validateConfiguration(value: unknown): Configuration {
             if (redirect !== undefined && typeof redirect !== 'boolean') {
                 const target = record(redirect, `${field}.redirectToSecure`);
                 if (target.port !== undefined) port(target.port, `${field}.redirectToSecure.port`);
-                if (target.host !== undefined) host(target.host, `${field}.redirectToSecure.host`);
+                if (target.host !== undefined) authorityHost(target.host, `${field}.redirectToSecure.host`);
             }
         });
     }
@@ -306,7 +334,7 @@ export function validateConfiguration(value: unknown): Configuration {
         config.remoteHostList.forEach((entry, index) => {
             const field = `remoteHostList[${index}]`;
             const item = record(entry, field);
-            host(item.hostname, `${field}.hostname`);
+            authorityHost(item.hostname, `${field}.hostname`);
             port(item.port, `${field}.port`);
             if (typeof item.secure !== 'boolean') invalid(`${field}.secure`, 'a boolean');
             booleanField(item.useProxy, `${field}.useProxy`);

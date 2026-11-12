@@ -57,6 +57,7 @@ test('a bundled server uses app/data from both root and dist launches', () => {
     assert.equal(readSettings({}, built, built).dataDir, path.join(app, 'data'), 'an empty old directory is safe');
     fs.writeFileSync(path.join(built, 'data', 'fixture'), 'untouched');
     assert.throws(() => readSettings({}, built, built), /Existing data.*Set WS_DATA_DIR/);
+    assert.throws(() => readSettings({}, app, built), /Existing data.*Set WS_DATA_DIR/, 'a root launch must not hide the former dist store');
     assert.equal(readSettings({ WS_NOTIFICATION_DATA: 'data' }, built, built).dataDir, path.join(built, 'data'), 'the legacy env name can explicitly select the former store');
     assert.equal(fs.readFileSync(path.join(built, 'data', 'fixture'), 'utf8'), 'untouched');
 });
@@ -178,10 +179,13 @@ test('YAML and JSON are validated before Config reads their server list', () => 
 });
 
 test('TLS options reject conflicting credentials and malformed types without logging contents', () => {
-    for (const options of [false, {}, { cert: 12 }, { certPath: '/cert' }, { cert: 'sentinel-secret', certPath: '/cert' },
-        { key: 'sentinel-secret', keyPath: '/key' }, { passphrase: 123 }, { rejectUnauthorized: 'false' }])
-        assert.throws(() => validateConfiguration({ server: [{ secure: true, options }] }),
-            (error) => !error.message.includes('sentinel-secret'));
+    for (const options of [false, {}, { certPath: '/cert' }])
+        assert.throws(() => validateConfiguration({ server: [{ secure: true, options }] }));
+    for (const invalid of [{ passphrase: 123 }, { rejectUnauthorized: 'false' }, { cert: 12 },
+        { cert: 'sentinel-secret' }, { key: 'sentinel-secret' }])
+        assert.throws(() => validateConfiguration({ server: [{ secure: true,
+            options: { certPath: '/cert', keyPath: '/key', ...invalid },
+        }] }), (error) => !error.message.includes('sentinel-secret'));
     assert.doesNotThrow(() => validateConfiguration({ server: [{ secure: true, options: { certPath: '/cert', keyPath: '/key' } }] }));
 });
 
@@ -193,11 +197,11 @@ test('the key is consumed separately, never held in settings or inherited by chi
         const settings = readSettings({ [IOS_KEY_ENV]: marker, WS_IOS_SETTINGS_KEY_FILE: '/sentinel-key-path',
             WS_PUBLIC_URL: 'https://phone.example/private-token' });
         assert(!JSON.stringify(settings).includes(marker));
-        assert.equal(takeIosSettingsKey(), marker);
+        assert.equal(takeIosSettingsKey() === marker, true, 'the key is returned only to its consumer');
         assert.equal(process.env[IOS_KEY_ENV], undefined);
         process.env[IOS_KEY_ENV] = marker;
         const child = childEnvironment({ [IOS_KEY_ENV]: marker, PLAIN_FIXTURE: 'kept' });
-        assert.equal(child[IOS_KEY_ENV], undefined);
+        assert.equal(Object.hasOwn(child, IOS_KEY_ENV), false);
         assert.equal(child.PLAIN_FIXTURE, 'kept');
         assert.equal(child.PATH, process.env.PATH);
         const report = JSON.stringify(settingsReport(settings));
@@ -235,4 +239,94 @@ test('an existing stream settings file is read and the next save moves to the da
         }
         resetSettingsForTests();
     }
+});
+
+test('invalid IPv6 hosts fail before startup and adb receives an unbracketed address', () => {
+    for (const value of ['[::1', '::1]', '[127.0.0.1]']) {
+        assert.throws(() => readSettings({ WS_ALLOWED_HOSTS: value }), /WS_ALLOWED_HOSTS/);
+        assert.throws(() => readSettings({ ADB_HOST: value }), /ADB_HOST/);
+    }
+    assert.equal(readSettings({ ADB_HOST: '[::1]' }).adbHost, '::1');
+    assert.throws(() => validateConfiguration({ remoteHostList: [{
+        type: 'ios', hostname: '::1', port: 8443, secure: true,
+    }] }), /remoteHostList\[0\].hostname/);
+    assert.throws(() => validateConfiguration({ server: [{ redirectToSecure: { host: '::1' } }] }),
+        /server\[0\].redirectToSecure.host/);
+    assert.doesNotThrow(() => validateConfiguration({ remoteHostList: [{
+        type: 'ios', hostname: '[::1]', port: 8443, secure: true,
+    }] }));
+});
+
+test('invalid TLS values and file credentials fail while Config is built without echoing contents', () => {
+    for (const options of [
+        { minVersion: 'not-a-version' }, { maxVersion: 'not-a-version' },
+        { minVersion: 'TLSv1.3', maxVersion: 'TLSv1.2' }, { ciphers: 'not-a-cipher' },
+        { ecdhCurve: 12 }, { key: 12 },
+    ]) {
+        assert.throws(() => validateConfiguration({ server: [{ secure: true,
+            options: { certPath: '/fixture-cert', keyPath: '/fixture-key', ...options },
+        }] }), /server\[0\].options/);
+    }
+    const { Config } = require('../src/server/Config');
+    const cert = path.join(temporary, 'invalid-cert');
+    const key = path.join(temporary, 'invalid-key');
+    fs.writeFileSync(cert, 'invalid-credential-sentinel');
+    fs.writeFileSync(key, 'invalid-credential-sentinel');
+    assert.throws(() => Config.initConfig({ server: [{ secure: true,
+        options: { certPath: cert, keyPath: key },
+    }] }), (error) => /server\[0\].options/.test(error.message) && !error.message.includes('sentinel'));
+});
+
+test('every direct audio, icon and adb child filters a key set after module loading', async (t) => {
+    const cp = require('node:child_process');
+    const { EventEmitter } = require('node:events');
+    const { CoreDeviceAudioRelay } = require('../src/server/appl-device/services/CoreDeviceAudio');
+    const { NotificationIcons } = require('../src/server/notifications/NotificationIcons');
+    const { PyMobileDevice } = require('../src/server/appl-device/services/PyMobileDevice');
+    require.extensions['.jar'] = () => {};
+    require.cache[require.resolve('../vendor/Genymobile/scrcpy/LICENSE')] = { exports: {} };
+    const { Device } = require('../src/server/goog-device/Device');
+    const inherited = [];
+    t.mock.method(cp, 'spawn', (_command, _args, options) => {
+        inherited.push(options.env || process.env);
+        const child = new EventEmitter();
+        child.pid = 123;
+        child.stdin = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.unref = () => {};
+        queueMicrotask(() => child.emit('close', 0));
+        return child;
+    });
+    t.mock.method(cp, 'execFile', (_command, _args, options, callback) => {
+        inherited.push(options.env || process.env);
+        queueMicrotask(() => callback(null, Buffer.alloc(0)));
+    });
+    t.mock.method(PyMobileDevice, 'probeCommand', () => ({ command: 'fixture', args: [] }));
+    const before = process.env[IOS_KEY_ENV];
+    try {
+        process.env[IOS_KEY_ENV] = 'child-filter-sentinel';
+        const relay = Object.create(CoreDeviceAudioRelay.prototype);
+        relay.startDecoder();
+        await new NotificationIcons(temporary).get('fixture-phone', 'com.fixture');
+        const phone = Object.create(Device.prototype);
+        Object.assign(phone, { udid: 'fixture-phone', audioLaunchGeneration: 0,
+            connectionGeneration: 0, servicePidRevision: 0, connected: false, TAG: '[fixture-phone]', setServerPid: () => {} });
+        await phone.runShellCommandAdb('fixture');
+        await assert.rejects(phone.launchServer('fixture', false), /exited before it was ready/);
+        assert.equal(inherited.length, 4);
+        for (const env of inherited) {
+            assert.equal(Object.hasOwn(env, IOS_KEY_ENV), false, 'a child must not inherit the stored key');
+            assert.equal(env.PATH, process.env.PATH);
+        }
+    } finally {
+        if (before === undefined) delete process.env[IOS_KEY_ENV];
+        else process.env[IOS_KEY_ENV] = before;
+    }
+});
+
+
+test('probe argument null characters fail before starting a child', () => {
+    assert.throws(() => readSettings({ IOS_PROBE_ARGS: JSON.stringify(['invalid\0argument']) }),
+        /IOS_PROBE_ARGS/);
 });

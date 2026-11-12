@@ -1,3 +1,4 @@
+import { childEnvironment } from '../Settings';
 import { AdbExtended } from './adb';
 import AdbKitClient from '@dead50f7/adbkit/lib/adb/client';
 import { AdbUtils } from './AdbUtils';
@@ -262,7 +263,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
         return new Promise<string>((resolve, reject) => {
             const cmd = 'adb';
             const args = ['-s', `${this.udid}`, 'shell', command];
-            const adb = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            const adb = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: childEnvironment() });
             let output = '';
 
             adb.stdout.on('data', (data) => {
@@ -309,7 +310,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
         return new Promise<void>((resolve, reject) => {
             const cmd = 'adb';
             const args = ['-s', udid, 'shell', command];
-            const adb = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            const adb = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: childEnvironment() });
             const launch: ServerLaunch = { child: adb, done: false };
             let exited = false;
             let lastOutput = '';
