@@ -910,8 +910,9 @@ validation* below for what was observed and what had to change.
   so `FloatingToolbar`, sheets and the switcher are shared; `ApplActionsSheet` and
   `ApplLiveTextOverlay` are its Actions/Type-text sheets. Keys are translated from
   `KeyboardEvent.code` to HID usages (`hidKeyboard.ts`, US layout; `keyboardReportsForText`
-  types ASCII and reports what it skipped). Touch is single-contact by protocol
-  (`CoreDeviceInteractionHandler` follows the first pointer only, rAF-coalesced).
+  types ASCII and reports what it skipped). Touches go as `touch-frame` contacts, up to five
+  fingers, rAF-coalesced; a mouse drag uses the single-contact `touch` messages and Ctrl+drag
+  two contacts (step 5c).
 - **Tracking.** The appl `ControlCenter` polls `usbmux list --simple --usb` every 3 s (since
   2026-11-11 only where usbmuxd's event feed is not available; see "Fewer Python processes"). A new
   UDID is `unauthorized`/`paired:false` until `lockdown info` answers (that is what an
@@ -961,8 +962,9 @@ validation* below for what was observed and what had to change.
   phone showed the stream but could not control it: `CoreDeviceInteractionHandler.position()`
   spread the `Touch`/`MouseEvent` into a plain object (`{ ...event }`), which copies nothing
   because event coordinates are prototype getters, so every point was NaN and silently dropped.
-  Coordinates are now read explicitly and mapped by `applDevice/touchMath.ts`
-  (`clientPointToVideo`, unit-tested, clamps onto the picture instead of dropping). Desktop
+  Coordinates are now read explicitly and mapped by `applDevice/touchMath.ts`, since step 5c
+  `input/pointMapper.ts` (`clientPointToVideo`, unit-tested, clamps onto the picture instead of
+  dropping). Desktop
   Chrome said "This browser has no WebCodecs video decoder": Chrome/Edge expose WebCodecs only
   on secure origins, and the page was `http://<nuc>:8000`. `npm run setup:https` generates a
   self-signed cert with the host's IPs as SANs plus `config.https.yaml` (8000 + 8443);
@@ -1981,7 +1983,8 @@ again at the next SPS. Both iPhone players emit `decoder-error` and the client a
 delta (100 px or 3 lines per notch), adds up what arrives within the 30 ms throttle and clamps to
 16 notches. Horizontal scroll used to be mirrored: `AXIS_HSCROLL` is positive to the right, like
 the browser's `deltaX`, so only the vertical axis is negated now. How either feels on a device has
-not been judged by hand.
+not been judged by hand. On an iPhone, which takes no scroll message, a wheel gesture is one short
+swipe since step 5c (`input/wheelSwipe.ts`).
 
 **Touches beside the picture.** The touch layer is still the size of the picture. A touch that
 starts on the `.video` band next to it is now accepted on both platforms, held back until it
@@ -3385,8 +3388,9 @@ the tool header, so an Android header is two lines when all is well.
 
 **Banner slot and state card.** `.stream-banners` sits in the layout under the header and the
 tabs and stacks the lock notice, the first-start progress line and the stream notice, in that
-order. The stage takes the height that is left, so no banner lies over the picture; Android
-refits by CSS, the iPhone through its existing viewport observer and 150 ms `applyBounds`.
+order. The stage takes the height that is left, so no banner lies over the picture; both phones
+refit by CSS. (This said the iPhone refits through its viewport observer and 150 ms
+`applyBounds`; step 5c found that path only writes `BasePlayer.bounds`, which nothing reads.)
 `views/screen/StateCard.tsx` is the one card on the stage for every state without a picture, at
 z-index 5 (above the controls' shield, under the controls button), centred on the picture's
 part of the stage through `--stream-rail-width`. In order: a known problem (start error, no
@@ -3673,7 +3677,7 @@ refit and Type text focus need a person.
     tabs. Home sits alone in the middle of the top row and Siri under Lock.
 14. Tap Lock: the phone locks and Siri does not start. With the screen off only the Wake card
     shows (it says Screen is asleep); Wake taps the side button; the lock notice appears once the
-    screen is on and the picture refits about 150 ms later with touches still aimed right.
+    screen is on and the picture refits (by CSS, at once) with touches still aimed right.
 15. With a passcode stored on the server, tap Unlock on the notice: Unlocking… until the phone
     reports unlocked, no sheet. The server log shows exactly one RUN_UNLOCK_NOW with
     keepUnlocked, no new serve-web start and no Lock press after. Repeat only after the phone
@@ -3691,3 +3695,217 @@ refit and Type text focus need a person.
     Asleep or Locked as its status (5a).
 20. Only if needed, start 2, at least five minutes after start 1: Restart services from Settings
     on the iPhone screen reconnects the screen once and the outcome shows under the service rows.
+
+### Redesign step 5c: one mouse contract, one point mapper, one audio reader (2026-11-12, tested without a phone)
+
+Two packages merged into `redesign` in this order: p5-input, p5-reconnect (each from its
+`review/` branch). Findings U-stream-15 and C-client-stream-9 (point mapper, audio framing, the
+reconnect policies written down; resize timing did not apply). Nothing was run on a phone. Not
+deployed. One server file changed, `src/server/mw/WebsocketProxy.ts`, so the deploy of this step
+restarts the server; nothing else under `src/server` or `src/common` changed.
+
+**Mouse contract.** `src/app/input/mouseContract.ts` (`MOUSE_CONTRACT`) holds what the mouse does
+per platform as facts. `FeaturedInteractionHandler` (Android) and `CoreDeviceInteractionHandler`
+(iPhone) act on them, and the Actions sheet's new last Screen row, Mouse and keyboard, prints them
+through `mouseHelp()` in `views/actions/actionRows.ts` (Show and Hide, `aria-expanded`, its state
+in `useScreen` above `Sheet`). The help cannot list what the handlers do not do.
+- Wheel. Android: a scroll message at the pointer, as before (30 ms throttle, up to 16 notches).
+  iPhone: one wheel gesture is one swipe (below).
+- Drag. Both follow the held primary button on `window` (capture listeners while it is down). A
+  point beside the picture is clamped onto its edge, and the touch lifts once where the button
+  comes up. The press must start on the picture. The middle button does nothing on either phone.
+- Right-click. Android: `KEYCODE_BACK` down and up, the messages of the Back control, and no
+  touch. iPhone: nothing, because it has no Back. `BasePlayer` keeps the browser menu away on
+  both.
+- Ctrl+drag pinches on both: a second finger mirrored through the middle of the picture, or,
+  with Shift too, through the point pressed. The press sets the centre on both phones. Android
+  sends two scrcpy pointers; the centre is now in video pixels (it was in CSS pixels, which put
+  the second finger in the wrong place, or at a negative point that threw in `writeUInt32BE`,
+  whenever the picture was scaled). The iPhone sends `touch-frame` contacts 0 and 1, and both lift
+  in one frame; `CoreDeviceProxy` and `python/patches/multitouch.py` already take up to five
+  contacts. A plain iPhone drag keeps the single-contact `touch` messages. Android also draws
+  the pinch fingers while hovering with Ctrl held; the iPhone draws them only during the drag.
+
+**Wheel swipe on an iPhone.** `src/app/input/wheelSwipe.ts`: a touch down at the pointer, 5 moves
+20 ms apart that cover 0.2 of the screen against the scroll direction (scrolling down moves the
+finger up), a 100 ms rest so the page does not fling, then one lift at the last point: 7 `touch`
+messages over about 200 ms. The larger delta picks the axis. The whole swipe stays 10% away from
+every edge, so it is never Home, a panel or Back. A wheel event is dropped while a swipe, a mouse
+button or a finger is down, and when it comes sooner than 400 ms after the last swipe began. A
+held or fast wheel therefore gives at most 2.5 swipes a second: 17.5 touch messages a second on
+average and never more than 8 in any 400 ms, against one message per animation frame for an
+ordinary drag. A finger or a mouse press ends a running swipe with a lift first. The constants
+were chosen without a phone.
+
+**Point mapper.** `src/app/input/pointMapper.ts` replaces `applDevice/touchMath.ts` and the box code
+of `InteractionHandler`. It is pure: `elementBox` (the touch layer in CSS pixels, whatever the
+pixel ratio and the canvas bitmap size), `isInside`, `clientPointToVideo` (the picture centred in
+the box, the point clamped onto it), `lastPixel` (Android's width - 1), `pictureCentre` and
+`mirrorPoint`. Rotation needs no step: both phones send their video already turned, so a rotation
+arrives as a new video size. What each platform sends for a point is unchanged:
+`scripts/test-point-mapper.js` holds the messages of both handlers for 78 fixed points recorded at
+58f690c, and the integration ran that table against the 58f690c handlers as well; both match.
+
+**Release.** The `InteractionHandler` base owns it. It lets go once on window blur, `pagehide` and
+a hidden page, and `release()` (the view unmounting) lets go before it unbinds. Subclasses
+implement `releaseActiveTouch` (sends the lifts) and `forgetActiveTouch` (sends nothing). Pointer
+up and touch cancel end a touch in the handlers. Android released on none of blur, hidden or
+unmount before, and on unmount it dropped held touches without lifting them. The iPhone already
+released on blur, a hidden page and unmount, and now also on `pagehide`. An iPhone mouse lifted by
+blur or unmount now lifts at its last position; it used to lift at (0,0) once the last move had
+been sent.
+- Disconnect, Android: `StreamClientScrcpy.onDisconnected` calls `forgetActiveTouch()` next to
+  `forgetHeldButtons()`, because an up sent then is queued and replayed on the next connection.
+  The server does the lift: `WebsocketProxy` remembers the last one-message `INJECT_TOUCH_EVENT`
+  frame (32 bytes: type, action, pointer id, x, y, width, height, pressure, action button,
+  buttons) of each finger a viewer has down, by pointer id; an up removes it. When the viewer's
+  socket goes, it writes each one again with action UP and pressure 0, once, as it already did for
+  held keys (`scripts/test-video-bootstrap.js`).
+- Disconnect, iPhone: the client's lift is dropped by the closed socket, and `CoreDeviceProxy`
+  lifts all five contacts in its teardown, as before.
+
+**Shared and separate between the two stream stacks.**
+- Audio framing is shared: `AudioEnvelopeReader` in `src/app/client/audioPacket.ts`, one per
+  receiver. It reads `scrcpy_audio_2` at offset 0 on Android and at offset 1 behind the iPhone's
+  frame-type byte, and the legacy `scrcpy_audio_1` (Android only). It keeps the latest metadata
+  and decoder config for a player that starts late, drops the config on a codec change or a
+  status other than ready, turns any bad packet into an error status, and clears its state when
+  the socket closes. Each WebSocket message is one whole envelope. `scripts/test-stream-receivers.js`
+  plays one script of packets through both receivers and the reader and compares what the player
+  gets byte for byte, including that it gets a view into the message, not a copy; its receiver
+  tests also pass against the 58f690c receivers.
+- The point mapper and the release rules above are shared.
+- The two reconnect policies stay separate on purpose (owner decision D10), and each is written
+  at the top of its receiver. Android (`StreamReceiver.ts`) reconnects after every close except
+  4012 and a close after `stop()`, at 1 s x 1.5^n up to 8 s, and `scrcpy_initial` resets n: no
+  phone-side limit applies, and its socket ends at this server, which reaches scrcpy through a
+  local adb forward. The iPhone (`CoreDeviceReceiver.ts`) reconnects at 1 s x 2^n up to 60 s; the
+  codec or Retry resets both the delay and the failed-start count. It stops at once on 4011 and on
+  the third 4009 without a session in between, and retries 4010 without counting it. Every
+  iPhone start is a serve-web display session, counted against three starts per phone in five
+  minutes, and a burst of short sessions wedges the phone's display service. Both policies are
+  pinned with exact delays and one socket per attempt in `scripts/test-stream-receivers.js`.
+  Neither changed in this step: no backoff, stop rule, close-code meaning or ready point.
+- Resize timing was not shared, because there is none to share. Android has had no resize code
+  since C-client-stream-5, and CSS fits the picture on both (`StreamView.css`, `.video > canvas`,
+  `.video > video`, `.video-layer`). The iPhone's viewport observer and 150 ms `applyBounds` only
+  write `BasePlayer.bounds`, which nothing reads, so the iPhone also refits by CSS, at once, when a
+  banner comes or goes. The two step 5b notes that said otherwise are corrected above.
+- `scripts/test-coredevice.js` had not lost an ApplToolBox mock (step 5b's note): ApplToolBox was
+  deleted in dba152c and the layout fixture builds the real controls. Its audio routing test now
+  builds a real receiver, because the receiver owns the reader.
+
+**What the owner sees change.**
+- iPhone: the wheel scrolls, as a short swipe at the pointer. Ctrl+drag pinches. A blur during a
+  drag lifts the finger where it is instead of at the top left corner.
+- Android: a drag that leaves the picture keeps going along its edge and ends where the button is
+  let go; it used to lift when the pointer left the picture. A mouse drag that starts beside the
+  picture and moves onto it no longer becomes a touch (touch edge swipes are unchanged).
+  Right-click is Back, with no touch. Ctrl+drag pinches around the middle of the phone's screen
+  also when the picture is scaled; Shift+Ctrl pinches around the point pressed, not around where
+  the pointer first hovered. Switching window or tab, or closing the page, lifts what is held. A
+  viewer that drops mid-drag no longer leaves a finger down on the phone.
+- Both: Actions, Screen ends with Mouse and keyboard, which lists the four gestures for the phone.
+
+**Proof.** `npm run check` passes: 653 node tests (628 before; new: `scripts/test-point-mapper.js`
+and `scripts/test-stream-receivers.js`, now in `npm test`, plus 8 tests in
+`scripts/test-stream-clients.js` and 1 in `scripts/test-video-bootstrap.js`), the Python suites,
+lint with 0 errors and 29 warnings (29 at 58f690c as well), and the production build. All 33
+default browser suites pass in one run of `node scripts/test-browser.js`, with the new `ios-input`
+suite in the default list. `sheet-chrome`, `overlay-back`, `ios-reconnect`, `android-lifecycle`,
+`navigation`, `device-page`, `screen-states`, `audio-availability`, `ios-typing` and `controls`
+are unchanged and pass; `actions-sheet` expects the new row and `android-stream` now runs its
+desktop-dark pass at pixel ratio 2. Stream sockets, as those suites assert them at the merged head:
+- ios-reconnect: three failed starts open three sockets about 1 s and 2 s apart, then none for
+  4.6 s; Retry opens one; a 4011 refusal after a drop opens one and then none; a 4007 close and a
+  dropped socket each open exactly one more.
+- android-lifecycle: one socket per open; none after a 4012 close (3.5 s, longer than two
+  reconnect delays); Start again opens one; a 4007 close opens exactly one; Wake on a list card
+  opens none, and Wake on the screen's card keeps the page at one.
+- navigation: one socket per open of a phone screen on both fixtures, none from Back, the list
+  arriving or Switch beyond the phone opened, and one iPhone session per open.
+- ios-input: one screen session per visit, and no touch message from a wheel or press under the
+  open Actions sheet.
+The integration read the combined diff of both receivers and both stream clients against 58f690c:
+no new place opens a socket, and the reconnect code, stop rules, close codes, the ready point
+(`scrcpy_initial` on Android; a ready status or the codec on the iPhone) and `streamConnected` are
+unchanged. The only stream client change is the `forgetActiveTouch()` call in
+`StreamClientScrcpy.onDisconnected`. No router, route, `App.tsx`, service worker or screen adapter
+file changed. The `WebsocketProxy` lift was read against `TouchControlMessage.toBuffer`: it keeps
+the 32-byte layout the client writes and changes only the action byte and the pressure, as the
+client's own emulated up does.
+
+**Atlas against 58f690c.** 276 files in each. 64 differ, all from the new row: the 8 Actions
+states (both phones, both sizes, both themes) differ in pixels inside the sheet, where the Screen
+group grows by one row; the other 48 phone screen states differ only by the 6 elements of that row
+in the closed Actions sheet, with nothing painted differently. Nothing else differs. The two
+atlases are in the session scratchpad under int5c/atlas-base and int5c/atlas-head.
+
+**Phone check for step 5c** (after the deploy, which restarts the server; one iPhone screen start,
+a second only if needed and at least five minutes later). Items marked (fixture) are covered by
+the browser suites against fixtures and need only a glance; the rest need the phones. A headless
+browser cannot decode the iPhone picture and cannot see what a phone does with a touch, so every
+effect on a phone needs a person.
+1. During the deploy, keep the iPhone screen open in one desktop browser and the Android screen in
+   another: each says Reconnecting…, then Connected. The server log shows exactly one new
+   serve-web start for the iPhone and no second stream socket; the Android page reconnects by
+   itself and ends with one stream. That reconnect is iPhone start 1: do the iPhone items below in this session, without
+   leaving the screen.
+2. Listen on, on both phones: sound comes back after that reconnect without touching anything.
+3. Actions, Screen, Mouse and keyboard, Show, on both phones: four lines; on the iPhone the wheel
+   line says short swipe and right-click says nothing (fixture).
+4. iPhone wheel, over a long list (Settings): one notch moves the content about a fifth of the
+   screen in the wheel's direction and stops without flinging; a sideways wheel moves sideways;
+   a wheel near the top or bottom edge never goes Home or opens a panel; spinning the wheel fast
+   gives at most about 2.5 swipes a second and the phone keeps up, with taps answering at once
+   afterwards.
+5. Drag off the picture, both phones: press on a list, drag out past the right edge and up over
+   the header, let go there. The finger rides the edge and lifts where the button came up; the
+   next click is an ordinary tap. On Android this is new; on the iPhone it worked before.
+6. Ctrl+drag on both, in Maps or Photos: a two-finger pinch zooms in and out around the middle;
+   Shift+Ctrl pinches around the point pressed. On the iPhone, check that the held Control key
+   (sent to the phone while keyboard capture is on) does not change the pinch or trigger a
+   shortcut.
+7. Right-click on Android goes Back once and no browser menu appears. On the iPhone nothing
+   happens and no menu appears.
+8. Android viewer dropping mid-drag: turn on Show taps (Developer options) on the Android phone,
+   hold a mouse drag on its picture in a desktop browser, and end that browser's process from the
+   task manager while the button is held. The touch mark goes away on the phone once the server
+   sees the socket close; nothing stays pressed.
+9. Blur during a drag: hold a drag on each phone's picture and switch window with Alt+Tab. The
+   finger lifts where it was; on the iPhone it no longer jumps to the top left corner first.
+10. Touch from a phone browser on both (regression): taps, swipes, a two-finger pinch and an edge
+    swipe from beside the picture behave as before.
+
+**Left for phase 6.**
+- Dead iPhone resize path, removable as one change: `applDevice/client/StreamClientCoreDevice.ts`
+  `:1` and `:128` (observeViewport), `:489` (`input-video-resize` to `applyBounds`), `:525-543`
+  (`onWindowResize`, its 150 ms timer and `applyBounds`), `:560-563` (timer cleanup in stop);
+  `player/BasePlayer.ts:71` and `:401-403` (`bounds` and `setBounds`, never read);
+  `client/observeViewport.ts`; `getVideoBounds` and `computeMaxSize` in `ControlBarLayout.ts`;
+  the streamLayoutFixture tests in `scripts/test-coredevice.js`. `views/FloatingToolbar.tsx:29-30`
+  dispatches a window `resize` for that path; `controls/ControlPanel.tsx`, `views/LiveTextOverlay.tsx`,
+  `ui/viewport.ts`, `ui/Sheet.tsx` and `ui/Menu.tsx` also listen for window resize, so check them
+  before removing it.
+- Input release on disconnect and blur is still wired per stream client: Android
+  `StreamClientScrcpy.ts` (onDisconnected, and the blur, pagehide, visibilitychange and focusin
+  release of the UHID keyboard), iPhone `StreamClientCoreDevice.ts` (onDisconnected, and the
+  blur, pagehide and visibilitychange release of keys and typing). They release different things,
+  so a shared helper would only cover the listener wiring.
+- The WHEEL_SWIPE constants in `input/wheelSwipe.ts:9-22` were chosen without a phone. Upstream
+  serve-web's own swipe uses 10 steps over about 200 ms with no rest.
+- iPhone keyboard capture (`StreamClientCoreDevice.onKey`) sends Control to the phone while
+  Ctrl+drag pinches. If the phone check shows an effect, keep Control out of key capture while
+  the mouse is down.
+- Android shows the pinch fingers while hovering with Ctrl held; the iPhone only during the drag.
+- `WebsocketProxy` lifts by pointer id per viewer. Two viewers that use the same pointer id at
+  the same moment already collide at scrcpy, and a departing viewer's lift could lift the other
+  viewer's finger with that id.
+- A drag whose mouseup never arrives (the button let go outside the browser with no blur) keeps
+  the finger down until the next blur or click on both phones. Ending the drag on a mousemove with
+  `buttons == 0` would cover it.
+- A trackpad pinch over the iPhone picture arrives as a wheel event with Ctrl and now makes a
+  swipe instead of zooming the page; on Android it already scrolled. Ctrl+click on macOS is a
+  secondary click, and Ctrl+drag has not been tried on a Mac.
+- `applDevice/client/CoreDeviceReceiver.ts:206` throws a RangeError on an empty binary message.
+  The server never sends one; unchanged from before.
