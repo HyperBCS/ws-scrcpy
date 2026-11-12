@@ -310,6 +310,15 @@ export function lockFact(lock: LockState): string {
     return LOCK[lock];
 }
 
+/**
+ * The notice over the screen while the lock screen shows. The swipe text is only for a phone that
+ * reports itself not locked: there the passcode is refused and a swipe opens the phone. A lock
+ * that is not reported may still ask for the passcode, so it gets the general text.
+ */
+export function lockNotice(locked: KnownBoolean | undefined): string {
+    return locked === false ? LOCK.swipeNotice : LOCK.notice;
+}
+
 export type StreamServiceState = 'running' | 'stopped' | 'starting' | 'offline' | 'unauthorized' | 'unknown';
 export interface StreamServiceInfo {
     state: StreamServiceState;
