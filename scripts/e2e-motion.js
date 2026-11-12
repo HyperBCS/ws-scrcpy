@@ -225,7 +225,7 @@ async function toastTimer(browser) {
         await f.page.clock.fastForward(20000);
         assert.equal(await toast.count(), 1, 'keyboard focus pauses the timer after the pointer leaves');
         // Focus moves to the list's filter, away from the toast.
-        await f.page.getByRole('radio', { name: 'All', exact: true }).focus();
+        await f.page.getByRole('radio', { name: /^Inbox \d+$/ }).focus();
         await f.page.clock.fastForward(13000);
         await f.page.clock.runFor(400);
         await toast.waitFor({ state: 'detached' });
