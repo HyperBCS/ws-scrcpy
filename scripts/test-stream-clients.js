@@ -1531,14 +1531,14 @@ test('stream settings resolve the device through the stream socket when two host
 
 // ---------------------------------------------------------------- one keyboard target
 
-function captureFixture(t, { enabled = true, paste = () => {} } = {}) {
+function captureFixture(t, { enabled = true, paste = () => {}, controls = () => undefined } = {}) {
     const { KeyboardCapture, keyboardCapture } = require('../src/app/state/keyboardCapture');
     const sent = [];
     let ready = true, releases = 0;
     const capture = new KeyboardCapture({
         container: element(), enabled, connected: () => ready,
         key: event => sent.push([event.type, event.code]),
-        release: () => releases++, controls: () => undefined, paste, requestClipboard() {},
+        release: () => releases++, controls, paste, requestClipboard() {},
     });
     t.after(() => { openSheet = null; capture.stop(); });
     const key = (type, code, extra = {}) => capture.onKey({
@@ -1644,4 +1644,25 @@ test('iPhone clipboard failure, disconnect and a changed target never send the p
     await assert.rejects(pasted, /disconnected/);
     client.emit('result', { id: 3, ok: true });
     assert.deepEqual(sent.filter(message => message.type === 'key'), []);
+});
+
+
+test('reserved phone shortcuts use the offered controls and skip keys absent from an iPhone', t => {
+    const { createPhoneControls } = require('../src/app/controls/definition');
+    const calls = [];
+    const key = name => ({ kind: 'key', down: () => calls.push(`${name} down`), up: () => calls.push(`${name} up`) });
+    const actions = { home: key('home'), back: key('back'), overview: key('overview'),
+        typeText: { kind: 'run', run: () => calls.push('typeText') },
+        screenshot: { kind: 'run', run: () => calls.push('screenshot') } };
+    const android = createPhoneControls('android', actions);
+    const f = captureFixture(t, { controls: () => android });
+    for (const code of ['KeyH', 'KeyB', 'KeyO', 'KeyT', 'KeyP']) f.chord(code);
+    assert.deepEqual(calls, ['home down', 'home up', 'back down', 'back up', 'overview down', 'overview up', 'typeText', 'screenshot']);
+    assert.deepEqual(f.sent, [], 'the browser chord is never a phone key report');
+    f.capture.stop(); android.release(); calls.length = 0;
+    const iphone = createPhoneControls('ios', actions);
+    const ios = captureFixture(t, { controls: () => iphone });
+    ios.chord('KeyB'); ios.chord('KeyO'); ios.chord('KeyH');
+    assert.deepEqual(calls, ['home down', 'home up'], 'capabilities omit Back and Overview on an iPhone');
+    t.after(() => iphone.release());
 });
