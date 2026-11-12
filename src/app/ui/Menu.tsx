@@ -164,6 +164,8 @@ interface MenuProps {
     anchor: RefObject<HTMLElement> | { x: number; y: number };
     /** The accessible name. A menu has no title of its own. */
     label: string;
+    /** For a menu over dense rows: 32px items in the smaller type under a mouse, 44px on touch. */
+    compact?: boolean;
     children: ComponentChildren;
 }
 
@@ -171,7 +173,7 @@ interface MenuProps {
  * The one menu. Render it next to its button and keep `open` in the caller; the button toggles
  * it. Choosing a `MenuItem` closes the menu; a checked item leaves it open.
  */
-export function Menu({ open, onClose, anchor, label, children }: MenuProps) {
+export function Menu({ open, onClose, anchor, label, compact, children }: MenuProps) {
     const { ref, present } = usePresence<HTMLDivElement>(open, 'popover');
     const close = useRef(onClose);
     close.current = onClose;
@@ -191,7 +193,7 @@ export function Menu({ open, onClose, anchor, label, children }: MenuProps) {
     return (
         <div
             ref={ref}
-            class="kit-menu"
+            class={compact ? 'kit-menu kit-menu-compact' : 'kit-menu'}
             role="menu"
             aria-label={label}
             tabIndex={-1}

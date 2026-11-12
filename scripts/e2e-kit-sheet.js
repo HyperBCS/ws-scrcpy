@@ -818,6 +818,30 @@ async function menu(test) {
     console.log(`PASS ${test.label}: the menu opens at its button, moves with the arrow keys, closes on Escape, a press outside, Tab and Back, and returns focus`);
 }
 
+/** The compact menu (Files' row menu): 32px items in 13px type under a mouse, 44px in 15px type on touch. */
+async function compactMenu(test) {
+    const { page, mobile } = test;
+    const button = page.locator('[data-kit-demo="compact, over dense rows"]').getByRole('button', { name: 'Row actions', exact: true });
+    const list = page.getByRole('menu', { name: 'Row actions' });
+    const home = await at(page);
+    await press(test, button);
+    await list.waitFor();
+    await settleMotion(page);
+    await untilAt(page, home.index + 1, home.overlay + 1);
+    assert.ok(await list.evaluate((node) => node.matches('.kit-menu.kit-menu-compact')), 'the compact menu carries the kit classes');
+    const items = list.locator('[role^="menuitem"]');
+    const height = mobile ? 44 : 32;
+    assert.deepEqual(await items.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height)), [height, height, height, height], `each compact item is ${height}px high`);
+    assert.equal(await style(list, 'fontSize').then((value) => value.fontSize), mobile ? '15px' : '13px', 'the compact menu uses the type of its pointer');
+    assert.ok(await onTop(list), 'the compact menu is on top');
+    await shot(test, 'menu-compact');
+    await page.keyboard.press('Escape');
+    await list.waitFor({ state: 'detached' });
+    await untilAt(page, home.index, home.overlay);
+    assert.equal(await focused(page), 'button.kit-button:Row actions', 'Escape returns focus to the button');
+    console.log(`PASS ${test.label}: the compact menu has ${height}px items`);
+}
+
 const ONLY = process.env.KIT_SHEET_ONLY ? process.env.KIT_SHEET_ONLY.split(',') : undefined;
 const chosen = (check) => !ONLY || ONLY.includes(check.name);
 
@@ -839,13 +863,13 @@ async function run(browser, viewport, colorScheme, checks) {
 async function main() {
     const browser = await chromium.launch();
     try {
-        const behaviour = [history, confirmFirst, busyStays, focus, stack, toastAbove, eventsStop, keyboardResize, menu];
+        const behaviour = [history, confirmFirst, busyStays, focus, stack, toastAbove, eventsStop, keyboardResize, menu, compactMenu];
         // Side by side, each in a context of its own: the suite has four minutes.
         await Promise.all([
             run(browser, PHONE, 'light', [layout, ...behaviour]),
             run(browser, DESKTOP, 'dark', [layout, ...behaviour]),
-            run(browser, PHONE, 'dark', [layout, confirmFirst, toastAbove, menu]),
-            run(browser, DESKTOP, 'light', [layout, confirmFirst, toastAbove, menu]),
+            run(browser, PHONE, 'dark', [layout, confirmFirst, toastAbove, menu, compactMenu]),
+            run(browser, DESKTOP, 'light', [layout, confirmFirst, toastAbove, menu, compactMenu]),
             chosen(widthRule) ? widthRule(browser) : undefined,
         ]);
     } finally {

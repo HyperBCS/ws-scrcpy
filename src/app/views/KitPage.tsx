@@ -597,12 +597,13 @@ function SheetsAndMenu() {
     const [busy, setBusy] = useState(false);
     const [erased, setErased] = useState(false);
     const [message, setMessage] = useState('');
-    const [menu, setMenu] = useState<'page' | 'sheet'>();
+    const [menu, setMenu] = useState<'page' | 'sheet' | 'compact'>();
     const [choice, setChoice] = useState('');
     const [hidden, setHidden] = useState(false);
     const erase = useArmedAction<'erase'>(example === 'confirm');
     const pageMenuButton = useRef<HTMLButtonElement>(null);
     const sheetMenuButton = useRef<HTMLButtonElement>(null);
+    const compactMenuButton = useRef<HTMLButtonElement>(null);
     const close = () => setExample(undefined);
     const props = (id: SheetExample) => ({ open: example === id, onClose: close });
 
@@ -648,6 +649,39 @@ function SheetsAndMenu() {
         >
             More
         </button>
+    );
+
+    // The compact menu, as Files opens it over its rows.
+    const compactMenu = (
+        <>
+            <button
+                ref={compactMenuButton}
+                type="button"
+                class={buttonClass({ size: 'compact' })}
+                aria-haspopup="menu"
+                aria-expanded={menu === 'compact'}
+                onClick={() => setMenu(menu === 'compact' ? undefined : 'compact')}
+            >
+                Row actions
+            </button>
+            <Menu
+                open={menu === 'compact'}
+                onClose={() => setMenu(undefined)}
+                anchor={compactMenuButton}
+                label="Row actions"
+                compact
+            >
+                <MenuItem onSelect={() => setChoice('Open')}>Open</MenuItem>
+                <MenuItem onSelect={() => setChoice('Download')}>Download</MenuItem>
+                <MenuItem onSelect={() => setHidden(!hidden)} checked={hidden}>
+                    Hidden items
+                </MenuItem>
+                <MenuSeparator />
+                <MenuItem onSelect={() => setChoice('Delete')} danger>
+                    Delete
+                </MenuItem>
+            </Menu>
+        </>
     );
 
     return (
@@ -769,6 +803,7 @@ function SheetsAndMenu() {
                         {choice ? `Last choice: ${choice}.` : 'Nothing chosen yet.'}
                     </p>
                 </Demo>
+                <Demo name="compact, over dense rows">{compactMenu}</Demo>
             </Section>
         </>
     );
