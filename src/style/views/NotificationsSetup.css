@@ -119,6 +119,7 @@
     color: var(--text-muted);
     font-size: var(--font-size-13);
 }
+/* The iPhones this device receives from: a switch row each, under the disclosure's first line. */
 .notification-choices {
     min-width: 0;
     margin: 0;
@@ -126,9 +127,32 @@
     border: 0;
 }
 .notification-choices-title {
-    padding: 0;
+    padding: var(--space-4) var(--space-16) var(--space-8);
+    color: var(--text-muted);
     font-size: var(--font-size-13);
     font-weight: var(--font-weight-semibold);
+}
+.notification-choices-empty {
+    padding: 0 var(--space-16) var(--space-12);
+}
+/* The fields under the rows start below a line, as a row would. */
+.notification-choices + .notification-details-content {
+    padding-top: var(--space-12);
+    box-shadow: 0 -1px 0 var(--border);
+}
+
+/* An iPhone's apps: the older allow-list while it is set, then a switch row for each app seen. */
+.notification-only-apps {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-8);
+}
+.notification-only-apps > .kit-banner {
+    align-self: stretch;
+}
+.notification-app-switches {
+    min-width: 0;
 }
 .notification-actions {
     display: flex;

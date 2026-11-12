@@ -12,16 +12,19 @@ import { isDismissActionLabel } from '../../common/NotificationActions';
 import { sameOrigin } from '../requestOrigin';
 import { resolveDataDir } from '../dataDir';
 
-import { NotificationEvent, NotificationHistoryItem, NotificationSource } from '../../common/Notification';
+import { MutedApp, NotificationEvent, NotificationHistoryItem } from '../../common/Notification';
 import { PushDelivery, PushTarget } from './PushDelivery';
+import { HISTORY_MS, NotificationFeed, shouldRelay } from './NotificationFeed';
 export type { NotificationEvent, NotificationSource } from '../../common/Notification';
+export { shouldRelay, textFingerprint, reducedFingerprint } from './NotificationFeed';
 
 import {
     NotificationStorage,
     NotificationStore as Store,
     NotificationStoreError,
-    SubscriptionRecord,
     FeedItem,
+    MUTED_APP_LIMIT,
+    validMutedApp,
 } from './NotificationStorage';
 export type { FeedItem } from './NotificationStorage';
 
@@ -103,52 +106,6 @@ export interface SystemPushPayload {
     url: string;
 }
 
-type FingerprintFields = Pick<NotificationEvent, 'source' | 'app' | 'title' | 'subtitle' | 'body' | 'date'>;
-const digest = (value: unknown[]): string => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
-// Marks a fingerprint that holds no text, so one made from text is never kept for a phone
-// whose previews are off.
-const REDUCED_FINGERPRINT = 'l:';
-
-/** Identifies an alert that the iPhone announces again after a reconnect. Made from its text. */
-export function textFingerprint(event: FingerprintFields): string | undefined {
-    return event.date
-        ? digest([event.source, event.app, event.title || '', event.subtitle || '', event.body || '', event.date])
-        : undefined;
-}
-
-/**
- * The same for a phone with previews off. A hash of short, fixed-form text ("Your code is
- * 123456") can be reversed by trying every candidate, so this one holds only the app, the time
- * and the length of each text. The lengths are capped the way stored text is.
- */
-export function reducedFingerprint(event: FingerprintFields): string | undefined {
-    const length = (value: string | undefined, limit: number) => Math.min((value || '').length, limit);
-    return event.date
-        ? REDUCED_FINGERPRINT +
-              digest([
-                  event.source,
-                  event.app,
-                  length(event.title, 1024),
-                  length(event.subtitle, 1024),
-                  length(event.body, 4096),
-                  event.date,
-              ])
-        : undefined;
-}
-
-export function shouldRelay(event: NotificationEvent, source: NotificationSource, sub: SubscriptionRecord): boolean {
-    return (
-        event.event === 'added' &&
-        !event.preExisting &&
-        sub.sources.includes(source.id) &&
-        sub.receiverSource !== source.id &&
-        !!event.app &&
-        !event.app.startsWith('com.apple.WebKit.WebPush') &&
-        !event.app.startsWith('com.apple.WebKit.PushBundle') &&
-        (!source.apps.length || source.apps.includes(event.app))
-    );
-}
-
 export class NotificationService implements Service {
     private static instance?: NotificationService;
     static getInstance(): NotificationService {
@@ -171,7 +128,6 @@ export class NotificationService implements Service {
     private icons = new NotificationIcons(this.dataDir);
     private sessions = new Map<string, string>();
     private bulkSources = new Set<string>();
-    private liveKeys = new Map<string, string>();
     private actions = new Map<
         string,
         {
@@ -189,12 +145,17 @@ export class NotificationService implements Service {
     private restart?: NodeJS.Timeout;
     private closed = false;
     private loaded = false;
-    private feed = new Map<string, FeedItem>();
-    private observed = new Map<string, number>();
-    private replayCandidates = new Map<
-        string,
-        { fingerprint: string; session: string; received: number; historyKey?: string }
-    >();
+    // Receive, replay, pruning and counts. The routes below change its items in place.
+    private readonly notificationFeed = new NotificationFeed();
+    private get feed(): Map<string, FeedItem> {
+        return this.notificationFeed.items;
+    }
+    private get observed(): Map<string, number> {
+        return this.notificationFeed.observed;
+    }
+    private get replayCandidates(): NotificationFeed['replayCandidates'] {
+        return this.notificationFeed.replayCandidates;
+    }
     private statuses: Record<string, string> = {};
     private bluetooth: unknown[] = [];
     private pairing: { address: string; code: string } | null = null;
@@ -251,24 +212,7 @@ export class NotificationService implements Service {
             console.error(`[NotificationService] ${this.disabled}`);
             return;
         }
-        let redacted = false;
-        for (const item of this.storage.loadHistory(this.store.sources)) {
-            // History written before reduced fingerprints existed kept a hash of the text for
-            // these phones. The text is gone, so the hash cannot be replaced; drop it.
-            const preview = this.store.sources.find((source) => source.id === item.source)?.preview;
-            if (!preview && item.fingerprint && !item.fingerprint.startsWith(REDUCED_FINGERPRINT)) {
-                delete item.fingerprint;
-                redacted = true;
-            }
-            this.feed.set(item.key, item);
-            if (item.reconnectable && item.fingerprint)
-                this.replayCandidates.set(`${item.source}:${item.session}:${item.uid}`, {
-                    fingerprint: item.fingerprint,
-                    session: item.session,
-                    received: Date.now(),
-                    historyKey: item.key,
-                });
-        }
+        const redacted = this.notificationFeed.load(this.storage.loadHistory(this.store.sources), this.store.sources);
         this.prune();
         if (redacted) this.saveHistory();
     }
@@ -426,9 +370,7 @@ export class NotificationService implements Service {
         return commands;
     }
     private invalidateSources(source?: string): void {
-        for (const item of this.feed.values()) {
-            if (!source || item.source === source) item.active = false;
-        }
+        this.notificationFeed.deactivate(source);
         for (const [requestId, action] of this.actions) {
             if (!source || action.source === source) {
                 clearTimeout(action.timer);
@@ -446,18 +388,7 @@ export class NotificationService implements Service {
                 // ANCS session to act on a newly connected phone.
                 this.invalidateSources(String(message.source));
                 this.sessions.set(String(message.source), String(message.session));
-                // A phone can reconnect after the short push-dedup window. Rebuild
-                // one-to-one history hints from retained, never-removed lifetimes.
-                for (const item of this.feed.values()) {
-                    if (item.source === message.source && item.reconnectable && item.fingerprint) {
-                        this.replayCandidates.set(`${item.source}:${item.session}:${item.uid}`, {
-                            fingerprint: item.fingerprint,
-                            session: item.session,
-                            received: Date.now(),
-                            historyKey: item.key,
-                        });
-                    }
-                }
+                this.notificationFeed.rememberReplays(String(message.source));
                 break;
             case 'devices':
                 this.bluetooth = message.devices as unknown[];
@@ -470,13 +401,11 @@ export class NotificationService implements Service {
             case 'status': {
                 const source = String(message.source);
                 this.statuses[source] = String(message.status);
-                for (const item of this.feed.values()) {
-                    if (item.source === source)
-                        item.active =
-                            message.status === 'Receiving notifications' &&
-                            item.session === this.sessions.get(source) &&
-                            item.reconnectable;
-                }
+                this.notificationFeed.setActive(
+                    source,
+                    this.sessions.get(source),
+                    message.status === 'Receiving notifications',
+                );
                 if (String(message.status).includes('disconnected')) this.invalidateSources(source);
                 break;
             }
@@ -526,39 +455,14 @@ export class NotificationService implements Service {
         }
     }
     private prune(): void {
-        const cutoff = Date.now() - 3600000;
-        const historyCutoff = Date.now() - 30 * 86400000;
-        const counts = new Map<string, number>();
-        let changed = false;
-        for (const [key, item] of [...this.feed].reverse().sort((a, b) => b[1].received - a[1].received)) {
-            const count = (counts.get(item.source) || 0) + 1;
-            counts.set(item.source, count);
-            if (item.received < historyCutoff || count > 500) {
-                this.feed.delete(key);
-                changed = true;
-            }
-        }
-        for (const [key, value] of this.liveKeys) if (!this.feed.has(value)) this.liveKeys.delete(key);
-        for (const [key, time] of this.observed) if (time < cutoff) this.observed.delete(key);
-        for (const [key, value] of this.replayCandidates)
-            if (value.received < cutoff) this.replayCandidates.delete(key);
-        while (this.observed.size > 2000) this.observed.delete(this.observed.keys().next().value!);
-        while (this.replayCandidates.size > 2000)
-            this.replayCandidates.delete(this.replayCandidates.keys().next().value!);
-        if (changed) this.saveHistory();
+        if (this.notificationFeed.prune()) this.saveHistory();
     }
     private counts(): { unread: number; unreadBySource: Record<string, number> } {
-        const unreadBySource: Record<string, number> = Object.fromEntries(this.store.sources.map((s) => [s.id, 0]));
-        for (const item of this.feed.values()) if (!item.read && !item.dismissed) unreadBySource[item.source]++;
-        return { unread: Object.values(unreadBySource).reduce((sum, n) => sum + n, 0), unreadBySource };
+        return this.notificationFeed.counts(this.store.sources);
     }
     /** The history as the page shows it: newest first, without the fields only the server uses. */
     private history(source?: string): NotificationHistoryItem[] {
-        return [...this.feed.values()]
-            .filter((item) => source === undefined || item.source === source)
-            .reverse()
-            .sort((a, b) => b.received - a.received)
-            .map(({ fingerprint: _fingerprint, reconnectable: _reconnectable, ...item }) => item);
+        return this.notificationFeed.history(source);
     }
     private async performAction(item: FeedItem, expectedLabel: unknown, timeout = 15000): Promise<void> {
         if (typeof expectedLabel !== 'string' || expectedLabel !== item.negativeActionLabel)
@@ -608,107 +512,16 @@ export class NotificationService implements Service {
     }
     receive(event: NotificationEvent): void {
         this.load();
-        this.prune();
         const source = this.store.sources.find((s) => s.id === event.source);
-        if (
-            !source ||
-            typeof event.session !== 'string' ||
-            event.session.length > 128 ||
-            !Number.isInteger(event.uid) ||
-            event.uid < 0 ||
-            event.uid > 0xffffffff ||
-            !['added', 'modified', 'removed'].includes(event.event)
-        )
-            return;
-        if (this.sessions.has(source.id) && this.sessions.get(source.id) !== event.session) return;
-        const eventKey = `${event.source}:${event.session}:${event.uid}`;
-        const current = this.feed.get(this.liveKeys.get(eventKey) || '');
-        if (event.event === 'removed') {
-            if (current) {
-                current.active = false;
-                current.reconnectable = false;
-                current.canDismiss = false;
-                this.saveHistory();
-            }
-            this.liveKeys.delete(eventKey);
-            this.observed.delete(eventKey);
-            this.replayCandidates.delete(eventKey);
-            return;
-        }
-        if (!event.app || event.app.length > 512) return;
-        // Receiving this relay on its source phone can feed it back through ANCS.
-        if (event.app.startsWith('com.apple.WebKit.WebPush') || event.app.startsWith('com.apple.WebKit.PushBundle'))
-            return;
-        if (source.apps.length && !source.apps.includes(event.app)) return;
-        // Only the kind this phone's setting allows is kept. An earlier record is compared under
-        // both, because it holds the kind that was allowed when it was stored.
-        const known = [textFingerprint(event), reducedFingerprint(event)];
-        const fingerprint = source.preview ? known[0] : known[1];
-        // Match only one previous lifetime per new UID. Preserve its app read state
-        // and stable history key while replacing transient Bluetooth identifiers.
-        const replay =
-            !current && fingerprint && event.event === 'added'
-                ? [...this.replayCandidates].find(
-                      ([, candidate]) => candidate.session !== event.session && known.includes(candidate.fingerprint),
-                  )
-                : undefined;
-        const previous = current || (replay?.[1].historyKey ? this.feed.get(replay[1].historyKey) : undefined);
-        const key = previous?.key || crypto.randomUUID();
-        const item: FeedItem = {
-            source: event.source,
-            session: event.session,
-            uid: event.uid,
-            event: event.event,
-            preExisting: !!event.preExisting,
-            app: event.app,
-            appName: (event.appName || event.app).slice(0, 512),
-            title: source.preview ? (event.title || '').slice(0, 1024) : '',
-            subtitle: source.preview ? (event.subtitle || '').slice(0, 1024) : '',
-            body: source.preview ? (event.body || '').slice(0, 4096) : '',
-            date: (event.date || '').slice(0, 64),
-            canDismiss: !!event.canDismiss,
-            negativeActionLabel: (event.negativeActionLabel || '').slice(0, 128),
-            key,
-            received: previous?.received || Date.now(),
-            read: previous?.read || false,
-            dismissed: previous?.dismissed || false,
-            active: this.sessions.get(source.id) === event.session,
-            reconnectable: true,
-            fingerprint,
-        };
-        this.feed.set(key, item);
-        this.liveKeys.set(eventKey, key);
-        this.saveHistory();
-        if (event.event === 'modified') {
-            if (this.replayCandidates.has(eventKey)) {
-                if (fingerprint)
-                    this.replayCandidates.set(eventKey, {
-                        fingerprint,
-                        session: event.session,
-                        received: Date.now(),
-                        historyKey: key,
-                    });
-                else this.replayCandidates.delete(eventKey);
-            }
-            this.prune();
-            return;
-        }
-        if (this.observed.has(eventKey)) {
-            this.prune();
-            return;
-        }
-        this.observed.set(eventKey, Date.now());
-        if (replay) this.replayCandidates.delete(replay[0]);
-        if (fingerprint)
-            this.replayCandidates.set(eventKey, {
-                fingerprint,
-                session: event.session,
-                received: Date.now(),
-                historyKey: key,
-            });
-        this.prune();
-        if (replay || event.preExisting) return;
-        for (const sub of this.store.subscriptions) if (shouldRelay(event, source, sub)) this.push.enqueue(sub.id, key);
+        const { changed, push } = this.notificationFeed.receive(
+            event,
+            source,
+            source ? this.sessions.get(source.id) : undefined,
+        );
+        if (changed) this.saveHistory();
+        if (!push || !source) return;
+        for (const sub of this.store.subscriptions)
+            if (shouldRelay(event, source, sub)) this.push.enqueue(sub.id, push);
     }
 
     /**
@@ -730,7 +543,7 @@ export class NotificationService implements Service {
         if ((key === 'test' || key.startsWith('system:')) && testPayload)
             return { subscription: sub.subscription, payload: testPayload, vapid: this.store.vapid };
         const item = this.feed.get(key);
-        if (!item || item.read || item.dismissed || !item.reconnectable || item.received < Date.now() - 30 * 86400000)
+        if (!item || item.read || item.dismissed || !item.reconnectable || item.received < Date.now() - HISTORY_MS)
             return;
         const source = this.store.sources.find((candidate) => candidate.id === item.source);
         if (!source || !shouldRelay({ ...item, event: 'added', preExisting: false }, source, sub)) return;
@@ -795,8 +608,7 @@ export class NotificationService implements Service {
         // The page fetches /history only when `historyRevision` changes.
         route('get', '/status', (_req, res) => {
             this.prune();
-            const storedBySource: Record<string, number> = Object.fromEntries(this.store.sources.map((s) => [s.id, 0]));
-            for (const item of this.feed.values()) storedBySource[item.source] = (storedBySource[item.source] || 0) + 1;
+            const storedBySource = this.notificationFeed.storedBySource(this.store.sources);
             res.json({
                 publicKey: this.store.vapid.publicKey,
                 sources: this.store.sources,
@@ -1091,8 +903,10 @@ export class NotificationService implements Service {
             this.command({ type: 'confirm', ...this.pairing });
             res.json({ ok: true });
         });
+        // The whole record of one iPhone. `apps` is the older allow-list. `muted` is optional: a
+        // page left open since before the mute list existed sends none, and the list is kept.
         route('post', '/sources', (req, res) => {
-            const { id, address, name, apps, preview } = req.body;
+            const { id, address, name, apps, preview, muted } = req.body;
             if (
                 typeof id !== 'string' ||
                 !/^[\w-]{1,128}$/.test(id) ||
@@ -1104,35 +918,41 @@ export class NotificationService implements Service {
                 typeof preview !== 'boolean' ||
                 !Array.isArray(apps) ||
                 apps.length > 100 ||
-                apps.some((a) => typeof a !== 'string' || a.length > 256)
+                apps.some((a) => typeof a !== 'string' || a.length > 256) ||
+                (muted !== undefined &&
+                    (!Array.isArray(muted) || muted.length > MUTED_APP_LIMIT || !muted.every(validMutedApp)))
             )
                 throw Error('Invalid notification source');
             if (this.store.sources.some((s) => s.address === address.toUpperCase() && s.id !== id))
                 throw Error('Bluetooth phone is already linked');
             if (this.store.sources.length >= 32 && !this.store.sources.some((s) => s.id === id))
                 throw Error('Source limit reached');
-            const connectionChanged =
-                this.store.sources.find((source) => source.id === id)?.address !== address.toUpperCase();
-            this.store.sources = [
-                ...this.store.sources.filter((s) => s.id !== id),
-                { id, address: address.toUpperCase(), name, apps, preview },
-            ];
+            const existing = this.store.sources.find((source) => source.id === id);
+            const connectionChanged = existing?.address !== address.toUpperCase();
+            // Without `muted` the record is stored as such a request always stored it, with the
+            // list it already had.
+            const mutedApps =
+                muted === undefined
+                    ? existing?.muted
+                    : [...new Map((muted as MutedApp[]).map(({ app, name }) => [app, name]))].map(([app, name]) => ({
+                          app,
+                          name,
+                      }));
+            const record = {
+                id,
+                address: address.toUpperCase(),
+                name,
+                apps,
+                preview,
+                ...(mutedApps ? { muted: mutedApps } : {}),
+            };
+            // A changed iPhone keeps its place: the first one is the inbox shown without a choice,
+            // and Setup lists them in this order. A new one is added at the end.
+            this.store.sources = existing
+                ? this.store.sources.map((s) => (s.id === id ? record : s))
+                : [...this.store.sources, record];
             if (connectionChanged) this.invalidateSources();
-            if (!preview) {
-                // The text goes, and so does anything it could be recovered from.
-                for (const item of this.feed.values()) {
-                    if (item.source !== id) continue;
-                    if (item.fingerprint && !item.fingerprint.startsWith(REDUCED_FINGERPRINT))
-                        item.fingerprint = reducedFingerprint(item);
-                    Object.assign(item, { title: '', subtitle: '', body: '' });
-                }
-                for (const [key, candidate] of this.replayCandidates) {
-                    const item = this.feed.get(candidate.historyKey || '');
-                    if (item?.source !== id && !key.startsWith(`${id}:`)) continue;
-                    if (item?.fingerprint) candidate.fingerprint = item.fingerprint;
-                    else this.replayCandidates.delete(key);
-                }
-            }
+            if (!preview) this.notificationFeed.forgetText(id);
             this.saveHistory(true);
             this.save();
             if (connectionChanged) this.restartCollector();
@@ -1142,9 +962,7 @@ export class NotificationService implements Service {
             const id = req.params.id;
             this.store.sources = this.store.sources.filter((s) => s.id !== id);
             this.invalidateSources();
-            for (const [key, item] of this.feed) if (item.source === id) this.feed.delete(key);
-            for (const [key, value] of this.replayCandidates)
-                if (!this.feed.has(value.historyKey || '')) this.replayCandidates.delete(key);
+            this.notificationFeed.removeSource(id);
             this.icons.removeSource(id);
             this.saveHistory(true);
             this.save();

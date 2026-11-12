@@ -302,6 +302,8 @@ async function walk(browser, viewport) {
 
         // A search written to the address while a notification's sheet is open: the sheet stays,
         // and the text ends on the entry of the page.
+        // Search opens from the bar of Notifications.
+        await page.locator('.notifications-view > .kit-bar').getByRole('button', { name: 'Search', exact: true }).click();
         await page.getByRole('searchbox', { name: 'Search notifications', exact: true }).fill('Coffee');
         const actions = page.getByRole('button', { name: 'Actions for Coffee at four?', exact: true });
         await press(test, actions);

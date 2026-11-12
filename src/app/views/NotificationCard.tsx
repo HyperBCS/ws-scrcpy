@@ -13,7 +13,8 @@ import { Icon } from '../ui/Icon';
 import { IconButton } from '../ui/IconButton';
 import '../../style/views/NotificationsInbox.css';
 
-function AppIcon({ source, app, name }: { source: string; app?: string; name: string }) {
+/** The app's icon from the iPhone, or its first letter where the server has none. Setup lists apps with it too. */
+export function AppIcon({ source, app, name }: { source: string; app?: string; name: string }) {
     const [url, setUrl] = useState('');
     useEffect(() => {
         let alive = true;

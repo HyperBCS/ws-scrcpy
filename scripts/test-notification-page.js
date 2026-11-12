@@ -259,3 +259,53 @@ test('opening a screen from the inbox writes the search text first and keeps the
     router.openRoute(page.notificationRoute({ source: 'phone-a', filter: 'archive', q: 'four' }));
     assert.equal(nav.takeNotificationScroll(), undefined, 'an inbox opened from the list starts at the top');
 });
+
+// The mute list of Setup (src/app/state/notificationSources.ts). "Mute this app" on a card's menu
+// calls setAppMuted too.
+function sourceSettings() {
+    openTab('#!action=notifications&panel=setup');
+    global.window.location = global.location;
+    return require('../src/app/state/notificationSources');
+}
+const phoneA = { id: 'phone-a', address: 'AA:BB:CC:DD:EE:00', name: 'Phone A', apps: [], preview: true };
+const seen = (app, appName, received, source = 'phone-a') => ({ key: `${app}-${received}`, source, app, appName, received, session: 's', uid: 1, event: 'added', read: false, dismissed: false, active: true });
+
+test('Setup lists the apps seen from an iPhone, by their newest name, with the muted ones that sent nothing since', () => {
+    const { seenApps } = sourceSettings();
+    const items = [seen('com.example.chat', 'Messages', 3), seen('com.example.chat', 'Chat', 1), seen('com.example.mail', 'Mail', 2), seen('com.example.other', 'Other', 4, 'phone-b')];
+    assert.deepEqual(seenApps(phoneA, items), [
+        { app: 'com.example.mail', name: 'Mail', muted: false, listed: true },
+        { app: 'com.example.chat', name: 'Messages', muted: false, listed: true },
+    ]);
+    // Settings saved before the mute list existed have none; a muted app keeps its name.
+    const muted = { ...phoneA, apps: ['com.example.mail'], muted: [{ app: 'com.example.games', name: 'Games' }, { app: 'com.example.chat', name: 'Old name' }] };
+    assert.deepEqual(seenApps(muted, items), [
+        { app: 'com.example.games', name: 'Games', muted: true, listed: false },
+        { app: 'com.example.mail', name: 'Mail', muted: false, listed: true },
+        { app: 'com.example.chat', name: 'Messages', muted: true, listed: false },
+    ]);
+});
+
+test('muting changes only the mute list, and the whole record is saved in the shape the server takes', async () => {
+    const { withAppMuted, setAppMuted, isAppMuted } = sourceSettings();
+    const muted = withAppMuted(phoneA, 'com.example.chat', 'Messages', true);
+    assert.deepEqual(muted, { ...phoneA, muted: [{ app: 'com.example.chat', name: 'Messages' }] });
+    assert.equal(isAppMuted(muted, 'com.example.chat'), true);
+    assert.deepEqual(withAppMuted(withAppMuted(muted, 'com.example.mail', 'Mail', true), 'com.example.chat', 'Messages', true).muted.map((entry) => entry.app), ['com.example.mail', 'com.example.chat'], 'one entry per app');
+    assert.deepEqual(withAppMuted(muted, 'com.example.chat', 'Messages', false), { ...phoneA, muted: [] });
+    assert.deepEqual(phoneA, { id: 'phone-a', address: 'AA:BB:CC:DD:EE:00', name: 'Phone A', apps: [], preview: true }, 'the record given is not changed');
+    const sent = [];
+    const originalFetch = global.fetch;
+    try {
+        global.fetch = async (url, options) => {
+            sent.push([new URL(url).pathname, options.method, JSON.parse(options.body)]);
+            return { ok: true, status: 200, json: async () => ({ ok: true }) };
+        };
+        await setAppMuted({ ...phoneA, apps: ['com.example.chat'] }, 'com.example.chat', 'Messages', true);
+        assert.deepEqual(sent, [['/api/notifications/sources', 'POST', { ...phoneA, apps: ['com.example.chat'], muted: [{ app: 'com.example.chat', name: 'Messages' }] }]]);
+        global.fetch = async () => ({ ok: false, status: 400, json: async () => ({ error: 'Invalid notification source' }) });
+        await assert.rejects(setAppMuted(phoneA, 'com.example.chat', 'Messages', true), /Invalid notification source/, 'a refusal keeps its reason');
+    } finally {
+        global.fetch = originalFetch;
+    }
+});

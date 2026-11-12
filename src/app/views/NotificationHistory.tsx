@@ -49,12 +49,12 @@ export function feedState(status: string | undefined): FeedState {
     if (status && /allow|permission/i.test(status)) return 'attention';
     return 'reconnecting';
 }
-const FEED_LABELS: Record<FeedState, string> = {
+export const FEED_LABELS: Record<FeedState, string> = {
     connected: 'Connected',
     reconnecting: 'Reconnecting',
     attention: 'Action needed',
 };
-const FEED_TONES: Record<FeedState, ChipTone> = {
+export const FEED_TONES: Record<FeedState, ChipTone> = {
     connected: 'success',
     reconnecting: 'warning',
     attention: 'error',
@@ -81,13 +81,6 @@ function sentence(text: string): string {
 
 function count(n: number): string {
     return `${n} notification${n === 1 ? '' : 's'}`;
-}
-
-function receivedAt(time: number): string {
-    const date = new Date(time);
-    return date.toDateString() === new Date().toDateString()
-        ? date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-        : date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 /** A highlighted notification (opened from a push) keeps its outline this long. */
@@ -134,24 +127,27 @@ type BulkReply = {
 export function NotificationHistory({
     sources,
     items,
-    unreadBySource,
     statuses,
     feedError,
     connectionError,
     busy,
     run,
     refresh,
+    searchOpen,
+    setSearchOpen,
 }: {
     sources: NotificationSource[];
     items: HistoryItem[];
-    unreadBySource: Record<string, number>;
     // The collector's status text for each iPhone, and its own error.
     statuses: Record<string, string>;
     feedError: string;
     connectionError: string;
     busy: boolean;
-    run: (fn: () => Promise<void>, onError?: (message: string) => void) => Promise<void>;
+    run: (fn: () => Promise<void>, onError?: (message: string) => void) => Promise<unknown>;
     refresh: () => Promise<unknown>;
+    /** The search row, opened and closed from the page's bar. */
+    searchOpen: boolean;
+    setSearchOpen: (open: boolean) => void;
 }) {
     // The iPhone, the filter, the app and the search text are in the address, so a reload, a
     // link and a return with Back show the same inbox; see `state/notificationPage.ts`.
@@ -209,6 +205,8 @@ export function NotificationHistory({
         },
         [],
     );
+    const searchRow = useRef<HTMLDivElement>(null);
+    const searchWasOpen = useRef(searchOpen);
     const [menu, setMenu] = useState<'filters' | 'bulk' | null>(null);
     const [menuKey, setMenuKey] = useState('');
     const [undo, setUndo] = useState<UndoAction | null>(null);
@@ -285,6 +283,17 @@ export function NotificationHistory({
     const [phoneResult, setPhoneResult] = useState('');
     const matchingUnread = filtered.filter((n) => !n.read && !n.dismissed);
     const narrowed = !!query.trim() || !!appFilter;
+    // Text or an app filter keeps the search row open, also when it came with a link.
+    useEffect(() => {
+        if (narrowed && !searchOpen) setSearchOpen(true);
+    }, [narrowed]);
+    // Opened from the bar: the field takes focus. Closed from the bar: the search is cleared.
+    useEffect(() => {
+        if (searchOpen === searchWasOpen.current) return;
+        searchWasOpen.current = searchOpen;
+        if (searchOpen) searchRow.current?.querySelector('input')?.focus();
+        else if (narrowed || typed.current) show({ app: '', q: '' });
+    }, [searchOpen]);
     const screen = source ? screenLink(source) : undefined;
     const state = feedState(source ? statuses[source.id] : undefined);
     const statusText = sentence(
@@ -561,59 +570,10 @@ export function NotificationHistory({
             <h2 id="notification-history-heading" class="visually-hidden">
                 {filter === 'archive' ? 'Archive' : filter === 'unread' ? 'Unread' : 'Inbox'}
             </h2>
-            {source && (
+            {/* The bar of the page names the iPhone and its link state. A link that is not live
+                is explained here. */}
+            {source && (feedError || state !== 'connected') && (
                 <div class="notification-history-source">
-                    <div class="notification-history-device-row">
-                        {sources.length > 1 ? (
-                            <SelectField
-                                label="Device"
-                                labelHidden
-                                disabled={busy}
-                                value={source.id}
-                                options={sources.map((s) => ({
-                                    value: s.id,
-                                    label: `${s.name}${unreadBySource[s.id] ? ` · ${unreadBySource[s.id]} unread` : ''}`,
-                                }))}
-                                onChange={(event) =>
-                                    show({
-                                        source: event.currentTarget.value,
-                                        notification: '',
-                                        filter: 'inbox',
-                                        app: '',
-                                        q: '',
-                                    })
-                                }
-                            />
-                        ) : (
-                            <strong class="notification-history-device-name">{source.name}</strong>
-                        )}
-                        {screen?.unavailable ? (
-                            <Button
-                                class="notification-open-screen"
-                                disabled
-                                attributes={{ 'aria-describedby': reasonId }}
-                            >
-                                Open screen
-                            </Button>
-                        ) : (
-                            <Button class="notification-open-screen" href={screen?.href} onClick={followScreenLink}>
-                                Open screen
-                            </Button>
-                        )}
-                    </div>
-                    <p class="notification-feed-state">
-                        <FeedBadge state={state} />
-                        <span>
-                            {phoneItems.length
-                                ? `Last notification ${receivedAt(phoneItems[0].received)}`
-                                : 'No notifications yet'}
-                        </span>
-                    </p>
-                    {screen?.unavailable && (
-                        <p id={reasonId} class="notification-help">
-                            {screen.unavailable}
-                        </p>
-                    )}
                     {feedError ? (
                         <Banner tone="error">Notifications are not being received. {sentence(feedError)}</Banner>
                     ) : state === 'attention' ? (
@@ -629,30 +589,32 @@ export function NotificationHistory({
             )}
             <div class="notification-history-tools">
                 {connectionError && <Banner tone="error">Connection interrupted. {connectionError}</Banner>}
-                <div class="notification-search">
-                    <TextField
-                        type="search"
-                        label="Search notifications"
-                        labelHidden
-                        placeholder="Search notifications"
-                        value={query}
-                        onInput={(event) => typeQuery(event.currentTarget.value)}
-                        onKeyDown={(event) => {
-                            if (event.key === 'Enter') event.currentTarget.blur();
-                        }}
-                        enterKeyHint="search"
-                        autoComplete="off"
-                    />
-                    <Button
-                        attributes={{
-                            'aria-haspopup': 'dialog',
-                            'aria-label': appFilter ? 'Filters, app filter active' : 'Filters',
-                        }}
-                        onClick={() => setMenu('filters')}
-                    >
-                        Filters{appFilter ? ' · 1' : ''}
-                    </Button>
-                </div>
+                {searchOpen && (
+                    <div class="notification-search" ref={searchRow}>
+                        <TextField
+                            type="search"
+                            label="Search notifications"
+                            labelHidden
+                            placeholder="Search notifications"
+                            value={query}
+                            onInput={(event) => typeQuery(event.currentTarget.value)}
+                            onKeyDown={(event) => {
+                                if (event.key === 'Enter') event.currentTarget.blur();
+                            }}
+                            enterKeyHint="search"
+                            autoComplete="off"
+                        />
+                        <Button
+                            attributes={{
+                                'aria-haspopup': 'dialog',
+                                'aria-label': appFilter ? 'Filters, app filter active' : 'Filters',
+                            }}
+                            onClick={() => setMenu('filters')}
+                        >
+                            Filters{appFilter ? ' · 1' : ''}
+                        </Button>
+                    </div>
+                )}
                 <div class="notification-history-toolbar">
                     <SegmentedControl
                         label="Notification view"
@@ -796,6 +758,20 @@ export function NotificationHistory({
                 description={`${count(filtered.length)} in this view.`}
                 onClose={() => setMenu(null)}
             >
+                {screen?.unavailable ? (
+                    <>
+                        <Button full disabled attributes={{ 'aria-describedby': reasonId }}>
+                            Open iPhone screen
+                        </Button>
+                        <p id={reasonId} class="notification-help">
+                            {screen.unavailable}
+                        </p>
+                    </>
+                ) : (
+                    <Button full href={screen?.href} onClick={followScreenLink}>
+                        Open iPhone screen
+                    </Button>
+                )}
                 <Button full disabled={busy || !matchingUnread.length} onClick={markAllRead}>
                     Mark all read
                 </Button>
