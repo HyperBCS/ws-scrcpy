@@ -984,6 +984,44 @@ test('Ctrl+drag pinches on both: a second finger mirrored through the middle of 
     ], 'two contacts in each frame, around 648x1408, and both lift together');
 });
 
+test('Shift+Ctrl+drag pinches around the point pressed on both, wherever the pointer was before', (t) => {
+    const keys = { ctrlKey: true, shiftKey: true };
+    const android = androidHandler(t);
+    // The keys are held while the pointer hovers elsewhere first; the press sets the centre.
+    android.handler.onInteraction(new MouseEvent('mousemove', { target: android.canvas, clientX: 120, clientY: 160, ...keys }));
+    android.handler.onInteraction(new MouseEvent('mousemove', { target: android.canvas, clientX: 210, clientY: 320, ...keys }));
+    android.handler.onInteraction(new MouseEvent('mousedown', { target: android.canvas, clientX: 210, clientY: 320, buttons: 1, ...keys }));
+    windowMouse('mousemove', { clientX: 255, clientY: 320, buttons: 1, ...keys });
+    windowMouse('mouseup', { clientX: 255, clientY: 320, ...keys });
+    assert.deepEqual(pointers(android.sent), [
+        [ACTION.DOWN, 0, 360, 640],
+        [ACTION.DOWN, 1, 360, 640],
+        [ACTION.MOVE, 0, 450, 640],
+        [ACTION.MOVE, 1, 270, 640],
+        [ACTION.UP, 0, 450, 640],
+        [ACTION.UP, 1, 270, 640],
+    ], 'around 360x640, where the button went down');
+    // The keys are still held: the next pinch is around its own press, not the last one's.
+    android.sent.length = 0;
+    android.handler.onInteraction(new MouseEvent('mousedown', { target: android.canvas, clientX: 120, clientY: 160, buttons: 1, ...keys }));
+    assert.deepEqual(pointers(android.sent), [
+        [ACTION.DOWN, 0, 180, 320],
+        [ACTION.DOWN, 1, 180, 320],
+    ]);
+    windowMouse('mouseup', { clientX: 120, clientY: 160, ...keys });
+
+    const iphone = iphoneHandler(t);
+    iphone.handler.onInteraction(new MouseEvent('mousedown', { target: iphone.canvas, clientX: 192, clientY: 382, buttons: 1, ...keys }));
+    windowMouse('mousemove', { clientX: 273, clientY: 382, buttons: 1, ...keys });
+    iphone.flush();
+    windowMouse('mouseup', { clientX: 273, clientY: 382, ...keys });
+    assert.deepEqual(iphone.sent, [
+        ['frame', [0, true, 648, 1408], [1, true, 648, 1408]],
+        ['frame', [0, true, 972, 1408], [1, true, 324, 1408]],
+        ['frame', [0, false, 972, 1408], [1, false, 324, 1408]],
+    ], 'around 648x1408, where the button went down');
+});
+
 test('a pointer cancel, a blur, a hidden page and unmount release every touch once, on both', (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     const android = androidHandler(t);

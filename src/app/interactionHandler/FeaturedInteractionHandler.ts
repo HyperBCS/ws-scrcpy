@@ -150,10 +150,15 @@ export class FeaturedInteractionHandler extends InteractionHandler {
                 return [];
             }
             this.setMouseActive(true);
+            // The press sets the pinch's centre, as on an iPhone: the middle, or with Shift the
+            // point pressed. A centre left from hovering or from the last pinch does not count.
+            this.resetPinch();
             return this.buildMouseTouch(event, screenInfo, this.storedFromMouseEvent);
         }
         if (!this.mouseActive) {
-            // Hovering: nothing is sent, but with Ctrl held the pinch's fingers are shown.
+            // Hovering: nothing is sent, but with Ctrl held the pinch's fingers are shown where
+            // a press here would put them.
+            this.resetPinch();
             this.buildMouseTouch(event, screenInfo, new Map());
         }
         // During a drag the window listener sends the move.
@@ -222,6 +227,10 @@ export class FeaturedInteractionHandler extends InteractionHandler {
         const { target, button, buttons, clientY, clientX } = this.lastPosition;
         const type = InteractionHandler.SIMULATE_MULTI_TOUCH;
         const props = { ctrlKey, shiftKey, type, target, button, buttons, clientX, clientY };
+        if (!this.mouseActive) {
+            // The preview follows the keys: Shift held or let go moves its centre.
+            this.resetPinch();
+        }
         this.buildTouchEvent(props, screenInfo, new Map(), ctrlKey && MOUSE_CONTRACT.android.pinch);
     }
 
