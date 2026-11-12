@@ -484,11 +484,15 @@ async function offlineFlow(browser) {
         assert.equal(await close.isDisabled(), false, 'the sheet can close again');
         assert.equal(await saver.isChecked(), false, 'the preset shows what the phone ran before');
         assert.equal(await saver.isDisabled(), true);
-        // Back again: the sheet loads what the phone runs now, and the old outcome goes.
+        // Back again: the sheet loads what the phone runs now, and the old outcome goes. The
+        // quality row shows the same values while the phone is away, so the check waits for
+        // the second load and then for the outcome to go, not for the row.
         sendDeviceList(one);
+        const loads = () => commands.filter((command) => command.type === 'list_encoders').length;
+        for (let waited = 0; loads() < 2 && waited < 5000; waited += 50) await page.waitForTimeout(50);
+        assert.equal(loads(), 2);
         await loaded.waitFor();
-        assert.equal(await quality.count(), 0);
-        assert.equal(commands.filter((command) => command.type === 'list_encoders').length, 2);
+        await quality.waitFor({ state: 'detached', timeout: 5000 });
         assert.equal(applies(commands).length, 1);
         assert.deepEqual(errors, []);
     } finally {
