@@ -2,26 +2,17 @@
 
 @layer views {
 /* The notice above the picture while the phone shows its lock screen
-   (views/LockScreenNotice.tsx). Its buttons are the kit's. */
+   (views/LockScreenNotice.tsx): the kit's info banner, as a band across the page. Its buttons
+   are the kit's. */
 .lock-screen-notice {
     position: relative;
     /* One above the header's level: the cover over a sleeping phone must not dim the notice. */
     z-index: calc(var(--z-header) + 1);
-    display: flex;
     flex: 0 0 auto;
-    align-items: center;
-    gap: var(--space-8);
+    flex-wrap: nowrap;
     padding: var(--space-4) max(var(--space-8), env(safe-area-inset-right, 0px)) var(--space-4)
         max(var(--space-16), env(safe-area-inset-left, 0px));
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-raised);
-    color: var(--text);
-    font-size: var(--font-size-13);
-    line-height: 1.4;
-}
-.lock-screen-notice > span {
-    flex: 1;
-    min-width: 0;
+    border-radius: 0;
 }
 
 /* The two Unlock sheets (views/UnlockSheet.tsx, views/ApplUnlockSheet.tsx): text, a field and a
