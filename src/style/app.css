@@ -260,8 +260,7 @@ details > summary {
     }
 }
 .device-list-header,
-.notification-page-header,
-.tool-navigation {
+.notification-page-header {
     animation: surface-enter var(--motion-settle) var(--ease-out);
 }
 #devices .device {

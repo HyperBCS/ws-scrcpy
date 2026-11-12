@@ -204,7 +204,7 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
     };
     const tabs = (status?: ComponentChildren) =>
         PHONE_TABS.length > 1 ? (
-            <TabStrip kit label="Phone views" tabs={PHONE_TABS} current={view} onSelect={selectTab}>
+            <TabStrip label="Phone views" tabs={PHONE_TABS} current={view} onSelect={selectTab}>
                 {status}
             </TabStrip>
         ) : null;

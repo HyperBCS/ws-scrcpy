@@ -1046,7 +1046,8 @@ test('AppBar and TabStrip are the kit bar and the kit tabs, with their class nam
             children: 'Connected',
         }),
     );
-    assert.deepEqual(strip.slice(0, 2).map((element) => [element.type, element.props.class]), [['nav', 'tool-navigation'], ['div', 'tool-tabs']]);
+    assert.deepEqual(strip.slice(0, 2).map((element) => [element.type, element.props.class]), [['nav', 'kit-tabs'], ['div', 'kit-tabs-list']]);
+    assert.ok(strip.filter((element) => element.type === 'button').every((tab) => tab.props.class === 'kit-tab'));
     assert.equal(strip[0].props['aria-label'], 'Device views');
     const tabs = strip.filter((element) => element.type === 'button');
     assert.deepEqual(tabs.map((tab) => [tab.props.children, tab.props['aria-current']]), [['Screen', undefined], ['Files', 'page'], ['Shell', undefined]]);

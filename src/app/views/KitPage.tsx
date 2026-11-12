@@ -857,7 +857,7 @@ function Bars() {
             <Section title="TabStrip">
                 <Demo name="kit">
                     <div class="kit-demo-frame">
-                        <TabStrip kit label="Phone views" tabs={TABS} current={tab} onSelect={setTab} />
+                        <TabStrip label="Phone views" tabs={TABS} current={tab} onSelect={setTab} />
                     </div>
                 </Demo>
             </Section>
