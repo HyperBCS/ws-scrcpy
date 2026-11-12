@@ -100,19 +100,6 @@ body.sheet-open #devices {
     color: var(--danger-text);
     font-weight: var(--font-weight-semibold);
 }
-/* A note under the head: muted words, and the action for them at the end. */
-.device-note {
-    display: flex;
-    align-items: center;
-    gap: var(--space-12);
-    color: var(--text-muted);
-    font-size: var(--font-size-13);
-}
-.device-note-text {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow-wrap: anywhere;
-}
 /* A status line sits in the card's own spacing. */
 #devices .device .kit-status {
     margin: 0;

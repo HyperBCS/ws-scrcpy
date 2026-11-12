@@ -303,10 +303,11 @@ test('a card has one status, at most one line under it, and the action for that 
     const cases = [
         // Android: a running stream service is the In use mark, and no line.
         ['android running', android('A1'), { status: 'ready', open: true, tools: ANDROID_TOOLS, inUse: true }],
-        // The stream service is not running on a phone that is otherwise ready: one note, with Start.
-        ['android stopped', android('A2', { pid: -1 }), { status: 'ready', line: 'stream-service', action: 'start-stream-service', open: true, tools: ANDROID_TOOLS }],
-        ['android unknown service', android('A3', { pid: 0 }), { status: 'ready', line: 'stream-service', action: 'start-stream-service', open: true, tools: ANDROID_TOOLS }],
-        // Asleep: Wake beside the status, and no line. The service line waits for a ready phone.
+        // An idle phone: the stream service is stopped or not known yet. No line and no Start;
+        // Open screen starts the service.
+        ['android stopped', android('A2', { pid: -1 }), { status: 'ready', open: true, tools: ANDROID_TOOLS }],
+        ['android unknown service', android('A3', { pid: 0 }), { status: 'ready', open: true, tools: ANDROID_TOOLS }],
+        // Asleep: Wake beside the status, and no line.
         ['android asleep', android('A4', { pid: -1, 'screen.power': 'off' }), { status: 'asleep', open: true, wake: true, tools: ANDROID_TOOLS }],
         ['android locked', android('A5', { pid: -1, 'device.locked': true }), { status: 'locked', open: true, tools: ANDROID_TOOLS }],
         // Not reachable: the hint is the line, Open screen is disabled, no tools and no Wake.
@@ -332,7 +333,7 @@ test('a card has one status, at most one line under it, and the action for that 
     for (const [label, entry, expected, playable] of cases) {
         assert.deepEqual(card(entry, playable), { line: undefined, action: undefined, wake: false, tools: [], inUse: false, ...expected }, label);
     }
-    // The Start flag: Starting is the status and the service line goes.
+    // The Starting flag, set by Start in Settings: Starting is the status, and there is no line.
     const starting = android('A9', { pid: -1 });
     markStarting(starting.key);
     try {
@@ -341,8 +342,8 @@ test('a card has one status, at most one line under it, and the action for that 
         clearStarting(starting.key);
     }
     // What a kind of phone offers on its card.
-    assert.deepEqual(cardCapabilities('android'), { wake: true, startStreamService: true, player: true });
-    assert.deepEqual(cardCapabilities('ios'), { wake: false, startStreamService: false, player: false });
+    assert.deepEqual(cardCapabilities('android'), { wake: true, player: true });
+    assert.deepEqual(cardCapabilities('ios'), { wake: false, player: false });
 });
 
 test('the row of a phone is the head of its card and its switcher row: one chip, no serial, no tracker', () => {

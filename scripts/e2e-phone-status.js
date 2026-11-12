@@ -131,7 +131,7 @@ async function listCard(browser, layout) {
             assert.deepEqual(chips, [['Ready', 'kit-chip kit-chip-success phone-row-chip device-status']], `${label} ${platform}: one chip, the status`);
             assert.equal(await item.locator('.phone-row-meta .phone-row-in-use').textContent(), 'In use', `${label} ${platform}: the session mark`);
         }
-        assert.equal(await pixel.locator('.stream-service-status, [data-line="stream-service"]').count(), 0, `${label}: no stream service line while it runs`);
+        assert.equal(await pixel.locator('.stream-service-status, .device-line').count(), 0, `${label}: no stream service line while it runs`);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `${label}: no sideways scroll`);
         fs.writeFileSync(path.join(OUT, `iphone-card-${layout.width}-${layout.colorScheme}.png`), await card.screenshot());
         assert.deepEqual(test.errors, []);

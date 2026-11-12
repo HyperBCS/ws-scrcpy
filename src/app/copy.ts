@@ -102,7 +102,7 @@ export const FACT = {
     unknown: 'Unknown',
 } as const;
 
-/** The stream service of an Android phone: its line on a card and in a header, and its tooltip. */
+/** The stream service of an Android phone: its line in a header, its Settings row and its tooltip. */
 export const STREAM_SERVICE = {
     name: 'Stream service',
     running: { label: 'Running', description: 'The stream service is running on this phone.' },

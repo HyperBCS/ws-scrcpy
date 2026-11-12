@@ -29,7 +29,8 @@ const iphone = (udid, name, extra = {}) => ({
 });
 const schedule = { enabled: true, time: '03:00', hasPasscode: true, serverTimeZone: 'UTC', lastUnlockedAt: NOW - 2 * 86400000 };
 
-// The last one is ready with its stream service stopped, so its card says so on one line.
+// The last one is ready with its stream service stopped, the normal state of an idle phone, so
+// its card has no line.
 const ANDROIDS = [
     android('HOME-PIXEL-0001', 'Pixel 9 Pro'),
     android('HOME-TAB-0002', 'Galaxy Tab S9', { 'screen.power': 'off', 'device.awake': false }),
@@ -220,17 +221,18 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         assert.ok(cards.filter((item) => item.inUse).every((item) => item.inUse === 'In use' && item.dot), `${label}: a dot and In use`);
         const lines = Object.fromEntries(cards.filter((item) => item.lines.length).map((item) => [item.key, item.lines[0]]));
         assert.deepEqual(lines, {
-            'android:HOME-OFFLINE-0004': 'offline', 'android:HOME-UNAUTH-0005': 'unauthorized', 'android:HOME-IDLE-0006': 'stream-service',
+            'android:HOME-OFFLINE-0004': 'offline', 'android:HOME-UNAUTH-0005': 'unauthorized',
             'ios:HOME-IPAD-NODEV': 'developer-mode', 'ios:HOME-IPHONE-ERROR': 'session', 'ios:HOME-IPHONE-UNLOCK': 'unlock', 'ios:HOME-IPHONE-AWAY': 'offline',
         }, `${label}: the line of each card`);
         assert.equal(await page.getByText('Streaming', { exact: true }).count(), 0, `${label}: Streaming is not a status`);
         assert.ok((await contrastOf(card(page, 'ios:HOME-IPHONE-STREAM').locator('.phone-row-in-use'))).ratio >= 4.5, `${label}: In use is readable`);
-        // The stream service line only where the service does not run on a ready phone, with Start.
+        // An idle Android phone, its stream service stopped: the head and the actions, no line and
+        // no Start. Open screen starts the service; Settings starts and stops it by hand.
         const idle = card(page, 'android:HOME-IDLE-0006');
-        const service = idle.locator('.device-line[data-line="stream-service"]');
-        assert.equal(await service.getAttribute('data-stream-service'), 'stopped');
-        assert.equal(await service.locator('.device-note-text').textContent(), 'The stream service is stopped. Opening the screen starts it.');
-        await service.getByRole('button', { name: 'Start stream service', exact: true }).waitFor();
+        const parts = await idle.evaluate((item) => [...item.children].map((child) =>
+            child.classList.contains('device-header') ? 'head' : child.classList.contains('device-primary-actions') ? 'actions' : child.className));
+        assert.deepEqual(parts, ['head', 'actions'], `${label}: an idle Android card is its head and its actions`);
+        assert.equal(await idle.getByRole('button', { name: /^Start/ }).count(), 0, `${label}: no Start on an idle card`);
         assert.equal(await page.locator('.stream-service-status').count(), 0, `${label}: no Stream service line on a card`);
         const small = await page.locator('#devices .device').evaluateAll((items) =>
             items.flatMap((el) => [...el.querySelectorAll('.phone-row-meta, .device-line, .device-schedule, .desc-block')])
@@ -532,12 +534,12 @@ async function arrived(page, check) {
 }
 
 /**
- * Start, the one action the card keeps for an idle Android phone: one start request, Starting…
- * as the status until the phone reports the service, and In use once it does. A phone that goes
- * away ends the Starting flag at once, so it is not Starting… when it comes back. Nothing here
- * opens a screen.
+ * Start in an idle Android phone's Settings (About and troubleshooting): one start request,
+ * Starting… as the status on its card until the phone reports the service, and In use once it
+ * does. A phone that goes away ends the Starting flag at once, so it is not Starting… when it
+ * comes back. Nothing here opens a screen.
  */
-async function startFromCard(browser) {
+async function startFromSettings(browser) {
     const udid = 'HOME-IDLE-0006';
     const idle = android(udid, 'Pixel 5', { pid: -1 });
     const test = await start(browser, { width: 390, height: 844, mobile: true, androids: [idle], iphones: [] });
@@ -545,13 +547,18 @@ async function startFromCard(browser) {
     try {
         const item = card(page, `android:${udid}`);
         const chip = item.locator('.phone-row-status .kit-chip');
-        const line = item.locator('.device-line[data-line="stream-service"]');
         const starts = () => test.commands.filter((command) => command.type === 'start_server').map((command) => command.data);
-        await line.waitFor();
-        await line.getByRole('button', { name: 'Start stream service', exact: true }).click();
+        await item.getByRole('button', { name: 'Settings for Google Pixel 5', exact: true }).click();
+        const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+        await dialog.waitFor();
+        const row = dialog.locator('[data-section="about"] [data-service="stream-service"]');
+        const startButton = row.getByRole('button', { name: 'Start stream service', exact: true });
+        const stopped = row.getByText('Stopped. It starts when the screen is opened.', { exact: true });
+        await stopped.waitFor();
+        await startButton.click();
         await chip.getByText('Starting…', { exact: true }).waitFor();
-        assert.equal(await item.locator('.device-line').count(), 0, 'the line goes while the service starts');
-        assert.equal(await item.getByRole('button', { name: 'Start stream service' }).count(), 0, 'Start cannot be pressed twice');
+        assert.equal(await startButton.isDisabled(), true, 'Start cannot be pressed twice');
+        assert.equal(await item.locator('.device-line').count(), 0, 'no line on the card while the service starts');
         await arrived(page, () => starts().length > 0);
         assert.deepEqual(starts(), [{ udid }], 'one start request');
 
@@ -560,25 +567,26 @@ async function startFromCard(browser) {
         await chip.getByText('Ready', { exact: true }).waitFor();
         assert.equal(await item.locator('.phone-row-in-use').textContent(), 'In use');
         assert.equal(await item.locator('.device-line').count(), 0);
-        // It stops later: the line and Start are back, and the status is not Starting…. Well
-        // inside the flag's own time limit, so it is the report that ended the flag.
+        // It stops later: the row says Stopped, and the status is not Starting…. Well inside the
+        // flag's own time limit, so it is the report that ended the flag.
         test.updateAndroid({ ...idle, pid: -1 });
-        await line.waitFor({ timeout: 3000 });
+        await stopped.waitFor({ timeout: 3000 });
         assert.equal(await chip.textContent(), 'Ready');
 
         // A start that the phone never confirms, then the phone goes away and comes back.
-        await line.getByRole('button', { name: 'Start stream service', exact: true }).click();
+        await startButton.click();
         await chip.getByText('Starting…', { exact: true }).waitFor();
         test.updateAndroid({ ...idle, state: 'offline' });
         await chip.getByText('Offline', { exact: true }).waitFor();
         test.updateAndroid(idle);
-        await line.waitFor({ timeout: 3000 });
+        await stopped.waitFor({ timeout: 3000 });
         assert.equal(await chip.textContent(), 'Ready', 'the Starting flag ended with the phone');
+        assert.equal(await item.locator('.device-line').count(), 0, 'no line on the card once it is back');
         await arrived(page, () => starts().length > 1);
         assert.deepEqual(starts(), [{ udid }, { udid }], 'one start request per press');
         assert.equal(test.streams, 0, 'no screen was opened');
         assert.deepEqual(test.errors, []);
-        console.log('PASS Start on an idle Android card: one request, Starting… until the phone reports the service');
+        console.log('PASS Start in Settings for an idle Android phone: one request, Starting… on its card until the phone reports the service');
     } finally {
         await test.context.close();
     }
@@ -983,7 +991,7 @@ async function main() {
             await kitList(browser, { width: 390, height: 844, mobile: true, colorScheme });
             await kitList(browser, { width: 1440, height: 900, mobile: false, colorScheme });
         }
-        await startFromCard(browser);
+        await startFromSettings(browser);
         await wakeOnePerSleep(browser);
         await narrowRow(browser);
         await notchedList(browser);

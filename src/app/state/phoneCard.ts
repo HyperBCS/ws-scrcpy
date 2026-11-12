@@ -10,10 +10,10 @@ import { DeviceProblem, derivePhoneStatus, phoneFacts, PhoneFacts, PhoneStatus }
  */
 
 /** What the line under the head is about. A problem line has the kind of the problem. */
-export type CardLineKind = 'unauthorized' | 'offline' | 'player' | 'stream-service' | DeviceProblem['kind'];
+export type CardLineKind = 'unauthorized' | 'offline' | 'player' | DeviceProblem['kind'];
 
 /** The one action of the line, where it has one. */
-export type CardLineAction = 'enable-developer-mode' | 'restart-services' | 'open-settings' | 'start-stream-service';
+export type CardLineAction = 'enable-developer-mode' | 'restart-services' | 'open-settings';
 
 export interface CardLine {
     kind: CardLineKind;
@@ -38,15 +38,14 @@ const LINE_ACTION: Partial<Record<CardLineKind, CardLineAction>> = {
     'developer-mode': 'enable-developer-mode',
     session: 'restart-services',
     unlock: 'open-settings',
-    'stream-service': 'start-stream-service',
 };
 
 /**
  * The card of a listed phone. `playable` says whether this browser has a player for a screen
  * that needs one (an Android stream). The line, most important first: the phone has not trusted
  * the server, it is offline, its first problem (Developer Mode first when it keeps the screen
- * from opening), no player, then a stream service that is not running on a phone that is
- * otherwise ready.
+ * from opening), then no player. A stopped stream service has no line: it is the normal state
+ * of an idle Android phone. Open screen starts it, and Settings starts and stops it.
  */
 export function phoneCard(entry: DeviceEntry, playable: boolean, now = Date.now()): PhoneCard {
     const facts = phoneFacts(entry, now);
@@ -57,7 +56,6 @@ export function phoneCard(entry: DeviceEntry, playable: boolean, now = Date.now(
     const canPlay = !card.player || playable;
     const problem =
         (!screenCanOpen && facts.problems.find((item) => item.kind === 'developer-mode')) || facts.problems[0];
-    const serviceIdle = facts.session === 'stopped' || facts.session === 'unknown';
     let kind: CardLineKind | undefined;
     if (status.status === 'unauthorized') {
         kind = 'unauthorized';
@@ -67,8 +65,6 @@ export function phoneCard(entry: DeviceEntry, playable: boolean, now = Date.now(
         kind = problem.kind;
     } else if (!canPlay) {
         kind = 'player';
-    } else if (card.startStreamService && status.status === 'ready' && serviceIdle) {
-        kind = 'stream-service';
     }
     const reachable = facts.trusted && facts.connected;
     return {

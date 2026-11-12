@@ -142,9 +142,10 @@ export function derivePhoneStatus(facts: PhoneFacts): PhoneStatus {
     };
 }
 
-// Set the instant the owner presses Start on an Android card (see DeviceCard), cleared either
-// when the descriptor confirms a pid (the adapter only counts it while no pid is confirmed) or by
-// this timeout if the launch failed without a word. There is no server push for "the service is
+// Set the instant the owner presses Start in an Android phone's Settings (About and
+// troubleshooting, `views/settings/AboutSection.tsx`), cleared either when the descriptor
+// confirms a pid (the adapter only counts it while no pid is confirmed) or by this timeout if
+// the launch failed without a word. There is no server push for "the service is
 // starting"; this is the only signal between the press and the next descriptor update.
 const STARTING_TIMEOUT_MS = 8000;
 const startingKeys = signal<Set<string>>(new Set());
@@ -327,8 +328,8 @@ export interface StreamServiceInfo {
 }
 
 /**
- * The stream service line of an Android card and header. It says the process on the phone, apart
- * from the browser's connection and from the phone's lock and power.
+ * The stream service of an Android phone, for its header line and its Settings row. It says the
+ * process on the phone, apart from the browser's connection and from the phone's lock and power.
  */
 export function getStreamServiceStatus(
     descriptor?: Pick<GoogDeviceDescriptor, 'state' | 'pid'>,

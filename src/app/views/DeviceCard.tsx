@@ -10,8 +10,8 @@ import { deviceHref, followLink, isLocalLink } from '../state/links';
 import type { DeviceView } from '../state/routes';
 import { capabilities } from '../state/capabilities';
 import { CardLineKind, phoneCard } from '../state/phoneCard';
-import { clearStarting, markStarting } from '../state/phoneStatus';
-import { STREAM_SERVICE, UNAVAILABLE_HINT } from '../copy';
+import { clearStarting } from '../state/phoneStatus';
+import { UNAVAILABLE_HINT } from '../copy';
 import { openSettings } from '../state/settingsSheet';
 import { unlockCardLine } from '../state/unlockSchedule';
 import { replyText, sendServiceCommand, TrackerCommandAborted } from '../client/trackerCommand';
@@ -50,36 +50,24 @@ function pageLink(udid: string, view: DeviceView, params: ParamsDeviceTracker, e
 }
 
 /**
- * The one line under the head of a card: what is wrong, or what to do. A problem or a hint is a
- * banner in the kit's markup (`style/kit/Banner.css`), with the card's own button as its action,
- * so a confirm prompt can return focus to it. A note is a muted line.
+ * The one line under the head of a card: what is wrong, or what to do. It is a banner in the
+ * kit's markup (`style/kit/Banner.css`), with the card's own button as its action, so a confirm
+ * prompt can return focus to it.
  */
 function CardLine({
     kind,
     look,
     action,
-    attributes,
     children,
 }: {
     kind: CardLineKind;
-    look: 'warning' | 'error' | 'note';
+    look: 'warning' | 'error';
     action?: ComponentChildren;
-    /** `data-*` attributes. */
-    attributes?: Record<string, string | undefined>;
     children: ComponentChildren;
 }) {
-    if (look === 'note') {
-        return (
-            <div {...attributes} class="device-line device-note" data-line={kind} role="status">
-                <span class="device-note-text">{children}</span>
-                {action}
-            </div>
-        );
-    }
     const problem = kind === 'developer-mode' || kind === 'session' || kind === 'unlock';
     return (
         <div
-            {...attributes}
             class={`kit-banner ${look === 'error' ? 'kit-banner-error ' : ''}device-line${problem ? ' device-problem' : ''}`}
             role="status"
             data-line={kind}
@@ -131,8 +119,9 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
         return () => controller.abort();
     }, []);
 
-    // The Start flag is only a guess until the phone reports a pid. A running service, or a
-    // phone that is gone, ends it at once instead of after its timeout.
+    // The Starting… flag that Start in Settings sets is only a guess until the phone reports a
+    // pid. A running service, or a phone that is gone, ends it at once instead of after its
+    // timeout.
     useEffect(() => {
         if (!facts.trusted || !facts.connected || facts.session === 'running') {
             clearStarting(entry.key);
@@ -180,16 +169,6 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
                 }
             },
         );
-    };
-
-    // Kept on the card: the stream service of an Android phone can be started before the screen
-    // is opened. The status says Starting… until the phone reports the service.
-    const startStreamService = () => {
-        if (!isActive || facts.session === 'starting') {
-            return;
-        }
-        markStarting(entry.key);
-        tracker.sendCommand(ControlCenterCommand.START_SERVER, { udid });
     };
 
     let lineView: ComponentChildren = null;
@@ -271,26 +250,6 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
             lineView = (
                 <CardLine kind={line.kind} look="warning">
                     This browser cannot play the stream of this phone.
-                </CardLine>
-            );
-            break;
-        case 'stream-service':
-            lineView = (
-                <CardLine
-                    kind={line.kind}
-                    look="note"
-                    attributes={{ 'data-stream-service': facts.session }}
-                    action={
-                        <Button
-                            size="compact"
-                            attributes={{ 'aria-label': 'Start stream service' }}
-                            onClick={startStreamService}
-                        >
-                            Start
-                        </Button>
-                    }
-                >
-                    {(facts.session === 'stopped' ? STREAM_SERVICE.stopped : STREAM_SERVICE.unknown).description}
                 </CardLine>
             );
             break;
