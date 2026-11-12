@@ -373,7 +373,8 @@ async function fixture(browser, options = {}) {
             const source = request.postDataJSON();
             state.sourcePosts.push(source);
             if (state.sourceError) { status = 400; reply = { error: state.sourceError }; }
-            else state.sources = [...state.sources.filter(s => s.id !== source.id), source];
+            // As the server does: a changed iPhone keeps its place, a new one is added at the end.
+            else state.sources = state.sources.some(s => s.id === source.id) ? state.sources.map(s => s.id === source.id ? source : s) : [...state.sources, source];
         } else {
             const error = `Unexpected fixture request: ${request.method()} ${pathname}`;
             state.errors.push(error); status = 500; reply = { error };
@@ -629,6 +630,9 @@ async function appMuteList(browser) {
         assert.deepEqual(phoneA().apps, ['com.example.chat', 'com.example.calendar'], 'the older list is left as it is');
         await toast('Messages muted.').getByRole('button', { name: 'Undo', exact: true }).waitFor();
         assert.equal(await appSwitch('Messages').isChecked(), false);
+        // The iPhone keeps its place in Setup, and the inbox shown without a choice is still its own.
+        assert.deepEqual(await f.page.locator('.notification-source-name').allTextContents(), ['Phone A', 'Phone B'], 'a change does not move the iPhone');
+        assert.deepEqual(f.sources.map(s => s.id), ['phone-a', 'phone-b']);
         await capture(f, 'setup-apps');
         await toast('Messages muted.').getByRole('button', { name: 'Undo', exact: true }).click();
         await until(() => !phoneA().muted.some(entry => entry.app === 'com.example.chat'), 'Undo unmutes');
@@ -663,6 +667,32 @@ async function appMuteList(browser) {
             await f.page.emulateMedia({ colorScheme });
             await settings.screenshot({ path: path.join(SCREENSHOTS, `ws-notifications-setup-apps-${colorScheme}.png`), animations: 'disabled' });
         }
+
+        // With the settings of both iPhones open and a prompt armed, every id is used once and
+        // each switch is named by its own row.
+        await openDetails(f.page, 'Settings for Phone B');
+        const settingsB = f.page.locator('details').filter({ has: f.page.locator('summary').filter({ hasText: 'Settings for Phone B' }) });
+        await settingsB.locator('summary').filter({ hasText: /^Apps/ }).click();
+        await settingsB.getByRole('switch', { name: 'Mail', exact: true }).waitFor();
+        await settingsB.getByRole('button', { name: 'Remove iPhone', exact: true }).click();
+        await settingsB.locator('.kit-confirm').waitFor();
+        const faults = await f.page.evaluate(() => {
+            const found = [];
+            const uses = new Map();
+            for (const el of document.querySelectorAll('[id]')) uses.set(el.id, (uses.get(el.id) || 0) + 1);
+            for (const [id, count] of uses) if (count > 1) found.push(`id ${id} is used ${count} times`);
+            for (const input of document.querySelectorAll('.notification-source [role="switch"]')) {
+                const row = input.closest('.kit-row');
+                for (const id of (input.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
+                    if (!row?.contains(document.getElementById(id))) found.push(`a switch is named by #${id} outside its row`);
+                }
+            }
+            return found;
+        });
+        assert.deepEqual(faults, []);
+        await settingsB.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await settingsB.locator('.kit-confirm').waitFor({ state: 'detached' });
+        assert.deepEqual(f.removed, []);
         await assertClean(f);
         console.log('PASS Setup lists the apps of an iPhone with a switch each; a change applies at once with Undo, a refused one is put back, and an older list reads Only these apps with Clear');
     } finally { await f.context.close(); }

@@ -938,17 +938,19 @@ export class NotificationService implements Service {
                           app,
                           name,
                       }));
-            this.store.sources = [
-                ...this.store.sources.filter((s) => s.id !== id),
-                {
-                    id,
-                    address: address.toUpperCase(),
-                    name,
-                    apps,
-                    preview,
-                    ...(mutedApps ? { muted: mutedApps } : {}),
-                },
-            ];
+            const record = {
+                id,
+                address: address.toUpperCase(),
+                name,
+                apps,
+                preview,
+                ...(mutedApps ? { muted: mutedApps } : {}),
+            };
+            // A changed iPhone keeps its place: the first one is the inbox shown without a choice,
+            // and Setup lists them in this order. A new one is added at the end.
+            this.store.sources = existing
+                ? this.store.sources.map((s) => (s.id === id ? record : s))
+                : [...this.store.sources, record];
             if (connectionChanged) this.invalidateSources();
             if (!preview) this.notificationFeed.forgetText(id);
             this.saveHistory(true);

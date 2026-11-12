@@ -466,8 +466,10 @@ test('an existing allow-list keeps filtering exactly as before', async (t) => {
         const item = [...service.feed.values()][0];
         assert.equal(shouldRelay({ ...event, app: 'com.other' }, service.store.sources[0], subscriber), false);
         assert.equal(service.preparePush('sub', item.key).payload.includes('Bank'), true);
-        // The list arrives in the status as it was saved, with an empty mute list beside it.
-        assert.deepEqual((await (await api('/status')).json()).sources[0].apps, ['com.allowed']);
+        // The list arrives in the status as it was saved, and no mute list is added to the record.
+        const [record] = (await (await api('/status')).json()).sources;
+        assert.deepEqual(record.apps, ['com.allowed']);
+        assert.equal('muted' in record, false);
     }, [{ ...source, apps: ['com.allowed'] }]);
 });
 
@@ -517,6 +519,22 @@ test('muting and unmuting are saved, and a server started later reads them', asy
         }
         assert.deepEqual(settings().sources[0].muted, []);
     });
+});
+
+test('a changed iPhone keeps its place in the list, so the inbox shown first stays the same', async () => {
+    const other = { ...source, id: 'other', address: 'AA:BB:CC:DD:EE:01', name: 'Other' };
+    await mounted(async ({ api, status }) => {
+        const order = async () => (await status()).sources.map((item) => item.id);
+        assert.equal((await api('/sources', { ...source, muted: [{ app: 'com.noisy', name: 'Noisy' }] })).status, 200);
+        assert.deepEqual(await order(), ['iphone', 'other'], 'muting an app does not move the iPhone to the end');
+        assert.equal((await api('/sources', { ...source, preview: false })).status, 200);
+        assert.deepEqual(await order(), ['iphone', 'other']);
+        assert.deepEqual(settings().sources.map((item) => item.id), ['iphone', 'other']);
+        // A new iPhone is added after the others.
+        const third = { ...source, id: 'third', address: 'AA:BB:CC:DD:EE:02', name: 'Third' };
+        assert.equal((await api('/sources', third)).status, 200);
+        assert.deepEqual(await order(), ['iphone', 'other', 'third']);
+    }, [source, other]);
 });
 
 test('a request in the old shape is still accepted and means what it meant', async () => {
