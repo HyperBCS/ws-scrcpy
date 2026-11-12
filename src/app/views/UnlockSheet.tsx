@@ -161,7 +161,9 @@ export function PhoneUnlockSheet({
         if (!open) return;
         if (!connected) {
             clearDraft();
-            if (controller.current) {
+            // An Android passcode goes over the stream, so the attempt ends with it. An iPhone
+            // run is the server's and goes on without the stream; its answer still counts.
+            if (controller.current && adapter.isLost()) {
                 cancelPending();
                 setPhase('failed');
                 setFeedback(UNLOCK_TEXT.connectionLost);
@@ -257,13 +259,14 @@ export function PhoneUnlockSheet({
     };
 
     // What the line under the form says: the state of the phone first, then the attempt.
-    const [stateMessage, tone]: [string, StatusTone] = !connected
-        ? ['Waiting for the phone to reconnect. No passcode will be queued.', 'neutral']
-        : noticeBusy && phase !== 'waiting'
-          ? [UNLOCK.unlocking, 'neutral']
-          : unlocked && phase !== 'confirmed'
-            ? ['This phone reports that it is unlocked.', 'neutral']
-            : [feedback, phase === 'failed' ? 'error' : phase === 'confirmed' ? 'success' : 'neutral'];
+    const [stateMessage, tone]: [string, StatusTone] =
+        !connected && (!pending || adapter.isLost())
+            ? ['Waiting for the phone to reconnect. No passcode will be queued.', 'neutral']
+            : noticeBusy && phase !== 'waiting'
+              ? [UNLOCK.unlocking, 'neutral']
+              : unlocked && phase !== 'confirmed'
+                ? ['This phone reports that it is unlocked.', 'neutral']
+                : [feedback, phase === 'failed' ? 'error' : phase === 'confirmed' ? 'success' : 'neutral'];
 
     return (
         <Sheet

@@ -431,6 +431,7 @@ async function startIphone(browser, { mobile = true, colorScheme = 'light', sche
     const commands = [];
     const handlers = { onCommand: undefined };
     let trackerReply;
+    let screenSocket;
     let current = { 'device.locked': true, unlockSchedule: schedule };
     const iphone = () => ({
         udid: IPHONE, name: 'iPhone fixture', state: 'Connected', model: 'iPhone 13 Pro Max', version: '27.2',
@@ -440,6 +441,7 @@ async function startIphone(browser, { mobile = true, colorScheme = 'light', sche
     await page.route('**/api/notifications/**', (route) => route.fulfill({ status: 200, json: { sources: [], unread: 0, unreadBySource: {} } }));
     await page.routeWebSocket('**', (socket) => {
         if (new URL(socket.url()).searchParams.get('action') === 'proxy-coredevice') {
+            screenSocket = socket;
             socket.onMessage(() => undefined);
             setTimeout(() => socket.send(JSON.stringify({ type: 'status', state: 'ready' })), 50);
             return;
@@ -476,6 +478,10 @@ async function startIphone(browser, { mobile = true, colorScheme = 'light', sche
         update(patch) {
             current = { ...current, ...patch };
             trackerReply({ id: -1, type: 'device', data: { id: 'ios', name: 'Devices', device: iphone() } });
+        },
+        /** The screen session's state, as the server reports it: 'starting' drops the stream, 'ready' brings it back. */
+        session(state) {
+            screenSocket.send(JSON.stringify({ type: 'status', state }));
         },
     };
 }
@@ -588,11 +594,35 @@ async function iphoneFlow(browser, mobile) {
         await closeButton(page).click();
         await closed(page);
 
+        // The stream drops while the server runs the unlock. The run is the server's and goes
+        // on without the stream, so its answer is still shown, and nothing is sent again.
+        await openFromActions(test);
+        release = holdRun(test);
+        await unlockButton(page).click();
+        await state(page, 'waiting');
+        await until(page, () => test.runs().length === 5);
+        test.session('starting');
+        await page.waitForFunction(() => !document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
+        await page.waitForTimeout(200);
+        assert.equal(await status(page).getAttribute('data-unlock-state'), 'waiting', 'a dropped stream does not end the server run');
+        assert.equal(await status(page).textContent(), 'Unlocking with the passcode stored on the server…');
+        assert.equal(await unlockButton(page).getAttribute('aria-busy'), 'true');
+        await release(run('failed-rejected', 'Scheduled unlock is paused until the passcode is saved again'));
+        await state(page, 'failed');
+        test.session('ready');
+        await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
+        await page.waitForFunction(() =>
+            document.querySelector('[data-unlock-state="failed"]')?.textContent.startsWith('Failed: the stored passcode was rejected.'),
+        );
+        assert.equal(test.runs().length, 5);
+        await closeButton(page).click();
+        await closed(page);
+
         // The phone stopped accepting connections: the sheet says so instead of trying.
         test.update({ unlockSchedule: { ...STORED, needsManualUnlock: true } });
         await open(page);
         await dialog(page).getByText('The iPhone stopped accepting connections. Enter the passcode on the phone.', { exact: true }).waitFor();
-        assert.equal(test.runs().length, 4, 'opening the sheet sends nothing');
+        assert.equal(test.runs().length, 5, 'opening the sheet sends nothing');
         await closeButton(page).click();
         await closed(page);
 
@@ -608,9 +638,9 @@ async function iphoneFlow(browser, mobile) {
         await settings.waitFor();
         assert.notEqual(await settings.locator('.kit-sheet-title').textContent(), TITLE);
         assert.equal(await page.locator('dialog.kit-sheet[open]').count(), 1, 'one sheet at a time');
-        assert.equal(test.runs().length, 4);
+        assert.equal(test.runs().length, 5);
         assert.deepEqual(test.errors, []);
-        console.log('PASS', label, 'one tap with a stored passcode, the sheet only after a failure, confirmation closes it, one request per press');
+        console.log('PASS', label, 'one tap with a stored passcode, the sheet only after a failure, confirmation closes it, a stream drop keeps the server run, one request per press');
     } finally {
         await test.context.close();
     }
