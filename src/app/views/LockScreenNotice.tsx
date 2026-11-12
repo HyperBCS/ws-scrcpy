@@ -9,7 +9,7 @@ import { IconButton } from '../ui/IconButton';
 import { Presence } from '../ui/Presence';
 import { findDeviceByUdid } from '../state/devices';
 import { lockNotice } from '../state/phoneStatus';
-import { oneTapUnlock, unlockingFromNotice } from '../state/unlockDevice';
+import { noticeUnlockFailure, oneTapUnlock, unlockingFromNotice } from '../state/unlockDevice';
 
 export type DeviceLockValue = boolean | 'unknown';
 
@@ -32,11 +32,14 @@ export function LockScreenNotice({ udid, connected, locked, keyguardShowing, onU
     const [dismissed, setDismissed] = useState(false);
     const attempt = useRef<AbortController>();
     useEffect(() => setDismissed(false), [udid, connected, locked, keyguardShowing]);
-    // An attempt belongs to the phone and the page it was started on.
+    // An attempt belongs to the phone and the page it was started on, and so does its failure.
     useEffect(
         () => () => {
             attempt.current?.abort();
             attempt.current = undefined;
+            if (noticeUnlockFailure.peek()?.udid === udid) {
+                noticeUnlockFailure.value = undefined;
+            }
         },
         [udid],
     );
