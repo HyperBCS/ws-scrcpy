@@ -644,7 +644,7 @@ function openFiles(t, folder = '/sdcard') {
     const client = FileListingClient.start(FileListingClient.parseParameters(params), mount);
     const wrapper = mount.children[0];
     // The template marks these hidden; the stand-in elements know nothing of the markup.
-    wrapper.querySelector('.fx-menu').hidden = true;
+    wrapper.querySelector('.files-menu').hidden = true;
     wrapper.querySelector('.fx-address-input').hidden = true;
     const toasts = [];
     client.renderToast = (message, error) => message && toasts.push({ message, error });

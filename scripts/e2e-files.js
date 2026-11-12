@@ -339,12 +339,12 @@ async function command(page, button, item = button) {
     const toolbar = page.locator('.fx-commands').getByRole('button', { name: button, exact: true });
     if (await toolbar.isVisible()) return pressAtRest(page, toolbar);
     await page.getByRole('button', { name: 'Actions', exact: true }).click();
-    await page.locator('.fx-menu').waitFor();
-    await page.locator('.fx-menu').getByRole(item === 'Select items' ? 'menuitemcheckbox' : 'menuitem', { name: item, exact: true }).click();
+    await page.locator('.files-menu').waitFor();
+    await page.locator('.files-menu').getByRole(item === 'Select items' ? 'menuitemcheckbox' : 'menuitem', { name: item, exact: true }).click();
 }
 async function openViewMenu(page) {
     await command(page, 'View', 'View options…');
-    await page.locator('.fx-menu [data-menu="view"]').first().waitFor();
+    await page.locator('.files-menu [data-menu="view"]').first().waitFor();
 }
 async function fillFilter(page, text) {
     const input = page.locator('.fx-filter-input');
@@ -506,13 +506,13 @@ async function main() {
             } else {
                 await page.getByRole('button', { name: 'Quick access', exact: true }).click();
                 await settleMotion(page);
-                const places = await page.locator('.fx-menu [data-menu="place"]').evaluateAll((items) =>
+                const places = await page.locator('.files-menu [data-menu="place"]').evaluateAll((items) =>
                     items.map((item) => item.getBoundingClientRect().height),
                 );
                 assert(places.length >= 8, 'the Places menu lists the common device folders');
                 if (touch) assert(places.every((height) => height >= 44), 'Places rows are touch sized');
                 await page.keyboard.press('Escape');
-                await page.locator('.fx-menu').waitFor({ state: 'hidden' });
+                await page.locator('.files-menu').waitFor({ state: 'hidden' });
             }
             assert(
                 (await page.locator('.fx-crumb[aria-current="page"]').innerText()) === 'tmp',
@@ -553,7 +553,7 @@ async function main() {
             await page.getByRole('menuitemradio', { name: 'Details' }).click();
             await page.getByRole('menuitemcheckbox', { name: 'Hidden items' }).click();
             await page.keyboard.press('Escape');
-            await page.locator('.fx-menu').waitFor({ state: 'hidden' });
+            await page.locator('.files-menu').waitFor({ state: 'hidden' });
             assert.equal(await row(page, '.hidden-cache').count(), 0, 'hidden items toggle back off');
 
             // Sorting: folders always lead, and both the View menu and the (wide-layout) column
@@ -1120,7 +1120,7 @@ async function main() {
             );
             assert(!files.has(ROOT + '/pending-upload.txt'), 'pending upload never wrote bytes');
             assert.equal(
-                await page.locator('.fx-menu, .fx-dialog[open]').count(),
+                await page.locator('.files-menu, .fx-dialog[open]').count(),
                 0,
                 'menus and dialogs leave with the explorer',
             );

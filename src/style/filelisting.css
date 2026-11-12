@@ -437,7 +437,7 @@
 }
 
 /* The row whose ⋮ menu is open. The menu acts on it alone, whatever is selected. */
-.fx-row.fx-menu-for {
+.fx-row.fx-row-menu-open {
     background: var(--surface-sunken);
     box-shadow: inset 3px 0 0 var(--accent);
 }

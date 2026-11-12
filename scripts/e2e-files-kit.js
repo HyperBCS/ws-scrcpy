@@ -216,7 +216,7 @@ async function run(browser, layout, theme) {
         await page.screenshot({ path: path.join(OUT, `kit-${state}-${layout.name}-${theme}.png`) });
         audits++;
     };
-    const menu = page.locator('.kit-menu.fx-menu');
+    const menu = page.locator('.kit-menu.files-menu');
     const dialog = page.locator('dialog.kit-sheet.fx-dialog[open]');
     const dialogGone = () => page.locator('.fx-dialog').waitFor({ state: 'hidden' });
     const folderKept = async (what) => {

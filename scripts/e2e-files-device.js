@@ -19,8 +19,8 @@ async function command(page, button, item = button) {
     const toolbar = page.locator('.fx-commands').getByRole('button', { name: button, exact: true });
     if (await toolbar.isVisible()) return toolbar.click();
     await page.getByRole('button', { name: 'Actions', exact: true }).click();
-    await page.locator('.fx-menu').waitFor();
-    await page.locator('.fx-menu').getByRole('menuitem', { name: item, exact: true }).click();
+    await page.locator('.files-menu').waitFor();
+    await page.locator('.files-menu').getByRole('menuitem', { name: item, exact: true }).click();
 }
 
 (async () => {

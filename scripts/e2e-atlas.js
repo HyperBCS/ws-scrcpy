@@ -191,9 +191,9 @@ async function start(browser, viewport, theme) {
 }
 
 const card = (page, key) => page.locator(`article.device[data-device-key="${key}"]`);
-// Either sheet container: the kit's dialog, and the older one until its last user has moved.
-const sheet = (page) => page.locator('.bottom-sheet-root.open, dialog.kit-sheet[open]');
-const sheetTitled = (page, title) => sheet(page).filter({ has: page.locator('.bottom-sheet-title, .kit-sheet-title', { hasText: title }) });
+// Every sheet is the kit's dialog. One that is closing stays open until its exit has ended.
+const sheet = (page) => page.locator('dialog.kit-sheet[open]');
+const sheetTitled = (page, title) => sheet(page).filter({ has: page.locator('.kit-sheet-title', { hasText: title }) });
 const tab = (page, name) => page.locator('.kit-tabs-list').getByRole('button', { name, exact: true });
 const connected = (page) => page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
 const screenOf = (udid) => `#!action=device&udid=${udid}&view=screen`;
@@ -226,9 +226,9 @@ async function dismiss(test, shown) {
  * holds its action back for a moment after it opens; the picture is taken once it is ready.
  */
 async function shootPrompt(test, container, name) {
-    const prompt = container.locator('.confirm-prompt, .kit-confirm');
+    const prompt = container.locator('.kit-confirm');
     await prompt.waitFor();
-    await prompt.locator('.confirm-prompt-button:not([aria-disabled]), .kit-confirm-actions > .kit-button:not([aria-disabled])').nth(1).waitFor();
+    await prompt.locator('.kit-confirm-actions > .kit-button:not([aria-disabled])').nth(1).waitFor();
     await shoot(test, name);
     await test.page.keyboard.press('Escape');
     await prompt.waitFor({ state: 'detached' });
@@ -271,12 +271,31 @@ function computedStyles(full) {
     return rows;
 }
 
+// The class names of the parts the kit replaced (step 4c). A name counts with its own parts
+// (`stream-header-back`, `bottom-sheet-root`); `kit-confirm` is not `confirm-prompt`.
+const OLDER_CLASSES = [
+    'stream-header', 'tool-tabs', 'tool-navigation', 'app-toast', 'bottom-sheet', 'sheet-row', 'sheet-group',
+    'confirm-prompt', 'fx-button', 'fx-menu', 'ui-button', 'sheet-button', 'settings-sheet', 'unlock-sheet', 'live-text-bar',
+];
+
+/** Every element of the page, shown or not, that carries a class of a part the kit replaced. */
+function olderParts(names) {
+    const found = [];
+    for (const element of document.querySelectorAll('[class]')) {
+        const classes = typeof element.className === 'string' ? element.className : element.getAttribute('class') || '';
+        const old = classes.split(/\s+/).filter((c) => names.some((name) => c === name || c.startsWith(`${name}-`)));
+        if (old.length) found.push(`${element.tagName.toLowerCase()}.${old.join('.')}`);
+    }
+    return [...new Set(found)];
+}
+
 /** Takes the state `name` once the page is still. A state left out by ATLAS_ONLY is skipped. */
 async function shoot(test, name) {
     const file = `${name}--${test.label}`;
     if (ONLY && !ONLY.test(file)) return;
     const { page } = test;
     await settleMotion(page);
+    assert.deepEqual(await page.evaluate(olderParts, OLDER_CLASSES), [], `${file}: no element carries a class of a part the kit replaced`);
     const take = () => page.screenshot({ animations: 'disabled', caret: 'hide' });
     let png = await take();
     // The picture is the page at rest: two in a row are the same.
@@ -370,7 +389,7 @@ async function androidStates(test) {
     await tab(page, 'Files').click();
     await page.locator('.file-explorer[data-listing="ready"] .fx-row[data-name="notes.txt"]').waitFor();
     await shoot(test, 'android-files');
-    const menu = page.locator('.fx-menu:not([hidden])');
+    const menu = page.locator('.files-menu:not([hidden])');
     const openMenu = async () => {
         await press(test, page.getByRole('button', { name: test.mobile ? 'Actions' : 'View', exact: true }));
         await menu.waitFor();

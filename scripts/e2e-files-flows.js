@@ -136,7 +136,7 @@ async function overlays(browser, layout) {
     await page.getByRole('button', { name: 'Up one folder', exact: true }).click();
     await crumb(page, 'tmp');
     await ready(page);
-    const menu = page.locator('.fx-menu');
+    const menu = page.locator('.files-menu');
     const dialog = page.locator('.fx-dialog[open]');
     const forward = page.getByRole('button', { name: 'Forward', exact: true });
     const openMenu = async () => {
@@ -221,7 +221,7 @@ async function overlays(browser, layout) {
 async function reachable(page, locator, what) {
     await locator.scrollIntoViewIfNeeded();
     await settleMotion(page);
-    const menu = await page.locator('.kit-menu.fx-menu').boundingBox();
+    const menu = await page.locator('.kit-menu.files-menu').boundingBox();
     const box = await locator.boundingBox();
     assert(
         box.y >= menu.y - 0.5 && box.y + box.height <= menu.y + menu.height + 0.5,
@@ -236,7 +236,7 @@ async function reachable(page, locator, what) {
 async function menuFits(page, what) {
     await settleMotion(page);
     const viewport = page.viewportSize();
-    const menu = await page.locator('.kit-menu.fx-menu').boundingBox();
+    const menu = await page.locator('.kit-menu.files-menu').boundingBox();
     assert(
         menu.y >= 8 - 0.5 && menu.y + menu.height <= viewport.height - 8 + 0.5,
         `${what} stays inside the window (${Math.round(menu.y)}..${Math.round(menu.y + menu.height)} of ${viewport.height})`,
@@ -253,11 +253,11 @@ async function menus(browser) {
     let session = await start(browser, { width: 390, height: 664, touch: true }, ROOT);
     let page = session.page;
     await page.getByRole('button', { name: 'Actions', exact: true }).click();
-    await page.locator('.fx-menu').waitFor();
+    await page.locator('.files-menu').waitFor();
     await menuFits(page, 'the Actions menu');
     await reachable(page, page.getByRole('menuitem', { name: 'View options…', exact: true }), 'View options');
     await page.getByRole('menuitem', { name: 'View options…', exact: true }).click();
-    await page.locator('.fx-menu [data-menu="view"]').first().waitFor();
+    await page.locator('.files-menu [data-menu="view"]').first().waitFor();
     await menuFits(page, 'the View options inside Actions');
     await reachable(page, page.getByRole('menuitemcheckbox', { name: 'Hidden items' }), 'Hidden items');
     await page.screenshot({ path: path.join(OUT, 'flows-menu-phone-664.png') });
@@ -268,18 +268,18 @@ async function menus(browser) {
     session = await start(browser, { width: 926, height: 428, touch: true }, ROOT);
     page = session.page;
     await pressAtRest(page, row(page, 'notes.txt').locator('.fx-row-menu'));
-    await page.locator('.fx-menu').waitFor();
+    await page.locator('.files-menu').waitFor();
     await menuFits(page, 'the row menu');
     await reachable(page, page.getByRole('menuitem', { name: 'Properties', exact: true }), 'Properties');
     await reachable(page, page.getByRole('menuitem', { name: 'Delete', exact: true }), 'Delete');
     await page.screenshot({ path: path.join(OUT, 'flows-menu-landscape-row.png') });
     await page.keyboard.press('Escape');
-    await page.locator('.fx-menu').waitFor({ state: 'hidden' });
+    await page.locator('.files-menu').waitFor({ state: 'hidden' });
     await pressAtRest(page, page.locator('.fx-commands').getByRole('button', { name: 'View', exact: true }));
-    await page.locator('.fx-menu').waitFor();
+    await page.locator('.files-menu').waitFor();
     await menuFits(page, 'the View menu');
     assert(
-        await page.locator('.fx-menu').evaluate((menu) => menu.scrollHeight > menu.clientHeight),
+        await page.locator('.files-menu').evaluate((menu) => menu.scrollHeight > menu.clientHeight),
         'the View menu scrolls when it is taller than the window',
     );
     await reachable(page, page.getByRole('menuitemcheckbox', { name: 'Hidden items' }), 'Hidden items');
@@ -326,11 +326,11 @@ async function keyboardFocus(browser) {
     await page.keyboard.press('Tab');
     assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), 'Actions for denied');
     await page.keyboard.press('Space');
-    await page.locator('.fx-menu').waitFor();
-    assert.equal(await page.locator('.fx-row.fx-menu-for').getAttribute('data-name'), 'denied', 'Space opens the menu');
+    await page.locator('.files-menu').waitFor();
+    assert.equal(await page.locator('.fx-row.fx-row-menu-open').getAttribute('data-name'), 'denied', 'Space opens the menu');
     assert.equal(await page.locator('.fx-row.selected').count(), 0, 'the menu does not change the selection');
     await page.keyboard.press('Escape');
-    await page.locator('.fx-menu').waitFor({ state: 'hidden' });
+    await page.locator('.files-menu').waitFor({ state: 'hidden' });
     await row(page, 'denied').locator('.fx-row-menu').focus();
     await page.keyboard.press('Tab');
     assert.equal(
@@ -685,8 +685,8 @@ async function phoneSelection(browser, layout, name, scheme) {
 
     // A ⋮ on a row that is not selected acts on that row and leaves the selection alone.
     await pressAtRest(page, row(page, 'archive').locator('.fx-row-menu'));
-    await page.locator('.fx-menu').waitFor();
-    assert.equal(await page.locator('.fx-row.fx-menu-for').getAttribute('data-name'), 'archive');
+    await page.locator('.files-menu').waitFor();
+    assert.equal(await page.locator('.fx-row.fx-row-menu-open').getAttribute('data-name'), 'archive');
     assert.deepEqual(await selected(), ['notes.txt', 'photo.png'], 'the menu keeps the selection');
     await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
     await dialog.getByRole('heading', { name: `Delete “archive” from ${DEVICE}?`, exact: true }).waitFor();

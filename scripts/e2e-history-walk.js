@@ -170,7 +170,7 @@ const hashIs = (page, expected) => page.waitForFunction((value) => location.hash
 const untilAt = (page, index, overlay) =>
     page.waitForFunction(([i, o]) => history.state?.nav?.index === i && (history.state.nav.overlay || 0) === o, [index, overlay]);
 /** Every overlay a page can show: the sheets, Type text, the controls panel, a Files menu or dialog, a notification sheet. */
-const OVERLAYS = '.bottom-sheet-root.open, .live-text-overlay, .floating-toolbar.mobile.open, .fx-menu:not([hidden]), dialog[open]';
+const OVERLAYS = '.bottom-sheet-root.open, .live-text-overlay, .floating-toolbar.mobile.open, .files-menu:not([hidden]), dialog[open]';
 const screenOf = (udid) => `#!action=device&udid=${udid}&view=screen`;
 const filesOf = (udid, folder) => `#!action=device&udid=${udid}&view=files${folder ? `&path=${encodeURIComponent(folder)}` : ''}`;
 
@@ -190,7 +190,7 @@ async function press(test, locator) {
 /** A Files menu: Actions on a touch screen, View on a desktop. */
 async function openFilesMenu(test) {
     await press(test, test.page.getByRole('button', { name: test.mobile ? 'Actions' : 'View', exact: true }));
-    await test.page.locator('.fx-menu:not([hidden])').waitFor();
+    await test.page.locator('.files-menu:not([hidden])').waitFor();
     await settleMotion(test.page);
 }
 
@@ -237,7 +237,7 @@ async function walk(browser, viewport) {
         await openFilesMenu(test);
         await untilAt(page, list.index + 2, 1);
         await page.goBack();
-        await page.locator('.fx-menu:not([hidden])').waitFor({ state: 'hidden' });
+        await page.locator('.files-menu:not([hidden])').waitFor({ state: 'hidden' });
         await untilAt(page, list.index + 1, 0);
         assert.equal((await at(page)).hash, filesOf(PIXEL, ROOT), `${label}: Back with a Files menu open keeps the folder`);
 

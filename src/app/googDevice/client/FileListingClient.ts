@@ -568,7 +568,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     >Connecting to device…</span
                 >
             </div>
-            <div class="kit-menu kit-menu-compact fx-menu" role="menu" tabindex="-1" hidden></div>
+            <div class="kit-menu kit-menu-compact files-menu" role="menu" tabindex="-1" hidden></div>
             <dialog class="kit-sheet fx-dialog" role="dialog" tabindex="-1" aria-labelledby="fx-dialog-title"></dialog>
             <div class="fx-toast-host"></div>
             <input type="file" multiple hidden aria-label="Choose files to upload" />
@@ -585,7 +585,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.counts = this.wrapper.querySelector('.fx-counts') as HTMLElement;
         this.transfers = this.wrapper.querySelector('.fx-transfers') as HTMLElement;
         this.transferSummary = this.wrapper.querySelector('.fx-transfer-total') as HTMLElement;
-        this.menu = this.wrapper.querySelector('.fx-menu') as HTMLElement;
+        this.menu = this.wrapper.querySelector('.files-menu') as HTMLElement;
         this.toastHost = this.wrapper.querySelector('.fx-toast-host') as HTMLElement;
         this.dialog = this.wrapper.querySelector('.fx-dialog') as HTMLDialogElement;
         this.dialog.addEventListener('cancel', this.onDialogCancel);
@@ -790,7 +790,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             const name = esc(entry.name);
             const tabIndex = entry.name === this.rovingName ? 0 : -1;
             return `<tr class="fx-row${selected ? ' selected' : ''}${cut.includes(entry.name) ? ' fx-cut' : ''}${
-                this.menuTargets?.includes(entry.name) ? ' fx-menu-for' : ''
+                this.menuTargets?.includes(entry.name) ? ' fx-row-menu-open' : ''
             }" data-name="${name}" data-index="${index}" data-kind="${kindOf(entry)}" aria-selected="${selected}">
                 <td class="fx-cell-select"><input type="checkbox" class="fx-check" tabindex="-1" aria-label="Select ${name}"${
                     selected ? ' checked' : ''
@@ -1023,7 +1023,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (!target || !this.wrapper.contains(target)) {
             return;
         }
-        const menuItem = target.closest<HTMLElement>('.fx-menu [data-menu]');
+        const menuItem = target.closest<HTMLElement>('.files-menu [data-menu]');
         if (menuItem) {
             event.preventDefault();
             this.runMenuItem(menuItem);
@@ -1060,7 +1060,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         const row = target.closest<HTMLElement>('tr[data-name]');
         if (!row) {
-            if (!target.closest('.fx-menu')) {
+            if (!target.closest('.files-menu')) {
                 this.closeMenu();
             }
             return;
@@ -1508,12 +1508,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.openMenu(() => this.itemMenuItems(this.targetEntries(targets)), button, MENU_LABELS.item);
         // Set after `openMenu`, which forgets the targets of the menu it replaces.
         this.menuTargets = targets;
-        button.closest('tr')?.classList.add('fx-menu-for');
+        button.closest('tr')?.classList.add('fx-row-menu-open');
     }
 
     private forgetMenuTargets(): void {
         this.menuTargets = undefined;
-        this.tableBody.querySelectorAll('.fx-menu-for').forEach((row) => row.classList.remove('fx-menu-for'));
+        this.tableBody.querySelectorAll('.fx-row-menu-open').forEach((row) => row.classList.remove('fx-row-menu-open'));
     }
 
     /**
