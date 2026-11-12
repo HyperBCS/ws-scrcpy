@@ -14,15 +14,16 @@ import { closeAllSheets, openSheet } from '../state/stream';
 import { AppBar } from '../ui/AppBar';
 import { Banner } from '../ui/Banner';
 import { Button } from '../ui/Button';
-import { IconButton } from '../ui/IconButton';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { StateCardBody } from './screen/StateCard';
 import { NotificationsLink } from '../ui/NotificationsLink';
+import { ShellKeys, ShellTerminal } from './shell/ShellKeys';
 import '../../style/views/StreamView.css';
 import '../../style/views/ToolView.css';
 
-export interface MountedTool {
+/** A mounted tool. Shell also takes the keys of its row (`ShellTerminal`). */
+export interface MountedTool extends Partial<ShellTerminal> {
     stop(): void;
     hasConnection(): boolean;
     navigate?(path: string): void;
@@ -31,9 +32,6 @@ export interface MountedTool {
      * stays mounted in between: a tab change never stops it. A new tool counts as shown.
      */
     setActive?(active: boolean): void;
-    focus?(): void;
-    sendInput?(text: string): void;
-    setControl?(active: boolean): void;
     onControlChange?(listener: (active: boolean) => void): void;
     /** Opens a new connection in place. A tool without it is mounted again instead. */
     reconnect?(): void;
@@ -314,8 +312,6 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
               : { text: 'Connection lost.', button: 'Reconnect' };
     }
 
-    /** A key of the row under the terminal, sent as the terminal would send it. */
-    const sendKey = (input: string) => clientRef.current?.sendInput?.(input);
     const connection = toolConnection({
         failed: !!error || codeMissing,
         connected,
@@ -391,50 +387,14 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                     </div>
                 )}
                 <div key="tool-mount" ref={mountRef} class="tool-mount" hidden={codeMissing} />
-                {action === ACTION.SHELL && (
-                    <div class="shell-shortcuts" role="group" aria-label="Terminal keys">
-                        <IconButton
-                            icon="keyboard"
-                            label="Show keyboard"
-                            size="compact"
-                            disabled={!connected}
-                            onClick={() => clientRef.current?.focus?.()}
-                        />
-                        <Button
-                            size="compact"
-                            disabled={!connected}
-                            pressed={control}
-                            attributes={{ title: 'Ctrl for the next key' }}
-                            onClick={() => {
-                                const next = !control;
-                                setControl(next);
-                                clientRef.current?.setControl?.(next);
-                                clientRef.current?.focus?.();
-                            }}
-                        >
-                            Ctrl
-                        </Button>
-                        <Button size="compact" disabled={!connected} onClick={() => sendKey('\x1b')}>
-                            Esc
-                        </Button>
-                        <Button size="compact" disabled={!connected} onClick={() => sendKey('\t')}>
-                            Tab
-                        </Button>
-                        <IconButton
-                            icon="arrowUp"
-                            label="Previous command"
-                            size="compact"
-                            disabled={!connected}
-                            onClick={() => sendKey('\x1b[A')}
-                        />
-                        <IconButton
-                            icon="arrowDown"
-                            label="Next command"
-                            size="compact"
-                            disabled={!connected}
-                            onClick={() => sendKey('\x1b[B')}
-                        />
-                    </div>
+                {/* The keys a phone keyboard lacks. Only a touch screen has them. */}
+                {action === ACTION.SHELL && !codeMissing && (
+                    <ShellKeys
+                        connected={connected}
+                        control={control}
+                        onControl={setControl}
+                        terminal={() => clientRef.current}
+                    />
                 )}
             </section>
             {/* One switcher for the page: a hidden tool has none, and no shortcut of its own. */}

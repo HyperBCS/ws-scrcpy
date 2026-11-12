@@ -462,7 +462,8 @@ async function androidTabs(browser, viewport, colorScheme) {
         assert.deepEqual(test.closed, [], 'a tab change closes no tool channel');
         assert.equal(await page.evaluate(() => document.body.className), 'shell');
         await checkLinks(page, `${label} Shell`);
-        await page.getByRole('button', { name: 'Show keyboard', exact: true }).click();
+        // A tap on the terminal gives it the keyboard (p6-shell-keys removed Show keyboard).
+        await page.locator('.terminal-container .xterm-screen').click();
         await page.keyboard.type('kept');
         await until(async () => (await terminalText(page)).includes('$ kept'), 'typed input is echoed');
         await shot('shell');
@@ -520,7 +521,7 @@ async function androidTabs(browser, viewport, colorScheme) {
         await quiet(page, 300);
         assert.equal(await terminalRows(page), rows, 'the terminal has the rows it had');
         assert.deepEqual(test.resizes, [], 'a tab change does not resize the terminal on the phone');
-        await page.getByRole('button', { name: 'Show keyboard', exact: true }).click();
+        await page.locator('.terminal-container .xterm-screen').click();
         await page.keyboard.type('!');
         await until(() => test.input.join('') === 'kept!', 'input reaches the same session');
         assert.equal(await entries(page), afterFolder, 'six tab changes added no entry');

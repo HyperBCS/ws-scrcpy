@@ -88,12 +88,19 @@
     box-sizing: border-box;
 }
 
-/* The keys a phone keyboard lacks, under the terminal: the kit's buttons in a row. */
-.shell-shortcuts {
+/* The keys a phone keyboard lacks, under the terminal on a touch screen (`views/shell/ShellKeys.tsx`):
+   the kit's buttons in one row that scrolls sideways. No key is narrower than it is high. */
+.shell-keys {
     display: flex;
     flex: none;
-    flex-wrap: wrap;
     gap: var(--space-4);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+}
+.shell-keys > * {
+    flex: none;
+    min-width: var(--control-height);
 }
 
 @media (min-width: 1000px) {
@@ -118,7 +125,7 @@
     .tool-error {
         padding: var(--space-8);
     }
-    .shell-shortcuts {
+    .shell-keys {
         padding: var(--space-8);
     }
 }
