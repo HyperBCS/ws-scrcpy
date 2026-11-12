@@ -15,6 +15,8 @@
 //   the centred dialog;
 //   below 1024px the sheets are as before: Actions the centred dialog, Type text under the
 //   picture;
+//   a state card lies on the picture, centred on it and no wider than it, so the rail never
+//   covers it, and its layer dims the stage evenly up to the edge or the docked panel;
 //   the stage and the mount node are never built again, and each open of the screen is one
 //   stream socket however often a panel opens and closes.
 // Every socket is a fixture; nothing reaches a phone.
@@ -109,7 +111,12 @@ async function start(browser, platform, viewport, colorScheme = 'light', { list 
         }
         if (action === 'proxy-coredevice') {
             test.streams++;
+            test.say = (message) => socket.send(JSON.stringify(message));
             let live = true;
+            test.close = (code, reason) => {
+                live = false;
+                socket.close({ code, reason });
+            };
             socket.onClose(() => { live = false; });
             socket.onMessage((data) => typeof data === 'string' && test.messages.push(JSON.parse(data)));
             setTimeout(() => socket.send(JSON.stringify({ type: 'status', state: 'ready' })), 50);
@@ -509,6 +516,68 @@ async function narrow(browser, platform) {
     }
 }
 
+/**
+ * A state card with a long message on a narrow picture (the iPhone at 1366x650): the card lies on
+ * the picture, centred on it and no wider than it, so the rail beside the picture never covers it;
+ * the layer under the card dims the stage evenly up to its right edge, or up to a docked panel.
+ */
+async function stateCard(browser) {
+    const test = await start(browser, 'ios', SHORT);
+    const { page, label } = test;
+    try {
+        // 4011, as the server ends a start that the budget refuses: no try without Retry.
+        test.say({ type: 'status', state: 'error', message: "This phone's screen session was started 3 times in the last 5 min. The next start is allowed in 2 min." });
+        test.close(4011, 'Stream unavailable');
+        await page.locator('.stream-state:not([data-exiting]) .stream-state-card').filter({ hasText: 'Stream unavailable' }).waitFor();
+        await settle(page);
+        const facts = () => page.evaluate(() => {
+            const rect = (node) => node && node.getBoundingClientRect().toJSON();
+            const card = document.querySelector('.stream-state:not([data-exiting]) .stream-state-card');
+            const box = rect(card);
+            const covered = [];
+            // Clear of the rounded corners, which take no press.
+            for (let y = box.top + 16; y < box.bottom - 15; y += 6) {
+                for (let x = box.left + 2; x < box.right - 1; x += 6) {
+                    const hit = document.elementFromPoint(x, y);
+                    if (!card.contains(hit)) covered.push(`${Math.round(x)},${Math.round(y)} ${hit?.className}`);
+                }
+            }
+            return {
+                card: box,
+                covered: covered.slice(0, 3),
+                layer: rect(document.querySelector('.stream-state:not([data-exiting])')),
+                picture: rect(document.querySelector('.stream-mount .touch-layer')),
+                rail: rect(document.querySelector('.stream-controls-slot .floating-toolbar-panel')),
+                stage: rect(document.querySelector('.stream-stage')),
+                panel: rect(document.querySelector('dialog.kit-sheet[open]:not([data-exiting]) > .kit-sheet-panel')),
+            };
+        });
+        let g = await facts();
+        assert.ok(g.card.width > 200 && g.card.width <= g.picture.width + 0.5, `${label}: the card is no wider than the picture (${g.card.width}, ${g.picture.width})`);
+        near(g.card.left + g.card.width / 2, g.picture.left + g.picture.width / 2, `${label}: the card is centred on the picture`);
+        assert.ok(g.card.right <= g.rail.left + 0.5, `${label}: the card ends before the rail (${g.card.right} <= ${g.rail.left})`);
+        assert.deepEqual(g.covered, [], `${label}: nothing covers the card`);
+        near(g.layer.right, g.stage.right, `${label}: the layer dims the stage up to its right edge`);
+        near(g.layer.left, g.stage.left, `${label}: and from its left edge`);
+        await shot(test, 'failed');
+
+        // With Settings docked beside the stage, the layer ends at the panel.
+        const dialog = await openFromRail(test, 'Settings', 'Settings');
+        g = await facts();
+        assert.ok(g.panel, `${label}: Settings is open`);
+        near(g.layer.right, g.panel.left, `${label}: the layer ends at the docked panel`);
+        near(g.card.left + g.card.width / 2, g.picture.left + g.picture.width / 2, `${label}: the card stays centred on the picture`);
+        assert.ok(g.card.right <= g.rail.left + 0.5, `${label}: the card still ends before the rail`);
+        await page.keyboard.press('Escape');
+        await dialog.waitFor({ state: 'hidden' });
+        assert.equal(test.streams, 1, `${label}: no stream opened by the card or the panel`);
+        assert.deepEqual(test.errors, []);
+        console.log(`PASS ${label}: a state card lies on the picture, centred and not covered by the rail, on an evenly dimmed stage`);
+    } finally {
+        await test.context.close();
+    }
+}
+
 /** From the list, Settings is the centred dialog at every width. */
 async function settingsFromTheList(browser, platform) {
     const test = await start(browser, platform, LARGE, 'light', { list: true });
@@ -542,6 +611,7 @@ async function main() {
             runs.push(() => narrow(browser, platform));
             runs.push(() => settingsFromTheList(browser, platform));
         }
+        runs.push(() => stateCard(browser));
         // Four at a time, each in a context of its own: the suite has four minutes.
         for (let index = 0; index < runs.length; index += 4) await Promise.all(runs.slice(index, index + 4).map((run) => run()));
     } finally {

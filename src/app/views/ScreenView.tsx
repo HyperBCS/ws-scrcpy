@@ -67,12 +67,13 @@ interface ScreenViewProps<P> {
 }
 
 /**
- * Writes where the picture is on the stage as `--stream-picture-top`, `-right` and `-height`, so
- * that the rail of controls stands against its edge (`StreamView.css`). The picture is the touch
- * layer the player draws in the mount node; until the player has given it a size (a canvas
- * without a width is 300 by 150) it is the mount node itself. This only reads the mount node:
- * the stream client owns what is inside it. The CSS fits the picture, so it moves when the
- * stage or the mount node changes size, or when the player sizes the layer.
+ * Writes where the picture is on the stage as `--stream-picture-top`, `-right`, `-width` and
+ * `-height`, so that the rail of controls stands against its edge and the state card is no wider
+ * than the picture (`StreamView.css`). The picture is the touch layer the player draws in the
+ * mount node; until the player has given it a size (a canvas without a width is 300 by 150) it
+ * is the mount node itself. This only reads the mount node: the stream client owns what is
+ * inside it. The CSS fits the picture, so it moves when the stage or the mount node changes
+ * size, or when the player sizes the layer.
  */
 function usePictureBox(stageRef: RefObject<HTMLDivElement>, mountRef: RefObject<HTMLDivElement>) {
     useLayoutEffect(() => {
@@ -88,6 +89,7 @@ function usePictureBox(stageRef: RefObject<HTMLDivElement>, mountRef: RefObject<
             const picture = sized && sized.width > 0 && sized.height > 0 ? sized : mount.getBoundingClientRect();
             stage.style.setProperty('--stream-picture-top', `${picture.top - frame.top}px`);
             stage.style.setProperty('--stream-picture-right', `${picture.right - frame.left}px`);
+            stage.style.setProperty('--stream-picture-width', `${picture.width}px`);
             stage.style.setProperty('--stream-picture-height', `${picture.height}px`);
         };
         place();

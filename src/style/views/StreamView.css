@@ -165,15 +165,15 @@
     border-radius: 0;
 }
 
-/* The card for a state without a picture (`screen/StateCard.tsx`) lies on this layer, centred on
+/* The card for a state without a picture (`screen/StateCard.tsx`) lies on this layer, which dims
+   the stage up to a docked sheet and takes no press; only the card does. The card is centred on
    the picture's part of the stage, the mount node: under a mouse the rail of controls is beside
-   it, and a docked sheet beside both. The layer dims the picture and takes no press; only the
-   card does. It is above the picture (1), its touch layer (2) and the controls' shield (4), and
-   under the controls button and the sheets. */
+   the picture (below). The layer is above the picture (1), its touch layer (2) and the controls'
+   shield (4), and under the rail, the controls button and the sheets. */
 .stream-state {
     position: absolute;
     top: 0;
-    right: calc(var(--stream-rail-width) + var(--stream-dock-width));
+    right: var(--stream-dock-width);
     bottom: 0;
     left: 0;
     z-index: 5;
@@ -184,15 +184,6 @@
     padding: var(--space-16);
     background-color: var(--scrim);
     pointer-events: none;
-}
-@media (hover: none) and (pointer: coarse) {
-    .stream-state {
-        right: 0;
-    }
-
-    .stream-stage[data-sheet-docked] > .stream-state {
-        right: var(--stream-dock-width);
-    }
 }
 
 /* The card: an icon or a spinner, the word, what it means, and at most one main action. */
@@ -214,6 +205,20 @@
     color: var(--text);
     text-align: center;
     pointer-events: auto;
+}
+
+/* Under a mouse the rail stands against the picture and above this layer: the layer keeps the
+   rail's width free at its right, so the card is centred on the picture, and the card is no wider
+   than the picture, so the rail never covers it (`ScreenView.tsx` writes the picture's width). */
+@media not all and (hover: none) and (pointer: coarse) {
+    .stream-state {
+        padding-right: calc(var(--space-16) + var(--stream-rail-width));
+    }
+
+    .stream-state-card {
+        min-width: min(200px, var(--stream-picture-width, 200px));
+        max-width: min(400px, 100%, var(--stream-picture-width, 100%));
+    }
 }
 
 .stream-state-card > .kit-icon {
