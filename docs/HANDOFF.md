@@ -3493,21 +3493,26 @@ dot with 'In use' while `getDeviceStatusInfo().sessionRunning`, the unread count
 and one status chip; no serial and no tracker name. The card's rules are a pure function,
 `state/phoneCard.ts`. At most one line under the head, in this order: unauthorized hint, offline
 hint (both from `copy.ts` UNAVAILABLE_HINT, the same words as the screen's card), the first
-problem (Developer Mode first when it blocks the screen), no player, then on an otherwise ready
-Android phone the stream service line when the service is not running ('The stream service is
-stopped. Opening the screen starts it.' with Start). Open screen is always the first button,
+problem (Developer Mode first when it blocks the screen), then no player. Step 5b first also
+gave a ready Android phone with its stream service stopped or unknown a line ('The stream
+service is stopped. Opening the screen starts it.') with Start. That line and Start are now gone
+from the card: since phase 2 the service stops 30 s after the last viewer leaves, so the line
+was on every idle Android card, and U-home-5 and the approved mockup keep one status per card
+with no service line. Open screen starts the service; Start and Stop stay in Settings under
+About and troubleshooting, and Start there still shows Starting… on the card. Open screen is
+always the first button,
 disabled with the line saying why. Wake sits beside Asleep (`ui/WakeButton.tsx`, the same
 `wakeDevice` request; a late reply does not speak for a later sleep). The Details disclosure is
 gone, Settings is on every card in every state, Files and Shell are icon links from
 `capabilities()` and the new `cardCapabilities()` block. The card keeps Enable and restart,
-Restart services, Open settings and Start, each on its line. The switcher puts the phone on
+Restart services and Open settings, each on its line. The switcher puts the phone on
 screen first with 'Viewing', then the phones that can be opened, then the rest greyed, not
 focusable; 'Switch phone', 'Find a phone…'; the search matches the name and the platform line.
 
 **Where everything went.** Nothing the base offered was dropped.
 - Card Details, Android: serial and connection to About (Connection now gives the live word in
   place of the fixed 'Automatic · via server'); Open with a player to About; stream service Stop
-  and Start to About, and Start also on the card's line.
+  and Start to About.
 - Card Details, iPhone: model, serial, Session, Paired, Developer Mode to About; Refresh info,
   Stop stream service, Restart services, Remount developer image to About's service rows.
 - Android Actions: Sound to Settings; Clipboard stays; Phone panels into Screen; Open Stream
@@ -3527,7 +3532,7 @@ focusable; 'Switch phone', 'Find a phone…'; the search matches the name and th
   place of Session running and Stream service: Running; Wake beside Asleep in place of the
   banner; Open screen always, disabled with a reason, in place of Device unavailable, Waiting
   for trust and Browser cannot play; no Details; Settings on every card; Files and Shell as
-  icons; an idle Android card says the stream service is stopped, with Start.
+  icons; an idle Android card has no line and no Start.
 - Switcher: Switch phone, Find a phone…, the phone on screen first as Viewing, unavailable
   phones last and greyed, no serial or tracker.
 - Screen: the coloured connection line; no Running line on Android (the header is 10 px
@@ -3610,7 +3615,7 @@ int5b/screens, and the head atlas is in int5b/atlas-head.
   `src/app/index.tsx:109` and `:126`, `applDevice/client/coreDeviceTool.ts` and the
   `createEntryForDeviceList` methods. `DEVICE_TABS` in `state/routes.ts:37` is read only by
   `scripts/test-routes.js`.
-- The clearStarting rule is in both `views/DeviceCard.tsx:138` and `ui/StreamServiceStatus.tsx:40`.
+- The clearStarting rule is in both `views/DeviceCard.tsx:127` and `ui/StreamServiceStatus.tsx:40`.
 - Server strings: 'Preparing the device' (`appl-device/services/CoreDeviceRunner.ts:489`, `:523`)
   still says device, and the server does not answer the Android stream service start and stop
   (`goog-device/mw/DeviceTracker.ts`), so About sends them without waiting.
@@ -3629,8 +3634,8 @@ refit and Type text focus need a person.
    header and the card say Reconnecting…, then Connected, with one new stream (5a).
 2. Phones list, no screen open: one chip and at most one line per card, the platform line with
    battery and OS from the real phones, no serial (fixture for the layout). An Android phone
-   whose stream service runs shows In use; an idle one says the service is stopped, with Start.
-   Start: Starting…, then In use, and no stream opens.
+   whose stream service runs shows In use; an idle one has no line and no Start. Start in its
+   Settings, About: the card says Starting…, then In use, and no stream opens.
 3. Turn the Android screen off on the phone: the card says Asleep with Wake beside it; one press
    sends one wake, opens no stream, and the screen lights.
 4. Settings from each card (fixture for the sections): Android has five sections and About shows
