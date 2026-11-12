@@ -2712,3 +2712,188 @@ declaration block with other tool-page buttons. In 4d the `:where()` list of the
 `kit/Disclosure.css`, the summary hover rule in `app.css`, `DESKTOP_DIALOG` in `sheetDrag.ts`
 and its copy in `Presence.tsx`, and `.bottom-sheet-drag-region` in the no-select rule of
 `app.css` go with the older containers.
+
+### Redesign step 4c: every screen on the kit (2026-11-12, tested without a phone)
+
+Packages p4-adopt-screen, p4-adopt-sheets, p4-adopt-list, p4-adopt-notifications and
+p4-adopt-files, merged into `redesign` from their `review/` branches in that order, then joined.
+This is the step where the app changes its look. It is not deployed on its own: the live
+container still runs 2f17e28, and `redesign` also carries steps 6s, 4a and 4b. The deploy and the
+check on the phones come after step 4d.
+
+**Which screen uses which kit part.**
+- A phone's page (`StreamView`, `CoreDeviceStreamView`, `DevicePage`, `ToolView`,
+  `ToolUnavailable`, the not-connected page): `AppBar kit` (the name is the page's one h1, the
+  status is `.kit-bar-status` with no dot), `TabStrip kit` (`nav.kit-tabs`), Switch as a compact
+  `Button`, stream notices and the tool banner as kit banners, the failure, stopped and sleep
+  cards with kit buttons (the sleep card has a Wake button), the Shell keys as compact `Button`
+  and `IconButton`. The lock notice is the kit's info banner across the page.
+- The controls (`GoogToolBox`, `ApplToolBox`, `soundButton`): each is
+  `button.kit-icon-button.kit-icon-button-bare.control-button` with an icon from `iconSvg()`.
+  New kit part `kit-icon-button-captioned` (`style/kit/IconButtonCaption.css`) keeps the caption
+  and the whole tile as the press target, and draws the focus ring inside the tile. The controls
+  button is the outlined `IconButton` look with the kit grid and close icons. `SvgImage.ts` and
+  the Material files are deleted.
+- Sheets: Stream settings, Scheduled unlock, both Unlock sheets, both Actions sheets, Type text,
+  Switch phone, the Notifications sheets and the Files dialog are all `dialog.kit-sheet`.
+  Nothing under `src/app` imports `ui/BottomSheet.tsx` any more. The Files dialog is the kit
+  sheet written as markup with the sheet's helpers (`FileListingClient.ts`), because it keeps
+  its own history logic from step 3b. `NotificationActionSheet.tsx` is a wrapper over `Sheet`
+  that only adds a focus fallback.
+- Sheet rows: `SheetGroup`, `SheetRow`, `SheetToggleRow`, `SheetMessageRow`, `SheetStatus`,
+  `VolumeSlider` and `SoundRows` with `kit`; select rows are `SheetRow layout="pair"` with a
+  `SelectField`. Actions that end a sheet are in the `Sheet` footer slot; `SheetFooter` is used
+  only by the kit page.
+- The Phones list: `AppBar kit root` (h1 "Phones", the summary as its status line, the bell and
+  Reload as icon buttons), cards with kit buttons, `Chip` for the status, `Badge` for unread
+  counts, banners for card conditions (a local `CardBanner` in `DeviceCard.tsx:150`) and
+  `InlineStatus` for the outcome of a card command, under the control that sent it.
+- Notifications: `AppBar kit`, `SegmentedControl` for the page tabs and the inbox filter,
+  `TextField`, `SelectField`, `Switch`, `Checkbox`, `Disclosure`, `Banner`, `InlineStatus`, kit
+  `Toast` and `ConfirmPrompt`, and `Chip` for the state of a link (integration change).
+- Files: `buttonClass()` and `iconButtonClass()` in its HTML strings (compact: 32px under a
+  mouse, 44px under a finger), `iconSvg()` for every icon including the file types, and one
+  persistent `.kit-menu.kit-menu-compact.files-menu` opened through `bindMenu`.
+
+**New kit parts.** `Chip` (`ui/Chip.tsx`, `kit/Chip.css`; neutral, success, info, warning, and
+a solid error), `Badge` (`ui/Badge.tsx`, `kit/Badge.css`), `Checkbox` (`ui/Checkbox.tsx`,
+`kit/Checkbox.css`; sheets and Notifications each added one, joined at integration with the
+label as children and an optional `describedBy`), `kit-icon-button-captioned`, and
+`kit-menu-compact` (`kit/Menu.css`; `<Menu compact>` since integration). All have specimens on
+`#!action=kit`; the kit-sheet suite opens the compact menu and measures it (32px items under a
+mouse, 44px on touch).
+
+**Integration changes.**
+- `scripts/test-stream-config.js` and `scripts/test-notifications-style.js` are in `npm test`;
+  suite `files-kit` is in the default list of `scripts/test-browser.js`.
+- The Files menu hook class is `files-menu` (was `fx-menu`), and the row whose menu is open is
+  `fx-row-menu-open` (was `fx-menu-for`).
+- The atlas checks, in every state, that no element carries a class of a part the kit replaced
+  (`OLDER_CLASSES` in `scripts/e2e-atlas.js`: `stream-header`, `tool-tabs`, `tool-navigation`,
+  `app-toast`, `bottom-sheet`, `sheet-row`, `sheet-group`, `confirm-prompt`, `fx-button`,
+  `fx-menu`, `ui-button`, `sheet-button`, `settings-sheet`, `unlock-sheet`, `live-text-bar`,
+  each with its own parts). Its sheet helpers name only the kit sheet.
+- `.stream-header button` (`ui/AppBar.css`) and `.tool-tabs button` (`views/ToolView.css`) are
+  deleted: no page draws the older header or tabs.
+- overlay-back now presses a key on the picture while each sheet of the screen is open (Actions,
+  Settings, Switch, Type text, Unlock, on both kinds of phone) and checks that nothing reaches
+  the phone, then checks that the same key does reach it with nothing open.
+  `localKeyboardTarget.ts` names `dialog.kit-sheet[open]`, which also covers the Files dialog.
+- The lock notice is the kit's info banner with a compact Unlock button (it was a band with a
+  primary button), so the screen's notices share one form.
+- In Stream settings, Listen sits beside its text as in the Actions sheet; the row goes to two
+  lines on a phone only when Retry audio shows too.
+
+**Stream path.** The stream effects, their dependencies, the keyed stage and the mount order in
+`StreamView.tsx` and `CoreDeviceStreamView.tsx` are as at 4031c80; only the chrome around the
+stage changed. `DevicePage.tsx` changed only `AppBar kit`, `TabStrip kit` and one button. No
+route, router or service worker file changed. Type text still begins and ends its typing session
+on `open`, not on mount, although the kit sheet keeps it mounted while closed. One socket per
+open is asserted in navigation, device-page, history-walk and overlay-back.
+
+**UI text that changed** (old, then new):
+- Sleep card: one large button "Screen is off / Tap to wake the device", then "Screen is off"
+  with a "Wake" button.
+- iPhone card screen link: "Open screen →", then "Open screen".
+- Switch phone rows: "Screen →" and "Asleep →", then "Screen" or an "Asleep" chip with an arrow
+  icon; the current phone shows a "Viewing" chip.
+- Type text: the "Done" button is gone; the header's close button is "Close Type text". The key
+  labels "←", "→", "⌫ Delete" and "Enter ↵" are icons with the same names (Move cursor left, Move
+  cursor right, Delete previous character, Send Enter).
+- Shell keys: "↑" and "↓" are arrow icons with the same names (Previous command, Next command).
+- Card Settings button tooltip: "Stream settings" or "Scheduled unlock", then
+  "Settings for <name>" (its name was already this).
+- The bell no longer shows the word "Notifications" at 480px and wider; its name is unchanged.
+- Notification sheets: the close button "Close actions", then "Close <sheet title>".
+- Notifications, "Filter by app · N selected" is the disclosure "Filter by app" with
+  "N selected" or "All apps" as its note. The reason the "Open iPhone screen" button is off is a
+  line under the button, not inside it.
+- Files: the submenu's "‹ Back" is "Back" with an icon; menus are named "Item actions" and
+  "Folder actions"; dialog close buttons are "Close <title>" or "Close this question".
+- Stream settings: the quality presets no longer show their figures on each button (they show
+  in the line under Quality); "No encoders were listed" replaces the encoder row's description.
+- The failed-panel notice keeps its text "This panel failed"; its title is an h2.
+No other label changed. "Device" is still in "Unlock device", "Device locked", "Device media",
+"Device controls", "Switch device" and "Find a device…"; phase 5 owns the wording.
+
+**What `ALLOWED` still holds** (`scripts/test-style-rules.js`): `app.css` colours 3, font sizes
+3, radii 1, `!important` 5; `morebox.css` z-index 1, `!important` 1; the older shared files
+`ui/AppBar.css` (font sizes 2, radii 1, `!important` 1), `ui/BottomSheet.css`,
+`ui/ConfirmAction.css`, `ui/SheetControls.css` and `ui/Toast.css`, which 4d deletes; and four
+view files with only a stacking order or a black: `views/FloatingToolbar.css` z-index 2,
+`views/SleepOverlay.css` z-index 1, `views/StreamView.css` colours 2 and z-index 4,
+`views/ToolView.css` colours 1. Every other stylesheet holds tokens only.
+
+**Left for step 4d.**
+- Delete the older parts and their non-kit branches: `ui/BottomSheet.tsx` and
+  `ui/BottomSheet.css`; the branch without `kit` in `ui/AppBar.tsx:81-131` and
+  `ui/AppBar.css`; `ui/TabStrip.tsx:55-56` and `views/ToolView.css:15-32` (`.tool-navigation`,
+  `.tool-tabs`); `ui/Toast.tsx:75` and `ui/Toast.css`; `ui/ConfirmAction.tsx:240-245` and
+  `ui/ConfirmAction.css`; the non-kit branches of `ui/SheetControls.tsx` (after each
+  `if (kit)`, and `SoundRows:317-334`) and `ui/SheetControls.css`; `SheetFooter`
+  (`ui/SheetControls.tsx:217`, kit page only); `.bottom-sheet-root.open` in
+  `googDevice/localKeyboardTarget.ts:8`; `DESKTOP_DIALOG` in `ui/sheetDrag.ts:3` and its copy in
+  `ui/Presence.tsx:8`.
+- `src/style/app.css`: `.stream-header` and `.bottom-sheet-drag-region` in the no-select rule
+  (:46-47; the kit bar gets the same rule for the phone page only, `views/StreamView.css`);
+  `body.list` (:104), taken back by the negative margins of `.devices-page`
+  (`views/DeviceList.css:6`); `.notification-unread-count` (:160), still drawn by `UnreadBadge`
+  (`views/NotificationHistory.tsx:33`) in the Notifications bar with a raw colour and 11px; the
+  `:where()` lists at :219-228 (`.notifications-page`, `.bottom-sheet`, `.stream-header`,
+  `.notification-link-button`; decide the kit toast's press in `kit/Toast.css` first, because
+  `.notifications-page` still gives it one); :249 (`.settings-advanced`, `.settings-playback`,
+  `.sheet-details`, `.notification-details`); `.device-list-header` and `.tool-navigation` in the
+  surface-enter rule (:264-266); `.settings-sheet-apply-bar` (:298, :370);
+  `.toolbar-close-glyph` and `.toolbar-controls-glyph` (:302-317);
+  `:where(.tool-view, .live-text-bar, .sleep-overlay-card) button` (:337-344); the field rules
+  for `.sheet-input`, `.settings-sheet-row`, `.notification-search-row input` and
+  `.live-text-input` (:348-364).
+- `kit/Disclosure.css:10-13, 30-33, 41-44` list `.settings-advanced`, `.settings-playback`,
+  `.sheet-details` and `.notification-details`. `ui/StreamServiceStatus.css:35` exists only for
+  the older header. `views/DeviceList.css:197` `.device-debug-facts dd` also styles the iPhone
+  Actions sheet.
+- The webpack rule for `.svg` (`webpack/ws-scrcpy.common.ts:52`), `typings/custom_svg.d.ts` and
+  the `svg-inline-loader` dependency (`package.json:83`) have no user; removing the dependency
+  needs the owner's leave.
+- `control-button` stays as a hook class without rules (`toolbox/ToolBoxButton.ts:13`): the
+  views, FloatingToolbar's disable-by-title and 17 scripts find the controls by it. p5-controls
+  removes it with the title matching.
+- `views/FloatingToolbar.tsx:104-110, 195-197, 405` (`openedOverSheet`, the `liveTextOpen` part
+  of `sheetOpen`) is dead now that a modal sheet covers the controls button.
+- Kit decisions: a toast above a bottom sheet covers the sheet's last action
+  (`ui/Toast.tsx:151`, `ui/Sheet.tsx:262`); Notifications holds its toasts while a sheet is open
+  (`views/NotificationHistory.tsx:228`, `views/NotificationsView.tsx:440`). `ui/Sheet.tsx:154`
+  hears Escape only inside the dialog (the switcher works round it,
+  `views/DeviceSwitcherSheet.tsx:161`). `ui/Banner.tsx` passes no event and takes no
+  aria-label, hence `CardBanner`. `kit/Group.css:104` lets a select shrink to about 40px beside a
+  long description. `kit/Button.css` has no user-select rule and no solid danger variant (Files
+  borrows `kit-confirm-go` in a `kit-confirm-danger` footer). `kit-button-compact` keeps 13px
+  labels on a phone.
+- `scripts/e2e-deeplink.js:41-61` (phone only, already stale) looks for a control titled
+  "Switch device".
+
+**Behaviour that changed, beyond the look.** Type text is modal: a press on the picture closes
+it and does not reach the phone (U-stream-5 withdrawn until the phase 6 side panel; owner to
+confirm). The list's bar stays in place. Notifications sets body class `notifications`, not
+`list`, and pads its own sides and bottom. Notifications hides a toast while a sheet is open
+and shows it again, with its timer restarted, when the sheet has gone. Files menus sit in the
+top layer, close when their button is pressed again or scrolled away, and keep list shortcuts
+from running behind them. Kit sheets stay mounted while closed. The tab row moves by about
+10px between Screen (two status lines in the bar) and Files or Shell (one), as it did before
+the kit; the one screen view of p5-screen-shell puts the status in one place.
+
+**Tests.** All default browser suites pass, including `files-kit`; `npm run check` passes. The
+atlas reaches 146 states and finds no older class name in any of them. A contrast probe over
+every atlas state (run once, not kept) found no text under 4.5:1 outside disabled controls; the
+lowest is 4.96:1, white on the accent. Focus rings are measured by the kit, device-page,
+files-kit, home and notifications suites.
+
+**Only a phone can show.** The picture and touch aim under the taller header (61px with one
+status line, 71px with the stream service line; tabs 45px); holding Power, volume and Siri on the
+new tiles; the iOS keyboard raised by `focus()` in a sheet shown in the same tap, and Type text
+standing on it; the Unlock footer above the keyboard and Enter submitting through a button
+outside the form; Back on Android reaching a kit sheet, the switcher or the Files dialog as a
+`cancel` event; the list and Notifications bars under a real notch in the installed app; the
+native time field in Scheduled unlock; the switch, tick boxes and selects in iOS Safari;
+swiping notifications by finger; the Files sheet over the keyboard and the menu in the top layer
+in Safari 17. Nothing ran in WebKit or Firefox.
