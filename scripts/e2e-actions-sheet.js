@@ -472,8 +472,9 @@ async function lockRows(browser) {
                 ? [[0, 0, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0, 0, 0], [0, 1, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0, 0, 0]]
                 : [{ type: 'button', name: 'lock', state: 'press' }];
             const pack = (list) => (platform === 'android' ? bytes(list) : list);
-            // The control, pressed from the keyboard: one press, no hold.
-            const key = page.locator(`.control-buttons-list [title="${platform === 'android' ? 'Power' : 'Lock'}"]`);
+            // The control, pressed from the keyboard: one press, no hold. The side button is Lock
+            // on both phones, in the controls as in this sheet.
+            const key = page.locator('.control-buttons-list [title="Lock"]');
             assert.deepEqual(pack(await sentDuring(test, () => key.evaluate((el) => el.click()))), expected, `${platform}: the control's press`);
             let sheet = await openActions(test);
             assert.deepEqual(pack(await sentDuring(test, () => press(sheet, 'Lock the phone', 'Lock'))), expected, `${platform}: Lock sends the same press`);
