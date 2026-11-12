@@ -173,10 +173,14 @@ test('a long press on a kit button, a link among them, selects nothing on a touc
     }
 });
 
-test('a select at the end of a row keeps the width of its options', () => {
+test('a select at the end of a row does not shrink under the width of its options', () => {
     const control = rule('kit/Group.css', '.kit-row-control-select');
-    assert.match(control, /flex: 0 0 auto;/, 'the control does not shrink');
-    assert.match(rule('kit/Group.css', '.kit-row-control-select > .kit-select > .kit-field'), /width: auto;/, 'the select is as wide as its options');
+    // A flex item's automatic minimum is its content, clamped by its maximum: the options, up to 70% of the row.
+    assert.match(control, /min-width: auto;/, 'the control does not shrink under its content');
+    assert.match(control, /max-width: 70%;/, 'unless its content would crowd the text out');
+    const select = rule('kit/Group.css', '.kit-row-control-select > .kit-select > .kit-field');
+    assert.match(select, /(^|\s)width: auto;/, 'the content of the control is the select at the width of its options');
+    assert.match(select, /min-width: 100%;/, 'which fills the control where there is room');
 });
 
 test('the unread count of Notifications is the kit badge, on its own in the bar', () => {

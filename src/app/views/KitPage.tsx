@@ -39,7 +39,7 @@ import '../../style/views/KitPage.css';
  * `scripts/e2e-kit.js` and `scripts/e2e-kit-sheet.js`, and nothing links to it.
  */
 
-const VARIANTS: ReadonlyArray<ButtonVariant> = ['primary', 'secondary', 'quiet', 'danger'];
+const VARIANTS: ReadonlyArray<ButtonVariant> = ['primary', 'secondary', 'quiet', 'danger', 'danger-solid'];
 const nothing = () => undefined;
 
 function Section({ title, children }: { title: string; children: ComponentChildren }) {
