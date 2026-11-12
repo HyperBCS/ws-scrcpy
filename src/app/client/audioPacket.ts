@@ -22,6 +22,10 @@ export type AudioFrame = {
 export type ParsedAudioPacket = { kind: 'metadata'; metadata: AudioMetadata } | { kind: 'frame'; frame: AudioFrame };
 
 export const AUDIO_MAGIC_BYTES = new TextEncoder().encode(AUDIO_MAGIC);
+// The envelope of gateways older than `scrcpy_audio_2`: magic(14) flag(1, 1 = config) payload,
+// with no timestamp and no metadata. Only the Android stream can carry it. Like every magic on
+// that socket it is 14 bytes long; `StreamReceiver` tells them apart by that.
+export const LEGACY_AUDIO_MAGIC_BYTES = new TextEncoder().encode('scrcpy_audio_1');
 
 /** Metadata that an invalid packet degrades to, so a bad audio frame can never take video down. */
 export function audioErrorMetadata(error: unknown): AudioMetadata {
@@ -69,4 +73,78 @@ export function parseAudioPacket(packet: ArrayBuffer, offset = 0): ParsedAudioPa
         return { kind: 'frame', frame: { config: kind === AudioPacketKind.CONFIG, timestamp, data } };
     }
     throw Error('Unknown audio packet type.');
+}
+
+/** Where `AudioEnvelopeReader` delivers what it read: the receiver's `audio` and `audioMetadata` events. */
+export interface AudioEnvelopeSink {
+    audio(frame: AudioFrame): void;
+    metadata(metadata: AudioMetadata): void;
+}
+
+/**
+ * The audio half of a stream socket, one for each receiver, Android and iPhone alike. Each
+ * WebSocket message holds one whole envelope; nothing is joined across messages. It keeps the
+ * latest metadata and decoder config for a player that starts later (`state/audio.ts`). A bad
+ * packet becomes an error status with the decoder config dropped, so it never reaches the video
+ * decoder or the controls.
+ */
+export class AudioEnvelopeReader {
+    private metadata?: AudioMetadata;
+    private config?: AudioFrame;
+
+    constructor(private readonly sink: AudioEnvelopeSink) {}
+
+    /** One `scrcpy_audio_2` envelope at `offset`: 0 on Android, 1 behind the iPhone's frame-type byte. */
+    public read(packet: ArrayBuffer, offset = 0): void {
+        try {
+            const parsed = parseAudioPacket(packet, offset);
+            if (parsed.kind === 'metadata') {
+                const { metadata } = parsed;
+                // A config belongs to one codec of a running capture.
+                if (metadata.status !== 'ready' || metadata.codec !== this.metadata?.codec) {
+                    this.config = undefined;
+                }
+                this.metadata = metadata;
+                this.sink.metadata(metadata);
+            } else {
+                this.frame(parsed.frame);
+            }
+        } catch (error) {
+            this.config = undefined;
+            this.metadata = audioErrorMetadata(error);
+            this.sink.metadata(this.metadata);
+        }
+    }
+
+    /** One `scrcpy_audio_1` packet. A packet with no flag byte is reported as truncated. */
+    public readLegacy(packet: ArrayBuffer): void {
+        const flagOffset = LEGACY_AUDIO_MAGIC_BYTES.length;
+        if (packet.byteLength <= flagOffset) {
+            this.read(packet);
+            return;
+        }
+        const config = new Uint8Array(packet, flagOffset, 1)[0] === 1;
+        this.frame({ config, data: new Uint8Array(packet, flagOffset + 1) });
+    }
+
+    /** The socket closed: the next session may run another capture, so its audio state starts over. */
+    public reset(): void {
+        this.metadata = undefined;
+        this.config = undefined;
+    }
+
+    public getMetadata(): AudioMetadata | undefined {
+        return this.metadata;
+    }
+
+    public getConfig(): AudioFrame | undefined {
+        return this.config;
+    }
+
+    private frame(frame: AudioFrame): void {
+        if (frame.config) {
+            this.config = frame;
+        }
+        this.sink.audio(frame);
+    }
 }

@@ -6,18 +6,31 @@ import ScreenInfo from '../ScreenInfo';
 import Util from '../Util';
 import { DisplayInfo } from '../DisplayInfo';
 import { ParamsStream } from '../../types/ParamsStream';
-import { AUDIO_MAGIC, AudioMetadata } from '../../common/AudioProtocol';
+import { AudioMetadata } from '../../common/AudioProtocol';
 import { STREAM_SERVICE_STOPPED } from '../../common/StreamCloseCode';
-import { audioErrorMetadata, parseAudioPacket } from './audioPacket';
+import { AUDIO_MAGIC_BYTES, AudioEnvelopeReader, LEGACY_AUDIO_MAGIC_BYTES } from './audioPacket';
 import type { AudioFrame } from './audioPacket';
+
+/*
+ * Reconnect policy (Android). The iPhone's is different on purpose; see CoreDeviceReceiver.ts.
+ *
+ * - Every close is followed by a new socket, except a close with 4012 (STREAM_SERVICE_STOPPED:
+ *   the owner stopped the stream service, and a new socket would start it again) and a close
+ *   after stop(). It never gives up by itself.
+ * - The delay is 1 s * 1.5^n, at most 8 s: 1, 1.5, 2.25, 3.375, 5.06, 7.59, 8, 8 ... s.
+ * - n goes back to 0 when scrcpy_initial arrives, not when the socket opens: the server accepts
+ *   the socket before scrcpy is up. Only one reconnect timer exists at a time.
+ *
+ * It can be quick: nothing on an Android phone counts or limits stream starts. The socket ends
+ * at this server, which reaches scrcpy through a local adb forward and runs one scrcpy process
+ * per phone for all its viewers, with starts, stops and restarts in one queue per phone. The
+ * usual cause of a close is a stream quality change, which relaunches scrcpy in a few seconds.
+ *
+ * Pinned by scripts/test-stream-receivers.js.
+ */
 
 const DEVICE_NAME_FIELD_LENGTH = 64;
 const MAGIC_BYTES_INITIAL = Util.stringToUtf8ByteArray('scrcpy_initial');
-// Mirrors Broadcast.ts's own MAGIC_BYTES_AUDIO constant (kept as independent literals in both
-// files, same as MAGIC_BYTES_INITIAL already is). Must stay 14 bytes: see the comment on
-// StreamReceiver.onSocketMessage's EqualArrays check below.
-const MAGIC_BYTES_AUDIO = Util.stringToUtf8ByteArray('scrcpy_audio_1');
-const MAGIC_BYTES_AUDIO_V2 = Util.stringToUtf8ByteArray(AUDIO_MAGIC);
 
 export type ClientsStats = {
     deviceName: string;
@@ -63,8 +76,10 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     private stopped = false;
     private reconnectAttempts = 0;
     private reconnectTimeoutId?: ReturnType<typeof setTimeout>;
-    private audioMetadata?: AudioMetadata;
-    private audioConfig?: AudioFrame;
+    private readonly audio = new AudioEnvelopeReader({
+        audio: (frame) => this.emit('audio', frame),
+        metadata: (metadata) => this.emit('audioMetadata', metadata),
+    });
 
     constructor(params: P) {
         super(params);
@@ -154,8 +169,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     protected onSocketClose(ev: CloseEvent): void {
         this.events.length = 0;
         this.hasInitialInfo = false;
-        this.audioMetadata = undefined;
-        this.audioConfig = undefined;
+        this.audio.reset();
         console.log(`${TAG}. WS closed: ${ev.reason}`);
         this.emit('disconnected', ev);
         if (ev.code === STREAM_SERVICE_STOPPED) {
@@ -201,8 +215,8 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             return;
         }
         if (event.data instanceof ArrayBuffer) {
-            // works only because MAGIC_BYTES_INITIAL, MAGIC_BYTES_MESSAGE and MAGIC_BYTES_AUDIO
-            // all have the same length (14)
+            // Works only because scrcpy_initial, scrcpy_message and both audio magics all have
+            // the same length (14).
             if (event.data.byteLength >= MAGIC_BYTES_INITIAL.length) {
                 const magicBytes = new Uint8Array(event.data, 0, MAGIC_BYTES_INITIAL.length);
                 if (StreamReceiver.EqualArrays(magicBytes, MAGIC_BYTES_INITIAL)) {
@@ -214,25 +228,12 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
                     this.emit('deviceMessage', message);
                     return;
                 }
-                if (StreamReceiver.EqualArrays(magicBytes, MAGIC_BYTES_AUDIO)) {
-                    if (event.data.byteLength === MAGIC_BYTES_AUDIO.length) {
-                        this.handleAudioPacket(event.data);
-                        return;
-                    }
-                    // Layout after the magic: 1 flag byte (bit0 = config packet), then the raw
-                    // encoded audio payload - see Broadcast.emitAudioFrame() on the server.
-                    const flagOffset = MAGIC_BYTES_AUDIO.length;
-                    const config = new Uint8Array(event.data, flagOffset, 1)[0] === 1;
-                    const data = new Uint8Array(event.data, flagOffset + 1);
-                    const frame = { config, data };
-                    if (config) {
-                        this.audioConfig = frame;
-                    }
-                    this.emit('audio', frame);
+                if (StreamReceiver.EqualArrays(magicBytes, LEGACY_AUDIO_MAGIC_BYTES)) {
+                    this.audio.readLegacy(event.data);
                     return;
                 }
-                if (StreamReceiver.EqualArrays(magicBytes, MAGIC_BYTES_AUDIO_V2)) {
-                    this.handleAudioPacket(event.data);
+                if (StreamReceiver.EqualArrays(magicBytes, AUDIO_MAGIC_BYTES)) {
+                    this.audio.read(event.data);
                     return;
                 }
             }
@@ -241,35 +242,11 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
         }
     }
 
-    private handleAudioPacket(packet: ArrayBuffer): void {
-        try {
-            const parsed = parseAudioPacket(packet);
-            if (parsed.kind === 'metadata') {
-                const { metadata } = parsed;
-                if (metadata.status !== 'ready' || metadata.codec !== this.audioMetadata?.codec) {
-                    this.audioConfig = undefined;
-                }
-                this.audioMetadata = metadata;
-                this.emit('audioMetadata', metadata);
-            } else {
-                if (parsed.frame.config) {
-                    this.audioConfig = parsed.frame;
-                }
-                this.emit('audio', parsed.frame);
-            }
-        } catch (error) {
-            // Audio failures must never leak into the video decoder or disconnect controls.
-            this.audioConfig = undefined;
-            this.audioMetadata = audioErrorMetadata(error);
-            this.emit('audioMetadata', this.audioMetadata);
-        }
-    }
-
     public getAudioMetadata(): AudioMetadata | undefined {
-        return this.audioMetadata;
+        return this.audio.getMetadata();
     }
     public getAudioConfig(): AudioFrame | undefined {
-        return this.audioConfig;
+        return this.audio.getConfig();
     }
 
     protected onSocketOpen(): void {

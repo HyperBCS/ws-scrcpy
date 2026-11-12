@@ -8,7 +8,32 @@ import {
     CoreDeviceSessionState,
 } from '../../../common/CoreDeviceProtocol';
 import { AudioMetadata } from '../../../common/AudioProtocol';
-import { AudioFrame, audioErrorMetadata, parseAudioPacket } from '../../client/audioPacket';
+import { AudioEnvelopeReader, AudioFrame } from '../../client/audioPacket';
+
+/*
+ * Reconnect policy (iPhone). Android's is different on purpose; see StreamReceiver.ts.
+ *
+ * - After a close the next socket opens after 1 s * 2^n, at most 60 s: 1, 2, 4, 8, 16, 32, 60,
+ *   60 ... s.
+ * - n and the failed-start count go back to 0 when the codec arrives (the session is up) and on
+ *   retry(), not when the socket opens: the server accepts the socket before it starts the
+ *   session.
+ * - CoreDeviceProxy close codes: 4011 (the phone's start budget is used up) stops at once. 4009
+ *   (serve-web was started and the session failed) is counted, and the third one without a
+ *   session in between stops. 4010 (nothing was started on the phone: the wait after a failed
+ *   session, the phone not attached, a failure before serve-web ran) and any other close are
+ *   retried and not counted.
+ * - After a stop it emits an error 'status' with `retrying: false` and opens no socket until
+ *   retry() (the Retry button). stop() is final.
+ *
+ * It backs off further than Android because every session start runs serve-web, a display
+ * session on the phone. The server allows three starts per phone in five minutes, kept across
+ * server restarts, and waits 30 s after a failed session before the next start. A burst of short
+ * sessions wedges the phone's display service until a reboot (measured: six in about four
+ * minutes). After a few failed starts the next try is left to the person.
+ *
+ * Pinned by scripts/test-stream-receivers.js and scripts/test-coredevice.js.
+ */
 
 export interface CoreDeviceReceiverEvents {
     connected: void;
@@ -28,13 +53,8 @@ export type ParamsCoreDeviceReceiver = ParamsBase & { udid: string };
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 60000;
-// Every failed start is a short display session on the phone, and a burst of those wedges its
-// display service until a reboot. The server spaces and limits starts as well; this is the
-// viewer's share: stop asking after a few and leave the next try to the person.
+// The viewer's share of the start limits; see the policy above.
 const MAX_FAILED_STARTS = 3;
-// `CoreDeviceProxy` close codes. 4009: serve-web was started and the session failed. 4011: the
-// phone's start budget is used up. Any other close (4010 "nothing was started, try later", a
-// dropped connection) is retried.
 const CLOSE_START_FAILED = 4009;
 const CLOSE_START_BUDGET = 4011;
 
@@ -48,11 +68,10 @@ function decodeBase64(value: string): Uint8Array {
 }
 
 /**
- * The browser end of `CoreDeviceProxy`. Binary messages are video access units, text messages
- * are JSON; see `CoreDeviceProtocol`. Reconnects with a growing delay after a close, as the
- * Android `StreamReceiver` does, so a server-side session restart is a short freeze rather than a
- * dead page. After `MAX_FAILED_STARTS` failed starts in a row it stops and waits for `retry()`.
- * `stop()` is final.
+ * The browser end of `CoreDeviceProxy`. Binary messages are video access units, or audio behind
+ * the `COREDEVICE_FRAME_AUDIO` byte; text messages are JSON; see `CoreDeviceProtocol`. It
+ * reconnects by the policy above, so a server-side session restart is a short freeze rather than
+ * a dead page.
  */
 export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, CoreDeviceReceiverEvents> {
     public static readonly ACTION = ACTION.PROXY_COREDEVICE;
@@ -63,8 +82,10 @@ export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, 
     private lastError?: string;
     private reconnectTimer?: ReturnType<typeof setTimeout>;
     private ready = false;
-    private audioMetadata?: AudioMetadata;
-    private audioConfig?: AudioFrame;
+    private readonly audio = new AudioEnvelopeReader({
+        audio: (frame) => this.emit('audio', frame),
+        metadata: (metadata) => this.emit('audioMetadata', metadata),
+    });
 
     constructor(params: ParamsCoreDeviceReceiver) {
         super({ ...params, action: ACTION.PROXY_COREDEVICE });
@@ -90,11 +111,11 @@ export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, 
     }
 
     public getAudioMetadata(): AudioMetadata | undefined {
-        return this.audioMetadata;
+        return this.audio.getMetadata();
     }
 
     public getAudioConfig(): AudioFrame | undefined {
-        return this.audioConfig;
+        return this.audio.getConfig();
     }
 
     /**
@@ -183,41 +204,17 @@ export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, 
         }
         if (event.data instanceof ArrayBuffer) {
             if (new Uint8Array(event.data, 0, 1)[0] === COREDEVICE_FRAME_AUDIO) {
-                this.handleAudioPacket(event.data);
+                this.audio.read(event.data, 1);
                 return;
             }
             this.emit('video', new Uint8Array(event.data));
         }
     }
 
-    private handleAudioPacket(message: ArrayBuffer): void {
-        try {
-            const parsed = parseAudioPacket(message, 1);
-            if (parsed.kind === 'metadata') {
-                if (parsed.metadata.status !== 'ready' || parsed.metadata.codec !== this.audioMetadata?.codec) {
-                    this.audioConfig = undefined;
-                }
-                this.audioMetadata = parsed.metadata;
-                this.emit('audioMetadata', parsed.metadata);
-            } else {
-                if (parsed.frame.config) {
-                    this.audioConfig = parsed.frame;
-                }
-                this.emit('audio', parsed.frame);
-            }
-        } catch (error) {
-            // A bad audio packet only ever changes the audio status; video and input carry on.
-            this.audioConfig = undefined;
-            this.audioMetadata = audioErrorMetadata(error);
-            this.emit('audioMetadata', this.audioMetadata);
-        }
-    }
-
     protected onSocketClose(event?: CloseEvent): void {
         this.ready = false;
-        // The next session may run a different helper process; its audio state starts over.
-        this.audioMetadata = undefined;
-        this.audioConfig = undefined;
+        // The next session may run a different helper process.
+        this.audio.reset();
         this.emit('disconnected', undefined as never);
         if (this.stopped) {
             return;
