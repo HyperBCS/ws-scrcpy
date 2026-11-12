@@ -51,17 +51,27 @@ export function reducedFingerprint(event: FingerprintFields): string | undefined
 }
 
 /**
+ * Whether an app is on the mute list of an iPhone. Settings saved before the list existed have
+ * none and are read as they are.
+ */
+export function isMuted(source: NotificationSource, app: string | undefined): boolean {
+    return !!app && Array.isArray(source.muted) && source.muted.some((entry) => entry?.app === app);
+}
+
+/**
  * The one filter for an iPhone's alert. Without a subscription: whether it is kept at all. An
  * app is kept when it is not the relay itself (a push received on its source phone comes back
- * through ANCS) and when the allow-list is empty or names it. With a subscription: whether that
- * subscription is sent a push for it.
+ * through ANCS), when the older allow-list is empty or names it, and when it is not muted. The
+ * mute list applies on top of an allow-list. With a subscription: whether that subscription is
+ * sent a push for it.
  */
 export function shouldRelay(event: NotificationEvent, source: NotificationSource, sub?: SubscriptionRecord): boolean {
     const kept =
         !!event.app &&
         !event.app.startsWith('com.apple.WebKit.WebPush') &&
         !event.app.startsWith('com.apple.WebKit.PushBundle') &&
-        (!source.apps.length || source.apps.includes(event.app));
+        (!source.apps.length || source.apps.includes(event.app)) &&
+        !isMuted(source, event.app);
     if (!sub) return kept;
     return (
         kept &&

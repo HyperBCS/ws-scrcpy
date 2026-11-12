@@ -1,9 +1,18 @@
+/** An app whose notifications from one iPhone are not kept or pushed. The name is shown in Setup. */
+export interface MutedApp {
+    app: string;
+    name: string;
+}
+
 export interface NotificationSource {
     id: string;
     address: string;
     name: string;
+    /** An older allow-list: when it names apps, only those are kept. Shown as "Only these apps". */
     apps: string[];
     preview: boolean;
+    /** Missing in settings saved before the mute list existed, and in a page left open since. */
+    muted?: MutedApp[];
 }
 
 export interface NotificationEvent {

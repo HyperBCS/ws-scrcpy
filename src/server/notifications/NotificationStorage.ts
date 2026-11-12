@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import webpush, { PushSubscription } from 'web-push';
-import { NotificationSource, NotificationHistoryItem } from '../../common/Notification';
+import { MutedApp, NotificationSource, NotificationHistoryItem } from '../../common/Notification';
 
 export interface SubscriptionRecord {
     id: string;
@@ -21,6 +21,23 @@ export interface FeedItem extends NotificationHistoryItem {
 }
 
 const STORE_FILE = 'notifications.json';
+
+/** The most apps one iPhone's mute list holds. */
+export const MUTED_APP_LIMIT = 200;
+
+/** One entry of a mute list. The feed keeps app identifiers and names of up to 512 characters. */
+export function validMutedApp(value: unknown): value is MutedApp {
+    const entry = value as MutedApp | null;
+    return (
+        !!entry &&
+        typeof entry === 'object' &&
+        typeof entry.app === 'string' &&
+        entry.app.length >= 1 &&
+        entry.app.length <= 512 &&
+        typeof entry.name === 'string' &&
+        entry.name.length <= 512
+    );
+}
 
 /** load() could not use the settings file. `message` is written for the Setup page. */
 export class NotificationStoreError extends Error {}

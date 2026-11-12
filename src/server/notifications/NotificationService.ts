@@ -12,7 +12,7 @@ import { isDismissActionLabel } from '../../common/NotificationActions';
 import { sameOrigin } from '../requestOrigin';
 import { resolveDataDir } from '../dataDir';
 
-import { NotificationEvent, NotificationHistoryItem } from '../../common/Notification';
+import { MutedApp, NotificationEvent, NotificationHistoryItem } from '../../common/Notification';
 import { PushDelivery, PushTarget } from './PushDelivery';
 import { HISTORY_MS, NotificationFeed, shouldRelay } from './NotificationFeed';
 export type { NotificationEvent, NotificationSource } from '../../common/Notification';
@@ -23,6 +23,8 @@ import {
     NotificationStore as Store,
     NotificationStoreError,
     FeedItem,
+    MUTED_APP_LIMIT,
+    validMutedApp,
 } from './NotificationStorage';
 export type { FeedItem } from './NotificationStorage';
 
@@ -901,8 +903,10 @@ export class NotificationService implements Service {
             this.command({ type: 'confirm', ...this.pairing });
             res.json({ ok: true });
         });
+        // The whole record of one iPhone. `apps` is the older allow-list. `muted` is optional: a
+        // page left open since before the mute list existed sends none, and the list is kept.
         route('post', '/sources', (req, res) => {
-            const { id, address, name, apps, preview } = req.body;
+            const { id, address, name, apps, preview, muted } = req.body;
             if (
                 typeof id !== 'string' ||
                 !/^[\w-]{1,128}$/.test(id) ||
@@ -914,18 +918,27 @@ export class NotificationService implements Service {
                 typeof preview !== 'boolean' ||
                 !Array.isArray(apps) ||
                 apps.length > 100 ||
-                apps.some((a) => typeof a !== 'string' || a.length > 256)
+                apps.some((a) => typeof a !== 'string' || a.length > 256) ||
+                (muted !== undefined &&
+                    (!Array.isArray(muted) || muted.length > MUTED_APP_LIMIT || !muted.every(validMutedApp)))
             )
                 throw Error('Invalid notification source');
             if (this.store.sources.some((s) => s.address === address.toUpperCase() && s.id !== id))
                 throw Error('Bluetooth phone is already linked');
             if (this.store.sources.length >= 32 && !this.store.sources.some((s) => s.id === id))
                 throw Error('Source limit reached');
-            const connectionChanged =
-                this.store.sources.find((source) => source.id === id)?.address !== address.toUpperCase();
+            const existing = this.store.sources.find((source) => source.id === id);
+            const connectionChanged = existing?.address !== address.toUpperCase();
+            const mutedApps =
+                muted === undefined
+                    ? existing?.muted || []
+                    : [...new Map((muted as MutedApp[]).map(({ app, name }) => [app, name]))].map(([app, name]) => ({
+                          app,
+                          name,
+                      }));
             this.store.sources = [
                 ...this.store.sources.filter((s) => s.id !== id),
-                { id, address: address.toUpperCase(), name, apps, preview },
+                { id, address: address.toUpperCase(), name, apps, preview, muted: mutedApps },
             ];
             if (connectionChanged) this.invalidateSources();
             if (!preview) this.notificationFeed.forgetText(id);

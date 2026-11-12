@@ -445,3 +445,116 @@ test('shouldRelay is the one app filter: what it refuses is neither kept nor pus
     assert.equal(shouldRelay({ ...event, preExisting: true }, source), true, 'kept');
     assert.equal(shouldRelay({ ...event, preExisting: true }, source, sub), false, 'and not pushed');
 });
+
+// The mute list. A subscription that takes this iPhone's alerts, and the pushes it is queued.
+const subscriber = { id: 'sub', subscription: { endpoint: 'https://web.push.apple.com/mute', keys: {} }, sources: ['iphone'], receiverSource: '', updated: 0 };
+const queued = (t, service) => {
+    const enqueue = t.mock.method(service.push, 'enqueue', () => undefined);
+    return () => enqueue.mock.calls.map((call) => call.arguments[0]);
+};
+const kept = (service) => [...service.feed.values()].map((item) => item.app).sort();
+const settings = () => JSON.parse(fs.readFileSync(path.join(temporary, 'notifications.json'), 'utf8'));
+
+test('an existing allow-list keeps filtering exactly as before', async (t) => {
+    await mounted(async ({ service, api }) => {
+        service.store.subscriptions = [subscriber];
+        const pushes = queued(t, service);
+        service.receive({ ...event, app: 'com.allowed' });
+        service.receive({ ...event, uid: 2, app: 'com.other' });
+        assert.deepEqual(kept(service), ['com.allowed'], 'an app the list does not name is not kept');
+        assert.deepEqual(pushes(), ['sub'], 'and not pushed');
+        const item = [...service.feed.values()][0];
+        assert.equal(shouldRelay({ ...event, app: 'com.other' }, service.store.sources[0], subscriber), false);
+        assert.equal(service.preparePush('sub', item.key).payload.includes('Bank'), true);
+        // The list arrives in the status as it was saved, with an empty mute list beside it.
+        assert.deepEqual((await (await api('/status')).json()).sources[0].apps, ['com.allowed']);
+    }, [{ ...source, apps: ['com.allowed'] }]);
+});
+
+test('a muted app is not relayed and not pushed, also on top of an allow-list', async (t) => {
+    await mounted(async ({ service, api }) => {
+        service.store.subscriptions = [subscriber];
+        const pushes = queued(t, service);
+        service.receive({ ...event, uid: 1, app: 'com.noisy', date: 'd1' });
+        const before = [...service.feed.values()][0];
+        const mute = await api('/sources', { ...source, muted: [{ app: 'com.noisy', name: 'Noisy' }] });
+        assert.equal(mute.status, 200);
+        assert.equal(pushes().length, 1);
+        assert.equal(service.preparePush('sub', before.key), undefined, 'a push still queued for it is not sent');
+        service.receive({ ...event, uid: 2, app: 'com.noisy', date: 'd2' });
+        service.receive({ ...event, uid: 3, app: 'com.example', date: 'd3' });
+        assert.deepEqual(kept(service), ['com.example', 'com.noisy'], 'only the alert from before the mute is kept');
+        assert.equal(pushes().length, 2, 'the other app is still pushed');
+        assert.equal((await (await api('/status')).json()).unread, 2);
+        // With an allow-list that names it, a muted app is still muted.
+        assert.equal((await api('/sources', { ...source, apps: ['com.noisy', 'com.example'] })).status, 200);
+        service.receive({ ...event, uid: 4, app: 'com.noisy', date: 'd4' });
+        assert.equal(service.feed.size, 2);
+        assert.equal(shouldRelay({ ...event, app: 'com.noisy' }, service.store.sources[0]), false);
+    });
+});
+
+test('muting and unmuting are saved, and a server started later reads them', async () => {
+    await mounted(async ({ api, status }) => {
+        const muted = [{ app: 'com.noisy', name: 'Noisy' }, { app: 'com.games', name: 'Games' }];
+        assert.equal((await api('/sources', { ...source, muted: [...muted, { ...muted[0], name: 'Again' }] })).status, 200);
+        assert.deepEqual(settings().sources[0].muted, [{ app: 'com.noisy', name: 'Again' }, muted[1]], 'one entry per app');
+        assert.deepEqual((await status()).sources[0].muted, settings().sources[0].muted);
+        const restarted = new NotificationService();
+        try {
+            restarted.load();
+            assert.deepEqual(restarted.store.sources[0].muted, settings().sources[0].muted);
+        } finally {
+            restarted.release();
+        }
+        assert.equal((await api('/sources', { ...source, muted: [muted[1]] })).status, 200);
+        assert.deepEqual(settings().sources[0].muted, [muted[1]]);
+        assert.equal((await api('/sources', { ...source, muted: [] })).status, 200);
+        assert.deepEqual(settings().sources[0].muted, []);
+        // A list the page could not have sent is refused, and nothing changes.
+        for (const bad of [{}, [{ app: '' , name: 'x' }], [{ app: 'a'.repeat(513), name: '' }], [{ app: 'com.x' }], Array.from({ length: 201 }, (_, i) => ({ app: `a${i}`, name: '' }))]) {
+            assert.equal((await api('/sources', { ...source, muted: bad })).status, 400, JSON.stringify(bad).slice(0, 60));
+        }
+        assert.deepEqual(settings().sources[0].muted, []);
+    });
+});
+
+test('a request in the old shape is still accepted and means what it meant', async () => {
+    await mounted(async ({ service, api }) => {
+        assert.equal((await api('/sources', { ...source, muted: [{ app: 'com.noisy', name: 'Noisy' }] })).status, 200);
+        // A page left open since before the mute list sends the fields it knew: `apps` is the
+        // allow-list, as it was, and the mute list is left as it is.
+        const { id, address, name, preview } = source;
+        assert.equal((await api('/sources', { id, address, name, apps: ['com.example', 'com.noisy'], preview })).status, 200);
+        assert.deepEqual(settings().sources[0], { id, address, name, apps: ['com.example', 'com.noisy'], preview, muted: [{ app: 'com.noisy', name: 'Noisy' }] });
+        service.receive({ ...event, uid: 1, app: 'com.example', date: 'd1' });
+        service.receive({ ...event, uid: 2, app: 'com.other', date: 'd2' });
+        service.receive({ ...event, uid: 3, app: 'com.noisy', date: 'd3' });
+        assert.deepEqual(kept(service), ['com.example']);
+        // Its Save app filter with an empty field clears the list.
+        assert.equal((await api('/sources', { id, address, name, apps: [], preview })).status, 200);
+        service.receive({ ...event, uid: 4, app: 'com.other', date: 'd4' });
+        assert.deepEqual(kept(service), ['com.example', 'com.other']);
+        assert.deepEqual(settings().sources[0].muted, [{ app: 'com.noisy', name: 'Noisy' }]);
+    });
+});
+
+test('settings saved before the mute list existed are read as they are and keep working', () => {
+    const old = { id: 'iphone', address: 'AA:BB:CC:DD:EE:FF', name: 'iPhone', apps: ['com.example'], preview: false, extra: 'kept' };
+    const file = path.join(temporary, 'notifications.json');
+    fs.rmSync(path.join(temporary, 'notification-history.json'), { force: true });
+    fs.writeFileSync(file, JSON.stringify({ vapid: { publicKey: 'public', privateKey: 'private' }, sources: [old], subscriptions: [subscriber] }));
+    const service = new NotificationService();
+    try {
+        service.load();
+        assert.equal(service.disabled, '');
+        assert.deepEqual(service.store.sources, [old]);
+        assert.deepEqual(service.store.subscriptions, [subscriber]);
+        assert.deepEqual(service.store.vapid, { publicKey: 'public', privateKey: 'private' });
+        assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).sources, [old], 'reading writes nothing back');
+        service.receive({ ...event, app: 'com.example', preExisting: true });
+        assert.equal(service.feed.size, 1, 'the allow-list it held still applies');
+    } finally {
+        service.release();
+    }
+});
