@@ -4326,3 +4326,319 @@ see a phone keyboard, or see what a phone does with a touch.
   delivery, app filters, Save changes, the name row with Last notification and Open screen).
 - p6-android-device is still to come in 6a, with its own Android check and deploy after 5b is
   live.
+
+### Redesign step 6b: keyboard capture, the inbox and server settings (2026-11-12, tested without a phone)
+
+Merged from base `4434a62` in the approved order, each with `--no-ff`:
+`review/p6-desktop-input` at `6958e45537254262742a09dc50c689d55e72f2fc`,
+`review/p6-inbox` at `c7a15185fd090d67fe1d26391c5b647b711bc28e`, then
+`review/p6-server-config` at `4563fbbeb38596c7688a5d8796cb9bf57e4f14fc`.
+The merge commits are `674f414`, `33a4eb1` and `5365573`. There were no conflicts.
+`9439a08` registers `scripts/test-settings.js` in `npm test` and `desktop-input` and
+`notification-inbox` in the default browser list. No integration feature fix was needed.
+Not deployed. No phone, adb, real pymobiledevice3, Docker or live server was used.
+All server and browser checks below used fixtures.
+
+**Keyboard and paste (p6-desktop-input).** Findings U-stream-6, U-flows-8 and U-stream-12
+are done in fixtures. `state/keyboardCapture.ts` owns the open screen's capture state,
+keyboard listeners, deferred modifiers and clipboard cancellation. The header chip and
+Keyboard settings read the same state. The chip says `Keyboard: phone` or
+`Keyboard: this page`; local fields and open sheets make the latter visible without
+changing the capture preference. The chip is shown only with a fine pointer. Its full
+wording wraps at 320/390px mouse widths; Back, Notifications and Switch remain reachable.
+The existing under-360px bell rule now applies only to coarse pointers.
+
+Ctrl+Alt+K releases or recaptures the keyboard (Ctrl+Option+K on a Mac). The Keyboard
+section lists K capture, S Switch phone, H Home, B Back, O Overview, T Type text,
+P Screenshot and C Copy from phone, all with Ctrl+Alt. iPhone omits Back and Overview.
+Reserved chords use the existing offered control table and do not send their modifiers
+to the phone. Ctrl/Cmd+K still opens Switch after release. With capture on, fine-pointer
+rail actions and sheet close refocus the picture, or the mount before a picture arrives.
+Released capture retains page focus. `dialog.kit-sheet[open]` stays the local-keyboard
+gate for bottom, centred and docked sheets. Type text keeps its own keys and paste once.
+UHID preference survives release; the Android keycode fallback uses the same gate.
+
+Direct browser paste uses Android's existing clipboard-and-paste message. iPhone writes
+the clipboard once, waits for its matching successful result, then sends Cmd+V as four
+reports: Command, Command+V, Command, empty. Failed writes send no paste keys. The shared
+UTF-8 limit is 262130 bytes (256 KiB less the 14-byte Android header); the notice says
+256 KB. Local fields retain native paste. A busy clipboard action rejects overlap.
+Target change, blur, page hide, disconnect or stop cancels pending work. Queued iPhone
+paste reports recheck the target and lift a modifier already sent. Repeated Copy from
+phone keeps one read outstanding. A late browser-copy result cannot replace a later
+screen's notice or start its fallback textarea; a write already given to the browser
+clipboard API cannot be retracted. The temporary fallback field is removed and prior
+focus restored, including on denial.
+
+A ready iPhone session now enables commands, Unlock and Type text independently of HEVC
+decoding. The no-picture card remains. New contacts stay blocked without a usable
+picture; decoder loss lifts existing contacts and permits their releases. No unlock was
+run. The inert elements inspected with Type text open are retained panels in closed
+Sheets. The open input and stage remain active; no inert rule changed.
+
+**Inbox (p6-inbox).** Findings U-notifications-4, -5, -7, -14 and the card action part of
+-13 are done in fixtures. An unscoped inbox combines multiple linked iPhones. An explicit
+source, including an already delivered push link, remains scoped. The Switch iPhone sheet
+adds All iPhones and per-source unread counts; combined cards name their source. The
+filter row says Inbox with count, Unread with count, Archive; Mark all read is a direct
+toolbar action. The first actual card is 129px from the top at 390x844 without safe-area
+insets. The desktop inbox can grow to 1024px.
+
+Cards use local calendar-day headings, shorter times and regular muted app names.
+Adjacent notifications sharing source, app, title and day form a stack, with access to
+each member and its own actions. Missing apps or titles do not stack. A click or Space
+expands text and marks that item read; opening its phone also marks it read. The badge
+counts update. Expanded text remains in Unread until collapsed or hidden, including when
+its stack closes. Opening a phone waits for the read response and cannot navigate after
+the inbox has been left or its address changed. A push notification parameter is consumed
+once; filter and search writes do not consume it again.
+
+Fine-pointer cards have hover/focus Mark read/unread, Dismiss and Open screen controls,
+and an anchored Menu even at a 768px mouse width. Touch keeps Sheets and swipes. J/K or
+arrows move between cards; E archives here, U changes read state, / opens search and Z
+undoes. Native controls, typing and open overlays retain their keys. Successful local
+restore, phone actions and mute move focus to the next available card. Cancelled swipes
+suppress the compatibility click, so they cannot mark text read by accident. Scroll,
+cancellation, multi-finger and reduced-motion checks remain.
+
+Mute this app calls the existing source API, refreshes and offers Undo. Mute and Undo
+fetch the current source before saving its whole record, preserving other settings and
+mutes changed since the last poll. A failed read saves nothing. Existing history remains;
+new muted-app events still follow the established server drop policy. Combined bulk
+archive freezes each source's keys/read states and can undo a partial success. Clear all
+on iPhone requires one chosen source and a frozen confirmation set. Individual phone
+labels, expectedLabel payloads, confirmations, timeout constants and accepted-command
+wording stay unchanged. The bounded NotificationActionSheet child wrapper keeps Preact
+parent links current without changing its public props or the kit contract.
+
+**Server settings (p6-server-config).** C-server-core-12 is done in fixtures.
+`src/server/Settings.ts` holds the frozen non-secret startup snapshot, parses all 36 env
+names, validates YAML/JSON configuration before services start and exposes an explicit
+safe startup-report allow-list. The old EnvName exports remain. Booleans accept 0, 1,
+false and true; malformed values now fail with a field error that omits the value.
+`WS_SCRCPY_DEBUG=0` now turns debug off. Numeric ports, limits and times, probe JSON,
+URLs/hosts, server arrays, remote hosts and TLS options/credentials are validated.
+Valid trailing-dot DNS and IPv6 interface-case behavior remain. Zero still disables
+the iPhone session start limit or cooldown. Time units, valid defaults, shutdown budget,
+phone payloads, start/stop paths, retry policies and unlock schedule remain.
+
+`WS_DATA_DIR` takes precedence over the legacy `WS_NOTIFICATION_DATA`; an empty canonical
+value falls back to the old one. Compose passes both names with the same resolved value
+for old-image rollback, and the entrypoint uses that directory. Explicit relative paths
+still resolve from cwd. Bundled defaults use app/data outside dist from either launch
+directory. A nonempty former dist/data blocks startup until explicitly selected or moved;
+its files are not opened or copied. Compose defaults remain /app/data and
+/app/data/stream-config.json. An explicit `WS_SCRCPY_STREAM_CONFIG_PATH` remains valid.
+Otherwise Android stream settings read an existing cwd/stream-config.json if the new
+file is absent, without writing. The next save writes the data-directory file and leaves
+the former file for rollback. Stored formats do not change.
+
+The iPhone key is consumed and deleted separately, stays outside the general snapshot,
+and is excluded from every direct child environment, including decoder, icon probe,
+RemoteShell, collector and both existing Device.ts children. No key or credential is
+logged. All server/common env reads are now in Settings.ts. Source fixtures select both
+data env names before server imports and reset the snapshot for deliberate env changes.
+The new guarded import regression checks eleven setups with child tools and sockets
+disabled. Review also ran all 384 affected focused cases and the full check under an
+inherited synthetic WS_DATA_DIR: zero poison-directory access attempts, marker unchanged.
+
+The server diff is confined to the 22 paths authorized in the integration brief: Settings,
+Config/EnvName/dataDir, existing env callers in iPhone services, adb/RemoteShell/StreamConfig,
+notification services and HTTP origin/server code. Device.ts and NotificationIcons.ts add
+only filtered child envs. config/docker-entrypoint.sh and docker-compose.yml carry the data
+alias. No src/common file changed. The only phone status wording change is
+Preparing the phone. The Android Device split is still a separate step.
+
+**Preserved action inventory.** The base actions remain at these paths:
+
+| Base screen or group | Actions and current location |
+| --- | --- |
+| Phones list | Open screen, Wake, Files, Shell, per-phone Notifications and Settings stay on the card. Enable and restart, Restart services and Open settings keep their existing problem rows. |
+| Phone header and tabs | Phones, Notifications and Switch remain in the header. Android Screen/Files/Shell and iPhone Screen remain. The switcher retains search, current phone and available rows. |
+| Stage and controls | Wake, Unlock, Retry, Start again, Phones and Reload keep their state cards. Back/Home/Overview, volume down/mute/up, Lock, Listen, Screenshot, Type text, Actions, Settings and iPhone Siri keep their existing rail/touch controls and capabilities. |
+| Actions | Read phone clipboard, Copy here and the local fallback remain. Android Paste and iPhone Send to phone/Type text remain. Android Notifications/Quick settings/Collapse; iPhone Rotate/Refresh picture/Restart video/Reconnect; mouse help; Unlock/Lock; iPhone Reboot/Shut down; Open Settings remain in their existing groups. |
+| Settings | Stream quality/advanced/player/stats, Sound capture/source/format/listen/volume, Keyboard capture/UHID, Unlock stores/Forget/Replace/Remove/schedule/time zone/Run now, facts and service Start/Stop/Restart/Remount/Refresh/player choices remain in their existing sections. Keyboard gains the shared state and shortcut rows. |
+| Type text and Unlock | Text/paste, cursor left/right, Backspace and Enter remain in Type text. Android PIN/password/Remember and the iPhone server-passcode flow, confirmation and one-tap notice remain in Unlock. No unlock timing changes. |
+| Files | Back/Forward/Up/root/places/path, Refresh, filter, selection, Upload/Cancel, New folder, Download, Rename, Delete, Cut/Copy/Move/Paste/Copy path, Properties, view/sort/hidden items and menus remain in the unchanged Files view. |
+| Shell | Terminal, Esc/Tab/Ctrl/arrows, Paste/Copy and text size remain in the unchanged Shell view. |
+| Inbox browsing | Search, app filter, Clear filters, Inbox/Unread/Archive, source switch, Show older and media/link actions remain. Counts, day groups, stacks and combined scope are added. |
+| Inbox item | Open iPhone screen by menu/Enter/mouse double-click, Mark read/unread, Archive/Move to inbox, phone-supplied action and guarded confirmation remain. Mouse quick actions, Space/click expand and Mute this app are added. |
+| Inbox bulk | Mark all read moves to the toolbar. Archive all/Undo remain in page actions, with per-source requests in combined mode. Clear all on iPhone retains confirmation and requires a selected source. |
+| Setup and push | Linking, receiver choices, permissions/repair, app mutes/legacy allow-list, previews, source removal and Undo remain. Delivered old links, notification highlight, one-time read and push cleanup remain. |
+
+No action was found missing. Unchanged source paths, socket evidence and logs are recorded
+under /tmp/ws-scrcpy-redesign/logs/integrate-6b-invariants.json.
+
+**Visible and behavior changes, one per line.**
+- Fine-pointer headers show a keyboard-target chip and keep its full wording at narrow widths.
+- Active capture returns focus to the picture after rail actions or sheet close.
+- Released capture permits normal page keyboard navigation.
+- Keyboard settings show the release chord, Mac spelling and available shortcuts.
+- Direct browser paste sends browser text once, with limits and errors in the notice.
+- Copy from phone has a shortcut and prevents overlapping reads or stale fallback focus.
+- A ready iPhone session offers commands and Type text without an HEVC decoder; new contacts remain blocked.
+- Unscoped notifications combine linked iPhones, with their source names on cards.
+- Source choices and Inbox/Unread filters show counts; Switch becomes an icon.
+- Mark all read is directly on the inbox toolbar.
+- Cards show day headings, short times, quieter app names and conversation stacks.
+- Mouse cards have quick actions, anchored menus and card-navigation keys.
+- Clicking or expanding text and opening its phone marks one notification read.
+- Successful card actions focus the next available card.
+- Cards offer Mute this app and Undo while preserving later source changes.
+- Combined bulk archive can undo partial success; phone clear requires a selected source.
+- Malformed server env/config input fails before services start with a safe field error.
+- Startup logs one allow-listed settings summary.
+- WS_DATA_DIR becomes canonical; old deployments keep the legacy alias.
+- Default stream saves use the resolved data directory while older files remain readable.
+- A nonempty former dist/data requires an explicit data selection or move.
+- Child processes always omit the iPhone settings key.
+- The iPhone preparing status says Preparing the phone.
+
+**Assertion changes reviewed.** Desktop-layout and sheet-chrome now expect picture/mount
+focus after close with capture enabled. Released-capture expectations, geometry, modal
+isolation, history and stream counts remain. ios-reconnect's decoder case now requires
+ready-session commands, Unlock and Type text enabled; it retains No picture, no Retry,
+no reconnect claim and its exact socket counts. Notification helpers use counted Inbox/
+Unread names, the combined default, Menu for fine pointers and Sheet for touch. Read-on-open
+expects one fewer unread and the exact read request; its 50-row, scroll-within-2px, route,
+history and one-stream assertions stay. Motion changes only the stale All radio selector.
+Overlay-back/history-walk adapt notification roles while retaining timing/history/no-command/
+stream assertions. Phone fixtures explicitly use touch, with a mouse override for narrow
+windows. No assertion was changed during integration. Server fixture resets and dual data
+names preserve prior assertions; the status text test now says phone. Review proved the
+new behavior tests against base assets or bounded implementation reversions.
+
+**Combined check.** npm run check passed: typecheck; lint 0 errors and 29 existing warnings;
+733 Node tests, 733 passed, 0 failed; Python suites 43 OK, 32 OK with 2 skips, 4 OK; both
+production builds passed. The client has the existing three webpack performance warnings.
+Complete log: /tmp/ws-scrcpy-redesign/logs/integrate-6b-check.log.
+
+node scripts/test-browser.js passed all 36 registered default suites in one uninterrupted
+invocation, exit 0, 1706.957s. This includes all 43 existing notification scenarios, all
+17 desktop-input scenarios and all 11 notification-inbox scenarios. First card: 129px.
+No assertion, selector or fixture was changed during integration. Complete browser log:
+/tmp/ws-scrcpy-redesign/logs/integrate-6b-browser.log; exact suite inventory and result:
+integrate-6b-browser-suite-inventory.json and integrate-6b-browser-result.json in that
+log directory. The source second pass covered both stream clients and capture controller,
+ScreenView, notification mutations/focus/grouping, and Config/Settings/data/key/child env.
+All 65 package files match their final reviewed heads exactly. Merge identity is recorded
+in integrate-6b-merge-identity.json in the log directory. Diff checking passes.
+
+**Stream and mount counts.** The passing browser assertions measure these values; they
+count fixture sockets, not real serve-web processes:
+
+| Checks | Measured result |
+| --- | --- |
+| desktop-input, Android UHID/fallback and iPhone | 1 socket per open through release/recapture, rail actions, Switch, Actions, Settings, Type text, local fields and paste. All 17 scenarios pass. |
+| Native direct paste | 1 clipboard write per native paste. Android sends 0 paste key reports; iPhone sends exactly 4 ordered HID reports after the matching successful clipboard result. Socket count stays 1. |
+| Narrow mouse and touch sheets | Both platforms keep 1 socket at 320/390px with both chip targets, and at 390px in both themes with a bottom Settings sheet. |
+| desktop-layout | 1 socket at 1440x900 and 1366x650, both platforms/themes, after docked Actions/Settings/Type text, Switch, crossing 1024px and six more panel opens. Stage and mount stay the same elements. List Settings opens 0. |
+| controls, touch dock | 1 socket and the same stage on both platforms at 1180x820 with Type text docked and closed. |
+| navigation | 1 socket for each phone screen opened, including old and short links; 0 extra from list arrival or Back. An unknown phone opens 0 until identified, then 1. |
+| device-page | Initial Screen opens 1. Files closes it once; returning to Screen makes 2 total. Shell and Back add 0. Each deliberate player change opens exactly 1 more. |
+| ios-input | 1 screen session per visit; Actions blocks picture input. |
+| ios-reconnect | 3 failed-start sockets, then no extra; Retry adds 1. The separate no-picture case has 3 sockets after its two deliberate drops and remains at 3 through decoder failure and sheets. 4011 stops, 4010 remains a retry and 4009 keeps its failed-start limit. |
+| android-lifecycle | 1 per open, 0 extra after 4012, Start again adds 1, a deliberate 4007 close adds 1. List Wake opens 0; screen Wake stays at 1. |
+| Inbox/history | Menus, confirmations, mutes, filters and Back open 0 streams. A requested phone screen opens 1, including delivered push routes and return/history checks. |
+
+The adapters and mount effects, both receiver policies, routing, unlock scheduling,
+control table and common protocol are byte-unchanged from the base. The ScreenView diff
+only imports/renders the chip in the header; the mount node was not moved or re-keyed.
+
+**Atlas against 4434a62.** Reused the review's git-archive export and build only after
+checking 371 production/build files byte for byte against 4434a62, its successful build
+log and its 142-state/284-file base atlas. The combined default invocation wrote 146
+states/292 raw files: 38 phone states and 35 desktop states in each theme, at 390x844
+and 1440x900. Base is /tmp/ws-scrcpy-redesign/atlas-base-4434a62; head is
+/tmp/ws-scrcpy-redesign/atlas-integrate-6b. No file was removed.
+
+Of the 284 shared files, 60 PNGs and 112 style JSONs changed; 82 PNGs and 30 JSONs are
+identical. Four notifications-all states add four PNGs and four JSONs. Every changed
+name, decoded pixel bound/count, raw hash and grouped count is retained in
+/tmp/ws-scrcpy-redesign/integrate-6b-atlas-comparison.json and
+/tmp/ws-scrcpy-redesign/integrate-6b-atlas-changed-files.txt.
+
+| Files/states | Difference and reason |
+| --- | --- |
+| 28 desktop phone-screen/Settings PNGs | The new keyboard chip in both capture states and the Keyboard section rows. Covers android-actions/asleep/screen/settings/switcher/type-text/unlock; iphone-actions/screen/settings/switcher/type-text/unlock; list-iphone-settings, both themes. The Android light Settings image also has the baseline AutoHeight gap described below. |
+| 4 phone iPhone Settings PNGs | New Keyboard shortcut rows in iphone-settings and list-iphone-settings, both themes. |
+| 64 input/Settings JSONs | Chip nodes/styles, including the hidden chip at touch width; new shortcut rows and descriptions, including list-android-settings; and the measured AutoHeight height variation. Phone controls images retain their pixels. |
+| 28 existing inbox PNGs and their JSONs | notifications-inbox/search/filters/page-actions/card-actions/confirm/toast at both widths/themes: counted filters and Mark all read, day headings/times/app text/spacing/wider inbox, anchored mouse Menu or touch Sheet with Mute, retained guarded prompt, and updated focus/counts behind Undo. |
+| 12 Setup PNGs | notifications-setup/setup-details/setup-confirm pixels match base exactly. Their raw JSON differs through generated selector IDs and closed-Sheet lifecycle state. Setup actions were preserved. |
+| Other notification JSON detail | The 40 existing notification JSONs also retain the raw generated suffixed Preact IDs, closed Settings panel interactivity and hidden Add another iPhone option differences. No raw data was normalized. |
+| 8 other style JSONs | phone-not-listed and tool-unavailable in all widths/themes differ only on nine nodes of the closed global Settings Sheet: interactivity inert becomes auto after the notification fixture reload. Every other row matches; all eight PNGs match base. |
+| 8 new files | notifications-all at both widths/themes shows Bench iPhone and Spare iPhone, with source names and the second source's read item. The fixture restores its temporary arrays afterwards. |
+
+A second fixture atlas used ATLAS_COMPARE against base. All four state captures passed,
+then comparison exited 1 with exactly 180 changed/added raw files, as expected for this
+redesign. This comparison result is separate from the successful uninterrupted default
+run. Log: /tmp/ws-scrcpy-redesign/logs/integrate-6b-atlas-compare.log; second raw atlas:
+/tmp/ws-scrcpy-redesign/atlas-integrate-6b-compare. All 146 PNGs match the first combined
+capture byte for byte. Six desktop-dark JSONs vary only by one option in the hidden
+Add another iPhone select. Against the corrected inbox review atlas, all 44 PNGs match;
+12 pre-Setup dark JSONs differ only by that hidden option. Raw files remain intact.
+Separate structural records are integrate-6b-repeat-raw-diff.json and
+integrate-6b-reviewer-raw-style-diff.json under /tmp/ws-scrcpy-redesign. The eight other
+closed-Sheet JSON changes were checked against the review's full-property captures:
+the old/new hashes match exactly, with only interactivity inert to auto on those nine
+nodes. Full evidence is integrate-6b-hidden-style-proof.json. The existing fixture
+pushManager error banner is present in both atlases and was retained.
+
+**Baseline Quality-card gap found during atlas review.** The combined light desktop
+Android Settings PNG has 40px of empty space below Quality. It shifts the rows below;
+its content and actions remain. The base/review atlas images happened to capture the
+natural height. A matched desktop list/Android atlas-prefix probe on the base production
+assets reproduces the gap: outer 161.1875px, inner 119.1875px, two border pixels, leaving
+40px extra, unchanged after 1s. The same prefix on merged assets measured the natural
+121.1875px outer/119.1875px inner. Both show exactly the same quality text and config.
+The base stale-card computed style hashes match both full combined captures exactly.
+Against the natural card, only height/block-size and their derived transform/perspective
+origins differ; all other computed properties match. AutoHeight, StreamSection, Section,
+Group.css and app.css are unchanged from base. This proves a pre-existing stale inline
+AutoHeight measurement, not a new data or CSS rule. A controlled merged fixture with
+14 opens and 0/1/8/16/32/80/200ms replies stayed at the natural height. The precise triggering
+observer order is not yet established. Root queued initialization/measurement work for
+the existing kit follow-up and authorized leaving it out of 6b. No production fix or
+assertion change was made. Proof: integrate-6b-quality-gap-proof.json; logs
+integrate-6b-settings-base-prefix.log, integrate-6b-settings-head-prefix.log and
+integrate-6b-settings-head-sequence.log; raw screenshots/full styles in
+integrate-settings-base-prefix and integrate-settings-head-prefix, all under
+/tmp/ws-scrcpy-redesign. The probe scripts use the fixture runner and linked built assets;
+no build or hardware server was started.
+
+Screenshots of every changed atlas state at 390/1440, light/dark remain in the head
+atlas, with byte-identical PNGs in the comparison atlas. Supplementary input and combined
+inbox captures are in /tmp/ws-scrcpy-redesign/screens/integrate-6b. The inbox suite writes
+its four captures to a fixed inbox-screens folder; they were copied into this unique
+integration folder after the suite finished. I inspected both combined inbox sizes/themes,
+mouse menus and touch action sheets in both themes, the desktop headers/Settings, and
+phone iPhone Settings/list Settings in both themes. Root also inspected merged combined
+inbox, mouse Menu, Android header and iPhone Type text. No new clipping or missing action
+was found. The baseline AutoHeight gap is retained and explained, not hidden.
+
+**Left for later.** The baseline AutoHeight initialization gap is queued for the kit
+follow-up. No new integration defect is known. This step does not prove real phone
+input or delivery. p6-android-device still needs its full split, Android check and own deploy.
+p6-docs remains. Collector supervision/routes, quality-preset arrow restarts, dock entry/
+stage overlap, kit children/ConfirmAction IDs, list stale/atlas gaps, dead code, old browser
+storage, focus-ring contrast and production kit access remain in their assigned follow-ups.
+Mac Ctrl+drag gesture policy is unchanged. The owner's pending choices remain: dropping
+new muted-app events on the server, 50% idle touch opacity, rail attached at every mouse width.
+
+**One hardware checklist for this step, separate from these fixtures.**
+1. Follow the separate deploy brief. Confirm the real config selects the same /app/data
+   and stream file, both trackers, allowed hosts, push setup and named unlock schedule
+   fields. Keep the rollback alias and startup safety. No settings save during a look check.
+2. In a permitted single iPhone session and an Android session, check physical keyboard
+   capture/release/recapture, rail and sheet-close focus, Tab after release, Ctrl+Alt shortcuts
+   and Mac Ctrl+Option. Try Android UHID and keycode fallback. Keep one stream per open.
+3. Paste browser text into a real focused phone field once on each platform; check Type text,
+   local fields, denied clipboard permission, plain HTTP and Safari/Firefox. Check the actual
+   clipboard-set-then-Cmd+V result on iPhone and command readiness without HEVC. Unlock needs
+   separate owner permission. Verify held contacts lift if decoding is lost.
+4. On a real phone/installed app, check the inbox under safe areas, mouse menus and next-card
+   focus, touch scroll/swipe/cancel and read counts. With two sources, check combined and explicit
+   push targets, real OS badges and delivered push taps. Mute an app, receive from it and an
+   unmuted app, then Undo/unmute and receive again. Existing history must remain.
+5. Check Safari, Firefox and the installed app. Fixture Chromium does not establish those
+   browser or hardware outcomes. Keep the iPhone session/start discipline from the deploy brief.
