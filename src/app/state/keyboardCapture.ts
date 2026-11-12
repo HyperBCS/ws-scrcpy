@@ -153,6 +153,7 @@ export class KeyboardCapture {
             }
             this.swallowed.add(event.code);
             if (event.repeat) return;
+            if (shortcut.action === 'copy' && this.clipboardBusy) return;
             this.invalidate();
             if (shortcut.action === 'release') {
                 this.setEnabled(!this.enabled);

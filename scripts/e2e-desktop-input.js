@@ -269,10 +269,35 @@ async function phoneLayout(browser, platform, theme) {
     } finally { await t.context.close(); }
 }
 
+async function narrowMouseHeader(browser, platform, width) {
+    const t = await start(browser, platform, { width });
+    try {
+        const { page } = t;
+        for (const released of [false, true]) {
+            if (released) { await page.keyboard.press('Control+Alt+k'); await sleep(page); }
+            assert.equal(await chip(page).innerText(), released ? 'Keyboard: this page' : 'Keyboard: phone');
+            if (OUT) await page.screenshot({ path: path.join(OUT, `${platform}-${width}-mouse-${released ? 'released' : 'captured'}.png`) });
+            const header = await page.locator('.kit-bar').evaluate(node => ({ width: node.clientWidth, content: node.scrollWidth }));
+            assert.ok(header.content <= header.width, `${platform} ${width}: header has no horizontal overflow (${JSON.stringify(header)})`);
+            assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'the page has no horizontal overflow');
+            for (const button of [page.locator('.kit-bar-back'), page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }), page.locator('.kit-bar').getByRole('link')]) {
+                assert.equal(await button.isVisible(), true, 'Back, bell and Switch stay visible');
+                assert.equal(await button.evaluate(node => {
+                    const b = node.getBoundingClientRect();
+                    return b.left >= 0 && b.right <= innerWidth && node.contains(document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2));
+                }), true, 'Back, bell and Switch stay inside the mouse viewport and can be pressed');
+            }
+        }
+        assert.equal(t.sockets.length, 1); assert.deepEqual(t.errors, []);
+        console.log(`PASS: ${platform} ${width}px mouse header stays inside the viewport with both keyboard targets`);
+    } finally { await t.context.close(); }
+}
+
 (async () => {
     const browser = await chromium.launch({ headless: true });
     try {
         const selected = process.env.DESKTOP_INPUT_CASE;
+        if (selected === 'narrow-header') { for (const platform of ['android', 'ios']) for (const width of [320, 390]) await narrowMouseHeader(browser, platform, width); return; }
         if (selected === 'paste') { for (const platform of ['android', 'ios']) await pasteFlow(browser, platform); return; }
         if (selected === 'no-decoder') { await noDecoder(browser); return; }
         for (const platform of ['android', 'ios']) {
@@ -283,6 +308,7 @@ async function phoneLayout(browser, platform, theme) {
         await captureFlow(browser, 'android', { uhid: false });
         await pasteFlow(browser, 'android', { uhid: false });
         await noDecoder(browser);
+        for (const platform of ['android', 'ios']) for (const width of [320, 390]) await narrowMouseHeader(browser, platform, width);
         for (const platform of ['android', 'ios']) for (const theme of ['light', 'dark']) await phoneLayout(browser, platform, theme);
     } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

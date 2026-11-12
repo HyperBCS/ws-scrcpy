@@ -118,9 +118,9 @@
     }
 }
 
-/* A 320px header of a phone's page has no room for the bell (`ui/NotificationsLink.tsx`, compact)
-   beside the name, the status line and Switch. The header of the list keeps it at every width. */
-@media (max-width: 359px) {
+/* A 320px touch header has no room for the bell beside the name, status and Switch.
+   Mouse windows and the header of the list keep it at every width. */
+@media (max-width: 359px) and (pointer: coarse) {
     .notifications-link.compact {
         display: none;
     }

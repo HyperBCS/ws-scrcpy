@@ -1531,14 +1531,14 @@ test('stream settings resolve the device through the stream socket when two host
 
 // ---------------------------------------------------------------- one keyboard target
 
-function captureFixture(t, { enabled = true, paste = () => {}, controls = () => undefined } = {}) {
+function captureFixture(t, { enabled = true, paste = () => {}, controls = () => undefined, requestClipboard = () => {} } = {}) {
     const { KeyboardCapture, keyboardCapture } = require('../src/app/state/keyboardCapture');
     const sent = [];
     let ready = true, releases = 0;
     const capture = new KeyboardCapture({
         container: element(), enabled, connected: () => ready,
         key: event => sent.push([event.type, event.code]),
-        release: () => releases++, controls, paste, requestClipboard() {},
+        release: () => releases++, controls, paste, requestClipboard,
     });
     t.after(() => { openSheet = null; capture.stop(); });
     const key = (type, code, extra = {}) => capture.onKey({
@@ -1794,4 +1794,17 @@ test('a stale rejected browser copy never focuses the fallback textarea', async 
     current = false;
     fail(Error('Browser denied copying'));
     assert.equal(await copied, false, 'the stale copy ends without creating or focusing a field');
+});
+
+
+test('repeating Copy from phone keeps one outstanding read until its reply', async t => {
+    const { deviceClipboard, deviceClipboardError } = require('../src/app/state/stream');
+    deviceClipboard.value = undefined; deviceClipboardError.value = '';
+    let reads = 0;
+    const f = captureFixture(t, { requestClipboard: () => { reads++; deviceClipboard.value = undefined; } });
+    f.chord('KeyC');
+    f.chord('KeyC');
+    assert.equal(reads, 1, 'a repeated copy chord keeps the read already in progress');
+    deviceClipboard.value = '';
+    await new Promise(resolve => setImmediate(resolve));
 });
