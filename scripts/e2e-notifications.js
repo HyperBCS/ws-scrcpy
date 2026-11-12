@@ -1014,13 +1014,19 @@ async function feedStatusInInbox(browser) {
         await f.page.getByRole('alert').filter({ hasText: 'Phone B: Allow notification sharing in the iPhone Bluetooth settings.' }).waitFor();
         const colours = await f.page.evaluate(() => {
             const badge = document.querySelector('.notification-feed-state .notification-badge');
-            // The colour of error text, read from the token through an element that takes it.
+            // The error fill, read from the token through an element that takes it.
             const probe = document.querySelector('.notifications-page').appendChild(document.createElement('span'));
-            probe.style.cssText = 'transition: none; color: var(--danger-text)';
-            const danger = getComputedStyle(probe).color;
+            probe.style.cssText = 'transition: none; background-color: var(--danger-fill)';
+            const danger = getComputedStyle(probe).backgroundColor;
             probe.remove();
-            return { badge: getComputedStyle(badge).color, danger, banner: document.querySelectorAll('.notification-history-source .kit-banner-error').length };
+            return {
+                badge: getComputedStyle(badge).backgroundColor,
+                chip: badge.matches('.kit-chip.kit-chip-error'),
+                danger,
+                banner: document.querySelectorAll('.notification-history-source .kit-banner-error').length,
+            };
         });
+        assert.equal(colours.chip, true, 'Action needed is the error chip of the kit');
         assert.equal(colours.badge, colours.danger, 'Action needed uses the error colour');
         assert.equal(colours.banner, 1, 'and its message is the error banner');
         for (const colorScheme of ['light', 'dark']) {

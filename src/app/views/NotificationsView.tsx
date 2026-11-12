@@ -4,6 +4,7 @@ import { Disclosure } from '../ui/AnimatedDetails';
 import { Banner } from '../ui/Banner';
 import { Button } from '../ui/Button';
 import { Checkbox } from '../ui/Checkbox';
+import { Chip } from '../ui/Chip';
 import { SelectField, TextField } from '../ui/Field';
 import { Icon } from '../ui/Icon';
 import { InlineStatus } from '../ui/InlineStatus';
@@ -707,13 +708,13 @@ export function NotificationsView() {
                                         Receive on this device
                                     </h2>
                                     <div class="notification-receiver-state">
-                                        <span class={`notification-badge ${enabled ? 'ready' : ''}`}>
+                                        <Chip tone={enabled ? 'success' : 'neutral'} class="notification-badge">
                                             {!workerLoaded
                                                 ? 'Checking…'
                                                 : enabled
                                                   ? 'Notifications on'
                                                   : 'Notifications off'}
-                                        </span>
+                                        </Chip>
                                         {enabled && (
                                             <p class="notification-receiver-sources">
                                                 {!confirmed

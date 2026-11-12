@@ -17,6 +17,7 @@ import { Button } from '../ui/Button';
 import { SelectField, TextField } from '../ui/Field';
 import { IconButton } from '../ui/IconButton';
 import { InlineStatus } from '../ui/InlineStatus';
+import { Chip, ChipTone } from '../ui/Chip';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { topSheet } from '../ui/Sheet';
 import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
@@ -50,8 +51,17 @@ const FEED_LABELS: Record<FeedState, string> = {
     reconnecting: 'Reconnecting',
     attention: 'Action needed',
 };
+const FEED_TONES: Record<FeedState, ChipTone> = {
+    connected: 'success',
+    reconnecting: 'warning',
+    attention: 'error',
+};
 export function FeedBadge({ state }: { state: FeedState }) {
-    return <span class={`notification-badge ${state === 'connected' ? 'ready' : state}`}>{FEED_LABELS[state]}</span>;
+    return (
+        <Chip tone={FEED_TONES[state]} class="notification-badge">
+            {FEED_LABELS[state]}
+        </Chip>
+    );
 }
 
 /** The link to an iPhone's screen, or why it cannot be opened now. */

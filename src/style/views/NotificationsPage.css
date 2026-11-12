@@ -103,29 +103,4 @@
     align-self: stretch;
 }
 
-/* The state of a link, as a chip: connected, reconnecting, or in need of the owner. */
-.notification-badge {
-    display: inline-flex;
-    align-items: center;
-    flex: none;
-    height: 24px;
-    padding: 0 var(--space-8);
-    border-radius: var(--radius-full);
-    background: var(--neutral-fill);
-    color: var(--neutral-text);
-    font-size: var(--font-size-12);
-    font-weight: var(--font-weight-bold);
-    white-space: nowrap;
-}
-.notification-badge.ready {
-    background: var(--success-fill);
-    color: var(--success-text);
-}
-.notification-badge.reconnecting {
-    background: var(--warning-fill);
-    color: var(--warning-text);
-}
-.notification-badge.attention {
-    color: var(--danger-text);
-}
 }
