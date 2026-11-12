@@ -63,7 +63,9 @@ function frame(type, id, data) {
 async function start(browser, { width, height, mobile, colorScheme = 'light', androids = ANDROIDS, iphones = IPHONES, summary = SUMMARY, hash } = {}) {
     const context = await browser.newContext({ viewport: { width, height }, isMobile: mobile, hasTouch: mobile, colorScheme, serviceWorkers: 'block' });
     const page = await context.newPage();
-    const state = { context, page, errors: [], commands: [], channels: [], summary };
+    // `streams` counts the screen sockets the page opens; `updateAndroid` sends one phone's new
+    // descriptor on the Android list, as the server does when a phone changes.
+    const state = { context, page, errors: [], commands: [], channels: [], summary, streams: 0, updateAndroid: undefined };
     page.on('pageerror', (error) => state.errors.push(error.message));
     await page.route('**/api/notifications/**', (route) => {
         const pathname = new URL(route.request().url()).pathname;
@@ -77,10 +79,14 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
     await page.routeWebSocket('**', (socket) => {
         const action = new URL(socket.url()).searchParams.get('action');
         if (action === 'proxy-adb') {
+            state.streams++;
             setTimeout(() => socket.send(initialStreamPacket()), 40);
             return;
         }
-        if (action === 'proxy-coredevice') return; // The iPhone stream stays on "Connecting".
+        if (action === 'proxy-coredevice') {
+            state.streams++;
+            return; // The iPhone stream stays on "Connecting".
+        }
         socket.onMessage((data) => {
             const packet = Buffer.from(data);
             if (packet.length < 5) return;
@@ -89,10 +95,18 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
             if (packet[0] === 4) {
                 state.channels.push(body);
                 if (body === 'HSTS') send({ id: -1, type: 'hosts', data: { local: [{ type: 'android' }, { type: 'ios' }] } });
-                if (body === 'GTRC') send({ id: -1, type: 'devicelist', data: { id: 'android', name: 'Fixture host', list: androids } });
+                if (body === 'GTRC') {
+                    send({ id: -1, type: 'devicelist', data: { id: 'android', name: 'Fixture host', list: androids } });
+                    state.updateAndroid = (device) => send({ id: -1, type: 'device', data: { id: 'android', name: 'Fixture host', device } });
+                }
                 if (body === 'ATRC') send({ id: -1, type: 'devicelist', data: { id: 'ios', name: 'Fixture host', list: iphones } });
             } else if (packet[0] === 32 && body.startsWith('{')) {
-                try { state.commands.push(JSON.parse(body)); } catch {}
+                try {
+                    const command = JSON.parse(body);
+                    // The fixture answers nothing by itself; a check can answer a command later.
+                    command.reply = (data) => send({ id: command.id, type: command.type, data });
+                    state.commands.push(command);
+                } catch {}
             }
         });
     });
@@ -513,6 +527,109 @@ async function notchedList(browser) {
     }
 }
 
+/** Waits up to two seconds for a request of the page to cross the fixture's socket. */
+async function arrived(page, check) {
+    for (let i = 0; i < 100 && !check(); i++) await page.waitForTimeout(20);
+}
+
+/**
+ * Start, the one action the card keeps for an idle Android phone: one start request, Starting…
+ * as the status until the phone reports the service, and In use once it does. A phone that goes
+ * away ends the Starting flag at once, so it is not Starting… when it comes back. Nothing here
+ * opens a screen.
+ */
+async function startFromCard(browser) {
+    const udid = 'HOME-IDLE-0006';
+    const idle = android(udid, 'Pixel 5', { pid: -1 });
+    const test = await start(browser, { width: 390, height: 844, mobile: true, androids: [idle], iphones: [] });
+    const { page } = test;
+    try {
+        const item = card(page, `android:${udid}`);
+        const chip = item.locator('.phone-row-status .kit-chip');
+        const line = item.locator('.device-line[data-line="stream-service"]');
+        const starts = () => test.commands.filter((command) => command.type === 'start_server').map((command) => command.data);
+        await line.waitFor();
+        await line.getByRole('button', { name: 'Start stream service', exact: true }).click();
+        await chip.getByText('Starting…', { exact: true }).waitFor();
+        assert.equal(await item.locator('.device-line').count(), 0, 'the line goes while the service starts');
+        assert.equal(await item.getByRole('button', { name: 'Start stream service' }).count(), 0, 'Start cannot be pressed twice');
+        await arrived(page, () => starts().length > 0);
+        assert.deepEqual(starts(), [{ udid }], 'one start request');
+
+        // The phone reports the service: Ready with In use, and no line.
+        test.updateAndroid({ ...idle, pid: 4242 });
+        await chip.getByText('Ready', { exact: true }).waitFor();
+        assert.equal(await item.locator('.phone-row-in-use').textContent(), 'In use');
+        assert.equal(await item.locator('.device-line').count(), 0);
+        // It stops later: the line and Start are back, and the status is not Starting…. Well
+        // inside the flag's own time limit, so it is the report that ended the flag.
+        test.updateAndroid({ ...idle, pid: -1 });
+        await line.waitFor({ timeout: 3000 });
+        assert.equal(await chip.textContent(), 'Ready');
+
+        // A start that the phone never confirms, then the phone goes away and comes back.
+        await line.getByRole('button', { name: 'Start stream service', exact: true }).click();
+        await chip.getByText('Starting…', { exact: true }).waitFor();
+        test.updateAndroid({ ...idle, state: 'offline' });
+        await chip.getByText('Offline', { exact: true }).waitFor();
+        test.updateAndroid(idle);
+        await line.waitFor({ timeout: 3000 });
+        assert.equal(await chip.textContent(), 'Ready', 'the Starting flag ended with the phone');
+        await arrived(page, () => starts().length > 1);
+        assert.deepEqual(starts(), [{ udid }, { udid }], 'one start request per press');
+        assert.equal(test.streams, 0, 'no screen was opened');
+        assert.deepEqual(test.errors, []);
+        console.log('PASS Start on an idle Android card: one request, Starting… until the phone reports the service');
+    } finally {
+        await test.context.close();
+    }
+}
+
+/**
+ * Wake belongs to one sleep: a reply that comes after the phone woke and slept again does not
+ * speak for the new sleep, and each press sends one wake.
+ */
+async function wakeOnePerSleep(browser) {
+    const udid = 'HOME-TAB-0002';
+    const asleep = android(udid, 'Galaxy Tab S9', { 'screen.power': 'off', 'device.awake': false });
+    const awake = { ...asleep, 'screen.power': 'on', 'device.awake': true };
+    const test = await start(browser, { width: 390, height: 844, mobile: true, androids: [asleep], iphones: [] });
+    const { page } = test;
+    try {
+        const item = card(page, `android:${udid}`);
+        const head = item.locator('.phone-row-status');
+        const wakes = () => test.commands.filter((command) => command.type === 'wake_device');
+        const sent = async (count) => {
+            await arrived(page, () => wakes().length >= count);
+            assert.equal(wakes().length, count, 'one wake per press');
+        };
+        await head.getByRole('button', { name: 'Wake', exact: true }).click();
+        await head.getByRole('button', { name: 'Waking…', exact: true }).waitFor();
+        await sent(1);
+        const first = wakes()[0];
+        // The screen comes on and goes off again before the server answers the first press.
+        test.updateAndroid(awake);
+        await head.locator('.kit-chip').getByText('Ready', { exact: true }).waitFor();
+        assert.equal(await head.getByRole('button', { name: /^Wak/ }).count(), 0, 'no Wake for a phone that is awake');
+        test.updateAndroid(asleep);
+        await head.getByRole('button', { name: 'Wake', exact: true }).waitFor();
+        first.reply({ udid });
+        await page.waitForTimeout(200);
+        assert.equal(await item.getByText('Wake sent', { exact: false }).count(), 0, 'a late reply does not speak for this sleep');
+        assert.equal(await head.getByRole('button', { name: 'Wake', exact: true }).isEnabled(), true);
+        // A new press is its own wake, and its reply is shown.
+        await head.getByRole('button', { name: 'Wake', exact: true }).click();
+        await sent(2);
+        wakes()[1].reply({ udid });
+        await item.getByText('Wake sent. Waiting for the screen.', { exact: true }).waitFor();
+        assert.equal(test.streams, 0, 'no screen was opened');
+        assert.deepEqual(test.errors, []);
+        console.log('PASS Wake on a card: one wake per press, and its outcome belongs to one sleep');
+    } finally {
+        await test.context.close();
+    }
+}
+
 async function narrowRow(browser) {
     const test = await start(browser, { width: 320, height: 568, mobile: true });
     const { page } = test;
@@ -867,6 +984,8 @@ async function main() {
             await kitList(browser, { width: 390, height: 844, mobile: true, colorScheme });
             await kitList(browser, { width: 1440, height: 900, mobile: false, colorScheme });
         }
+        await startFromCard(browser);
+        await wakeOnePerSleep(browser);
         await narrowRow(browser);
         await notchedList(browser);
         for (const size of [sizes[0], sizes[3]]) {
