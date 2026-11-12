@@ -4,9 +4,13 @@
 //   tokens.css in `tokens`, app.css in `base`, ui/ and kit/ in `components`, the rest in `views`.
 //   Units: no font size in rem or em. The root is 16px and every length is px.
 //   Tokens: outside tokens.css a colour, a font size, a radius and a z-index come from a token,
-//   and nothing is `!important`. The stylesheets written before the tokens still hold such
-//   values; ALLOWED records how many each file had when this test was added. A count may fall,
-//   and the test fails when one rises. A file that is not listed is allowed none.
+//   and nothing is `!important`: the layer order and the selectors decide. ALLOWED lists the few
+//   values a token would not make clearer, each with its reason: the order of what lies over the
+//   picture of a phone, and the black behind the picture and the terminal. A file that is not
+//   listed is allowed none, and a count that rises fails.
+//   Breakpoints: a width in a media or container query is 600 or 1024px (599 and 1023 for the
+//   side under it). The view stylesheets still hold others; VIEW_BREAKPOINTS lists them for the
+//   desktop layout step, and a view may not add one.
 // scripts/e2e-atlas.js is the check that a change to the stylesheets cannot be seen.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
@@ -17,19 +21,34 @@ const STYLE = path.join(__dirname, '../src/style');
 const LAYERS = ['tokens', 'base', 'components', 'views'];
 const ORDER = `@layer ${LAYERS.join(', ')};`;
 
-// What each file may still hold. `otherLayers` counts the blocks a file has for a layer that is
-// not its own: a rule kept next to the rules it belongs with, in the layer it has to act in.
+// The values a file may write out, each with its reason. `otherLayers` counts the blocks a file
+// has for a layer that is not its own: a rule kept next to the rules it belongs with, in the
+// layer it has to act in.
 const ALLOWED = {
-    'app.css': { colours: 3, fontSizes: 3, radii: 1, important: 5 },
     // The order of what lies over the picture: the controls (8) and their shield (4).
     'views/FloatingToolbar.css': { zIndex: 2 },
-    // The sleep overlay, one step under the header (4).
+    // The sleep overlay over the picture, one step under the header (4).
     'views/SleepOverlay.css': { zIndex: 1 },
     // The black behind the picture, twice, and the order of the picture, its touch layer and
-    // the two failure cards. The picture's own rules were not changed.
+    // the two failure cards.
     'views/StreamView.css': { colours: 2, zIndex: 4 },
-    // The black of the terminal.
+    // The black around the terminal, the colour xterm draws it in.
     'views/ToolView.css': { colours: 1 },
+};
+
+// The breakpoints of the plan, and the side under each.
+const BREAKPOINTS = [599, 600, 1023, 1024];
+// The other widths the view stylesheets still break at, left for the desktop layout step
+// (p6-desktop-layout). A view may not add one.
+const VIEW_BREAKPOINTS = {
+    // Files: its own pane at 720px (a container query), the toolbar at 700 and 900, narrow phones at 360 and 380.
+    'filelisting.css': [360, 380, 700, 720, 900],
+    // The grid of cards at 720 and 1040, and narrow phones at 360.
+    'views/DeviceList.css': [360, 720, 1040],
+    // The bell of a phone's page on a 320px phone.
+    'views/StreamView.css': [359],
+    // The tool page's gutter at 700 and its widest workspace at 1000.
+    'views/ToolView.css': [700, 1000],
 };
 
 const KINDS = {
@@ -156,6 +175,16 @@ const fontSizeOf = (declaration) => {
     return '';
 };
 
+/** The widths the media and container queries of a file break at, in px. */
+function breakpoints(parsed) {
+    const widths = [];
+    for (const block of parsed.blocks) {
+        if (!/^@(media|container)\b/.test(block.prelude)) continue;
+        for (const match of block.prelude.matchAll(/(?:(?:min|max)-width\s*:|\bwidth\s*[<>]=?)\s*(\d+(?:\.\d+)?)px/g)) widths.push(Number(match[1]));
+    }
+    return widths;
+}
+
 /** How many values of each kind a file writes out, and its font sizes in rem or em. */
 function count(parsed) {
     const counts = { colours: 0, fontSizes: 0, radii: 0, zIndex: 0, important: 0 };
@@ -208,6 +237,33 @@ test('a colour written by its name counts, and a word that only holds one does n
     assert.equal(colours('.a { background: transparent; rotate: calc(tan(1) * 1deg); }'), 0);
 });
 
+test('the breakpoints are read from media and container queries', () => {
+    const parsed = read(`${ORDER}\n@layer views {\n@media (min-width: 600px) and (max-height: 500px) { .a { top: 0 } }\n@container pane (max-width: 720px) { .b { top: 0 } }\n@media (width >= 1024px) { .c { top: 0 } }\n@media (hover: hover) { .d { top: 0 } }\n}\n`);
+    assert.deepEqual(breakpoints(parsed), [600, 720, 1024]);
+});
+
+test('a breakpoint is 600 or 1024px, and a view keeps no other than those listed', () => {
+    const found = [];
+    for (const file of files) {
+        const allowed = ownLayer(file) === 'views' ? VIEW_BREAKPOINTS[file] || [] : [];
+        for (const width of breakpoints(sheets.get(file).parsed)) {
+            if (!BREAKPOINTS.includes(width) && !allowed.includes(width)) found.push(`${file} breaks at ${width}px`);
+        }
+    }
+    assert.deepEqual(found, [], 'Use 600 or 1024px, the breakpoints of the plan (599 and 1023 for the side under each).');
+    // The list holds only what is still there, so it shrinks as the layouts move.
+    for (const [file, widths] of Object.entries(VIEW_BREAKPOINTS)) {
+        assert.ok(files.includes(file), `${file} exists`);
+        const present = breakpoints(sheets.get(file).parsed);
+        for (const width of widths) assert.ok(present.includes(width), `${file} still breaks at ${width}px; remove it from VIEW_BREAKPOINTS`);
+    }
+});
+
+test('no stylesheet holds !important', () => {
+    const found = files.filter((file) => count(sheets.get(file).parsed).counts.important > 0);
+    assert.deepEqual(found, [], 'The layer order and the selectors decide which rule wins.');
+});
+
 test('every stylesheet opens with the layer order and keeps each rule in a layer', () => {
     assert.ok(files.length > 20, 'the stylesheets are found');
     const faults = files.flatMap((file) => layerFaults(file, sheets.get(file).source, sheets.get(file).parsed).faults);
@@ -231,5 +287,11 @@ test('no file holds more values written out, or more !important, than it did', (
             if (actual[kind] > (allowed[kind] || 0)) over.push(`${file} has ${actual[kind]} ${KINDS[kind]}; the list allows ${allowed[kind] || 0}`);
         }
     }
-    assert.deepEqual(over, [], 'Use a token from src/style/tokens.css. ALLOWED in this file only records what the older stylesheets held.');
+    assert.deepEqual(over, [], 'Use a token from src/style/tokens.css. ALLOWED holds only a stacking order over the picture and the black behind it.');
+    // An entry holds only what is still there.
+    for (const [file, allowed] of Object.entries(ALLOWED)) {
+        const { parsed, source } = sheets.get(file);
+        const actual = { ...count(parsed).counts, otherLayers: layerFaults(file, source, parsed).otherLayers };
+        for (const kind of Object.keys(allowed)) assert.equal(actual[kind], allowed[kind], `${file}: ALLOWED says ${allowed[kind]} ${KINDS[kind]}, the file has ${actual[kind]}`);
+    }
 });

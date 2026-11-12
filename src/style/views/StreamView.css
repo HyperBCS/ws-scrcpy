@@ -63,6 +63,14 @@
     }
 }
 
+/* A 320px header of a phone's page has no room for the bell (`ui/NotificationsLink.tsx`, compact)
+   beside the name, the status line and Switch. The header of the list keeps it at every width. */
+@media (max-width: 359px) {
+    .notifications-link.compact {
+        display: none;
+    }
+}
+
 /* A long press on the header of a phone's page brings up no selection handles and no iOS
    callout. */
 @media (hover: none) and (pointer: coarse) {

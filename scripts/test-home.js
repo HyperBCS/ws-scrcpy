@@ -379,7 +379,7 @@ test('the list, its cards, the switcher and the notices take their controls, ico
     }
     const styles = [
         'src/style/views/DeviceList.css', 'src/style/views/DeviceSwitcherSheet.css', 'src/style/ui/StreamServiceStatus.css',
-        'src/style/ui/ErrorBoundary.css', 'src/style/ui/NotificationsLink.css', 'src/style/ui/DeviceIcon.css',
+        'src/style/ui/ErrorBoundary.css', 'src/style/ui/DeviceIcon.css',
     ];
     for (const file of styles) {
         const rules = read(file);
@@ -387,7 +387,8 @@ test('the list, its cards, the switcher and the notices take their controls, ico
         assert.equal(/content:\s*'[^']/.test(rules), false, `${file} draws no glyph`);
         assert.equal(/--(device|text-color|main-bg|status-|button-|control-border|header-bg|radius-control|radius-panel|accent-solid|progress)/.test(rules), false, `${file} reads role tokens only`);
     }
-    for (const gone of ['src/style/ui/AsleepBanner.css', 'src/style/ui/TrackerStatusNotice.css']) {
+    // The bell is the kit's icon button and badge. Where it hides on a narrow phone is a rule of the phone's page.
+    for (const gone of ['src/style/ui/AsleepBanner.css', 'src/style/ui/TrackerStatusNotice.css', 'src/style/ui/NotificationsLink.css']) {
         assert.equal(fs.existsSync(path.join(root, gone)), false, `${gone} is deleted`);
     }
     // The header of the list is the kit bar, with the bell and Reload as icon buttons.

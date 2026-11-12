@@ -4,7 +4,6 @@ import { notificationsTarget } from '../state/notificationsTarget';
 import { Badge } from './Badge';
 import { Icon } from './Icon';
 import { iconButtonClass } from './IconButton';
-import '../../style/ui/NotificationsLink.css';
 
 interface NotificationsLinkProps {
     /** The iPhone on screen, if any. Its inbox opens when it sends notifications to this server. */
