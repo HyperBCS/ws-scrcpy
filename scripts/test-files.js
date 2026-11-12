@@ -379,6 +379,379 @@ test('every kind of file has an icon of the kit set, with the classes the explor
     assert.notEqual(iconMarkup('folder'), iconMarkup('file').replace('fx-icon-file', 'fx-icon-folder'), 'a folder and a file differ');
 });
 
+// ------------------------------------------------------------------ FileService
+//
+// The service against a Files channel answered by hand: each request opens a channel, and the
+// test replies on it, closes it from the phone's side, or leaves it waiting.
+
+/** A Files channel whose request channels record what is sent and are answered by the test. */
+function serviceSocket() {
+    const channels = [];
+    const socket = {
+        OPEN: 1,
+        readyState: 1,
+        createChannel(payload) {
+            const listeners = { message: new Set(), close: new Set() };
+            const channel = {
+                command: Buffer.from(payload).subarray(0, 4).toString(),
+                payload: Buffer.from(payload),
+                sent: [],
+                /** How the explorer closed it, if it did. */
+                closedBy: null,
+                open: true,
+                addEventListener: (type, listener) => listeners[type].add(listener),
+                removeEventListener: (type, listener) => listeners[type].delete(listener),
+                send: (data) => channel.sent.push(Buffer.from(data)),
+                reply: (data) => [...listeners.message].forEach((listener) => listener({ data })),
+                end(code = 1000, reason = '') {
+                    if (!channel.open) return;
+                    channel.open = false;
+                    [...listeners.close].forEach((listener) => listener({ code, reason }));
+                },
+                close(code = 1000) {
+                    if (!channel.open) return;
+                    channel.closedBy = `client ${code}`;
+                    channel.end(code);
+                },
+                /** The upload messages sent on it, decoded. */
+                pushes: () => channel.sent.map((data) => CommandControlMessage.pushFileCommandFromBuffer(data)),
+            };
+            channels.push(channel);
+            return channel;
+        },
+    };
+    return { socket, channels, last: () => channels.at(-1) };
+}
+
+const record = (code, name, mode, size = 0) => {
+    const text = Buffer.from(name);
+    const data = Buffer.alloc(20 + text.length);
+    data.write(code);
+    data.writeUInt32LE(mode, 4);
+    data.writeUInt32LE(size, 8);
+    data.writeUInt32LE(1700000000, 12);
+    data.writeUInt32LE(text.length, 16);
+    text.copy(data, 20);
+    return data;
+};
+const statReply = (mode, size = 0) => {
+    const data = Buffer.alloc(16);
+    data.write('STAT');
+    data.writeUInt32LE(mode, 4);
+    data.writeUInt32LE(size, 8);
+    data.writeUInt32LE(1700000000, 12);
+    return data;
+};
+const failReply = (message) => {
+    const text = Buffer.from(message);
+    const data = Buffer.alloc(8 + text.length);
+    data.write('FAIL');
+    data.writeUInt32LE(text.length, 4);
+    text.copy(data, 8);
+    return data;
+};
+const pushReply = (id, code) => {
+    const data = Buffer.alloc(3);
+    data.writeInt16BE(id);
+    data.writeInt8(code, 2);
+    return data;
+};
+/** Waits for whatever the promises in flight do next. */
+const later = () => new Promise((resolve) => setImmediate(resolve));
+const outcome = (promise) =>
+    promise.then(
+        (value) => ({ value }),
+        (error) => ({ error: { kind: error.kind, message: error.message, isFileError: error.name === 'FileError' } }),
+    );
+const fileService = () => {
+    const { FileService } = require('../src/app/googDevice/files/FileService');
+    const wire = serviceSocket();
+    return { service: new FileService(wire.socket, { serial: PHONE }), ...wire };
+};
+
+test('FileService: list, stat, large sizes and the folder operations resolve, with the request on the wire', async (t) => {
+    const { service, last } = fileService();
+    global.location = { href: 'http://phones.test:8000/' };
+    t.after(() => delete global.location);
+    const heard = [];
+    const listing = outcome(service.list('/sdcard', (entry) => heard.push(entry.name)));
+    const list = last();
+    assert.equal(list.command, 'LIST');
+    assert.equal(list.payload.subarray(8).toString(), '/sdcard');
+    list.reply(record('DENT', '.', 0o40755));
+    list.reply(record('DENT', 'DCIM', 0o40755));
+    list.reply(record('DENT', 'notes.txt', 0o100644, 12));
+    assert.deepEqual(heard, ['DCIM', 'notes.txt'], 'each item is heard of as it arrives');
+    list.end(0);
+    const { value: entries } = await listing;
+    assert.deepEqual(entries.map((entry) => [entry.name, entry.isDirectory(), entry.size]), [['DCIM', true, 0], ['notes.txt', false, 12]]);
+
+    // A listing that ends with DONE resolves at DONE.
+    const done = outcome(service.list('/data'));
+    last().reply(Buffer.from('DONE'));
+    assert.deepEqual((await done).value, []);
+
+    const stat = outcome(service.stat('/sdcard/DCIM'));
+    assert.equal(last().command, 'STAT');
+    last().reply(statReply(0o40755));
+    const { value: folder } = await stat;
+    assert.deepEqual([folder.name, folder.isDirectory()], ['DCIM', true]);
+    assert.equal(last().closedBy, null, 'the phone closes a STAT itself');
+
+    const sizes = outcome(service.largeSizes('/sdcard/DCIM'));
+    const big = Buffer.alloc(16 + 7);
+    big.write('SIZE');
+    big.writeUInt32LE(7, 4);
+    big.writeUInt32LE(1, 8);
+    big.writeUInt32LE(7, 12);
+    big.write('big.mp4', 16);
+    last().reply(big);
+    last().reply(Buffer.from('DONE'));
+    last().end();
+    assert.deepEqual([...(await sizes).value], [['big.mp4', 2 ** 32 + 7]]);
+
+    const operations = [
+        ['MKDR', () => service.mkdir('/sdcard/Trips')],
+        ['MOVE', () => service.rename('/sdcard/a', '/sdcard/b')],
+        ['MOVE', () => service.move('/sdcard/a', '/sdcard/b', true)],
+        ['COPY', () => service.copy('/sdcard/a', '/sdcard/b')],
+        ['DELE', () => service.remove(['/sdcard/a', '/sdcard/b'])],
+    ];
+    for (const [command, start] of operations) {
+        const result = outcome(start());
+        assert.equal(last().command, command);
+        last().reply(Buffer.from('DONE'));
+        last().end();
+        assert.deepEqual(await result, { value: undefined }, command);
+    }
+
+    assert.equal(
+        service.downloadLink('/sdcard/notes.txt'),
+        'http://phones.test:8000/api/files/download?udid=PIXEL&path=%2Fsdcard%2Fnotes.txt',
+    );
+    const { FileService } = require('../src/app/googDevice/files/FileService');
+    const proxied = new FileService(serviceSocket().socket, { serial: PHONE, remote: 'ws://phone.test:8000/?action=multiplex' });
+    assert.match(proxied.downloadLink('/sdcard/a b'), /path=%2Fsdcard%2Fa\+b&remote=ws%3A%2F%2Fphone\.test%3A8000%2F%3Faction%3Dmultiplex$/);
+});
+
+test('FileService: errors are FileErrors that carry the phone\'s message', async () => {
+    const { service, last } = fileService();
+    const cases = [
+        [() => service.list('/sdcard/Denied'), (channel) => channel.reply(failReply('Permission denied')), { kind: 'refused', message: 'Permission denied' }, 'client 1000'],
+        [() => service.mkdir('/sdcard/Locked'), (channel) => channel.reply(failReply('Read-only file system')), { kind: 'refused', message: 'Read-only file system' }, 'client 1000'],
+        [() => service.mkdir('/sdcard/x'), (channel) => channel.reply(failReply('')), { kind: 'refused', message: 'The phone refused it.' }, 'client 1000'],
+        [() => service.stat('/sdcard/none'), (channel) => channel.reply(statReply(0)), { kind: 'missing', message: 'There is no such folder on the phone, or it cannot be read.' }, 'client 1000'],
+        [() => service.stat('/dev/null'), (channel) => channel.reply(statReply(0o20666)), { kind: 'unsupported', message: 'This item is not a regular file or folder.' }, 'client 1000'],
+        // The server ends a LIST that adb refused with the reason in the close.
+        [() => service.list('/sdcard/x'), (channel) => channel.end(4000, 'No such file or directory'), { kind: 'interrupted', message: 'No such file or directory' }, null],
+        [() => service.copy('/a', '/b'), (channel) => channel.end(), { kind: 'interrupted', message: 'The connection to the phone was interrupted.' }, null],
+        [() => service.stat('/sdcard'), (channel) => channel.reply(Buffer.from('ST')), { kind: 'unreadable', message: 'The answer from the phone could not be read.' }, 'client 1000'],
+    ];
+    for (const [start, answer, expected, closedBy] of cases) {
+        const result = outcome(start());
+        const channel = last();
+        answer(channel);
+        assert.deepEqual(await result, { error: { ...expected, isFileError: true } }, expected.message);
+        assert.equal(channel.closedBy, closedBy, `${expected.message}: ${closedBy ? 'the explorer closes the channel' : 'the phone closed it'}`);
+    }
+    // Without the connection nothing is sent.
+    const offline = fileService();
+    offline.socket.readyState = 3;
+    assert.deepEqual(await outcome(offline.service.list('/sdcard')), {
+        error: { kind: 'offline', message: 'The connection to the phone is closed.', isFileError: true },
+    });
+    assert.equal(offline.channels.length, 0);
+});
+
+test('FileService: each request can be cancelled, and a reply that comes after is ignored', async () => {
+    const { service, last, channels } = fileService();
+    const cancelled = { error: { kind: 'cancelled', message: 'The request was cancelled.', isFileError: true } };
+    const heard = [];
+    const starts = [
+        () => service.list('/sdcard', (entry) => heard.push(entry.name)),
+        () => service.stat('/sdcard'),
+        () => service.largeSizes('/sdcard'),
+        () => service.mkdir('/sdcard/a'),
+        () => service.rename('/sdcard/a', '/sdcard/b'),
+        () => service.move('/sdcard/a', '/sdcard/b'),
+        () => service.copy('/sdcard/a', '/sdcard/b'),
+        () => service.remove(['/sdcard/a']),
+    ];
+    for (const start of starts) {
+        const request = start();
+        const channel = last();
+        request.cancel();
+        assert.equal(channel.closedBy, 'client 1000', `${channel.command}: cancel closes its channel`);
+        // The phone had already answered: what it says now reaches nobody.
+        channel.reply(record('DENT', 'late.txt', 0o100644));
+        channel.reply(statReply(0o40755));
+        channel.reply(Buffer.from('DONE'));
+        assert.deepEqual(await outcome(request), cancelled, channel.command);
+    }
+    assert.deepEqual(heard, [], 'no item of a cancelled listing is heard of');
+    assert.equal(channels.length, starts.length);
+
+    // Release closes every channel that is open, and its requests end as cancelled.
+    const open = [service.list('/a'), service.stat('/b')].map(outcome);
+    service.release();
+    assert.deepEqual(channels.slice(-2).map((channel) => channel.closedBy), ['client 1000', 'client 1000']);
+    assert.deepEqual(await Promise.all(open), [cancelled, cancelled]);
+    assert.equal(service.connected(), false);
+});
+
+/**
+ * The phone's side of one upload channel. `answer(upto)` answers what was sent since the last
+ * answer, as far as the step `upto` (a FilePushState); `run(upto)` keeps answering while the
+ * upload reads its file and sends more.
+ */
+function uploadPhone(channel, id) {
+    const { FilePushState } = require('../src/app/controlMessage/CommandControlMessage');
+    let answered = 0;
+    const phone = {
+        answer(upto = Infinity) {
+            const pushes = channel.pushes();
+            while (answered < pushes.length && channel.open) {
+                const { state } = pushes[answered];
+                if (state > upto) return;
+                answered++;
+                if (state === FilePushState.NEW) channel.reply(pushReply(id, 1));
+                else if (state === FilePushState.START || state === FilePushState.APPEND) channel.reply(pushReply(id, 0));
+                else if (state === FilePushState.FINISH) {
+                    channel.reply(pushReply(id, 0));
+                    channel.end();
+                }
+            }
+        },
+        async run(upto = Infinity, rounds = 20) {
+            for (let round = 0; round < rounds && channel.open; round++) {
+                phone.answer(upto);
+                await later();
+            }
+        },
+        states: () => channel.pushes().map(({ state }) => state),
+    };
+    return phone;
+}
+
+test('FileService: an upload sends NEW, START, its chunks and FINISH, and reports how far it is', async () => {
+    const { service, last } = fileService();
+    const progress = [];
+    const contents = Buffer.alloc(200000, 7);
+    const upload = outcome(
+        service.upload(new File([contents], 'clip.bin'), {
+            path: '/sdcard/Movies/clip.bin',
+            overwrite: false,
+            onProgress: (step) => progress.push(step),
+        }),
+    );
+    const channel = last();
+    assert.equal(channel.command, 'SEND');
+    await uploadPhone(channel, 41).run();
+    assert.deepEqual(await upload, { value: undefined });
+    const pushes = channel.pushes();
+    assert.deepEqual(pushes.map(({ state }) => state), [0, 1, 2, 2, 2, 2, 3], 'NEW, START, four chunks, FINISH');
+    assert.deepEqual(pushes.slice(1).map(({ id }) => id), [41, 41, 41, 41, 41, 41], 'every message after NEW names the id');
+    assert.deepEqual([pushes[1].fileName, pushes[1].fileSize, pushes[1].overwrite], ['/sdcard/Movies/clip.bin', 200000, false]);
+    assert.deepEqual(Buffer.concat(pushes.slice(2, 6).map(({ chunk }) => chunk)), contents);
+    assert.deepEqual(progress.at(0), { sent: 0, size: 200000, saving: false });
+    assert.deepEqual(progress.at(-1), { sent: 200000, size: 200000, saving: true });
+    assert.ok(progress.some(({ sent, saving }) => sent === 65536 && !saving), 'bytes are reported as the phone takes them');
+    assert.equal(channel.closedBy, null, 'the phone ends a finished upload');
+
+    // A refusal reads as the phone gives it: the close reason, or the meaning of its code.
+    const refused = outcome(service.upload(new File(['x'], 'notes.txt'), { path: '/sdcard/notes.txt', overwrite: false }));
+    await uploadPhone(last(), 42).run(0, 3);
+    last().end(4013, 'An item with this name already exists.');
+    assert.deepEqual(await refused, {
+        error: { kind: 'refused', message: 'An item with this name already exists.', isFileError: true },
+    });
+    const full = outcome(service.upload(new File(['x'], 'notes.txt'), { path: '/sdcard/notes.txt', overwrite: false }));
+    await uploadPhone(last(), 43).run(0, 3);
+    last().reply(pushReply(43, -2));
+    assert.deepEqual(await full, { error: { kind: 'refused', message: 'No space.', isFileError: true } });
+});
+
+test('FileService: an upload can be cancelled while it sends and while its id is on the way', async () => {
+    const { service, last } = fileService();
+    const { FilePushState } = require('../src/app/controlMessage/CommandControlMessage');
+    const cancelled = { error: { kind: 'cancelled', message: 'The request was cancelled.', isFileError: true } };
+
+    const sending = service.upload(new File([Buffer.alloc(200000)], 'a.bin'), { path: '/sdcard/a.bin', overwrite: false });
+    const first = uploadPhone(last(), 50);
+    await first.run(FilePushState.START, 6);
+    assert.deepEqual(first.states(), [0, 1, 2, 2, 2, 2], 'the chunks are out, none acknowledged');
+    const channel = last();
+    sending.cancel();
+    assert.deepEqual(first.states().slice(-1), [FilePushState.CANCEL], 'CANCEL names the upload');
+    assert.equal(channel.closedBy, 'client 1000', 'then the channel closes');
+    channel.reply(pushReply(50, 0));
+    assert.deepEqual(await outcome(sending), cancelled);
+
+    // Cancelled before the phone gave an id: CANCEL follows the id, then the close.
+    const early = service.upload(new File(['x'], 'b.bin'), { path: '/sdcard/b.bin', overwrite: false });
+    const second = last();
+    early.cancel();
+    assert.equal(second.closedBy, null, 'nothing to name yet');
+    await uploadPhone(second, 51).run(FilePushState.NEW, 3);
+    assert.deepEqual(second.pushes().map(({ state, id }) => [state, id]), [[FilePushState.NEW, 0], [FilePushState.CANCEL, 51]]);
+    assert.equal(second.closedBy, 'client 1000');
+    assert.deepEqual(await outcome(early), cancelled);
+
+    // Once every byte is sent the phone is saving the file, and Cancel does nothing.
+    const saving = service.upload(new File(['abc'], 'c.bin'), { path: '/sdcard/c.bin', overwrite: true });
+    const third = uploadPhone(last(), 52);
+    await third.run(FilePushState.APPEND, 6);
+    assert.deepEqual(third.states(), [0, 1, 2, 3], 'FINISH is out');
+    saving.cancel();
+    assert.equal(last().closedBy, null, 'a file being saved is not cancelled');
+    third.answer();
+    assert.deepEqual(await outcome(saving), { value: undefined });
+});
+
+test('FileService: an upload in progress does not hold up a listing or a STAT', async () => {
+    const { service, last } = fileService();
+    const upload = outcome(service.upload(new File([Buffer.alloc(300000)], 'big.bin'), { path: '/sdcard/big.bin', overwrite: false }));
+    const send = last();
+    const phone = uploadPhone(send, 60);
+    await phone.run(1, 6);
+    assert.equal(phone.states().filter((state) => state === 2).length, 5, 'its chunks wait for their acknowledgement');
+    // A listing goes out at once on a channel of its own and is answered while the upload waits.
+    const listing = outcome(service.list('/sdcard'));
+    const list = last();
+    assert.equal(list.command, 'LIST');
+    list.reply(record('DENT', 'notes.txt', 0o100644, 3));
+    list.end(0);
+    assert.deepEqual((await listing).value.map((entry) => entry.name), ['notes.txt']);
+    const stat = outcome(service.stat('/sdcard'));
+    last().reply(statReply(0o40755));
+    assert.equal((await stat).value.isDirectory(), true);
+    assert.equal(send.open, true, 'the upload is still sending');
+    await phone.run();
+    assert.deepEqual(await upload, { value: undefined });
+});
+
+test('an upload goes to the folder its name was checked against, whatever the explorer shows by then', async (t) => {
+    const { client, dialog, settle } = openFiles(t);
+    await settle();
+    const plan = client.planUploads([{ name: 'notes.txt' }]);
+    await settle();
+    dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value: 'replace' }) });
+    const [planned] = await plan;
+    assert.deepEqual([planned.folder, planned.name, planned.overwrite], ['/sdcard', 'notes.txt', true]);
+    client.navigate('/sdcard/Music');
+    await settle();
+    // The queue sends the planned upload to the planned folder.
+    const FilePushHandler = require('../src/app/googDevice/filePush/FilePushHandler').default;
+    const { service, last } = fileService();
+    const handler = new FilePushHandler(new FakeElement('div'), service, async (files) => files.map((file) => ({ ...planned, file })));
+    t.after(() => handler.release());
+    handler.onFilesDrop([new File(['abc'], 'notes.txt')]);
+    await later();
+    await uploadPhone(last(), 70).run(0, 3);
+    const start = last().pushes()[1];
+    assert.deepEqual([start.fileName, start.overwrite], ['/sdcard/notes.txt', true]);
+});
+
 // ------------------------------------------------------------------ the explorer while its tab is hidden
 //
 // The phone's page keeps Files mounted while it shows another tab and tells it with setActive.
@@ -427,12 +800,31 @@ class FakeElement {
         this.children.push(child);
         return child;
     }
-    insertBefore(child) {
-        return this.appendChild(child);
+    /** Before `reference` when it is one of the children, at the end otherwise. */
+    insertBefore(child, reference) {
+        child.remove();
+        child.parentNode = this;
+        const at = this.children.indexOf(reference);
+        if (at < 0) this.children.push(child);
+        else this.children.splice(at, 0, child);
+        return child;
     }
     remove() {
         if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
         this.parentNode = null;
+    }
+    get firstElementChild() {
+        return this.children[0] ?? null;
+    }
+    get nextElementSibling() {
+        const siblings = this.parentNode?.children || [];
+        const at = siblings.indexOf(this);
+        return at < 0 ? null : (siblings[at + 1] ?? null);
+    }
+    get isConnected() {
+        let item = this;
+        while (item.parentNode) item = item.parentNode;
+        return item === global.document?.body;
     }
     addEventListener(type, listener, options) {
         (this.listeners[type] ||= []).push({ listener, once: !!options?.once });
@@ -454,6 +846,9 @@ class FakeElement {
     getAttribute(name) {
         return this.attributes[name] ?? null;
     }
+    removeAttribute(name) {
+        delete this.attributes[name];
+    }
     toggleAttribute(name, force = !(name in this.attributes)) {
         if (force) this.attributes[name] = '';
         else delete this.attributes[name];
@@ -464,8 +859,28 @@ class FakeElement {
     blur() {
         if (global.document.activeElement === this) global.document.activeElement = null;
     }
+    setSelectionRange() {}
+    /**
+     * Rows lie one under the other, 33px each, and a spacer is as tall as its style says. A test
+     * can give another element a place with `layout`.
+     */
     getBoundingClientRect() {
-        return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+        const box = (top, height) => ({ left: 0, top, right: 0, bottom: top + height, width: 0, height });
+        if (this.layout) return this.layout();
+        if (this.tagName !== 'tr' || !this.parentNode) return box(0, 0);
+        let top = this.parentNode.getBoundingClientRect().top;
+        for (const sibling of this.parentNode.children) {
+            if (sibling === this) break;
+            top += sibling.rowHeight();
+        }
+        return box(top, this.rowHeight());
+    }
+    rowHeight() {
+        return this.classes.has('fx-spacer') ? parseFloat(this.style.height) || 0 : 33;
+    }
+    /** A download is a link that is clicked. The links clicked are kept on the document. */
+    click() {
+        (global.document.clicked ||= []).push(this.href);
     }
     showModal() {
         this.open = true;
@@ -490,6 +905,35 @@ class FakeElement {
     }
 }
 class FakeButton extends FakeElement {}
+
+/**
+ * A template that makes one element for each row in its markup, with the row's classes and
+ * data attributes. That is all the explorer reads from the rows it builds.
+ */
+class FakeTemplate extends FakeElement {
+    constructor() {
+        super('template');
+        this.content = new FakeElement('content');
+    }
+    set innerHTML(markup) {
+        this.markup = markup;
+        this.content.children = [];
+        const unescape = (text) =>
+            text.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+        for (const [, attributes] of markup.matchAll(/<tr\b([^>]*)>/g)) {
+            const row = new FakeElement('tr');
+            for (const [, name, value] of attributes.matchAll(/([\w-]+)="([^"]*)"/g)) {
+                if (name === 'class') row.className = value;
+                else if (name.startsWith('data-')) row.dataset[name.slice(5)] = unescape(value);
+                else row.setAttribute(name, unescape(value));
+            }
+            this.content.appendChild(row);
+        }
+    }
+    get innerHTML() {
+        return this.markup || '';
+    }
+}
 
 /** A tab's session history. Back, Forward and go act at once and fire the events a browser fires. */
 function fakeTab(address) {
@@ -596,10 +1040,12 @@ function fakePhone(Multiplexer) {
 }
 
 /** Opens Files for the phone in a tab that came from the list, as the phone's page does. */
-function openFiles(t, folder = '/sdcard') {
+function openFiles(t, folder = '/sdcard', makePhone = fakePhone) {
     const tab = fakeTab('#!');
     const body = new FakeElement('body');
     const frames = [];
+    const cancelledFrames = new Set();
+    let frameIds = 0;
     const storage = () => ({ getItem: () => null, setItem: () => undefined });
     const globals = {
         window: tab.window,
@@ -610,7 +1056,7 @@ function openFiles(t, folder = '/sdcard') {
         document: {
             body,
             activeElement: null,
-            createElement: (tag) => Object.assign(new FakeElement(tag), tag === 'template' ? { content: new FakeElement('content') } : {}),
+            createElement: (tag) => (tag === 'template' ? new FakeTemplate() : new FakeElement(tag)),
             addEventListener: () => undefined,
             removeEventListener: () => undefined,
         },
@@ -618,9 +1064,14 @@ function openFiles(t, folder = '/sdcard') {
         HTMLButtonElement: FakeButton,
         // The markup takes the kit's class names as values, which the template helper tells from a template.
         HTMLTemplateElement: class {},
-        getComputedStyle: () => ({ opacity: '1', transform: 'none' }),
-        requestAnimationFrame: (run) => frames.push(run),
-        cancelAnimationFrame: () => undefined,
+        getComputedStyle: () => ({ opacity: '1', transform: 'none', paddingTop: '0px', getPropertyValue: () => '' }),
+        // A frame that is cancelled does not run.
+        requestAnimationFrame: (run) => {
+            const id = ++frameIds;
+            frames.push(() => cancelledFrames.has(id) || run());
+            return id;
+        },
+        cancelAnimationFrame: (id) => cancelledFrames.add(id),
     };
     const before = Object.fromEntries(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(global, key)]));
     Object.entries(globals).forEach(([key, value]) => Object.defineProperty(global, key, { value, configurable: true, writable: true }));
@@ -632,7 +1083,7 @@ function openFiles(t, folder = '/sdcard') {
     const router = require('../src/app/state/router');
     const { deviceRoute } = require('../src/app/state/routes');
     const { FileListingClient } = require('../src/app/googDevice/client/FileListingClient');
-    const phone = fakePhone(Multiplexer);
+    const phone = makePhone(Multiplexer);
     t.mock.method(ManagerClient.prototype, 'openNewConnection', function () {
         this.ws = phone.socket;
         return phone.socket;
@@ -665,18 +1116,18 @@ function openFiles(t, folder = '/sdcard') {
     const upload = (fields) =>
         client.onFilePushUpdate({
             key: 1,
-            pushId: 0,
             fileName: 'clip.bin',
+            folder: '/sdcard/DCIM',
             message: 'Waiting',
-            progress: 0,
             error: false,
             finished: false,
             sent: 0,
             size: 10,
+            cancellable: true,
             ...fields,
         });
     const dialog = wrapper.querySelector('.fx-dialog');
-    return { tab, body, wrapper, client, phone, router, deviceRoute, toasts, settle, upload, dialog };
+    return { tab, body, wrapper, client, phone, router, deviceRoute, toasts, settle, upload, dialog, frames };
 }
 
 const address = (view, extra = '') => `#!action=device&udid=${PHONE}&view=${view}${extra}`;
@@ -700,11 +1151,11 @@ test('a hidden Files keeps its folder, its connection and its uploads, and write
     client.setActive(false);
     assert.equal(tab.location.hash, address('shell'), 'the change of view was not refused');
     const written = tab.writes.length;
-    const requests = phone.channels.length;
     client.navigate('/sdcard/Download');
-    upload({ sent: 5, message: '50%' });
+    upload({ sent: 5, message: '' });
     await settle();
-    assert.equal(client.getPath(), '/sdcard/DCIM', 'the folder is kept: a folder change waits for the upload');
+    assert.equal(client.getPath(), '/sdcard/Download', 'a folder change does not wait for the upload');
+    const requests = phone.channels.length;
     assert.equal(tab.writes.length, written, 'nothing is written to history while hidden');
     assert.equal(tab.location.hash, address('shell'));
     assert.equal(phone.socket.closed, 0, 'the connection stays open');
@@ -716,7 +1167,7 @@ test('a hidden Files keeps its folder, its connection and its uploads, and write
     assert.equal(key.defaultPrevented, false);
     assert.equal(phone.channels.length, requests, 'F5 lists nothing while hidden');
 
-    // The upload ends while hidden. The folder that was asked for is opened, without an entry.
+    // The upload ends while hidden. The folder shown stays, and nothing is written.
     upload({ finished: true, sent: 10, message: 'Uploaded' });
     await settle();
     assert.equal(client.getPath(), '/sdcard/Download');
@@ -738,6 +1189,70 @@ test('a hidden Files keeps its folder, its connection and its uploads, and write
     assert.equal(tab.history.state.files.index, 1, 'tagged with the place Files has in its own history');
     const pressed = wrapper.dispatch('keydown', { key: 'F5', target: wrapper.querySelector('.fx-items') });
     assert.equal(pressed.defaultPrevented, true, 'keys work again');
+});
+
+test('while a file uploads, folders open and folder operations run; the folder it went to is listed again when it ends', async (t) => {
+    const { client, phone, settle, upload, dialog, wrapper } = openFiles(t);
+    await settle();
+    upload({ folder: '/sdcard' });
+    assert.equal(wrapper.querySelector('.fx-transfers').children.length, 1, 'an upload to /sdcard runs');
+    client.navigate('/sdcard/DCIM');
+    await settle();
+    assert.equal(client.getPath(), '/sdcard/DCIM', 'another folder opens');
+    assert.equal(phone.asked('LIST').at(-1), '/sdcard/DCIM');
+    client.runCommand('new-folder');
+    await settle();
+    assert.equal(dialog.open, true, 'New folder asks for a name');
+    dialog.querySelector('input[name="value"]').value = 'Trips';
+    dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value: 'confirm' }) });
+    await settle();
+    assert.deepEqual(phone.asked('MKDR'), ['/sdcard/DCIM/Trips'], 'and a folder operation goes out');
+    await settle();
+    const lists = phone.asked('LIST').length;
+    upload({ folder: '/sdcard', finished: true, sent: 10, message: 'Uploaded' });
+    await settle();
+    assert.equal(phone.asked('LIST').length, lists, 'the end of an upload to another folder lists nothing');
+    assert.equal(client.getPath(), '/sdcard/DCIM');
+    // An upload to the folder that is shown lists it again when it ends.
+    upload({ key: 2, folder: '/sdcard/DCIM' });
+    upload({ key: 2, folder: '/sdcard/DCIM', finished: true, sent: 10, message: 'Uploaded' });
+    await settle();
+    assert.equal(phone.asked('LIST').length, lists + 1);
+    assert.equal(phone.asked('LIST').at(-1), '/sdcard/DCIM');
+});
+
+test('files dropped while others upload are taken; a drop while a folder loads is refused and says why', async (t) => {
+    const { client, settle, upload, toasts } = openFiles(t);
+    await settle();
+    upload({ folder: '/sdcard' });
+    assert.equal(client.onDrop(), true, 'a drop during an upload is taken');
+    assert.deepEqual(toasts, []);
+    client.navigate('/sdcard/DCIM');
+    assert.equal(client.onDrop(), false, 'a drop while a folder loads is not');
+    assert.deepEqual(toasts.at(-1), { message: 'Wait for the current folder or operation to finish before adding files.', error: false });
+});
+
+test('an upload row shows the name, a bar, how much of how much is sent, and Cancel', async (t) => {
+    const { settle, upload, wrapper } = openFiles(t);
+    await settle();
+    upload({ size: 2 * 1024 * 1024 });
+    const row = wrapper.querySelector('.fx-transfers').children[0];
+    assert.ok(row.innerHTML.includes('class="fx-upload-name">clip.bin</span>'));
+    assert.ok(row.innerHTML.includes('role="progressbar" aria-label="Upload of clip.bin"'));
+    assert.ok(row.innerHTML.includes('aria-label="Cancel the upload of clip.bin">Cancel</button>'));
+    const bar = row.querySelector('.fx-upload-bar');
+    const state = row.querySelector('.fx-upload-state');
+    assert.equal(state.textContent, 'Waiting');
+    assert.equal(bar.getAttribute('aria-valuetext'), '0 B of 2.0 MB');
+    upload({ size: 2 * 1024 * 1024, sent: 512 * 1024, message: '' });
+    assert.equal(state.textContent, '512 KB of 2.0 MB', 'bytes of total while it sends');
+    assert.equal(bar.getAttribute('aria-valuenow'), '25');
+    assert.equal(row.querySelector('.fx-upload-fill').style.width, '25%');
+    assert.equal(row.querySelector('.fx-upload-cancel').hidden, false);
+    upload({ size: 2 * 1024 * 1024, sent: 2 * 1024 * 1024, message: 'Saving', cancellable: false });
+    assert.equal(state.textContent, 'Saving');
+    assert.equal(bar.getAttribute('aria-valuenow'), '100');
+    assert.equal(row.querySelector('.fx-upload-cancel').hidden, true, 'a file being saved cannot be stopped');
 });
 
 test('a Files tab that is shown again lists its folder again, reports what it missed and keeps a selection', async (t) => {
@@ -895,26 +1410,6 @@ test('a question that is answered and not followed by another gives up its entry
     assert.deepEqual((await plan).map((upload) => upload.name), ['new.txt']);
 });
 
-test('an upload starts in the folder its name was checked against, not the one shown by then', async (t) => {
-    const { client, phone, settle } = openFiles(t);
-    await settle();
-    const { AdbkitFilePushStream } = require('../src/app/googDevice/filePush/AdbkitFilePushStream');
-    const stream = new AdbkitFilePushStream(phone.socket, client);
-    const sent = [];
-    stream.channels.set(7, { send: (data) => sent.push(CommandControlMessage.pushFileCommandFromBuffer(data)) });
-    client.navigate('/sdcard/Music');
-    await settle();
-    stream.sendEventStart({ id: 7, fileName: 'notes.txt', fileSize: 3, overwrite: true, folder: '/sdcard' });
-    stream.sendEventStart({ id: 7, fileName: 'notes.txt', fileSize: 3 });
-    assert.deepEqual(
-        sent.map(({ fileName, overwrite }) => ({ fileName, overwrite })),
-        [
-            { fileName: '/sdcard/notes.txt', overwrite: true },
-            { fileName: '/sdcard/Music/notes.txt', overwrite: false },
-        ],
-    );
-});
-
 test('uploads: a change of view on the same phone does not ask, leaving the phone does, also from another tab', async (t) => {
     const { tab, body, wrapper, client, router, deviceRoute, settle, upload, dialog } = openFiles(t);
     await settle();
@@ -956,4 +1451,614 @@ test('uploads: a change of view on the same phone does not ask, leaving the phon
     dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value: 'confirm' }) });
     await settle();
     assert.equal(tab.location.hash, '#!', 'Stop and leave goes where the owner asked');
+});
+
+// ------------------------------------------------------------------ large folders
+
+/** The order the explorer had before FolderEntries: filter, then sort with localeCompare. */
+function referenceOrder(entries, { sort, ascending, showHidden, filter }) {
+    const { typeLabel } = require('../src/app/googDevice/client/fileTypes');
+    const direction = ascending ? 1 : -1;
+    return entries
+        .filter((entry) => (showHidden || !entry.name.startsWith('.')) && (!filter || entry.name.toLowerCase().includes(filter)))
+        .sort((a, b) => {
+            const folders = Number(b.isDirectory()) - Number(a.isDirectory());
+            if (folders) return folders;
+            let result = 0;
+            if (sort === 'size') result = (a.isDirectory() ? -1 : a.size) - (b.isDirectory() ? -1 : b.size);
+            else if (sort === 'modified') result = a.mtime.getTime() - b.mtime.getTime();
+            else if (sort === 'type') result = typeLabel(a).localeCompare(typeLabel(b));
+            return (result || a.name.localeCompare(b.name, undefined, { numeric: true })) * direction;
+        })
+        .map((entry) => entry.name);
+}
+
+test('the folder is sorted once per change, in the order it had before, however often the list is read', () => {
+    const { FolderEntries } = require('../src/app/googDevice/files/FolderEntries');
+    const { Entry } = require('../src/app/googDevice/Entry');
+    const folder = new FolderEntries();
+    const arrangement = { sort: 'name', ascending: true, showHidden: false, filter: '' };
+    folder.arrange(arrangement);
+    for (let batch = 0; batch < 10; batch++) {
+        folder.add(
+            ...Array.from({ length: 500 }, (_, index) => new Entry(`IMG_${batch * 500 + index}.jpg`, 0o100644, index, 1700000000 + index)),
+        );
+        for (let read = 0; read < 5; read++) {
+            folder.visible();
+            folder.isShown('IMG_1.jpg');
+            folder.hiddenCount();
+        }
+        assert.equal(folder.sorts, batch + 1, 'one sort for each batch of items');
+    }
+    assert.equal(folder.visible().length, 5000);
+    assert.deepEqual(folder.visible().slice(8, 12).map((entry) => entry.name), ['IMG_8.jpg', 'IMG_9.jpg', 'IMG_10.jpg', 'IMG_11.jpg'], 'numbers in names sort by value');
+    // The filter and the dot names filter the sorted list; they do not sort it again.
+    folder.arrange({ ...arrangement, filter: 'img_49' });
+    assert.equal(folder.visible().length, 1 + 10 + 100);
+    assert.equal(folder.isShown('IMG_4950.jpg'), true);
+    assert.equal(folder.isShown('IMG_50.jpg'), false);
+    folder.arrange({ ...arrangement, showHidden: true });
+    folder.visible();
+    assert.equal(folder.sorts, 10, 'the filter sorts nothing');
+    folder.arrange({ ...arrangement, showHidden: true, ascending: false });
+    folder.visible();
+    folder.visible();
+    assert.equal(folder.sorts, 11, 'a new order is one sort');
+    assert.equal(folder.visible()[0].name, 'IMG_4999.jpg', 'and is what the list shows');
+    folder.arrange({ ...arrangement, showHidden: true, ascending: false, sort: 'size' });
+    assert.equal(folder.visible()[0].name, 'IMG_4999.jpg', 'the largest first');
+    folder.arrange({ ...arrangement, showHidden: true, ascending: true, sort: 'size' });
+    assert.equal(folder.visible()[0].name, 'IMG_0.jpg');
+    assert.equal(folder.sorts, 13);
+
+    // Every column and direction gives the order of before, folders first and dot names hidden.
+    const mixed = new FolderEntries();
+    const items = [
+        new Entry('Camera', 0o40755, 0, 1700000300),
+        new Entry('.thumbnails', 0o40755, 0, 1700000100),
+        new Entry('file10.txt', 0o100644, 30, 1700000200),
+        new Entry('file9.txt', 0o100644, 30, 1700000200),
+        new Entry('File01.txt', 0o100644, 5, 1700000400),
+        new Entry('clip.MP4', 0o100644, 9000, 1700000050),
+        new Entry('.nomedia', 0o100644, 0, 1700000000),
+        new Entry('archive.tar.gz', 0o100644, 70, 1700000600),
+        new Entry('Notes', 0o120777, 0, 1700000500),
+        new Entry('é.png', 0o100644, 1, 1700000700),
+    ];
+    mixed.add(...items);
+    for (const filter of ['', 'file']) {
+        for (const showHidden of [false, true]) {
+            for (const sort of ['name', 'size', 'type', 'modified']) {
+                for (const ascending of [true, false]) {
+                    const order = { sort, ascending, showHidden, filter };
+                    mixed.arrange(order);
+                    assert.deepEqual(mixed.visible().map((entry) => entry.name), referenceOrder(items, order), JSON.stringify(order));
+                    assert.equal(mixed.hiddenCount(), showHidden ? 0 : 2);
+                }
+            }
+        }
+    }
+    // An item listed again (its true size, say) keeps its place among the items.
+    mixed.add(new Entry('clip.MP4', 0o100644, 5 * 1024 ** 3, 1700000050));
+    assert.equal(mixed.indexOf('clip.MP4'), 5);
+    assert.equal(mixed.get('clip.MP4').size, 5 * 1024 ** 3);
+    assert.equal(mixed.size, items.length);
+});
+
+test('a row is built once for its item: the filter and a new order move rows, and a changed item is built again', () => {
+    const { KeyedRows } = require('../src/app/googDevice/files/KeyedRows');
+    const body = new FakeElement('tbody');
+    const rows = new KeyedRows(
+        body,
+        (item) => item.name,
+        (items) => items.map((item) => Object.assign(new FakeElement('tr'), { dataset: { name: item.name } })),
+        (before, after) => before.size === after.size,
+    );
+    const items = Array.from({ length: 1000 }, (_, index) => ({ name: `n${index}`, size: 1 }));
+    rows.show(items);
+    assert.equal(rows.built, 1000);
+    const all = [...body.children];
+    assert.deepEqual(all.map((row) => row.dataset.name), items.map((item) => item.name));
+    const same = (expected) => body.children.length === expected.length && body.children.every((row, index) => row === expected[index]);
+
+    rows.show(items.filter((_, index) => index % 7 === 0));
+    assert.equal(rows.built, 1000, 'the filter builds no row');
+    assert.ok(same(all.filter((_, index) => index % 7 === 0)), 'the rows that stay are the same rows');
+    rows.show(items);
+    assert.ok(same(all), 'and those that come back are the ones from before');
+    rows.show([...items].reverse());
+    assert.equal(rows.built, 1000, 'a new order builds no row');
+    assert.ok(same([...all].reverse()));
+    rows.show(items.map((item) => (item.name === 'n3' ? { ...item, size: 2 } : item)));
+    assert.equal(rows.built, 1001, 'an item that changed gets a new row');
+    assert.notEqual(body.children[3], all[3]);
+    assert.ok(body.children.every((row, index) => index === 3 || row === all[index]));
+    // With nothing to show, the body holds the line that says so.
+    const empty = new FakeElement('tr');
+    rows.show([], { after: empty });
+    assert.deepEqual(body.children, [empty]);
+    assert.deepEqual(rows.shown(), []);
+});
+
+/** A phone whose listings the test feeds by hand, one burst of items at a time. */
+function streamPhone(Multiplexer) {
+    const lists = [];
+    const waiting = [];
+    const socket = Object.assign(Object.create(Multiplexer.prototype), {
+        OPEN: 1,
+        readyState: 1,
+        close: () => undefined,
+        createChannel(payload) {
+            const listeners = { message: new Set(), close: new Set() };
+            const channel = {
+                command: payload.subarray(0, 4).toString(),
+                open: true,
+                addEventListener: (type, listener) => listeners[type]?.add(listener),
+                removeEventListener: (type, listener) => listeners[type]?.delete(listener),
+                send: () => undefined,
+                reply: (data) => [...listeners.message].forEach((listener) => listener({ data })),
+                end(code = 1000) {
+                    if (!channel.open) return;
+                    channel.open = false;
+                    [...listeners.close].forEach((listener) => listener({ code, reason: '' }));
+                },
+                close: (code) => channel.end(code),
+            };
+            (channel.command === 'LIST' ? lists : waiting).push(channel);
+            return channel;
+        },
+    });
+    return {
+        socket,
+        lists,
+        serve() {
+            waiting.splice(0).forEach((channel) => {
+                if (channel.command === 'STAT') channel.reply(statReply(0o40755));
+                if (channel.command === 'SIZE') channel.reply(Buffer.from('DONE'));
+                channel.end();
+            });
+        },
+    };
+}
+
+test('a folder of 5,000 items: sorted once per change, rows added at most every 250 ms, and the filter builds no row that stays', async (t) => {
+    const { client, phone, wrapper, frames } = openFiles(t, '/sdcard/DCIM/Camera', streamPhone);
+    // Frames come as they would in a browser. The list shows 20 rows of 33px at a time.
+    const pump = setInterval(() => frames.splice(0).forEach((run) => run()), 16);
+    t.after(() => clearInterval(pump));
+    const items = wrapper.querySelector('.fx-items');
+    const tbody = wrapper.querySelector('tbody');
+    items.clientHeight = 660;
+    items.scrollTop = 0;
+    tbody.layout = () => ({ left: 0, top: -items.scrollTop, right: 0, bottom: 0, width: 0, height: 0 });
+    for (let round = 0; round < 5 && !phone.lists.length; round++) {
+        phone.serve();
+        await later();
+    }
+    const [list] = phone.lists;
+    assert.ok(list, 'the folder is listed');
+    const renders = [];
+    const render = client.renderItems.bind(client);
+    client.renderItems = () => {
+        renders.push(performance.now());
+        render();
+    };
+    const sortsBefore = client.folder.sorts;
+    // 5,000 items over about a second, in bursts of 250: the way a large folder arrives.
+    for (let burst = 0; burst < 20; burst++) {
+        for (let index = 0; index < 250; index++) list.reply(record('DENT', `IMG_${burst * 250 + index}.jpg`, 0o100644, 2048));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const whileArriving = renders.length;
+    const sortsWhileArriving = client.folder.sorts - sortsBefore;
+    list.end(0);
+    await later();
+    phone.serve();
+    await later();
+    const gaps = renders.slice(1, whileArriving).map((at, index) => at - renders[index]);
+    assert.ok(whileArriving >= 2 && whileArriving <= 6, `${whileArriving} renders while 5,000 items arrived over a second`);
+    assert.ok(gaps.every((gap) => gap >= 245), `at least 250 ms apart: ${gaps.map(Math.round).join(', ')}`);
+    assert.equal(renders.length, whileArriving + 1, 'and one at once when the listing ends');
+    assert.ok(sortsWhileArriving <= whileArriving, `${sortsWhileArriving} sorts in ${whileArriving} renders, not one per frame`);
+    assert.ok(client.folder.sorts - sortsBefore <= renders.length, 'at most one sort for each render');
+
+    // Only the rows near the view are in the document; a spacer stands for the rest.
+    const rows = () => tbody.children.filter((row) => !row.classes.has('fx-spacer'));
+    const spacers = () => tbody.children.filter((row) => row.classes.has('fx-spacer')).map((row) => parseFloat(row.style.height));
+    assert.deepEqual(rows().map((row) => row.dataset.name).slice(0, 3), ['IMG_0.jpg', 'IMG_1.jpg', 'IMG_2.jpg']);
+    assert.ok(rows().length >= 20 && rows().length <= 40, `${rows().length} rows in the document`);
+    assert.deepEqual(spacers(), [(5000 - rows().length) * 33], 'the spacer is as tall as the rows it stands for');
+    const built = client.rows.built;
+    assert.ok(built <= 200, `${built} rows built for 5,000 items`);
+
+    // Scrolled half way down, the rows there are in the document, with a spacer on each side.
+    items.scrollTop = 2500 * 33;
+    items.dispatch('scroll');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const names = rows().map((row) => row.dataset.name);
+    assert.ok(names.includes('IMG_2500.jpg') && names.includes('IMG_2519.jpg'), names.join(' '));
+    const [before, after] = spacers();
+    assert.equal(before + rows().length * 33 + after, 5000 * 33, 'the list keeps its height');
+    assert.equal(tbody.children.length, rows().length + 2);
+
+    // Typing in the filter: rows that stay in view are the same rows, and nothing is sorted.
+    items.scrollTop = 0;
+    items.dispatch('scroll');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const sorts = client.folder.sorts;
+    const filter = wrapper.querySelector('.fx-filter-input');
+    for (const text of ['IMG_1', 'IMG_1', 'IMG_19', 'IMG_1', '']) {
+        const seen = new Map(rows().map((row) => [row.dataset.name, row]));
+        filter.value = text;
+        filter.dispatch('input');
+        const now = rows();
+        assert.ok(now.length > 0 && now.every((row) => row.dataset.name.toLowerCase().includes(text.toLowerCase())), text);
+        const kept = now.filter((row) => seen.has(row.dataset.name));
+        assert.ok(kept.every((row) => seen.get(row.dataset.name) === row), `"${text}": a row that stays is the row from before`);
+    }
+    assert.equal(client.folder.sorts, sorts, 'the filter sorted nothing');
+    assert.ok(client.rows.built < built + 200, 'and built only rows that came into view');
+});
+
+/**
+ * A list of 1,000 items, of which about one row in three is taller, in no regular order, as
+ * tiles are where some names take two lines and folders have no size. `scrollTo` scrolls it as
+ * the owner does and notes when a row in view where the scroll lands moves once the rows near
+ * the view have changed.
+ */
+async function unevenList(t) {
+    const rowHeight = FakeElement.prototype.rowHeight;
+    const tall = (name) => (Number(/\d+/.exec(name)[0]) * 7919) % 13 < 4;
+    t.mock.method(FakeElement.prototype, 'rowHeight', function () {
+        return this.dataset?.name !== undefined && tall(this.dataset.name) ? 49 : rowHeight.call(this);
+    });
+    const { client, phone, wrapper, frames } = openFiles(t, '/sdcard/Download', streamPhone);
+    const pump = setInterval(() => frames.splice(0).forEach((run) => run()), 16);
+    t.after(() => clearInterval(pump));
+    const items = wrapper.querySelector('.fx-items');
+    const tbody = wrapper.querySelector('tbody');
+    items.clientHeight = 660;
+    items.clientWidth = 390;
+    items.scrollTop = 0;
+    tbody.layout = () => ({ left: 0, top: -items.scrollTop, right: 0, bottom: 0, width: 0, height: 0 });
+    for (let round = 0; round < 5 && !phone.lists.length; round++) {
+        phone.serve();
+        await later();
+    }
+    const [list] = phone.lists;
+    for (let index = 0; index < 1000; index++) list.reply(record('DENT', `IMG_${index}.jpg`, 0o100644, 2048));
+    list.end(0);
+    await later();
+    phone.serve();
+    await later();
+    const length = () => tbody.children.reduce((total, row) => total + row.rowHeight(), 0);
+    const inView = () =>
+        tbody.children.filter((row) => {
+            const box = row.getBoundingClientRect();
+            return !row.classes.has('fx-spacer') && box.bottom > 0 && box.top < items.clientHeight;
+        });
+    const moved = [];
+    /** Runs `change`, then the frame it asked for, and notes whether the first row in view moved. */
+    const steady = (change) => {
+        const [anchor] = inView();
+        const before = anchor.getBoundingClientRect().top;
+        change();
+        frames.splice(0).forEach((run) => run());
+        const row = client.rows.element(anchor.dataset.name);
+        const after = row.isConnected ? row.getBoundingClientRect().top : NaN;
+        if (!(Math.abs(after - before) < 1)) moved.push(`${anchor.dataset.name} ${before} to ${after}`);
+    };
+    const scrollTo = (top) => {
+        items.scrollTop = Math.max(0, Math.min(top, length() - items.clientHeight));
+        steady(() => items.dispatch('scroll'));
+        assert.ok(inView().length >= 13, `the view is full of rows at ${items.scrollTop}`);
+    };
+    return { client, items, frames, length, tall, moved, inView, steady, scrollTo };
+}
+
+test('a long list whose lines differ in height: what is in view stays in place while it scrolls', async (t) => {
+    const { items, length, tall, moved, scrollTo } = await unevenList(t);
+    // The owner scrolls down to the end and back up, about eight lines at a time.
+    while (items.scrollTop < length() - items.clientHeight) scrollTo(items.scrollTop + 300);
+    while (items.scrollTop > 0) scrollTo(items.scrollTop - 300);
+    assert.deepEqual(moved, [], 'nothing in view moved');
+    // Every line has been in the document, so the spacers stand for the rows as tall as they
+    // are. The last line was never followed by another and keeps the mean.
+    const rows = Array.from({ length: 1000 }, (_, index) => (tall(`IMG_${index}`) ? 49 : 33));
+    const total = rows.reduce((sum, height) => sum + height, 0);
+    assert.ok(Math.abs(length() - total) <= 16, `the list is ${length()} px long, its rows ${total} px`);
+});
+
+test('a long list keeps the measures of its rows while its tab is hidden, and forgets them at a new width', async (t) => {
+    const observers = [];
+    global.ResizeObserver = class {
+        constructor(callback) {
+            observers.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+    };
+    t.after(() => delete global.ResizeObserver);
+    const { client, items, frames, moved, inView, steady, scrollTo } = await unevenList(t);
+    const resized = (width, height) => {
+        items.clientWidth = width;
+        items.clientHeight = height;
+        observers.forEach((callback) => callback([]));
+    };
+    // The first report of a new observer.
+    resized(390, 660);
+    frames.splice(0).forEach((run) => run());
+    while (items.scrollTop < 15000) scrollTo(items.scrollTop + 300);
+    assert.deepEqual(moved, []);
+    // Another tab of the phone is shown, then Files again: the list had no size meanwhile.
+    resized(0, 0);
+    steady(() => resized(390, 660));
+    assert.deepEqual(moved, [], 'the rows in view are where they were');
+    // A new height changes only which rows are in view.
+    resized(390, 500);
+    assert.ok(client.rowGeometry, 'a new height keeps the measures');
+    // A new width can change how tall the rows are.
+    resized(600, 500);
+    assert.equal(client.rowGeometry, undefined, 'a new width forgets them');
+    frames.splice(0).forEach((run) => run());
+    assert.ok(inView().length >= 10, 'and the rows near the view are measured again');
+});
+
+// ------------------------------------------------------------------ what goes over the wire
+//
+// A fixed script of actions, and every frame the explorer sends for it: the payload that opens
+// each channel, what it sends on it and whether it closes it. The phone answers the way the
+// server does (a LIST ends with a close and no DONE, a STAT with its reply and a close). The
+// frames were recorded from the explorer before its requests moved into FileService and must
+// not change. FILES_WIRE_RECORD=1 writes the record again.
+
+const WIRE_RECORD = path.join(__dirname, 'fixtures', 'files-wire.json');
+
+/** A phone that answers the server's way and records every frame the explorer sends. */
+function wirePhone(Multiplexer) {
+    const DIR = 0o40755;
+    const FILE = 0o100644;
+    const GIB5 = 5 * 1024 ** 3 + 7;
+    const folders = {
+        '/sdcard': [['DCIM', DIR], ['Music', DIR], ['Movies', DIR], ['Denied', DIR], ['notes.txt', FILE, 12], ['photo.png', FILE, 2048]],
+        '/sdcard/DCIM': [['Camera', DIR], ['big.mp4', FILE, GIB5 % 2 ** 32], ['notes.txt', FILE, 12]],
+        '/sdcard/Music': [['notes.txt', FILE, 12], ['photo.png', FILE, 2048]],
+        '/sdcard/Movies': [],
+        '/sdcard/Denied': [],
+    };
+    const large = { '/sdcard/DCIM': [['big.mp4', GIB5]] };
+    const describe = (data) => {
+        const buffer = Buffer.from(data);
+        if (buffer.length <= 48) return buffer.toString('hex');
+        const digest = require('node:crypto').createHash('sha256').update(buffer).digest('hex').slice(0, 16);
+        return `${buffer.subarray(0, 24).toString('hex')}... ${buffer.length} bytes, sha256 ${digest}`;
+    };
+    const record = { channels: [], rootClosed: 0 };
+    const pending = [];
+    let nextPushId = 40;
+    const stringOf = (payload) => payload.subarray(8, 8 + payload.readUInt32LE(4)).toString();
+    const socket = Object.assign(Object.create(Multiplexer.prototype), {
+        OPEN: 1,
+        readyState: 1,
+        close: () => record.rootClosed++,
+        createChannel(payload) {
+            const listeners = { message: new Set(), close: new Set() };
+            const seen = { open: describe(payload), sent: [], closed: null };
+            record.channels.push(seen);
+            const channel = {
+                OPEN: 1,
+                CLOSED: 3,
+                readyState: 1,
+                payload: Buffer.from(payload),
+                inbox: [],
+                addEventListener: (type, listener) => listeners[type]?.add(listener),
+                removeEventListener: (type, listener) => listeners[type]?.delete(listener),
+                send(data) {
+                    if (channel.readyState !== 1) throw Error('Socket is already in CLOSING or CLOSED state.');
+                    seen.sent.push(describe(data));
+                    channel.inbox.push(Buffer.from(data));
+                },
+                reply: (data) => channel.readyState === 1 && [...listeners.message].forEach((listener) => listener({ data })),
+                end(code = 1000, reason = '') {
+                    if (channel.readyState !== 1) return;
+                    channel.readyState = 3;
+                    [...listeners.close].forEach((listener) => listener({ code, reason }));
+                },
+                close(code = 1000, reason) {
+                    if (channel.readyState !== 1) return;
+                    seen.closed = `client ${code}${reason ? ` ${reason}` : ''}`;
+                    channel.end(code, reason);
+                },
+            };
+            pending.push(channel);
+            return channel;
+        },
+    });
+    const dent = (name, mode, size = 0) => {
+        const text = Buffer.from(name);
+        const data = Buffer.alloc(20 + text.length);
+        data.write('DENT');
+        data.writeUInt32LE(mode, 4);
+        data.writeUInt32LE(size, 8);
+        data.writeUInt32LE(1700000000, 12);
+        data.writeUInt32LE(text.length, 16);
+        text.copy(data, 20);
+        return data;
+    };
+    const fail = (message) => {
+        const text = Buffer.from(message);
+        const data = Buffer.alloc(8 + text.length);
+        data.write('FAIL');
+        data.writeUInt32LE(text.length, 4);
+        text.copy(data, 8);
+        return data;
+    };
+    const pushReply = (id, code) => {
+        const data = Buffer.alloc(3);
+        data.writeInt16BE(id);
+        data.writeInt8(code, 2);
+        return data;
+    };
+    const phone = {
+        socket,
+        record,
+        /** While set, upload chunks are not acknowledged. */
+        holdAppends: false,
+        /** Answers what each channel has asked for, the way the server would. */
+        serve() {
+            for (const channel of [...pending]) {
+                if (channel.readyState !== 1) {
+                    pending.splice(pending.indexOf(channel), 1);
+                    continue;
+                }
+                const command = channel.payload.subarray(0, 4).toString();
+                if (command === 'SEND') {
+                    while (channel.inbox.length && channel.readyState === 1) {
+                        const message = CommandControlMessage.pushFileCommandFromBuffer(channel.inbox[0]);
+                        if (message.state === FilePushState.APPEND && phone.holdAppends) break;
+                        channel.inbox.shift();
+                        if (message.state === FilePushState.NEW) {
+                            channel.pushId = nextPushId++;
+                            channel.reply(pushReply(channel.pushId, 1));
+                        } else if (message.state === FilePushState.START || message.state === FilePushState.APPEND) {
+                            channel.reply(pushReply(channel.pushId, 0));
+                        } else if (message.state === FilePushState.FINISH) {
+                            channel.reply(pushReply(channel.pushId, 0));
+                            channel.end();
+                        }
+                    }
+                    continue;
+                }
+                if (channel.answered) continue;
+                channel.answered = true;
+                const target = command === 'DELE' ? '' : stringOf(channel.payload);
+                if (command === 'STAT') {
+                    const name = path.posix.basename(target);
+                    const parent = folders[path.posix.dirname(target)] || [];
+                    const item = target in folders ? ['', DIR] : parent.find(([entry]) => entry === name);
+                    const data = Buffer.alloc(16);
+                    data.write('STAT');
+                    data.writeUInt32LE(item ? item[1] : 0, 4);
+                    data.writeUInt32LE(item?.[2] || 0, 8);
+                    data.writeUInt32LE(1700000000, 12);
+                    channel.reply(data);
+                    channel.end();
+                } else if (command === 'LIST') {
+                    if (target.endsWith('/Denied')) {
+                        channel.reply(fail('Permission denied'));
+                        channel.end();
+                        continue;
+                    }
+                    (folders[target] || []).forEach(([name, mode, size]) => channel.reply(dent(name, mode, size)));
+                    channel.end(0);
+                } else if (command === 'SIZE') {
+                    (large[target] || []).forEach(([name, size]) => {
+                        const text = Buffer.from(name);
+                        const data = Buffer.alloc(16 + text.length);
+                        data.write('SIZE');
+                        data.writeUInt32LE(size % 2 ** 32, 4);
+                        data.writeUInt32LE(Math.floor(size / 2 ** 32), 8);
+                        data.writeUInt32LE(text.length, 12);
+                        text.copy(data, 16);
+                        channel.reply(data);
+                    });
+                    channel.reply(Buffer.from('DONE'));
+                    channel.end();
+                } else if (command === 'MKDR' && target.endsWith('/Locked')) {
+                    channel.reply(fail('Read-only file system'));
+                    channel.end();
+                } else {
+                    channel.reply(Buffer.from('DONE'));
+                    channel.end();
+                }
+            }
+        },
+    };
+    return phone;
+}
+
+/** Runs the fixed script and returns what the explorer sent and what it told the owner. */
+async function wireScript(t) {
+    const files = openFiles(t, '/sdcard', wirePhone);
+    const { client, phone, dialog, toasts } = files;
+    // Until nothing is left to answer: uploads read their file and wait for acknowledgements.
+    const settle = async () => {
+        for (let quiet = 0, round = 0; quiet < 3 && round < 200; round++) {
+            const before = JSON.stringify(phone.record);
+            await files.settle();
+            quiet = JSON.stringify(phone.record) === before ? quiet + 1 : 0;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await files.settle();
+    };
+    const answer = async (value, text) => {
+        await settle();
+        assert.equal(dialog.open, true, `a question is open for ${value}`);
+        if (text !== undefined) dialog.querySelector('input[name="value"]').value = text;
+        dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value }) });
+        await settle();
+    };
+    await settle();
+    client.navigate('/sdcard/DCIM');
+    await settle();
+    client.runCommand('new-folder');
+    await answer('confirm', 'Trips');
+    client.runCommand('rename', ['big.mp4']);
+    await answer('confirm', 'clip.mp4');
+    client.runCommand('delete', ['Camera', 'big.mp4']);
+    await answer('confirm');
+    client.runCommand('copy', ['notes.txt']);
+    client.navigate('/sdcard/Music');
+    await settle();
+    client.runCommand('paste');
+    await answer('replace');
+    client.runCommand('cut', ['photo.png']);
+    client.navigate('/sdcard');
+    await settle();
+    client.runCommand('paste');
+    await answer('keep');
+    client.runCommand('new-folder');
+    await answer('confirm', 'Locked');
+    // A folder step that a second one overtakes, a folder that is not there, one that refuses.
+    client.navigate('/sdcard/Movies');
+    client.navigate('/sdcard/Music');
+    await settle();
+    const failures = [];
+    client.navigate('/sdcard/Nowhere');
+    await settle();
+    failures.push(client.listingError);
+    client.navigate('/sdcard/Denied');
+    await settle();
+    failures.push(client.listingError);
+    client.navigate('/sdcard');
+    await settle();
+    client.open('notes.txt');
+    // Uploads: a new name, a replaced name, and one that is cancelled while it sends.
+    client.filePushHandler.onFilesDrop([new File([Buffer.alloc(70000, 3)], 'clip.bin')]);
+    await settle();
+    client.filePushHandler.onFilesDrop([new File([Buffer.from('replaced')], 'notes.txt')]);
+    await answer('replace');
+    phone.holdAppends = true;
+    client.filePushHandler.onFilesDrop([new File([Buffer.alloc(200000, 5)], 'cancelled.bin')]);
+    await settle();
+    client.filePushHandler.cancelAll();
+    phone.holdAppends = false;
+    await settle();
+    client.stop();
+    return {
+        init: client.getChannelInitData().toString('hex'),
+        ...phone.record,
+        downloads: global.document.clicked || [],
+        failures,
+        toasts: toasts.map(({ message, error }) => `${error ? 'error' : 'result'}: ${message}`),
+    };
+}
+
+test('the explorer sends the same frames for a fixed script of actions as before FileService', async (t) => {
+    const seen = await wireScript(t);
+    assert.ok(seen.channels.length > 30, `the script ran (${seen.channels.length} channels)`);
+    if (process.env.FILES_WIRE_RECORD) {
+        fs.writeFileSync(WIRE_RECORD, `${JSON.stringify(seen, null, 1)}\n`);
+    }
+    assert.deepEqual(seen, JSON.parse(fs.readFileSync(WIRE_RECORD, 'utf8')));
 });

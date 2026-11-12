@@ -1,0 +1,336 @@
+{
+ "init": "46534c5305000000504958454c",
+ "channels": [
+  {
+   "open": "53544154070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c495354070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a45070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "535441540c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c4953540c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a450c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4d4b4452120000002f7364636172642f4443494d2f5472697073",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "535441540c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c4953540c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a450c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4d4f5645140000002f7364636172642f4443494d2f626967... 53 bytes, sha256 cd356c4e66fae607",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "535441540c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c4953540c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a450c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "44454c4502000000130000002f7364636172642f4443494d... 55 bytes, sha256 6b5c7fb9b46392b4",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "535441540c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c4953540c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a450c0000002f7364636172642f4443494d",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "535441540d0000002f7364636172642f4d75736963",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c4953540d0000002f7364636172642f4d75736963",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a450d0000002f7364636172642f4d75736963",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "434f5059160000002f7364636172642f4443494d2f6e6f74... 58 bytes, sha256 4d24735218387570",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "535441540d0000002f7364636172642f4d75736963",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c4953540d0000002f7364636172642f4d75736963",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a450d0000002f7364636172642f4d75736963",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53544154070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c495354070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a45070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4d4f5645170000002f7364636172642f4d757369632f7068... 56 bytes, sha256 b9d23086f67d3305",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53544154070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c495354070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a45070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4d4b44520e0000002f7364636172642f4c6f636b6564",
+   "sent": [],
+   "closed": "client 1000"
+  },
+  {
+   "open": "53544154070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c495354070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a45070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "535441540e0000002f7364636172642f4d6f76696573",
+   "sent": [],
+   "closed": "client 1000"
+  },
+  {
+   "open": "535441540d0000002f7364636172642f4d75736963",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c4953540d0000002f7364636172642f4d75736963",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a450d0000002f7364636172642f4d75736963",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "535441540f0000002f7364636172642f4e6f7768657265",
+   "sent": [],
+   "closed": "client 1000"
+  },
+  {
+   "open": "535441540e0000002f7364636172642f44656e696564",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c4953540e0000002f7364636172642f44656e696564",
+   "sent": [],
+   "closed": "client 1000"
+  },
+  {
+   "open": "53544154070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c495354070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a45070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53454e44",
+   "sent": [
+    "66000000",
+    "660028010001117000102f7364636172642f636c69702e62696e00",
+    "660028020001000003030303030303030303030303030303... 65544 bytes, sha256 f6eba5f2a2a84cbd",
+    "660028020000117003030303030303030303030303030303... 4472 bytes, sha256 a04b1f980b6d3b08",
+    "66002803"
+   ],
+   "closed": null
+  },
+  {
+   "open": "53544154070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c495354070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a45070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53454e44",
+   "sent": [
+    "66000000",
+    "660029010000000800112f7364636172642f6e6f7465732e74787401",
+    "66002902000000087265706c61636564",
+    "66002903"
+   ],
+   "closed": null
+  },
+  {
+   "open": "53544154070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c495354070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a45070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53454e44",
+   "sent": [
+    "66000000",
+    "66002a0100030d4000152f7364636172642f63616e63656c6c65642e62696e00",
+    "66002a020001000005050505050505050505050505050505... 65544 bytes, sha256 f3ba22e41dda1b89",
+    "66002a020001000005050505050505050505050505050505... 65544 bytes, sha256 f3ba22e41dda1b89",
+    "66002a020001000005050505050505050505050505050505... 65544 bytes, sha256 f3ba22e41dda1b89",
+    "66002a0200000d4005050505050505050505050505050505... 3400 bytes, sha256 7a09e55babacb77c",
+    "66002a04"
+   ],
+   "closed": "client 1000"
+  },
+  {
+   "open": "53544154070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "4c495354070000002f736463617264",
+   "sent": [],
+   "closed": null
+  },
+  {
+   "open": "53495a45070000002f736463617264",
+   "sent": [],
+   "closed": null
+  }
+ ],
+ "rootClosed": 1,
+ "downloads": [
+  "http://phones.test:8000/api/files/download?udid=PIXEL&path=%2Fsdcard%2Fnotes.txt"
+ ],
+ "failures": [
+  "There is no such folder on the phone, or it cannot be read.",
+  "Permission denied"
+ ],
+ "toasts": [
+  "result: Created Trips.",
+  "result: Renamed big.mp4 to clip.mp4.",
+  "result: Deleted 2 items.",
+  "result: 1 item ready to paste.",
+  "result: Copied notes.txt.",
+  "result: 1 item ready to move. Open the destination folder and choose Paste.",
+  "result: Moved photo.png as photo (1).png.",
+  "error: Could not create “Locked”: Read-only file system",
+  "result: Download of notes.txt started in your browser.",
+  "result: Uploaded clip.bin.",
+  "result: Uploaded notes.txt.",
+  "result: Cancelled 1 upload."
+ ]
+}

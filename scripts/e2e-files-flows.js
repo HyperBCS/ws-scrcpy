@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const { settleMotion } = require('./ui-motion');
-const { fixture, pressAtRest, DEVICE, SHARED } = require('./e2e-files');
+const { fixture, pressAtRest, DEVICE, SHARED, HUGE, HUGE_COUNT } = require('./e2e-files');
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-files';
 const UDID = 'files-fixture';
@@ -786,6 +786,25 @@ async function uploads(browser, layout, name, scheme) {
     assert.equal(await rows.filter({ hasText: 'Waiting' }).count(), 4, 'the other four wait their turn');
     assert.equal(await summary.innerText(), 'Uploading 1 of 6, 0%');
     assert.equal(traffic.starts.length, 2, 'a waiting upload has not started');
+    // Each upload shows its name, a bar, how much of how much is sent, and Cancel.
+    const first = rowFor('clip-1.bin');
+    const bar = first.getByRole('progressbar', { name: 'Upload of clip-1.bin', exact: true });
+    assert.equal(await bar.getAttribute('aria-valuenow'), '0');
+    assert.equal(await bar.getAttribute('aria-valuetext'), '0 B of 1.0 MB');
+    assert.equal(await first.getByRole('button', { name: 'Cancel the upload of clip-1.bin', exact: true }).isVisible(), true);
+    // The phone takes a few chunks: the bar and the bytes move.
+    traffic.heldAppends.splice(0, 6).forEach((release) => release());
+    const moving = rows.filter({ has: page.locator('.fx-upload-state', { hasText: /^[\d.]+ KB of 1\.0 MB$/ }) }).first();
+    await moving.waitFor();
+    const state = await moving.locator('.fx-upload-state').innerText();
+    const percent = Number(await moving.getByRole('progressbar').getAttribute('aria-valuenow'));
+    assert(percent > 0 && percent < 100, `${state}: ${percent}%`);
+    assert.equal(await moving.getByRole('progressbar').getAttribute('aria-valuetext'), state);
+    const filled = await moving.locator('.fx-upload-bar').evaluate((track) => {
+        const fill = track.firstElementChild.getBoundingClientRect();
+        return fill.width / track.getBoundingClientRect().width;
+    });
+    assert(Math.abs(filled - percent / 100) < 0.02, `the bar is ${Math.round(filled * 100)}% full at ${percent}%`);
     await settleMotion(page);
     await page.screenshot({ path: path.join(OUT, `flows-uploads-${name}.png`) });
 
@@ -796,10 +815,36 @@ async function uploads(browser, layout, name, scheme) {
     await rowFor('clip-1.bin').waitFor({ state: 'detached' });
     await until(page, () => traffic.cancels.includes(ROOT + '/clip-1.bin'), 'the CANCEL');
     await until(page, () => traffic.sending.size === 2, 'the next upload to take the free place');
+    // The owner browses meanwhile: another folder opens, a folder operation runs there, and the
+    // uploads go on to the folder they started in.
+    await open(page, 'archive');
+    await crumb(page, 'archive');
+    await ready(page);
+    assert.equal(await rows.count(), 4, 'the uploads go on behind the other folder');
+    const newFolder = page.locator('.fx-commands').getByRole('button', { name: 'New folder', exact: true });
+    if (await newFolder.isVisible()) await pressAtRest(page, newFolder);
+    else {
+        await page.getByRole('button', { name: 'Actions', exact: true }).click();
+        await page.getByRole('menuitem', { name: 'New folder', exact: true }).click();
+    }
+    await page.locator('.fx-dialog input[name="value"]').fill('during-upload');
+    await page.locator('.fx-dialog[open]').getByRole('button', { name: 'Create', exact: true }).click();
+    await row(page, 'during-upload').waitFor();
+    assert.deepEqual(traffic.operations.at(-1), { cmd: 'MKDR', paths: [ROOT + '/archive/during-upload'] });
+    await ready(page);
     traffic.holdAppends = false;
     traffic.releaseAppends();
     await toastText.filter({ hasText: 'Uploaded 4 files. Cancelled 2 uploads.' }).waitFor();
     await ready(page);
+    await crumb(page, 'archive');
+    assert.equal([...files.keys()].some((file) => file.startsWith(ROOT + '/archive/clip-')), false, 'nothing went to the folder shown');
+    assert.equal(await row(page, 'clip-2.bin').count(), 0);
+    // Back to the folder the files went to, by the browser's Back: the history of the page is
+    // as it was, for the questions below.
+    await page.goBack();
+    await crumb(page, 'tmp');
+    await ready(page);
+    await row(page, 'clip-2.bin').waitFor();
     assert.equal(traffic.mostSending, 2, 'never more than two at once');
     for (const index of [2, 3, 4, 6]) assert.equal(files.get(`${ROOT}/clip-${index}.bin`)?.length, size);
     assert.equal(files.has(ROOT + '/clip-1.bin'), false, 'a cancelled upload saves nothing');
@@ -914,6 +959,175 @@ async function uploads(browser, layout, name, scheme) {
     await finish();
 }
 
+async function fillFilter(page, text) {
+    const input = page.locator('.fx-filter-input');
+    if (!(await input.isVisible())) await page.getByRole('button', { name: 'Filter this folder', exact: true }).click();
+    await input.fill(text);
+}
+/** The View menu: the toolbar's on a desktop, inside Actions on a phone. */
+async function openViewMenu(page) {
+    const view = page.locator('.fx-commands').getByRole('button', { name: 'View', exact: true });
+    if (await view.isVisible()) await pressAtRest(page, view);
+    else {
+        await page.getByRole('button', { name: 'Actions', exact: true }).click();
+        await page.getByRole('menuitem', { name: 'View options…', exact: true }).click();
+    }
+    await page.locator('.files-menu [data-menu="view"]').first().waitFor();
+}
+
+// A folder of 5,000 items. Its rows are added in batches at most every 250 ms while it arrives,
+// typing in the filter shows and hides rows without building them again, and the keyboard and
+// the selection still work. Every task of the page that took 50 ms or more is reported.
+async function largeFolder(browser, layout, name) {
+    const { page, finish } = await start(browser, layout, ROOT);
+    await page.evaluate(() => {
+        window.__longTasks = [];
+        new PerformanceObserver((list) => list.getEntries().forEach((entry) => window.__longTasks.push(Math.round(entry.duration)))).observe({ type: 'longtask' });
+        // Each time the rows are put in order the item count is written. Only the rows near the
+        // view are in the document, so new rows are not a sign of it.
+        window.__batches = [];
+        const counts = document.querySelector('.fx-counts');
+        new MutationObserver(() => {
+            const text = counts.textContent;
+            if (text !== window.__batches.at(-1)?.text) window.__batches.push({ at: performance.now(), text });
+        }).observe(counts, { childList: true, characterData: true, subtree: true });
+    });
+    const tasks = [];
+    const longTasks = async (what) => {
+        const found = await page.evaluate(() => window.__longTasks.splice(0));
+        console.log(`  ${name}, ${what}: tasks of 50 ms or more: ${found.length ? found.join(', ') + ' ms' : 'none'}`);
+        tasks.push(...found);
+    };
+    const shown = () => page.evaluate(() => [...document.querySelectorAll('.fx-row')].map((row) => row.dataset.name));
+    const rowsAndSpacers = () =>
+        page.evaluate(() => {
+            const rows = document.querySelectorAll('.fx-row').length;
+            const spacers = [...document.querySelectorAll('.fx-spacer')].reduce((total, spacer) => total + spacer.getBoundingClientRect().height, 0);
+            const row = document.querySelector('.fx-row').getBoundingClientRect().height;
+            return { rows, spacers, row };
+        });
+    const started = Date.now();
+    await goTo(page, HUGE);
+    const listed = Date.now() - started;
+    assert.equal(await page.locator('.fx-counts').innerText(), `${HUGE_COUNT} items`);
+    // The renders while the items arrive, in bursts over about half a second. The one when the
+    // listing ends comes at once.
+    const batches = (await page.evaluate(() => window.__batches.splice(0))).filter(({ text }) => {
+        const count = Number(/^(\d+) items/.exec(text)?.[1]);
+        return count >= HUGE_COUNT / 10 && count < HUGE_COUNT;
+    });
+    const gaps = batches.slice(1).map(({ at }, index) => Math.round(at - batches[index].at));
+    console.log(`  ${name}: listed in ${listed} ms, ${batches.map(({ text }) => text).join(', ')} while it arrived${gaps.length ? `, ${gaps.join(', ')} ms apart` : ''}`);
+    assert(batches.length >= 2, 'the rows are put in order more than once while the items arrive');
+    // The count is seen once a render's work is done, and renders differ in length; one each
+    // frame would be 16 to 60 ms apart.
+    assert(gaps.every((gap) => gap >= 200), `rows are added at most every 250 ms: ${gaps.join(', ')}`);
+    // Only the rows near the view are in the document; the spacers keep the list as tall as all of them.
+    const first = await rowsAndSpacers();
+    assert(first.rows < 200, `${first.rows} rows in the document for ${HUGE_COUNT} items`);
+    assert.deepEqual((await shown()).slice(0, 2), ['IMG_0000.jpg', 'IMG_0001.jpg']);
+    await longTasks('listing');
+
+    // Scrolling to the end brings the last rows; the list kept its height on the way.
+    const items = page.locator('.fx-items');
+    const height = await items.evaluate((element) => element.scrollHeight);
+    await items.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+    await page.waitForFunction(() => [...document.querySelectorAll('.fx-row')].some((row) => row.dataset.name === 'IMG_4999.jpg'));
+    assert.equal(await items.evaluate((element) => element.scrollHeight), height, 'the list keeps its height');
+    const last = await row(page, 'IMG_4999.jpg').boundingBox();
+    const box = await items.boundingBox();
+    assert(last.y + last.height <= box.y + box.height + 1 && last.y >= box.y, 'the last row is in view at the end');
+    await items.evaluate((element) => element.scrollTo(0, 0));
+    await page.waitForFunction(() => document.querySelector('.fx-row')?.dataset.name === 'IMG_0000.jpg');
+    await longTasks('scroll');
+
+    // Typing in the filter: the rows that stay are the rows from before.
+    await page.evaluate(() => document.querySelectorAll('.fx-row').forEach((row) => (row.__kept = true)));
+    const before = await shown();
+    await fillFilter(page, 'IMG_00');
+    await page.waitForFunction(() => document.querySelectorAll('.fx-row').length === 100);
+    assert.equal(await page.locator('.fx-counts').innerText(), `100 of ${HUGE_COUNT} items`);
+    const kept = await page.evaluate(() => [...document.querySelectorAll('.fx-row')].map((row) => [row.dataset.name, !!row.__kept]));
+    assert.deepEqual(
+        kept.filter(([name]) => before.includes(name)).filter(([, same]) => !same),
+        [],
+        'a row that stays is the row from before',
+    );
+    await fillFilter(page, '');
+    await page.waitForFunction((count) => document.querySelector('.fx-counts').textContent === `${count} items`, HUGE_COUNT);
+    assert.equal(
+        await page.evaluate((names) => names.every((name) => document.querySelector(`.fx-row[data-name="${name}"]`)?.__kept), before.slice(0, 20)),
+        true,
+        'and so does clearing the filter',
+    );
+    await longTasks('filter');
+
+    // The keyboard walks the whole list and the selection follows.
+    if (!layout.touch) {
+        await row(page, 'IMG_0000.jpg').locator('.entry-name a').click();
+        await page.keyboard.press('End');
+        await page.waitForFunction(() => document.activeElement?.closest('tr')?.dataset.name === 'IMG_4999.jpg');
+        // Space selects the row the keys are on; Shift with an arrow extends from it.
+        await page.keyboard.press('Space');
+        await page.keyboard.press('Shift+ArrowUp');
+        await page.keyboard.press('Shift+ArrowUp');
+        await page.waitForFunction(() => document.querySelectorAll('.fx-row.selected').length === 3);
+        assert.equal(await page.evaluate(() => document.activeElement?.closest('tr')?.dataset.name), 'IMG_4997.jpg');
+        assert((await page.locator('.fx-counts').innerText()).includes('3 selected'));
+        await page.keyboard.press('Home');
+        await page.waitForFunction(() => document.activeElement?.closest('tr')?.dataset.name === 'IMG_0000.jpg');
+        await page.keyboard.press('Control+a');
+        await page.waitForFunction((count) => document.querySelector('.fx-counts').textContent.includes(`${count} selected`), HUGE_COUNT);
+        assert.equal(await page.evaluate(() => [...document.querySelectorAll('.fx-row')].every((row) => row.classList.contains('selected'))), true);
+        // Rows that come into view show the selection too.
+        await items.evaluate((element) => element.scrollTo(0, element.scrollHeight / 2));
+        await page.waitForFunction(() => !document.querySelector('.fx-row[data-name="IMG_0000.jpg"]'));
+        assert.equal(await page.evaluate(() => [...document.querySelectorAll('.fx-row')].every((row) => row.classList.contains('selected'))), true);
+        // Focus stays in the list while its row is out of the document, and the keys go on from it.
+        await page.keyboard.press('ArrowDown');
+        await page.waitForFunction(() => document.activeElement?.closest('tr')?.dataset.name === 'IMG_0001.jpg');
+        await page.locator('.fx-items').press('Escape');
+        await page.waitForFunction((count) => !document.querySelector('.fx-counts').textContent.includes('selected'), HUGE_COUNT);
+        await longTasks('keyboard and selection');
+    } else {
+        // A long press selects; Select all selects every item, also the rows not in the document.
+        await page.getByRole('button', { name: 'Actions', exact: true }).click();
+        await page.getByRole('menuitem', { name: 'Select all', exact: true }).click();
+        await page.waitForFunction((count) => document.querySelector('.fx-counts').textContent.includes(`${count} selected`), HUGE_COUNT);
+        await items.evaluate((element) => element.scrollTo(0, element.scrollHeight / 2));
+        await page.waitForFunction(() => !document.querySelector('.fx-row[data-name="IMG_0000.jpg"]'));
+        assert.equal(await page.evaluate(() => [...document.querySelectorAll('.fx-row')].every((row) => row.classList.contains('selected'))), true);
+        await page.locator('.fx-selection-bar').getByRole('button', { name: 'Close selection', exact: true }).click();
+        await page.waitForFunction(() => !document.querySelector('.fx-row.selected'));
+        await longTasks('selection');
+    }
+
+    // A new order moves the rows near the view.
+    await items.evaluate((element) => element.scrollTo(0, 0));
+    await openViewMenu(page);
+    await page.locator('.files-menu').getByRole('menuitemradio', { name: 'Descending', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelector('.fx-row')?.dataset.name === 'IMG_4999.jpg');
+    await openViewMenu(page);
+    await page.locator('.files-menu').getByRole('menuitemradio', { name: 'Tiles', exact: true }).click();
+    await page.locator('.files-menu').getByRole('menuitemradio', { name: 'Ascending', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelector('.fx-row')?.dataset.name === 'IMG_0000.jpg');
+    // Tiles lie several to a line; the window follows them.
+    const tiles = await rowsAndSpacers();
+    assert(tiles.rows < 400, `${tiles.rows} tiles in the document`);
+    await items.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+    await page.waitForFunction(() => [...document.querySelectorAll('.fx-row')].some((row) => row.dataset.name === 'IMG_4999.jpg'));
+    await items.evaluate((element) => element.scrollTo(0, 0));
+    await openViewMenu(page);
+    await page.locator('.files-menu').getByRole('menuitemradio', { name: 'Details', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await longTasks('order and tiles');
+    console.log(`  ${name}: longest task ${tasks.length ? Math.max(...tasks) : 0} ms`);
+    assert(tasks.every((duration) => duration < 200), `no task near 200 ms or more: ${tasks.join(', ')}`);
+    await finish();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -934,6 +1148,8 @@ async function main() {
         ['selection on a small phone', () => phoneSelection(browser, { width: 320, height: 640, touch: true }, 'phone320', 'dark')],
         ['uploads phone', () => uploads(browser, PHONE, 'phone', 'light')],
         ['uploads desktop', () => uploads(browser, DESKTOP, 'desktop', 'dark')],
+        ['large folder phone', () => largeFolder(browser, PHONE, 'phone')],
+        ['large folder desktop', () => largeFolder(browser, DESKTOP, 'desktop')],
     ];
     try {
         for (const [name, run] of scenarios) {

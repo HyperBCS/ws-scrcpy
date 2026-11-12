@@ -312,15 +312,21 @@
     min-width: 0;
 }
 
+/* One upload: its name and how much of it is sent, a bar under them, and Cancel beside both. */
 .file-listing-upload-progress {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+        'name state cancel'
+        'bar bar cancel';
     align-items: center;
-    gap: var(--space-8);
+    column-gap: var(--space-8);
+    row-gap: var(--space-4);
     padding: var(--space-4) 0;
 }
 
 .fx-upload-name {
-    flex: 1 1 auto;
+    grid-area: name;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -330,13 +336,31 @@
 
 /* How far an upload is: the kit's status line, beside the name instead of under a control. */
 .fx-upload-state {
-    flex: none;
+    grid-area: state;
     margin: 0;
     font-variant-numeric: tabular-nums;
 }
 
-.file-listing-upload-progress.error .fx-upload-state {
-    color: var(--danger-text);
+.fx-upload-cancel {
+    grid-area: cancel;
+}
+
+/* The bar: the part sent in the accent, on a track in the colour of an edge. */
+.fx-upload-bar {
+    grid-area: bar;
+    display: block;
+    height: var(--space-4);
+    overflow: hidden;
+    border-radius: var(--radius-full);
+    background: var(--border);
+}
+
+.fx-upload-fill {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: var(--radius-full);
+    background: var(--accent);
 }
 
 /* The list is a raised surface, as a card of rows is elsewhere in the app. */
@@ -554,6 +578,14 @@
     color: var(--text-muted);
     text-align: center;
     white-space: normal;
+}
+
+/* A long list has only the rows near the view in the document. One spacer stands in for the
+   lines above them and one for the lines below, so the list is as tall as all of its rows. */
+.file-explorer .fx-table tr.fx-spacer {
+    display: block;
+    grid-column: 1 / -1;
+    border: 0;
 }
 
 /* A folder that could not be listed says so where the list would be. */
@@ -985,7 +1017,7 @@
 }
 
 @media (hover: hover) {
-    .fx-table tbody tr:not(.fx-empty-row):hover,
+    .fx-table tbody tr:not(.fx-empty-row, .fx-spacer):hover,
     .fx-crumb:hover {
         background: var(--surface-sunken);
     }
