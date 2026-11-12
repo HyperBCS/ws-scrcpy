@@ -929,16 +929,25 @@ export class NotificationService implements Service {
                 throw Error('Source limit reached');
             const existing = this.store.sources.find((source) => source.id === id);
             const connectionChanged = existing?.address !== address.toUpperCase();
+            // Without `muted` the record is stored as such a request always stored it, with the
+            // list it already had.
             const mutedApps =
                 muted === undefined
-                    ? existing?.muted || []
+                    ? existing?.muted
                     : [...new Map((muted as MutedApp[]).map(({ app, name }) => [app, name]))].map(([app, name]) => ({
                           app,
                           name,
                       }));
             this.store.sources = [
                 ...this.store.sources.filter((s) => s.id !== id),
-                { id, address: address.toUpperCase(), name, apps, preview, muted: mutedApps },
+                {
+                    id,
+                    address: address.toUpperCase(),
+                    name,
+                    apps,
+                    preview,
+                    ...(mutedApps ? { muted: mutedApps } : {}),
+                },
             ];
             if (connectionChanged) this.invalidateSources();
             if (!preview) this.notificationFeed.forgetText(id);

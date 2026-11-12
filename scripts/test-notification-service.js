@@ -536,6 +536,10 @@ test('a request in the old shape is still accepted and means what it meant', asy
         service.receive({ ...event, uid: 4, app: 'com.other', date: 'd4' });
         assert.deepEqual(kept(service), ['com.example', 'com.other']);
         assert.deepEqual(settings().sources[0].muted, [{ app: 'com.noisy', name: 'Noisy' }]);
+        // An iPhone linked from such a page is stored as it always was.
+        const other = { id: 'other', address: 'AA:BB:CC:DD:EE:01', name: 'Other', apps: [], preview: true };
+        assert.equal((await api('/sources', other)).status, 200);
+        assert.deepEqual(settings().sources.find((item) => item.id === 'other'), other);
     });
 });
 
