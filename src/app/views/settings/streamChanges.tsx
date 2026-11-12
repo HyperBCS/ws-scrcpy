@@ -100,7 +100,10 @@ export function useStreamChanges({ opening, tracker, udid, connected, client, na
             return;
         }
         changed.current = null;
-        refocus(control);
+        // A sheet that is closing gives focus back to what opened it.
+        if (opening) {
+            refocus(control);
+        }
     }, [config.applying]);
 
     // A question answered with Cancel, or withdrawn: the control was off while it was asked, so
@@ -109,7 +112,7 @@ export function useStreamChanges({ opening, tracker, udid, connected, client, na
     useLayoutEffect(() => {
         const asked = wasAsking.current;
         wasAsking.current = !!confirm.armed;
-        if (!asked || confirm.armed || config.applying) {
+        if (!asked || confirm.armed || config.applying || !opening) {
             return;
         }
         refocus(asking.current?.control);
