@@ -260,7 +260,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         assert.equal(await away.locator('.device-problem').count(), 0);
         assert.equal(await away.locator('.device-meta .device-unlock-schedule.problem').textContent(), 'Scheduled unlock cannot run: no passcode');
         await unlockLine.getByRole('button', { name: 'Open settings for iPhone unlock', exact: true }).click();
-        const dialog = page.getByRole('dialog', { name: 'Scheduled unlock', exact: true });
+        const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
         await dialog.waitFor();
         await settleMotion(page);
         await dialog.getByRole('button', { name: /^Close/ }).click();

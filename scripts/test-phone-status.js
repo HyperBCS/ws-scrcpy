@@ -379,8 +379,8 @@ test('the capabilities table says what each kind of phone can do today', () => {
     assert.deepEqual([devices.supportsDeviceTools(pixel), devices.supportsDeviceTools(phone)], [true, false]);
 
     // Each value against the code that does it.
-    const android = { actions: read('src/app/views/ActionsSheet.tsx'), settings: read('src/app/views/SettingsSheet.tsx'), toolbox: read('src/app/googDevice/toolbox/GoogToolBox.ts'), unlock: read('src/app/views/UnlockSheet.tsx') };
-    const ios = { actions: read('src/app/views/ApplActionsSheet.tsx'), settings: read('src/app/views/ApplSettingsSheet.tsx'), toolbox: read('src/app/applDevice/toolbox/ApplToolBox.ts'), unlock: read('src/app/views/ApplUnlockSheet.tsx') };
+    const android = { actions: read('src/app/views/ActionsSheet.tsx'), settings: read('src/app/views/settings/StreamSection.tsx'), toolbox: read('src/app/googDevice/toolbox/GoogToolBox.ts'), unlock: read('src/app/views/UnlockSheet.tsx') };
+    const ios = { actions: read('src/app/views/ApplActionsSheet.tsx'), settings: read('src/app/views/settings/ScheduledUnlock.tsx'), toolbox: read('src/app/applDevice/toolbox/ApplToolBox.ts'), unlock: read('src/app/views/ApplUnlockSheet.tsx') };
     const tools = read('src/app/views/ToolView.tsx');
     assert.match(tools, /view: 'files'/);
     assert.match(tools, /view: 'shell'/);
@@ -398,10 +398,13 @@ test('the capabilities table says what each kind of phone can do today', () => {
     assert.match(ios.toolbox, /title: 'Lock', name: 'lock', icon: 'power'/);
     assert.match(ios.actions, /title="Reboot"/);
     assert.match(ios.actions, /title="Shut down"/);
-    assert.match(ios.settings, /title="Scheduled unlock"/);
-    assert.doesNotMatch(android.settings, /Scheduled unlock/);
-    assert.match(android.settings, /title="Stream quality"/);
-    assert.doesNotMatch(ios.settings, /Stream quality/);
+    // One Settings sheet (step 5b): the Stream section and the scheduled unlock are chosen by these two values.
+    assert.match(ios.settings, /title="Schedule"/);
+    assert.doesNotMatch(android.settings, /Scheduled unlock|unlockSchedule/);
+    assert.match(android.settings, /<SettingsSection name="stream">/);
+    assert.doesNotMatch(ios.settings, /Quality presets/);
+    assert.match(read('src/app/views/settings/sections.ts'), /can\.streamQuality/);
+    assert.match(read('src/app/views/settings/UnlockSection.tsx'), /capabilities\(platform\)\.scheduledUnlock/);
     for (const platform of [android, ios]) assert.match(platform.toolbox, /new ToolBoxButton\('Type text'/);
 });
 

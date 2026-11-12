@@ -36,9 +36,8 @@ async function settings(page) {
     await page.locator('dialog.kit-sheet[open] [data-setting="quality"] input[type="radio"]:not(:disabled)').first().waitFor();
 }
 async function applyPreset(page, name, nextHandshake) {
+    // A preset applies when it is pressed (step 5b). Run this with no other screen of the phone open.
     await page.getByRole('radio', { name, exact: true }).click();
-    await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
-    await page.getByRole('button', { name: 'Apply & restart', exact: true }).click();
     await page
         .getByText('Settings saved.', { exact: true })
         .waitFor({ timeout: 35000 });

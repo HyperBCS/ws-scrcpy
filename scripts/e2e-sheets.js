@@ -166,7 +166,7 @@ async function main() {
                 );
             };
             await open();
-            const close = page.getByRole('button', { name: 'Close Stream settings', exact: true });
+            const close = page.getByRole('button', { name: 'Close Settings', exact: true });
             const closeBox = await close.boundingBox();
             const iconBox = await close.locator('svg').boundingBox();
             assert(closeBox.width >= 44 && closeBox.height >= 44, 'close has a 44px target');
@@ -222,11 +222,10 @@ async function main() {
                 await closed();
                 await open();
             }
+            // A preset applies when it is pressed (step 5b).
             await page.getByRole('radio', { name: 'Data saver', exact: true }).click();
-            await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
-            await page.getByRole('button', { name: 'Apply & restart', exact: true }).click();
             await page
-                .getByText('Saving and reconnecting…', { exact: true })
+                .getByText('Restarting stream…', { exact: true })
                 .waitFor();
             assert(await close.isDisabled(), 'Apply disables Close');
             if (touch) {
@@ -252,7 +251,7 @@ async function main() {
             assert.equal(await page.locator('#devices').count(), 1, 'Back during Apply stays on the list');
             assert(completeApply, 'Apply reached only fixture');
             completeApply();
-            await page.locator('.kit-sheet-footer [role="alert"]').waitFor();
+            await page.locator('dialog.kit-sheet[open] .settings-quality [role="alert"]').waitFor();
             assert(!(await close.isDisabled()), 'Close works again once Apply has ended');
             // Once Apply has ended, Back closes the sheet and the list stays.
             await page.goBack();
@@ -293,7 +292,7 @@ async function main() {
             await settle(page);
             const touchesBefore = remotePackets.filter((packet) => packet[0] === 2).length;
             if (docked) await gesture(cdp, await handlePoint(page), 0, 130);
-            else await page.getByRole('button', { name: 'Close Stream settings', exact: true }).click();
+            else await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
             await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'hidden' });
             assert.equal(
                 remotePackets.filter((packet) => packet[0] === 2).length,

@@ -282,12 +282,11 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         {isActive ? 'Browser cannot play this stream' : 'Device unavailable'}
                     </Button>
                 )}
-                {isActive && (
-                    <SettingsButton
-                        name={deviceName(entry)}
-                        onClick={() => openSettingsSheet(descriptor.udid, entry.key)}
-                    />
-                )}
+                {/* For a phone in any state: its Settings say what is known of it and what can be done. */}
+                <SettingsButton
+                    name={deviceName(entry)}
+                    onClick={() => openSettingsSheet(descriptor.udid, entry.key)}
+                />
             </div>
             {isActive && tools.length > 0 && (
                 <div class="services device-tool-actions">

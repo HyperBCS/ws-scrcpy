@@ -331,13 +331,13 @@ async function listStates(test) {
     await shootPrompt(test, card(page, `android:${PIXEL_2}`), 'list-confirm');
 
     await press(test, card(page, `android:${PIXEL_2}`).locator('button.stream-settings-button'));
-    await sheetTitled(page, /^Stream settings$/).waitFor();
+    await sheetTitled(page, /^Settings$/).waitFor();
     await sheet(page).getByText(ENCODER).first().waitFor({ state: 'attached' });
     await shoot(test, 'list-android-settings');
     await dismiss(test, sheet(page));
 
     await press(test, card(page, `ios:${IPHONE}`).locator('button.stream-settings-button'));
-    await sheetTitled(page, /^Scheduled unlock$/).waitFor();
+    await sheetTitled(page, /^Settings$/).waitFor();
     await shoot(test, 'list-iphone-settings');
     await dismiss(test, sheet(page));
 }
@@ -361,7 +361,7 @@ async function screenOverlays(test, kind) {
     await dismiss(test, sheet(page));
 
     await control(test, 'Settings');
-    await sheetTitled(page, kind === 'android' ? /^Stream settings$/ : /^Scheduled unlock$/).waitFor();
+    await sheetTitled(page, /^Settings$/).waitFor();
     if (kind === 'android') await sheet(page).getByText(ENCODER).first().waitFor({ state: 'attached' });
     await shoot(test, `${kind}-settings`);
     await dismiss(test, sheet(page));
