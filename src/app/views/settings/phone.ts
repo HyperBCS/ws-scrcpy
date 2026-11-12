@@ -16,7 +16,8 @@ export interface SettingsPhone {
  * the screen carries only the serial, and two hosts can each have that serial, so an Android
  * screen's own socket decides. Without either, a serial is taken only when one Android phone has
  * it: picking the first would load another host's settings and restart that host's stream. An
- * iPhone serial is its own.
+ * iPhone serial is its own. A server that restarted lists its phones under a new tracker id, so
+ * a card's key that is no longer listed is resolved by the serial in the same way.
  */
 export function settingsPhone(
     target: SettingsSheetTarget,
@@ -26,7 +27,8 @@ export function settingsPhone(
     let entry: DeviceEntry | undefined;
     if (target.deviceKey) {
         entry = devices.value.get(target.deviceKey);
-    } else {
+    }
+    if (!entry) {
         const bound = androidStream?.udid === target.udid ? findDeviceForStream(androidStream) : undefined;
         const matches = Array.from(devices.value.values()).filter((item) => item.descriptor.udid === target.udid);
         entry = bound ?? (matches.length === 1 ? matches[0] : matches.find((item) => item.params.type === 'ios'));

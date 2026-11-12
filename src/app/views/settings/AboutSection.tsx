@@ -257,8 +257,17 @@ interface AboutSectionProps {
 export function AboutSection({ platform, udid, entry, name, opening, screenOpen, iosClient }: AboutSectionProps) {
     const connected = !!entry && isDeviceAvailable(entry);
     const status = entry && getDeviceStatusInfo(entry);
+    // A stale entry (its list is reconnecting) is not called Offline.
     const connection = connectionStatus(
-        !connected ? 'offline' : screenOpen ? (streamConnected.value ? 'connected' : 'reconnecting') : 'connected',
+        !connected
+            ? entry?.stale
+                ? 'reconnecting'
+                : 'offline'
+            : screenOpen
+              ? streamConnected.value
+                  ? 'connected'
+                  : 'reconnecting'
+              : 'connected',
     );
     const android = entry?.params.type === 'android' ? (entry.descriptor as GoogDeviceDescriptor) : undefined;
     const ios = entry?.params.type === 'ios' ? (entry.descriptor as ApplDeviceDescriptor) : undefined;

@@ -141,12 +141,12 @@ async function backFromEveryPage(browser, viewport) {
         },
         {
             name: 'Files', route: `action=device&udid=${PIXEL}&view=files`,
-            open: (page) => card(page, `android:${PIXEL}`).getByRole('link', { name: 'Files', exact: true }).click(),
+            open: (page) => card(page, `android:${PIXEL}`).getByRole('link', { name: 'Files on Google Pixel 9', exact: true }).click(),
             shown: (page) => page.locator('.tool-view-list-files').waitFor(),
         },
         {
             name: 'Shell', route: `action=device&udid=${PIXEL}&view=shell`,
-            open: (page) => card(page, `android:${PIXEL}`).getByRole('link', { name: 'Shell', exact: true }).click(),
+            open: (page) => card(page, `android:${PIXEL}`).getByRole('link', { name: 'Shell on Google Pixel 9', exact: true }).click(),
             shown: (page) => page.locator('.tool-view-shell').waitFor(),
         },
     ];
@@ -216,7 +216,7 @@ async function backAfterSwitching(browser, viewport) {
         const tools = await start(browser, { viewport });
         try {
             const tool = tools.page;
-            await card(tool, `android:${PIXEL}`).getByRole('link', { name: 'Files', exact: true }).click();
+            await card(tool, `android:${PIXEL}`).getByRole('link', { name: 'Files on Google Pixel 9', exact: true }).click();
             await tool.locator('.tool-view-list-files').waitFor();
             const inTool = await tool.evaluate(() => history.length);
             await tool.locator('.kit-tabs-list').getByRole('button', { name: 'Shell', exact: true }).click();

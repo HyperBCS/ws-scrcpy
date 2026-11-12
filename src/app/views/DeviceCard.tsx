@@ -1,6 +1,6 @@
 import { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { DeviceEntry, isDeviceAvailable, phoneName } from '../state/devices';
+import { DeviceEntry, isDeviceAvailable, phoneName, reportedConnected } from '../state/devices';
 import type ApplDeviceDescriptor from '../../types/ApplDeviceDescriptor';
 import type { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import { ControlCenterCommand } from '../../common/ControlCenterCommand';
@@ -86,7 +86,9 @@ type FeedbackPlace = 'developer-mode' | 'restart';
 /**
  * The card of a phone on the list (rules in `state/phoneCard.ts`). The head is the phone's row
  * with its one status; under it at most one line says what is wrong or what to do, with the one
- * action for it; then Open screen and the icon buttons.
+ * action for it; then Open screen and the icon buttons. A stale card (its list is reconnecting)
+ * shows what the phone last reported, dimmed, with everything that reaches the phone turned off.
+ * Settings and Notifications still open.
  */
 export function DeviceCard({ entry }: { entry: DeviceEntry }) {
     const { descriptor, params, tracker } = entry;
@@ -94,7 +96,9 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
     const name = phoneName(udid, entry);
     const model = phoneCard(entry, StreamClientScrcpy.getPlayers().length > 0);
     const { facts, status, line } = model;
+    // Not available while stale, so the commands of the card are off then.
     const isActive = isDeviceAvailable(entry);
+    const stale = !!entry.stale;
     const schedule = capabilities(entry).scheduledUnlock
         ? (descriptor as ApplDeviceDescriptor).unlockSchedule
         : undefined;
@@ -107,7 +111,8 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
     const [enabling, setEnabling] = useState(false);
     const [feedback, setFeedback] = useState<{ place: FeedbackPlace; tone: StatusTone; text: string }>();
     const [busy, setBusy] = useState(false);
-    const confirm = useArmedAction<FeedbackPlace>();
+    // A question asked before the list dropped is withdrawn: its answer could not be sent.
+    const confirm = useArmedAction<FeedbackPlace>(!stale);
     const canRecover = isActive && !busy;
 
     // Each command ends with its reply, an error, a closed socket or a time limit
@@ -195,7 +200,7 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
                     action={
                         <Button
                             size="compact"
-                            disabled={enabling}
+                            disabled={enabling || stale}
                             onClick={(event) => confirm.arm('developer-mode', event.currentTarget)}
                         >
                             {enabling ? 'Enabling…' : 'Enable and restart'}
@@ -261,14 +266,21 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
 
     return (
         <article
-            class={`device ${isActive ? 'active' : 'not-active'}${status.screen === 'asleep' ? ' asleep' : ''}`}
+            class={[
+                'device',
+                reportedConnected(entry) ? 'active' : 'not-active',
+                status.screen === 'asleep' && 'asleep',
+                stale && 'stale',
+            ]
+                .filter(Boolean)
+                .join(' ')}
             data-device-key={entry.key}
         >
             <PhoneRow
                 entry={entry}
                 info={status}
                 class="device-header"
-                action={model.wake && <WakeButton control={wake} />}
+                action={model.wake && <WakeButton control={wake} disabled={stale} />}
             />
             {/* The schedule is kept on the server, so its line stays while the phone is away. */}
             {unlockLine && line?.kind !== 'unlock' && (
@@ -333,8 +345,9 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
                             key={tool.view}
                             href={link.href}
                             icon={TOOL_ICON[tool.view]}
-                            label={tool.title}
+                            label={`${tool.title} on ${name}`}
                             class={`device-tool device-tool-${tool.view}`}
+                            disabled={stale}
                             onClick={link.onClick}
                             attributes={link.attributes}
                         />

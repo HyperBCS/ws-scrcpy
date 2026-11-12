@@ -41,8 +41,8 @@ const BREAKPOINTS = [599, 600, 1023, 1024];
 const VIEW_BREAKPOINTS = {
     // Files: its own pane at 720px (a container query), the toolbar at 700 and 900, narrow phones at 360 and 380.
     'filelisting.css': [360, 380, 700, 720, 900],
-    // The grid of cards at 720 and 1040, and narrow phones at 360.
-    'views/DeviceList.css': [360, 720, 1040],
+    // Narrow phones at 360, where a card gives the tile's room to the name. The grid needs none.
+    'views/DeviceList.css': [360],
     // The bell of a phone's page on a 320px phone.
     'views/StreamView.css': [359],
     // The tool page's gutter at 700 and its widest workspace at 1000.

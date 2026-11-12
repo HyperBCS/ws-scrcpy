@@ -8,9 +8,20 @@ import { HostItem } from '../../types/Configuration';
 import { Tool } from './Tool';
 import Util from '../Util';
 import { EventKey, EventMap } from '../../common/TypedEmitter';
-import { removeTrackerDevices, setTrackerDevices, updateTrackerDevice } from '../state/devices';
+import {
+    markTrackerDevicesStale,
+    removeTrackerDevices,
+    setTrackerDevices,
+    updateTrackerDevice,
+} from '../state/devices';
 
 const TAG = '[BaseDeviceTracker]';
+
+/**
+ * How long the phones of a tracker whose socket closed stay on the list, marked stale, without a
+ * new list. Past it they go, so a server that does not come back does not show phones forever.
+ */
+export const STALE_LIST_LIMIT_MS = 30000;
 
 export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE extends EventMap> extends ManagerClient<
     ParamsDeviceTracker,
@@ -49,6 +60,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     protected id = '';
     private messageId = 0;
     private reconnectTimer?: ReturnType<typeof setTimeout>;
+    private staleTimer?: ReturnType<typeof setTimeout>;
     private readonly closeListeners = new Set<() => void>();
 
     protected constructor(
@@ -114,7 +126,15 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         if (this.destroyed) {
             return;
         }
+        this.clearStaleTimer();
         setTrackerDevices(this.id, this.trackerName, this.params, this, this.descriptors);
+    }
+
+    private clearStaleTimer(): void {
+        if (this.staleTimer !== undefined) {
+            clearTimeout(this.staleTimer);
+            this.staleTimer = undefined;
+        }
     }
 
     protected onSocketClose(event: CloseEvent): void {
@@ -124,7 +144,18 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         }
         console.log(TAG, `Connection closed: ${event.reason}`);
         this.descriptors = [];
-        removeTrackerDevices(this.id, this);
+        // The list keeps the phones as they were, marked stale, until the next list replaces
+        // them. The limit counts from the first close, not from each failed reconnect. Past it
+        // the phones go, and the list loads again when the server is back.
+        markTrackerDevicesStale(this.id, this);
+        if (this.staleTimer === undefined) {
+            this.staleTimer = setTimeout(() => {
+                this.staleTimer = undefined;
+                if (!this.destroyed) {
+                    removeTrackerDevices(this.id, this);
+                }
+            }, STALE_LIST_LIMIT_MS);
+        }
         if (this.reconnectTimer === undefined) {
             this.reconnectTimer = setTimeout(() => {
                 this.reconnectTimer = undefined;
@@ -219,6 +250,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = undefined;
         }
+        this.clearStaleTimer();
         super.destroy();
         this.notifyClosed();
         this.descriptors = [];

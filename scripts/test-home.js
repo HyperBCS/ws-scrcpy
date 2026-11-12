@@ -20,6 +20,9 @@ const {
     supportsDeviceTools,
     findDeviceWithoutTools,
     canOpenScreen,
+    findDeviceByUdid,
+    isDeviceAvailable,
+    reportedConnected,
 } = require('../src/app/state/devices');
 const { pageTitle, APP_NAME } = require('../src/app/state/pageTitle');
 const { notificationsTarget, isNotificationSource } = require('../src/app/state/notificationsTarget');
@@ -113,6 +116,10 @@ test('every page takes its tab title from one function with one format', () => {
     assert.equal(deviceName(list[0]), 'Google Pixel 9 Pro');
     // Before the device list arrives the serial stands in, in the same format.
     assert.equal(pageTitle(route({ action: 'shell', udid: 'PIXEL-1' }), []), 'PIXEL-1 · Shell · ws-scrcpy');
+    // Unless this browser kept the phone's name when it last showed its page: a page reloaded
+    // after a server restart is named before the list is back.
+    require('../src/app/state/routes').rememberPhone('KEPT-1', 'ios', 'Bench iPhone');
+    assert.equal(pageTitle(route({ action: 'device', udid: 'KEPT-1', view: 'screen' }), []), 'Bench iPhone · Screen · ws-scrcpy');
     // A serial shared by an Android device and an iPhone resolves by the page's platform.
     assert.equal(
         pageTitle(route({ action: 'stream', udid: 'SAME' }), [iphone('SAME'), android('SAME')]),
@@ -277,12 +284,101 @@ test('the switcher shortcut and arrow keys', () => {
     assert.equal(nextHighlight([], 'a', 1), undefined);
 });
 
-test('the Devices page remembers its scroll position, and a card has no disclosure to remember', () => {
+test('the Devices page remembers its scroll position and the card a page was opened from, and a card has no disclosure to remember', () => {
     assert.equal(view.savedListScroll(), 0);
     view.rememberListScroll(1407);
     assert.equal(view.savedListScroll(), 1407);
     view.rememberListScroll(0);
-    assert.deepEqual(Object.keys(view).sort(), ['rememberListScroll', 'savedListScroll']);
+    // The card is focused once on the way back, not on every later return.
+    assert.equal(view.takeOpenedCard(), undefined);
+    view.rememberOpenedCard({ key: 'android:A', control: '#!action=device&udid=A&view=screen' });
+    assert.deepEqual(view.takeOpenedCard(), { key: 'android:A', control: '#!action=device&udid=A&view=screen' });
+    assert.equal(view.takeOpenedCard(), undefined);
+    assert.deepEqual(Object.keys(view).sort(), ['listState', 'rememberListScroll', 'rememberOpenedCard', 'savedListScroll', 'takeOpenedCard']);
+});
+
+test('loading, empty and stale are three different states of the list (U-home-8)', () => {
+    const live = { stale: undefined };
+    const stale = { stale: true };
+    // Before the first list nothing says that no phone is connected, also once the server has
+    // named its trackers.
+    assert.equal(view.listState([], false, 'connecting'), 'loading');
+    assert.equal(view.listState([], false, 'connected'), 'loading');
+    // A first list with no phone in it.
+    assert.equal(view.listState([], true, 'connected'), 'empty');
+    // The phones of a list that is reconnecting stay, as stale, whatever the host list says.
+    assert.equal(view.listState([live, stale], true, 'connected'), 'stale');
+    assert.equal(view.listState([stale], true, 'disconnected'), 'stale');
+    assert.equal(view.listState([live], true, 'connected'), 'ready');
+    // No phone and no server.
+    assert.equal(view.listState([], true, 'disconnected'), 'disconnected');
+    assert.equal(view.listState([], false, 'error'), 'disconnected');
+    const states = new Set([view.listState([], false, 'connected'), view.listState([], true, 'connected'), view.listState([stale], true, 'disconnected')]);
+    assert.equal(states.size, 3, 'three different states');
+});
+
+test('a stale card says what the phone last reported, never Offline, and cannot open a screen', () => {
+    const now = Date.UTC(2026, 10, 11, 12, 0);
+    const staleOf = (entry) => ({ ...entry, stale: true });
+    const cases = [
+        [android('S1', { 'ro.build.version.release': '16', 'battery.level': 80 }), 'ready'],
+        [android('S2', { 'screen.power': 'off' }), 'asleep'],
+        [iphone('S3', { session: 'ready' }), 'ready'],
+        [iphone('S4', { unlockSchedule: { enabled: true, time: '03:00', hasPasscode: false } }), 'attention'],
+    ];
+    for (const [entry, status] of cases) {
+        const live = phoneCard(entry, true, now);
+        const card = phoneCard(staleOf(entry), true, now);
+        assert.equal(card.status.status, status, `${entry.key}: the status it last had`);
+        assert.deepEqual([card.line?.kind, card.wake, [...card.tools]], [live.line?.kind, live.wake, [...live.tools]], `${entry.key}: the same line, Wake and tools, which the card turns off`);
+        assert.equal(card.openScreen, false, `${entry.key}: Open screen is off`);
+        assert.equal(isDeviceAvailable(staleOf(entry)), false);
+        assert.equal(reportedConnected(staleOf(entry)), true, 'it was connected when last listed');
+    }
+    // The row: dimmed, its chip names the status as the last known one, and its platform line
+    // keeps the battery it showed.
+    const pixel = android('S5', { 'ro.build.version.release': '16', 'battery.level': 80 });
+    const row = elements(PhoneRow({ entry: staleOf(pixel) }));
+    assert.match(row[0].props.class, /\bphone-row-stale\b/);
+    assert.doesNotMatch(elements(PhoneRow({ entry: pixel }))[0].props.class, /stale/);
+    assert.equal(row.find((node) => /kit-chip/.test(node.props.class || '')).props.title, 'Last known status: Ready');
+    assert.equal(platformLine(staleOf(pixel)), 'Android 16 · 80%');
+    // The pages of one phone do not take a stale entry; the list and the switcher show it.
+    const previous = devices.value;
+    try {
+        devices.value = new Map([[pixel.key, staleOf(pixel)]]);
+        assert.equal(findDeviceByUdid('S5'), undefined);
+        assert.equal(canOpenScreen(staleOf(pixel)), false);
+    } finally {
+        devices.value = previous;
+    }
+});
+
+test('Settings opened from a card keeps its phone when a restarted server lists it under a new key', () => {
+    const { settingsPhone } = require('../src/app/views/settings/phone');
+    const moved = (entry, trackerId) => ({ ...entry, key: `${trackerId}:${entry.descriptor.udid}`, trackerId });
+    const previous = devices.value;
+    try {
+        const pixel = android('S6');
+        const phone = iphone('S7');
+        devices.value = new Map([pixel, phone].map((entry) => [entry.key, entry]));
+        assert.equal(settingsPhone({ udid: 'S6', deviceKey: pixel.key }).entry, pixel);
+        // The server restarted: the same phones under new tracker ids.
+        const later = [moved(pixel, 'android-2'), moved(phone, 'ios-2')];
+        devices.value = new Map(later.map((entry) => [entry.key, entry]));
+        assert.equal(settingsPhone({ udid: 'S6', deviceKey: pixel.key }).entry, later[0]);
+        assert.equal(settingsPhone({ udid: 'S7', deviceKey: phone.key }).entry, later[1]);
+        // A serial that two servers list is still not guessed for an Android phone.
+        const other = { ...moved(pixel, 'remote'), params: { type: 'android', hostname: 'remote.test' } };
+        devices.value = new Map([...later, other].map((entry) => [entry.key, entry]));
+        assert.equal(settingsPhone({ udid: 'S6', deviceKey: pixel.key }).entry, undefined);
+        assert.equal(settingsPhone({ udid: 'S6', deviceKey: other.key }).entry, other);
+        // A phone that is no longer listed is not found.
+        devices.value = new Map();
+        assert.equal(settingsPhone({ udid: 'S6', deviceKey: pixel.key }).entry, undefined);
+    } finally {
+        devices.value = previous;
+    }
 });
 
 test('a card has one status, at most one line under it, and the action for that status', () => {

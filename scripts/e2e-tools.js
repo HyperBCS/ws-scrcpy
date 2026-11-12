@@ -199,7 +199,7 @@ async function main() {
             const state = await fixtures(page);
             await page.goto(BASE);
             const card = page.locator('.device').filter({hasText:'Phone A'});
-            await card.getByRole('link',{name:'Shell',exact:true}).click();
+            await card.getByRole('link',{name:'Shell on Fixture Phone A',exact:true}).click();
             await page.locator('.tool-connection.connected').waitFor({state:'attached'});
             await page.locator('.terminal-container .xterm').waitFor();
             assert.equal(context.pages().length,1,'local tools stay in the current app');
@@ -550,7 +550,7 @@ async function missingCode(browser) {
     });
     await page.goto(BASE);
     const card = page.locator('.device').filter({hasText:'Phone A'});
-    await card.getByRole('link',{name:'Shell',exact:true}).click();
+    await card.getByRole('link',{name:'Shell on Fixture Phone A',exact:true}).click();
     // The page's state card in place of the tool (p5-screen-shell).
     const offer = page.locator('.tool-state .stream-state-card');
     await offer.getByRole('heading',{name:'Shell could not be loaded',exact:true}).waitFor();

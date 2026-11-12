@@ -8,12 +8,16 @@ function canonicalSocket(value: string): string {
     return url.toString();
 }
 
-/** A serial is not unique across hosts (for example emulator-5554). Bind telemetry to its socket. */
+/**
+ * A serial is not unique across hosts (for example emulator-5554). Bind telemetry to its socket.
+ * A stale entry (its list is reconnecting) is not the phone's telemetry.
+ */
 export function findDeviceForStream(params: ParamsStreamScrcpy): DeviceEntry | undefined {
     try {
         const target = canonicalSocket(params.ws);
         const matches = Array.from(devices.value.values()).filter(
             (entry) =>
+                !entry.stale &&
                 entry.params.type === 'android' &&
                 entry.descriptor.udid === params.udid &&
                 canonicalSocket(streamSocketUrl(entry.descriptor.udid, entry.params)) === target,

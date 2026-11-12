@@ -4,7 +4,8 @@
 /* The list of phones (`views/DeviceList.tsx`): the kit bar, then the cards in a scrolling main.
    The controls on a card are the kit's; this file places them. The bar and the list keep clear
    of the notch and the screen edges themselves, so the bar's fill reaches the edges; the page
-   keeps the list clear of the home indicator. */
+   keeps the list clear of the home indicator. The gutter is 16px, 24px from 600px and 8px on
+   the narrowest phones. */
 .devices-page {
     display: flex;
     flex-direction: column;
@@ -38,6 +39,17 @@ body.sheet-open #devices {
 .devices-content > .kit-banner {
     margin-bottom: var(--space-16);
 }
+/* The list is reconnecting: one bar under the page's bar, outside the scrolling list, so it
+   stays in view and does not move the cards. It is as wide as the list. */
+.devices-reconnecting {
+    flex: none;
+    padding: var(--space-12) max(var(--space-16), env(safe-area-inset-right, 0px)) 0
+        max(var(--space-16), env(safe-area-inset-left, 0px));
+}
+.devices-reconnecting > .kit-banner {
+    max-width: 1200px;
+    margin: 0 auto;
+}
 
 .tracker-block {
     margin-bottom: var(--space-12);
@@ -57,17 +69,19 @@ body.sheet-open #devices {
 .tracker-name > span:last-child {
     flex: none;
 }
+/* The cards in columns of one width: as many as fit at 340px or more, which is three at most in
+   the 1200px of the list. A row is as tall as its tallest card, and every card keeps its actions
+   at its foot, so the cards of a row line up at the top and at the bottom. */
 #devices .device-list {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
     gap: var(--space-12);
-    align-items: start;
 }
 
 /* A card: the phone's row with its one status, at most one line under it, and the ways in. */
 #devices .device {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     gap: var(--space-12);
     box-sizing: border-box;
     min-width: 0;
@@ -109,14 +123,23 @@ body.sheet-open #devices {
 }
 
 /* Open screen takes the row. Files, Shell, Notifications and Settings are icon buttons beside
-   it, so the row never wraps. */
+   it, so the row never wraps. It is the foot of the card. */
 #devices .device-primary-actions {
     display: flex;
     gap: var(--space-8);
+    margin-top: auto;
 }
 #devices .device-primary-actions .stream {
     flex: 1 1 0;
     min-width: 0;
+}
+
+/* A card of a list that is reconnecting. Its row dims itself (`ui/PhoneRow.css`) and its lines
+   dim the same way; its buttons that reach the phone are off and dim themselves. Settings, and
+   the line's Open settings, stay as they are. */
+#devices .device.stale .device-schedule,
+#devices .device.stale .device-line > :not(.kit-button) {
+    opacity: var(--disabled-opacity);
 }
 
 /* No phone is listed. */
@@ -147,24 +170,51 @@ body.sheet-open #devices {
     text-align: left;
 }
 
-@media (min-width: 720px) {
+/* Before the first list. The box comes in after a short wait, so a list that arrives at once
+   does not flash it. */
+.device-list-loading {
+    animation: device-list-wait var(--motion-fast) ease-out 400ms both;
+}
+@keyframes device-list-wait {
+    from {
+        opacity: 0;
+    }
+}
+.device-list-spinner {
+    box-sizing: border-box;
+    width: 24px;
+    height: 24px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: var(--radius-full);
+    animation: device-list-spin 1s linear infinite;
+}
+@keyframes device-list-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .device-list-spinner {
+        animation: none;
+    }
+}
+
+@media (min-width: 600px) {
     #devices {
         padding-top: var(--space-24);
         padding-right: max(var(--space-24), env(safe-area-inset-right, 0px));
         padding-left: max(var(--space-24), env(safe-area-inset-left, 0px));
     }
-    #devices .device-list {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-@media (min-width: 1040px) {
-    #devices .device-list {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+    .devices-reconnecting {
+        padding-right: max(var(--space-24), env(safe-area-inset-right, 0px));
+        padding-left: max(var(--space-24), env(safe-area-inset-left, 0px));
     }
 }
 /* The narrowest phones: the tile gives its room to the name and the status. */
 @media (max-width: 360px) {
-    #devices {
+    #devices,
+    .devices-reconnecting {
         padding-right: max(var(--space-8), env(safe-area-inset-right, 0px));
         padding-left: max(var(--space-8), env(safe-area-inset-left, 0px));
     }

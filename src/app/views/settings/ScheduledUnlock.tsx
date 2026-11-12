@@ -145,7 +145,9 @@ interface ScheduledUnlockProps {
  */
 export function ScheduledUnlock({ udid, entry, opening, name }: ScheduledUnlockProps) {
     const descriptor = entry?.params.type === 'ios' ? (entry.descriptor as ApplDeviceDescriptor) : undefined;
-    const tracker = opening ? entry?.tracker : undefined;
+    // None while the list is reconnecting (a stale entry): a change could not reach the server,
+    // so the controls are off, as they were when the list dropped the phone.
+    const tracker = opening && !entry?.stale ? entry?.tracker : undefined;
     const broadcast = descriptor?.unlockSchedule;
     const [replyStatus, setReplyStatus] = useState<UnlockScheduleStatus>();
     const [pending, setPending] = useState<Pending>();
@@ -197,7 +199,8 @@ export function ScheduledUnlock({ udid, entry, opening, name }: ScheduledUnlockP
             confirmRemove.disarm();
         }
     }, [removable]);
-    const connected = descriptor?.state === DeviceState.CONNECTED;
+    // Not while the list is reconnecting (a stale entry).
+    const connected = !entry?.stale && descriptor?.state === DeviceState.CONNECTED;
     const locked = pending !== undefined || !tracker;
     const browserZone = localTimeZone();
     // Every time in the sheet is shown in the schedule's zone, which the Time row names.

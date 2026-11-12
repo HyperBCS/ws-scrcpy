@@ -55,11 +55,14 @@ export function useWake(tracker: WakeTracker, udid: string, asleep: boolean): Wa
     return { state, failure, wake };
 }
 
-/** Wake, beside the status of an asleep phone. It cannot be pressed again while a wake is on its way. */
-export function WakeButton({ control }: { control: WakeControl }) {
+/**
+ * Wake, beside the status of an asleep phone. It cannot be pressed again while a wake is on its
+ * way, nor while the list that would carry it is reconnecting (`disabled`).
+ */
+export function WakeButton({ control, disabled = false }: { control: WakeControl; disabled?: boolean }) {
     const sending = control.state === 'sending';
     return (
-        <Button size="compact" class="device-wake" disabled={sending} onClick={control.wake}>
+        <Button size="compact" class="device-wake" disabled={sending || disabled} onClick={control.wake}>
             {sending ? 'Waking…' : 'Wake'}
         </Button>
     );

@@ -4,10 +4,12 @@
 // Notifications entry, one name and one tab-title format, one status per card with at most one
 // line under it, Wake beside an asleep phone's status, Open screen disabled with the reason, the
 // action row, Settings on every card, the switcher rows as the card's head (current first, then
-// the phones that can be opened, then the rest, greyed), scroll restore, and the refusal of tool
-// links that name an iPhone. The list is also measured against the kit: the type scale, kit
-// buttons at their heights, the kit bar with one h1, status as a chip with words, and the unread
-// count as a badge. No phone, adb or pymobiledevice3 is involved.
+// the phones that can be opened, then the rest, greyed), scroll and focus restore, and the refusal
+// of tool links that name an iPhone. The list is also measured against the kit: the type scale,
+// kit buttons at their heights, the kit bar with one h1, status as a chip with words, and the
+// unread count as a badge. Loading before the first list, the stale cards while the list
+// reconnects, and the even grid on a desktop (U-home-8, U-home-9). No phone, adb or
+// pymobiledevice3 is involved.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -61,12 +63,21 @@ function frame(type, id, data) {
     return packet;
 }
 
-async function start(browser, { width, height, mobile, colorScheme = 'light', androids = ANDROIDS, iphones = IPHONES, summary = SUMMARY, hash } = {}) {
+async function start(browser, { width, height, mobile, colorScheme = 'light', androids = ANDROIDS, iphones = IPHONES, summary = SUMMARY, hash, holdLists = false } = {}) {
     const context = await browser.newContext({ viewport: { width, height }, isMobile: mobile, hasTouch: mobile, colorScheme, serviceWorkers: 'block' });
     const page = await context.newPage();
     // `streams` counts the screen sockets the page opens; `updateAndroid` sends one phone's new
-    // descriptor on the Android list, as the server does when a phone changes.
-    const state = { context, page, errors: [], commands: [], channels: [], summary, streams: 0, updateAndroid: undefined };
+    // descriptor on the Android list, as the server does when a phone changes. With `holdLists`
+    // set the lists wait until `releaseLists()`; `dropList()` closes the list's socket, as a
+    // server restart does, and the page opens a new one by itself. `listIds` are the ids the lists
+    // carry; a restarted server sends new ones.
+    const state = {
+        context, page, errors: [], commands: [], channels: [], summary, streams: 0, updateAndroid: undefined,
+        holdLists: false, heldLists: [], listSocket: undefined, listIds: { android: 'android', ios: 'ios' },
+        releaseLists() { state.holdLists = false; state.heldLists.splice(0).forEach((send) => send()); },
+        dropList() { state.listSocket.close({ code: 1006, reason: 'Server restart' }); },
+    };
+    const list = (send) => (state.holdLists ? state.heldLists.push(send) : send());
     page.on('pageerror', (error) => state.errors.push(error.message));
     await page.route('**/api/notifications/**', (route) => {
         const pathname = new URL(route.request().url()).pathname;
@@ -88,6 +99,7 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
             state.streams++;
             return; // The iPhone stream stays on "Connecting".
         }
+        state.listSocket = socket;
         socket.onMessage((data) => {
             const packet = Buffer.from(data);
             if (packet.length < 5) return;
@@ -97,10 +109,10 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
                 state.channels.push(body);
                 if (body === 'HSTS') send({ id: -1, type: 'hosts', data: { local: [{ type: 'android' }, { type: 'ios' }] } });
                 if (body === 'GTRC') {
-                    send({ id: -1, type: 'devicelist', data: { id: 'android', name: 'Fixture host', list: androids } });
-                    state.updateAndroid = (device) => send({ id: -1, type: 'device', data: { id: 'android', name: 'Fixture host', device } });
+                    list(() => send({ id: -1, type: 'devicelist', data: { id: state.listIds.android, name: 'Fixture host', list: androids } }));
+                    state.updateAndroid = (device) => send({ id: -1, type: 'device', data: { id: state.listIds.android, name: 'Fixture host', device } });
                 }
-                if (body === 'ATRC') send({ id: -1, type: 'devicelist', data: { id: 'ios', name: 'Fixture host', list: iphones } });
+                if (body === 'ATRC') list(() => send({ id: -1, type: 'devicelist', data: { id: state.listIds.ios, name: 'Fixture host', list: iphones } }));
             } else if (packet[0] === 32 && body.startsWith('{')) {
                 try {
                     const command = JSON.parse(body);
@@ -111,6 +123,7 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
             }
         });
     });
+    state.holdLists = holdLists;
     const url = new URL(BASE);
     if (hash) url.hash = `!${new URLSearchParams(hash)}`;
     await page.goto(url.toString());
@@ -133,6 +146,16 @@ const switcherRows = (sheet) => sheet.locator('.device-switcher-item').evaluateA
 // The bar of the list: the kit bar in its root form.
 const HEADER = 'header.kit-bar.kit-bar-root';
 const noOverflow = (page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
+/** The card and the link that have the focus, or null when no control of a card has it. */
+const focusedCardControl = (page) => page.evaluate(() => {
+    const key = document.activeElement?.closest('article.device')?.dataset.deviceKey;
+    return key ? { key, href: document.activeElement.getAttribute('href') } : null;
+});
+/** Waits up to `ms` for a condition on the fixture's side. */
+async function until(page, check, what, ms = 8000) {
+    for (let waited = 0; waited < ms && !check(); waited += 50) await page.waitForTimeout(50);
+    assert.ok(check(), what);
+}
 
 /** WCAG contrast of an element's text on its own background, composited over what is behind it. */
 function contrastOf(locator) {
@@ -271,7 +294,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         })));
         const pixel = await boxes('android:HOME-PIXEL-0001');
         const linked = await boxes(`ios:${LINKED}`);
-        assert.deepEqual(pixel.map((box) => box.name), ['Open screen', 'Files', 'Shell', 'Settings for Google Pixel 9 Pro']);
+        assert.deepEqual(pixel.map((box) => box.name), ['Open screen', 'Files on Google Pixel 9 Pro', 'Shell on Google Pixel 9 Pro', 'Settings for Google Pixel 9 Pro']);
         assert.deepEqual(linked.map((box) => box.text), ['Open screen', '2', '']);
         assert.deepEqual((await boxes('android:HOME-OFFLINE-0004')).map((box) => box.name), ['Open screen', 'Settings for Google Pixel 7'], `${label}: no Files or Shell for an offline phone`);
         for (const row of [pixel, linked]) {
@@ -293,7 +316,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         // Files and Shell are icon links of the Android card, to the phone's tool pages.
         const pixelCard = card(page, 'android:HOME-PIXEL-0001');
         for (const [name, view] of [['Files', 'files'], ['Shell', 'shell']]) {
-            const link = pixelCard.getByRole('link', { name, exact: true });
+            const link = pixelCard.getByRole('link', { name: `${name} on Google Pixel 9 Pro`, exact: true });
             assert.equal(await link.isVisible(), true, `${name} is on the card`);
             assert.match(await link.getAttribute('href'), new RegExp(`action=device&udid=HOME-PIXEL-0001&view=${view}`));
         }
@@ -637,6 +660,274 @@ async function wakeOnePerSleep(browser) {
     }
 }
 
+/**
+ * U-home-8: before the first list the page says it is loading, and never that no phone is
+ * connected; a first list that is empty says so.
+ */
+async function firstList(browser, { width, height, mobile, colorScheme }) {
+    const label = `${width}-${colorScheme}`;
+    const test = await start(browser, { width, height, mobile, colorScheme, holdLists: true });
+    const { page } = test;
+    try {
+        const loading = page.locator('#devices .device-list-loading');
+        await loading.waitFor();
+        await until(page, () => test.heldLists.length === 2, `${label}: both lists were asked for`);
+        // It comes in after a short wait, and stays until a list arrives.
+        await page.waitForTimeout(600);
+        assert.equal(await loading.getAttribute('role'), 'status');
+        assert.equal(await loading.getAttribute('aria-busy'), 'true');
+        assert.equal(await loading.evaluate((el) => getComputedStyle(el).opacity), '1', `${label}: the loading box is shown`);
+        assert.equal((await loading.textContent()).trim(), 'Loading phones…');
+        assert.equal(await page.getByRole('heading', { name: /No phones connected|Connection lost/ }).count(), 0, `${label}: no empty state before the first list`);
+        assert.equal((await page.locator(`${HEADER} .kit-bar-status`).textContent()).trim(), 'Waiting for phones');
+        assert.equal(await noOverflow(page), true);
+        await page.screenshot({ path: path.join(OUT, `loading-${label}.png`) });
+        test.releaseLists();
+        await card(page, 'ios:HOME-IPHONE-START').waitFor();
+        assert.equal(await loading.count(), 0, `${label}: the cards take the place of the loading box`);
+        assert.deepEqual(test.errors, []);
+    } finally {
+        await test.context.close();
+    }
+    // An empty first list: the empty state, with no loading box.
+    const empty = await start(browser, { width, height, mobile, colorScheme, androids: [], iphones: [] });
+    try {
+        await empty.page.getByRole('heading', { name: 'No phones connected', exact: true }).waitFor();
+        assert.equal(await empty.page.locator('.device-list-loading').count(), 0);
+        assert.equal((await empty.page.locator(`${HEADER} .kit-bar-status`).textContent()).trim(), 'Waiting for phones');
+        assert.deepEqual(empty.errors, []);
+    } finally {
+        await empty.context.close();
+    }
+    console.log('PASS', label, 'loading before the first list, the empty state only for an empty list');
+}
+
+/** The cards as the list shows them: name, status, stale mark and opacity of the name. */
+const cardsOf = (page) => page.locator('article.device').evaluateAll((items) => items.map((item) => ({
+    name: item.querySelector('.phone-row-name').textContent,
+    chip: item.querySelector('.phone-row-status .kit-chip').textContent,
+    stale: item.classList.contains('stale'),
+    dim: getComputedStyle(item.querySelector('.phone-row-text')).opacity,
+})));
+
+/**
+ * U-home-8: the list's socket drops. The cards stay, each with the status it had, dimmed under
+ * one Reconnecting bar; nothing on them reaches a phone and none opens a screen, while Settings
+ * still opens. The next list makes them live again, with the focus and the scroll where they
+ * were, also when it comes from a restarted server under new ids. No screen socket is opened at
+ * any point.
+ */
+async function reconnectingList(browser, { width, height, mobile, colorScheme }) {
+    const label = `${width}-${colorScheme}`;
+    const androids = [...ANDROIDS, ...Array.from({ length: 20 }, (_, index) => android(`HOME-MORE-${String(index).padStart(2, '0')}`, `More ${String(index).padStart(2, '0')}`))];
+    const test = await start(browser, { width, height, mobile, colorScheme, androids });
+    const { page } = test;
+    const list = page.locator('#devices');
+    const bar = page.locator('.devices-reconnecting .kit-banner');
+    const pill = page.locator(`${HEADER} .kit-bar-status`);
+    const drop = async () => {
+        const asked = test.channels.length;
+        test.holdLists = true;
+        test.dropList();
+        await bar.waitFor();
+        return asked;
+    };
+    // The page reconnects on its own after 2 s and asks for both lists again.
+    const reconnect = async (asked) => {
+        await until(page, () => test.channels.length >= asked + 3 && test.heldLists.length === 2, `${label}: the page asked for the lists again`);
+        test.releaseLists();
+        await bar.waitFor({ state: 'detached' });
+    };
+    try {
+        let target = card(page, 'android:HOME-MORE-15');
+        await target.waitFor();
+        await settleMotion(page);
+        await list.evaluate((el) => { el.scrollTop = el.scrollHeight / 2; });
+        await target.scrollIntoViewIfNeeded();
+        const open = target.getByRole('link', { name: 'Open screen', exact: true });
+        const href = await open.getAttribute('href');
+        await open.focus();
+        await page.waitForTimeout(100);
+        const scrollTop = await list.evaluate((el) => el.scrollTop);
+        assert.ok(scrollTop > 100, `${label}: the list is scrolled (${scrollTop})`);
+        const before = await cardsOf(page);
+        const summary = (await pill.textContent()).trim();
+
+        const asked = await drop();
+        assert.equal(await bar.getAttribute('role'), 'status');
+        assert.equal((await bar.textContent()).trim(), 'Reconnecting… The phones are shown as last reported.');
+        assert.equal(await page.locator('.devices-reconnecting').count(), 1, `${label}: one bar`);
+        assert.equal((await pill.textContent()).trim(), 'Reconnecting…', `${label}: the page's line agrees with the bar`);
+        const during = await cardsOf(page);
+        assert.deepEqual(during.map((item) => [item.name, item.chip]), before.map((item) => [item.name, item.chip]), `${label}: every card stays, in its place, with the status it had`);
+        assert.ok(during.every((item) => item.stale && item.dim === '0.5'), `${label}: every card is stale and dimmed`);
+        assert.ok(before.every((item) => !item.stale && item.dim === '1'));
+        assert.equal(await page.getByText('Offline', { exact: true }).count(), before.filter((item) => item.chip === 'Offline').length, `${label}: no stale phone is called Offline`);
+        // Nothing on a card reaches the phone or opens one of its pages.
+        assert.equal(await list.locator('a[href*="action=device"]').count(), 0, `${label}: no link to a phone's page`);
+        assert.equal(await list.getByRole('link', { name: 'Open screen', exact: true }).count(), 0);
+        assert.equal(await target.getByRole('button', { name: 'Open screen', exact: true }).isDisabled(), true);
+        for (const name of ['Files', 'Shell']) {
+            const link = target.getByRole('link', { name: `${name} on Google More 15`, exact: true });
+            assert.deepEqual([await link.getAttribute('aria-disabled'), await link.getAttribute('href')], ['true', null], `${label}: ${name} is off`);
+        }
+        assert.equal(await card(page, 'android:HOME-TAB-0002').getByRole('button', { name: 'Wake', exact: true }).isDisabled(), true, `${label}: Wake is off`);
+        assert.equal(await card(page, 'ios:HOME-IPHONE-ERROR').getByRole('button', { name: 'Restart services', exact: true }).isDisabled(), true);
+        assert.equal(await card(page, 'ios:HOME-IPAD-NODEV').getByRole('button', { name: 'Enable and restart', exact: true }).isDisabled(), true);
+        // Settings, the line's Open settings and Notifications stay.
+        assert.equal(await target.getByRole('button', { name: 'Settings for Google More 15', exact: true }).isEnabled(), true);
+        assert.equal(await card(page, 'ios:HOME-IPHONE-UNLOCK').getByRole('button', { name: 'Open settings for iPhone unlock', exact: true }).isEnabled(), true);
+        assert.equal(await card(page, `ios:${LINKED}`).locator('.device-notification-history').getAttribute('href'), `#!action=notifications&source=${LINKED}`);
+        assert.ok(Math.abs((await list.evaluate((el) => el.scrollTop)) - scrollTop) <= 1, `${label}: the list did not move`);
+        assert.equal(await noOverflow(page), true);
+        await page.screenshot({ path: path.join(OUT, `reconnecting-${label}.png`) });
+
+        // The next list, from the server restarted under new ids: live cards, the summary back,
+        // the focus on the link it was on and the list where it was.
+        test.listIds = { android: 'android-2', ios: 'ios-2' };
+        await reconnect(asked);
+        assert.deepEqual(await cardsOf(page), before, `${label}: the cards are as they were`);
+        assert.equal((await pill.textContent()).trim(), summary);
+        target = card(page, 'android-2:HOME-MORE-15');
+        assert.deepEqual(await focusedCardControl(page), { key: 'android-2:HOME-MORE-15', href }, `${label}: the focus is back on Open screen`);
+        assert.ok(Math.abs((await list.evaluate((el) => el.scrollTop)) - scrollTop) <= 1, `${label}: the list is where it was`);
+
+        // Again, and this time press what a stale card offers: Open screen does nothing, and
+        // Settings opens.
+        const address = await page.evaluate(() => location.href);
+        const again = await drop();
+        await target.getByRole('button', { name: 'Open screen', exact: true }).click({ force: true });
+        await page.waitForTimeout(150);
+        assert.equal(await page.evaluate(() => location.href), address, `${label}: a stale card opens no screen`);
+        await target.getByRole('button', { name: 'Settings for Google More 15', exact: true }).click();
+        const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+        await dialog.waitFor();
+        await settleMotion(page);
+        // It says what it last knew, and that the list is reconnecting, not that the phone is off.
+        const staleBanner = 'Reconnecting to the server. Settings that need it are off until it is back.';
+        await dialog.getByText(staleBanner, { exact: true }).waitFor();
+        const fact = (name) => dialog.locator(`[data-fact="${name}"] .kit-row-value`).textContent();
+        assert.deepEqual([await fact('status'), await fact('connection')], ['Ready', 'Reconnecting…'], `${label}: the stale phone in its Settings`);
+        await dialog.getByRole('button', { name: /^Close/ }).click();
+        await dialog.waitFor({ state: 'hidden' });
+        await reconnect(again);
+        await target.getByRole('link', { name: 'Open screen', exact: true }).waitFor();
+
+        // Settings of an iPhone stays open through a drop and the list of a restarted server.
+        // While the list is stale the schedule, which is kept on the server, cannot be changed.
+        // The new list lists the phone under a new key, and the sheet has the phone again.
+        const third = await drop();
+        await card(page, 'ios-2:HOME-IPHONE-UNLOCK').getByRole('button', { name: 'Settings for iPhone unlock', exact: true }).click();
+        await dialog.waitFor();
+        await settleMotion(page);
+        await dialog.getByText(staleBanner, { exact: true }).waitFor();
+        const toggle = dialog.getByRole('switch', { name: 'Unlock twice a day' });
+        assert.equal(await toggle.isDisabled(), true, `${label}: the schedule cannot be changed while the list is stale`);
+        test.listIds = { android: 'android-3', ios: 'ios-3' };
+        await reconnect(third);
+        await dialog.locator('[data-fact="connection"] .kit-row-value').getByText('Connected', { exact: true }).waitFor({ timeout: 5000 });
+        assert.equal(await dialog.getByText(/^(Reconnecting to the server|Waiting for the phone)/).count(), 0, `${label}: Settings has the phone again`);
+        assert.equal(await toggle.isEnabled(), true, `${label}: the schedule can be changed again`);
+        await dialog.getByRole('button', { name: /^Close/ }).click();
+        await dialog.waitFor({ state: 'hidden' });
+
+        // Focus that had left the cards before the drop stays where it is after the next list.
+        await page.evaluate(() => document.activeElement?.blur());
+        const fourth = await drop();
+        test.listIds = { android: 'android-4', ios: 'ios-4' };
+        await reconnect(fourth);
+        await card(page, 'android-4:HOME-MORE-15').getByRole('link', { name: 'Open screen', exact: true }).waitFor();
+        assert.equal(await focusedCardControl(page), null, `${label}: no card takes the focus it did not have`);
+        assert.equal(test.streams, 0, `${label}: no screen was opened`);
+        assert.deepEqual(test.commands, [], `${label}: nothing was sent to a phone`);
+        assert.deepEqual(test.errors, []);
+        console.log('PASS', label, 'a dropped list keeps its cards stale under one Reconnecting bar, and the next list brings them back with focus and scroll');
+    } finally {
+        await test.context.close();
+    }
+}
+
+/**
+ * U-home-9: on a desktop the cards are an even grid. One width for every card, rows whose cards
+ * share their top, their height and the line of their actions, and at most three columns in the
+ * 1200px of the list. The widths are measured, not read from the stylesheet.
+ */
+async function evenGrid(browser) {
+    for (const [width, height, columns] of [[1024, 768, 2], [1280, 800, 3], [1440, 900, 3], [1920, 1080, 3], [390, 844, 1]]) {
+        for (const colorScheme of width === 1280 ? ['light', 'dark'] : ['light']) {
+            const label = `${width}-${colorScheme}`;
+            const mobile = width < 600;
+            const test = await start(browser, { width, height, mobile, colorScheme });
+            const { page } = test;
+            try {
+                await card(page, 'ios:HOME-IPHONE-START').waitFor();
+                await settleMotion(page);
+                const boxes = await page.locator('article.device').evaluateAll((items) => items.map((item) => {
+                    const box = item.getBoundingClientRect();
+                    const actions = item.querySelector('.device-primary-actions').getBoundingClientRect();
+                    return { left: box.left, top: box.top, width: box.width, height: box.height, actionsBottom: box.bottom - actions.bottom };
+                }));
+                const round = (value) => Math.round(value * 2) / 2;
+                const widths = new Set(boxes.map((box) => round(box.width)));
+                assert.equal(widths.size, 1, `${label}: every card has one width (${[...widths]})`);
+                const lefts = [...new Set(boxes.map((box) => round(box.left)))].sort((a, b) => a - b);
+                assert.equal(lefts.length, columns, `${label}: ${columns} columns (${lefts})`);
+                const rows = new Map();
+                for (const box of boxes) rows.set(round(box.top), [...(rows.get(round(box.top)) || []), box]);
+                for (const [top, row] of rows) {
+                    assert.equal(new Set(row.map((box) => round(box.height))).size, 1, `${label}: the cards of the row at ${top} are one height`);
+                    assert.ok(row.every((box) => Math.abs(box.actionsBottom - row[0].actionsBottom) < 1), `${label}: the actions of the row at ${top} line up`);
+                }
+                // The rows fill from the left, so every row but the last is full.
+                const sizes = [...rows.values()].map((row) => row.length);
+                assert.ok(sizes.slice(0, -1).every((size) => size === columns), `${label}: full rows (${sizes})`);
+                const cardWidth = boxes[0].width;
+                if (columns > 1) assert.ok(cardWidth >= 340 && cardWidth <= 692, `${label}: a card is between 340 and 692px wide (${cardWidth})`);
+                if (columns === 3) assert.ok(cardWidth <= 392.5, `${label}: three columns in 1200px make the widest card (${cardWidth})`);
+                if (width >= 1280) {
+                    const span = lefts[lefts.length - 1] + cardWidth - lefts[0];
+                    assert.ok(Math.abs(span - 1200) < 1 && Math.abs(lefts[0] - (width - 1200) / 2) < 1, `${label}: the grid is the 1200px of the list, centred`);
+                }
+                assert.equal(await noOverflow(page), true);
+                await page.screenshot({ path: path.join(OUT, `grid-${label}.png`) });
+                assert.deepEqual(test.errors, []);
+            } finally {
+                await test.context.close();
+            }
+        }
+    }
+    console.log('PASS the cards are an even grid at 1024, 1280, 1440 and 1920, and one column at 390');
+}
+
+/**
+ * A phone's page reloaded after a server restart, before the list is back: the tab title and
+ * the header give the name this browser kept for the phone, not its serial.
+ */
+async function rememberedName(browser) {
+    const udid = 'HOME-PIXEL-0001';
+    const test = await start(browser, { width: 390, height: 844, mobile: true });
+    const { page } = test;
+    try {
+        await card(page, `android:${udid}`).waitFor();
+        // What a visit of the phone's page leaves in this browser (`rememberPhone`).
+        await page.evaluate((serial) => {
+            localStorage.setItem('ws-scrcpy.phones', JSON.stringify({ [serial]: { platform: 'android', name: 'Google Pixel 9 Pro' } }));
+            location.hash = `#!action=device&udid=${serial}&view=shell`;
+        }, udid);
+        test.holdLists = true;
+        await page.reload();
+        await page.waitForFunction(() => document.title === 'Google Pixel 9 Pro · Shell · ws-scrcpy');
+        await page.locator('h1.kit-bar-name').getByText('Google Pixel 9 Pro', { exact: true }).waitFor();
+        assert.equal(test.heldLists.length > 0, true, 'the list has not come');
+        assert.equal(await page.getByText(udid).count(), 0, 'the serial is not shown');
+        assert.equal(test.streams, 0);
+        assert.deepEqual(test.errors, []);
+        console.log('PASS a reloaded phone page is named by the name this browser kept, before the list is back');
+    } finally {
+        await test.context.close();
+    }
+}
+
 async function narrowRow(browser) {
     const test = await start(browser, { width: 320, height: 568, mobile: true });
     const { page } = test;
@@ -649,6 +940,18 @@ async function narrowRow(browser) {
         assert.ok(open.width >= (await row.evaluate((el) => el.clientWidth)) / 2 - 1, 'Open screen takes at least half the row at 320px');
         assert.equal(await row.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false);
         assert.equal(await noOverflow(page), true, 'no horizontal page scroll at 320px');
+        // Nothing overflows its card, and no words overflow their button, name or chip. (The
+        // unread badge sits over the corner of its button on purpose.)
+        const spills = await page.locator('article.device').evaluateAll((items) => items.flatMap((item) => {
+            const edge = item.getBoundingClientRect().right;
+            const name = (el) => `${item.dataset.deviceKey}: ${el.textContent.trim() || el.getAttribute('aria-label')}`;
+            return [
+                ...(item.scrollWidth > item.clientWidth + 1 ? [`${item.dataset.deviceKey}: the card`] : []),
+                ...[...item.querySelectorAll('a, button')].filter((el) => el.getBoundingClientRect().right > edge + 0.5).map(name),
+                ...[...item.querySelectorAll('.kit-button, .phone-row-name, .phone-row-platform, .kit-chip')].filter((el) => el.scrollWidth > el.clientWidth + 1).map(name),
+            ];
+        }));
+        assert.deepEqual(spills, [], 'nothing overflows at 320px');
         const header = page.locator(HEADER);
         const heading = await header.getByRole('heading', { name: 'Phones', exact: true }).boundingBox();
         const inbox = await header.locator('.notifications-link').boundingBox();
@@ -685,12 +988,17 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
             assert.ok(before > 300, `${label}: the list is scrolled when it is left (${before})`);
             await control.evaluate((el) => el.click());
         };
-        const check = async (how) => {
+        const check = async (how, focusedLink) => {
             await page.locator('#devices').waitFor();
             await card(page, 'android:HOME-EXTRA-15').waitFor();
             await page.waitForFunction(() => new Promise((resolve) => requestAnimationFrame(() => resolve(true))));
             assert.ok(Math.abs((await list.evaluate((el) => el.scrollTop)) - before) <= 2, `${label}: ${how} returns to the same scroll position`);
+            // The card the page was opened from has the focus, on the link that opened it.
+            assert.deepEqual(await focusedCardControl(page), focusedLink, `${label}: ${how} focuses the card it was opened from`);
         };
+        const linkOf = async (name) => ({ key: 'android:HOME-EXTRA-15', href: await target.getByRole('link', { name, exact: true }).getAttribute('href') });
+        const openLink = await linkOf('Open screen');
+        const filesLink = await linkOf('Files on Google Extra 15');
 
         // A screen and back, by the header button and by browser Back.
         await leave(target.getByRole('link', { name: 'Open screen', exact: true }));
@@ -698,19 +1006,19 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await page.waitForFunction(() => document.title === 'Google Extra 15 · Screen · ws-scrcpy');
         assert.equal(await page.locator('.kit-bar-name').textContent(), 'Google Extra 15', 'the stream header names the device like its card');
         await page.getByRole('button', { name: 'Phones', exact: true }).click();
-        await check('the back control');
+        await check('the back control', openLink);
         await leave(target.getByRole('link', { name: 'Open screen', exact: true }));
         await page.locator('.stream-view').waitFor();
         await page.goBack();
-        await check('browser Back');
+        await check('browser Back', openLink);
 
         // A tool and back.
-        await leave(target.getByRole('link', { name: 'Files', exact: true }));
+        await leave(target.getByRole('link', { name: 'Files on Google Extra 15', exact: true }));
         await page.locator('.tool-view').waitFor();
         await page.waitForFunction(() => document.title === 'Google Extra 15 · Files · ws-scrcpy');
         assert.equal(await page.locator('.kit-bar-name').textContent(), 'Google Extra 15');
         await page.getByRole('button', { name: 'Phones', exact: true }).click();
-        await check('Files');
+        await check('Files', filesLink);
 
         // Notifications and back. The bar stays in view above the scrolled list.
         before = await list.evaluate((el) => el.scrollTop);
@@ -719,15 +1027,17 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await page.locator('.notifications-view').getByRole('button', { name: 'Phones', exact: true }).waitFor();
         await page.waitForFunction(() => document.title === 'Notifications · ws-scrcpy');
         await page.locator('.notifications-view').getByRole('button', { name: 'Phones', exact: true }).click();
-        await check('Notifications');
+        // Opened from the page's bar, not from a card: no card takes the focus.
+        await check('Notifications', null);
         await page.waitForFunction(() => document.title === 'Phones · ws-scrcpy');
 
-        // A reload starts at the top.
+        // A reload starts at the top, with no card focused.
         await page.reload();
         await card(page, 'android:HOME-EXTRA-15').waitFor();
         assert.equal(await list.evaluate((el) => el.scrollTop), 0);
+        assert.equal(await focusedCardControl(page), null);
         assert.deepEqual(test.errors, []);
-        console.log('PASS', label, 'Phones keeps its scroll position; one name and title format');
+        console.log('PASS', label, 'Phones keeps its scroll position and focuses the card a page was opened from; one name and title format');
     } finally {
         await test.context.close();
     }
@@ -773,7 +1083,7 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         await page.getByRole('button', { name: 'Phones', exact: true }).click();
 
         // Shell: the same link, a tab title with the device name, and a switcher for this tool.
-        await card(page, 'android:HOME-PIXEL-0001').getByRole('link', { name: 'Shell', exact: true }).click();
+        await card(page, 'android:HOME-PIXEL-0001').getByRole('link', { name: 'Shell on Google Pixel 9 Pro', exact: true }).click();
         await page.locator('.tool-view').waitFor();
         await page.waitForFunction(() => document.title === 'Google Pixel 9 Pro · Shell · ws-scrcpy');
         assert.equal(await headerLink.getAttribute('href'), '#!action=notifications');
@@ -965,9 +1275,11 @@ async function installedApp(browser) {
             }, scheme);
             assert.equal(colours.meta, colours.page, `${scheme}: theme-color matches the page`);
         }
-        // With no device listed, Devices still has the way into Notifications.
+        // With no answer from the server the list is loading, and still has the way into
+        // Notifications.
         await page.goto(BASE);
-        await page.getByRole('heading', { name: 'No phones connected', exact: true }).or(page.getByRole('heading', { name: 'Connection lost', exact: true })).waitFor();
+        await page.locator('#devices .device-list-loading').waitFor();
+        assert.equal(await page.getByRole('heading', { name: /No phones connected|Connection lost/ }).count(), 0);
         await page.locator(HEADER).getByRole('link', { name: 'Notifications', exact: true }).click();
         await page.locator('.notifications-view h1.kit-bar-name').getByText('Notifications', { exact: true }).waitFor();
         console.log('PASS installed app: one name, a Notifications shortcut, page-coloured browser bar, inbox reachable with no devices');
@@ -991,10 +1303,16 @@ async function main() {
             await kitList(browser, { width: 390, height: 844, mobile: true, colorScheme });
             await kitList(browser, { width: 1440, height: 900, mobile: false, colorScheme });
         }
+        for (const size of sizes) {
+            await firstList(browser, size);
+            await reconnectingList(browser, size);
+        }
+        await evenGrid(browser);
         await startFromSettings(browser);
         await wakeOnePerSleep(browser);
         await narrowRow(browser);
         await notchedList(browser);
+        await rememberedName(browser);
         for (const size of [sizes[0], sizes[3]]) {
             await returnToDevices(browser, size);
             await screenHeaders(browser, size);
