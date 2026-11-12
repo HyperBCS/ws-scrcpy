@@ -12,6 +12,11 @@ const MAX_BUFFERED_BYTES = 20 * 1024 * 1024;
 const KEYCODE_MESSAGE_LENGTH = 14;
 const KEY_ACTION_DOWN = 0;
 const KEY_ACTION_UP = 1;
+// scrcpy INJECT_TOUCH_EVENT: type(1) action(1) pointerId(8) x(4) y(4) width(2) height(2)
+// pressure(2) actionButton(4) buttons(4).
+const TOUCH_MESSAGE_LENGTH = 32;
+const TOUCH_ACTION_UP = 1;
+const TOUCH_PRESSURE_OFFSET = 22;
 
 /**
  * Device details used to fill the synthetic `scrcpy_initial` packet. Supplied by the caller
@@ -35,6 +40,8 @@ export class WebsocketProxy extends Mw {
     private keyboardCreated = false;
     /** Android keycodes this viewer has sent down and not yet up. */
     private readonly heldKeys = new Set<number>();
+    /** The last message of each finger this viewer has put down and not lifted, by pointer id. */
+    private readonly heldTouches = new Map<string, Buffer>();
     private broadcast?: Broadcast;
     private broadcastListener?: BroadcastListener;
     private controlSocketCloseListener?: () => void;
@@ -203,7 +210,24 @@ export class WebsocketProxy extends Mw {
             }
         }
         this.trackHeldKey(buffer);
+        this.trackHeldTouch(buffer);
         controlSocket.write(buffer);
+    }
+
+    /**
+     * Remembers a finger this viewer has down. Each touch is a one-message frame. A move counts
+     * as down too: scrcpy puts down a pointer it has not seen.
+     */
+    private trackHeldTouch(buffer: Buffer): void {
+        if (buffer.length !== TOUCH_MESSAGE_LENGTH || buffer[0] !== ControlMessage.TYPE_TOUCH) {
+            return;
+        }
+        const pointer = buffer.subarray(2, 10).toString('hex');
+        if (buffer[1] === TOUCH_ACTION_UP) {
+            this.heldTouches.delete(pointer);
+        } else {
+            this.heldTouches.set(pointer, Buffer.from(buffer));
+        }
     }
 
     /**
@@ -235,6 +259,18 @@ export class WebsocketProxy extends Mw {
                 up[0] = ControlMessage.TYPE_KEYCODE;
                 up[1] = KEY_ACTION_UP;
                 up.writeInt32BE(keycode, 2);
+                this.broadcast.getControlSocket().write(up);
+            }
+        }
+        const heldTouches = Array.from(this.heldTouches.values());
+        this.heldTouches.clear();
+        if (heldTouches.length && this.broadcast?.getControlSocket().readyState === 'open') {
+            // The browser went away with a finger down, for example mid-drag when the network
+            // dropped. It cannot send the up, and the browser forgets the touch on a disconnect.
+            for (const last of heldTouches) {
+                const up = Buffer.from(last);
+                up[1] = TOUCH_ACTION_UP;
+                up.writeUInt16BE(0, TOUCH_PRESSURE_OFFSET);
                 this.broadcast.getControlSocket().write(up);
             }
         }
