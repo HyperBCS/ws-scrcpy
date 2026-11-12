@@ -19,7 +19,6 @@ import { Menu, MenuItem, MenuSeparator } from '../ui/Menu';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Sheet } from '../ui/Sheet';
 import {
-    SheetFooter,
     SheetGroup,
     SheetMessageRow,
     SheetRow,
@@ -499,19 +498,14 @@ function Groups() {
         <Section title="Group and Row">
             <div class="kit-demo-sheet">
                 <SheetGroup
-                    kit
                     title="Clipboard"
-                    status={
-                        <SheetStatus kit tone="success">
-                            Copied to this browser.
-                        </SheetStatus>
-                    }
+                    status={<SheetStatus tone="success">Copied to this browser.</SheetStatus>}
                     hint="Text only. Pictures stay on the phone."
                 >
-                    <SheetRow kit title="Read the phone's clipboard" description="Copies it to this browser.">
+                    <SheetRow title="Read the phone's clipboard" description="Copies it to this browser.">
                         <Button size="compact">Read</Button>
                     </SheetRow>
-                    <SheetRow kit title="Paste text on the phone" layout="stack">
+                    <SheetRow title="Paste text on the phone" layout="stack">
                         <textarea
                             class="kit-field"
                             aria-label="Text to paste on the phone"
@@ -519,16 +513,15 @@ function Groups() {
                         />
                         <Button>Paste</Button>
                     </SheetRow>
-                    <SheetRow kit title="Restart the phone" description="Asks before it restarts." layout="pair">
+                    <SheetRow title="Restart the phone" description="Asks before it restarts." layout="pair">
                         <Button size="compact" variant="danger">
                             Restart
                         </Button>
                         <Button size="compact">Shut down</Button>
                     </SheetRow>
                 </SheetGroup>
-                <SheetGroup kit title="Keyboard and video">
+                <SheetGroup title="Keyboard and video">
                     <SheetToggleRow
-                        kit
                         title="Send this keyboard to the phone"
                         description="Ctrl+Alt+K releases it."
                         checked={keys}
@@ -547,25 +540,21 @@ function Groups() {
                     <SheetMessageRow tone="info" action={{ label: 'Clear', run: nothing }}>
                         An older list is still active.
                     </SheetMessageRow>
-                    <SheetRow kit title="System">
+                    <SheetRow title="System">
                         <span class="kit-row-value">Android 16</span>
                     </SheetRow>
                 </SheetGroup>
-                <SheetGroup kit title="Sound">
-                    <SoundRows kit session={sound} />
+                <SheetGroup title="Sound">
+                    <SoundRows session={sound} />
                 </SheetGroup>
                 <Disclosure title="About and troubleshooting" note="Stream service running">
-                    <SheetRow kit title="Stream service" description="Running">
+                    <SheetRow title="Stream service" description="Running">
                         <Button size="compact">Restart</Button>
                     </SheetRow>
-                    <SheetRow kit title="Serial">
+                    <SheetRow title="Serial">
                         <span class="kit-row-value">ATLAS-PIXEL-0001</span>
                     </SheetRow>
                 </Disclosure>
-                <SheetFooter>
-                    <Button>Cancel</Button>
-                    <Button variant="primary">Apply and restart video</Button>
-                </SheetFooter>
             </div>
         </Section>
     );
@@ -707,9 +696,9 @@ function SheetsAndMenu() {
 
                 {/* No subtitle: the sheet is not about one phone. */}
                 <Sheet {...props('long')} title="Long sheet">
-                    <SheetGroup kit title="Rows">
+                    <SheetGroup title="Rows">
                         {SHEET_ROWS.map((row) => (
-                            <SheetRow kit key={row} title={row} />
+                            <SheetRow key={row} title={row} />
                         ))}
                     </SheetGroup>
                 </Sheet>

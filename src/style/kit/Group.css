@@ -1,7 +1,7 @@
 @layer tokens, base, components, views;
 
 @layer components {
-/* Groups of rows, for sheets and settings pages (`ui/SheetControls.tsx` with `kit`):
+/* Groups of rows, for sheets and settings pages (`ui/SheetControls.tsx`):
    <section class="kit-group">
      <h3 class="kit-group-title">Sound</h3>
      <div class="kit-card kit-list">
@@ -144,17 +144,5 @@
     font-size: var(--font-size-13);
     font-variant-numeric: tabular-nums;
     text-align: right;
-}
-
-/* The actions of a sheet, under its last group. The buttons share the line, and each takes a
-   line of its own where their labels do not fit side by side. */
-.kit-footer {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-8);
-    padding-top: var(--space-16);
-}
-.kit-footer > .kit-button {
-    flex: 1 1 auto;
 }
 }

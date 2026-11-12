@@ -443,25 +443,16 @@ export function ApplSettingsSheet() {
                 )}
 
                 <SheetGroup
-                    kit
                     title="Schedule"
                     hint="Unlocks the iPhone twice a day, at the set time and 12 hours later, then locks it again. The iPhone stops accepting connections 24 hours after the passcode was last entered."
-                    status={
-                        note && (
-                            <SheetStatus kit tone={note.tone}>
-                                {note.text}
-                            </SheetStatus>
-                        )
-                    }
+                    status={note && <SheetStatus tone={note.tone}>{note.text}</SheetStatus>}
                 >
                     <SheetRow
-                        kit
                         title={summary.tone === 'error' ? <ProblemTitle>{summary.title}</ProblemTitle> : summary.title}
                         description={summary.text}
                         attributes={{ 'data-unlock-summary': summary.state, 'data-tone': summary.tone }}
                     />
                     <SheetToggleRow
-                        kit
                         title="Unlock twice a day"
                         description={
                             schedule.hasPasscode
@@ -473,7 +464,7 @@ export function ApplSettingsSheet() {
                         disabled={locked || (!schedule.hasPasscode && !schedule.enabled)}
                         onChange={onToggle}
                     />
-                    <SheetRow kit title="Time" description={timeDescription} attributes={{ 'data-unlock-time': '' }}>
+                    <SheetRow title="Time" description={timeDescription} attributes={{ 'data-unlock-time': '' }}>
                         {/* Written with the kit's class: the field is read through its ref. */}
                         <input
                             ref={timeInput}
@@ -506,7 +497,6 @@ export function ApplSettingsSheet() {
                     </SheetRow>
                     {browserZone && schedule.timeZone !== browserZone && (
                         <SheetRow
-                            kit
                             title="Time zone"
                             description={
                                 schedule.timeZone
@@ -522,7 +512,6 @@ export function ApplSettingsSheet() {
                     )}
                     {!schedule.hasPasscode || replacing ? (
                         <SheetRow
-                            kit
                             title="Passcode"
                             description="Enter it twice. Encrypted on the server; never shown or sent to a browser."
                             layout="stack"
@@ -590,7 +579,6 @@ export function ApplSettingsSheet() {
                         </SheetRow>
                     ) : (
                         <SheetRow
-                            kit
                             title="Passcode"
                             description={
                                 schedule.passcodeRejected
@@ -630,18 +618,10 @@ export function ApplSettingsSheet() {
                 )}
 
                 <SheetGroup
-                    kit
                     title="Runs"
-                    status={
-                        runNote && (
-                            <SheetStatus kit tone={runNote.tone}>
-                                {runNote.text}
-                            </SheetStatus>
-                        )
-                    }
+                    status={runNote && <SheetStatus tone={runNote.tone}>{runNote.text}</SheetStatus>}
                 >
                     <SheetRow
-                        kit
                         title={lastRunProblem ? <ProblemTitle>Last run</ProblemTitle> : 'Last run'}
                         description={lastRun ? describeRun(lastRun, moment(lastRun.at)) : 'No run yet.'}
                         attributes={{
@@ -650,7 +630,6 @@ export function ApplSettingsSheet() {
                         }}
                     />
                     <SheetRow
-                        kit
                         title="Run now"
                         description={
                             connected || !tracker
@@ -665,16 +644,16 @@ export function ApplSettingsSheet() {
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup kit title="Phone">
-                    <SheetRow kit title="Model">
+                <SheetGroup title="Phone">
+                    <SheetRow title="Model">
                         <span class="kit-row-value">{descriptor?.model || 'unknown'}</span>
                     </SheetRow>
-                    <SheetRow kit title="iOS">
+                    <SheetRow title="iOS">
                         <span class="kit-row-value">{descriptor?.version || 'unknown'}</span>
                     </SheetRow>
                     {/* A serial is long: it goes under its name, where it can wrap. */}
-                    <SheetRow kit title="Serial" description={renderTarget.udid} />
-                    <SheetRow kit title="Developer Mode">
+                    <SheetRow title="Serial" description={renderTarget.udid} />
+                    <SheetRow title="Developer Mode">
                         <span class="kit-row-value">
                             {developerMode === 'unknown' || developerMode === undefined
                                 ? 'unknown'

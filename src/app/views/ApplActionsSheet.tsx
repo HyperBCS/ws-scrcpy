@@ -277,21 +277,16 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     </Banner>
                 )}
 
-                <SheetGroup kit title="Sound">
+                <SheetGroup title="Sound">
                     {audioSession ? (
-                        <SoundRows kit session={audioSession} />
+                        <SoundRows session={audioSession} />
                     ) : (
-                        <SheetRow kit title="Listen in this browser" description={audioAvailability.value.message} />
+                        <SheetRow title="Listen in this browser" description={audioAvailability.value.message} />
                     )}
                 </SheetGroup>
 
-                <SheetGroup kit title="Screen" status={screenNote && <SheetStatus kit>{screenNote}</SheetStatus>}>
-                    <SheetRow
-                        kit
-                        title="Rotate"
-                        description="Apps with a fixed orientation may ignore this."
-                        layout="pair"
-                    >
+                <SheetGroup title="Screen" status={screenNote && <SheetStatus>{screenNote}</SheetStatus>}>
+                    <SheetRow title="Rotate" description="Apps with a fixed orientation may ignore this." layout="pair">
                         <Button size="compact" onClick={() => onRotate('left')} disabled={!connected}>
                             Left
                         </Button>
@@ -299,7 +294,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             Right
                         </Button>
                     </SheetRow>
-                    <SheetRow kit title="Refresh picture" description="Refresh a smeared picture.">
+                    <SheetRow title="Refresh picture" description="Refresh a smeared picture.">
                         <Button
                             size="compact"
                             onClick={() => {
@@ -311,12 +306,12 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             Refresh
                         </Button>
                     </SheetRow>
-                    <SheetRow kit title="Restart video" description="For frozen or broken video.">
+                    <SheetRow title="Restart video" description="For frozen or broken video.">
                         <Button size="compact" onClick={onRestartVideo}>
                             Restart video
                         </Button>
                     </SheetRow>
-                    <SheetRow kit title="Reconnect" description="Reconnect video, touch and keyboard.">
+                    <SheetRow title="Reconnect" description="Reconnect video, touch and keyboard.">
                         <Button
                             size="compact"
                             onClick={() => {
@@ -329,14 +324,13 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup kit title="Keyboard">
-                    <SheetRow kit title="Type text">
+                <SheetGroup title="Keyboard">
+                    <SheetRow title="Type text">
                         <Button size="compact" onClick={() => openSheet('liveText')} disabled={!connected}>
                             Open
                         </Button>
                     </SheetRow>
                     <SheetToggleRow
-                        kit
                         title="Send keystrokes"
                         description="Keys typed in this browser go to the phone."
                         checked={keyboard}
@@ -344,17 +338,16 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     />
                 </SheetGroup>
 
-                <SheetGroup kit title="Lock screen">
-                    <SheetRow kit title="Unlock device" description="Uses the passcode stored on the server.">
+                <SheetGroup title="Lock screen">
+                    <SheetRow title="Unlock device" description="Uses the passcode stored on the server.">
                         <Button size="compact" onClick={() => openSheet('unlock')} disabled={!connected}>
                             Unlock
                         </Button>
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup kit title="iPhone settings">
+                <SheetGroup title="iPhone settings">
                     <SheetRow
-                        kit
                         title="Scheduled unlock"
                         description="The two daily unlocks, the passcode and the last run."
                     >
@@ -372,20 +365,16 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 </SheetGroup>
 
                 <SheetGroup
-                    kit
                     title="Clipboard"
                     status={
                         draftTooLong ? (
-                            <SheetStatus kit tone="error">
-                                {CLIPBOARD_TOO_LONG_NOTE}
-                            </SheetStatus>
+                            <SheetStatus tone="error">{CLIPBOARD_TOO_LONG_NOTE}</SheetStatus>
                         ) : (
-                            clipboardNote && <SheetStatus kit>{clipboardNote}</SheetStatus>
+                            clipboardNote && <SheetStatus>{clipboardNote}</SheetStatus>
                         )
                     }
                 >
                     <SheetRow
-                        kit
                         title="Read the phone's clipboard"
                         description="Copy from the phone to this browser."
                         layout="pair"
@@ -410,7 +399,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         </div>
                     )}
                     <SheetRow
-                        kit
                         title="Send text to the phone"
                         description="Copy to the phone, then paste in a field."
                         layout="stack"
@@ -432,14 +420,8 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     </SheetRow>
                 </SheetGroup>
 
-                <SheetGroup
-                    kit
-                    title="Phone"
-                    hint={phoneSummary}
-                    status={power && <SheetStatus kit>{power}</SheetStatus>}
-                >
+                <SheetGroup title="Phone" hint={phoneSummary} status={power && <SheetStatus>{power}</SheetStatus>}>
                     <SheetRow
-                        kit
                         title="Reboot"
                         description="Reconnects after restarting. If a passcode is set, unlock on the phone."
                     >
@@ -454,7 +436,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             Reboot
                         </Button>
                     </SheetRow>
-                    <SheetRow kit title="Shut down" description="Power it on using the phone’s button.">
+                    <SheetRow title="Shut down" description="Power it on using the phone’s button.">
                         <Button
                             size="compact"
                             variant="danger"
@@ -489,19 +471,19 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 )}
 
                 <Disclosure title="Troubleshooting" note="services and diagnostics">
-                    <SheetRow kit title="Decoder">
+                    <SheetRow title="Decoder">
                         <span class="kit-row-value">{client.getDecoderKind() ?? 'none yet'}</span>
                     </SheetRow>
-                    <SheetRow kit title="Session">
+                    <SheetRow title="Session">
                         <span class="kit-row-value">{descriptor?.session ?? 'unknown'}</span>
                     </SheetRow>
-                    <SheetRow kit title="Connection">
+                    <SheetRow title="Connection">
                         <span class="kit-row-value">{connected ? 'connected' : 'disconnected'}</span>
                     </SheetRow>
-                    <SheetRow kit title="Screen">
+                    <SheetRow title="Screen">
                         <span class="kit-row-value">{descriptor?.['screen.power'] ?? 'unknown'}</span>
                     </SheetRow>
-                    <SheetRow kit title="Lock">
+                    <SheetRow title="Lock">
                         <span class="kit-row-value">
                             {descriptor?.['device.locked'] === true
                                 ? 'locked'
@@ -511,7 +493,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         </span>
                     </SheetRow>
                     <SheetRow
-                        kit
                         title="Restart services"
                         description="Use if touch, keyboard or clipboard stop responding. Ends the phone session for every viewer."
                     >
@@ -525,7 +506,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                         </Button>
                     </SheetRow>
                     <SheetRow
-                        kit
                         title="Remount developer image"
                         description="Use if the screen will not start. Ends the phone session first."
                     >
@@ -539,7 +519,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             Remount
                         </Button>
                     </SheetRow>
-                    <SheetRow kit title="Refresh info" description="Check pairing and Developer Mode.">
+                    <SheetRow title="Refresh info" description="Check pairing and Developer Mode.">
                         <Button
                             size="compact"
                             disabled={debugBusy}
@@ -586,7 +566,7 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                             }
                         />
                     )}
-                    {debugNote && <SheetStatus kit>{debugNote}</SheetStatus>}
+                    {debugNote && <SheetStatus>{debugNote}</SheetStatus>}
                 </Disclosure>
             </div>
         </Sheet>

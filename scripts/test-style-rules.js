@@ -22,7 +22,6 @@ const ORDER = `@layer ${LAYERS.join(', ')};`;
 const ALLOWED = {
     'app.css': { colours: 3, fontSizes: 3, radii: 1, important: 5 },
     'morebox.css': { zIndex: 1, important: 1 },
-    'ui/SheetControls.css': { colours: 7, fontSizes: 10, radii: 5 },
     // The order of what lies over the picture: the controls (8) and their shield (4).
     'views/FloatingToolbar.css': { zIndex: 2 },
     // The sleep overlay, one step under the header (4).
