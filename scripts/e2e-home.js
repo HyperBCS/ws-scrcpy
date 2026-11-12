@@ -308,8 +308,9 @@ function auditList({ mobile }) {
         if (!summary.closest('.kit-disclosure')) faults.push(`not the kit disclosure: ${name(summary)}`);
         if (summary.getBoundingClientRect().height < 44) faults.push(`under 44px: ${name(summary)}`);
     }
-    // The header is the kit bar, with the page's one h1.
-    const bars = document.querySelectorAll('header');
+    // The header is the kit bar, with the page's one h1. A sheet has a header of its own inside its
+    // dialog, which stays in the page while the sheet is closed.
+    const bars = [...document.querySelectorAll('header')].filter((header) => !header.closest('dialog'));
     if (bars.length !== 1 || !bars[0].matches('.kit-bar.kit-bar-root')) faults.push('the header is not the kit bar of the list');
     const headings = [...document.querySelectorAll('h1')].map((heading) => heading.textContent);
     if (headings.join('|') !== 'Phones') faults.push(`the page has these h1: ${headings.join('|') || 'none'}`);

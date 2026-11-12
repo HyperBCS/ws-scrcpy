@@ -100,7 +100,7 @@ async function main() {
             'mobile text field avoids Safari focus zoom',
         );
         await screenshot(page, 'phone-keyboard');
-        await page.getByRole('button', { name: 'Done', exact: true }).click();
+        await page.getByRole('button', { name: 'Close Type text', exact: true }).click();
         for (const [label, width, height] of [
             ['iphone17pm-landscape', 956, 440],
             ['small-phone', 320, 568],
