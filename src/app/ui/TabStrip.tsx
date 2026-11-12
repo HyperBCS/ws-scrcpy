@@ -2,13 +2,20 @@ import { ComponentChildren } from 'preact';
 import '../../style/kit/TabStrip.css';
 
 // Each view of a page draws the strip itself, so a press on a tab removes the strip with its
-// view, and the view shown next draws another. That strip stands in for the one before: it takes
-// the focus if the pressed tab had it.
+// view, and the view shown next draws another. That strip stands in for the one before: it does
+// not play the row's entrance again (`views/StreamView.css`), and it takes the focus if the
+// pressed tab had it.
 const HANDOVER_MS = 1000;
 const pressed = { at: -HANDOVER_MS, focused: false };
 
 function handedOver(): boolean {
     return performance.now() - pressed.at < HANDOVER_MS;
+}
+
+function standIn(strip: HTMLElement | null): void {
+    if (strip && handedOver()) {
+        strip.style.animation = 'none';
+    }
 }
 
 function takeFocus(tab: HTMLElement | null): void {
@@ -38,7 +45,7 @@ interface TabStripProps<T extends string> {
 /** The tabs under the bar, with the class names of `style/kit/TabStrip.css`. */
 export function TabStrip<T extends string>({ label, tabs, current, onSelect, children }: TabStripProps<T>) {
     return (
-        <nav class="kit-tabs" aria-label={label}>
+        <nav ref={standIn} class="kit-tabs" aria-label={label}>
             <div class="kit-tabs-list">
                 {tabs.map((tab) => (
                     <button
