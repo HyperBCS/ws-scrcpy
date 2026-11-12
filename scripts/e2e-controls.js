@@ -80,7 +80,7 @@ const SENDS = {
         camera: { sent: [], sheet: null, download: true, pressed: null },
         text: { sent: [], sheet: 'Type text', download: false, pressed: null },
         bolt: { sent: [], sheet: 'Actions', download: false, pressed: null },
-        sliders: { sent: [], sheet: 'Stream settings', download: false, pressed: null },
+        sliders: { sent: [], sheet: 'Settings', download: false, pressed: null },
     },
     ios: {
         home: { sent: [{ type: 'button', name: 'home', state: 'press' }], sheet: null, download: false, pressed: null },
@@ -93,9 +93,17 @@ const SENDS = {
         camera: { sent: [], sheet: null, download: false, pressed: null },
         text: { sent: [], sheet: 'Type text', download: false, pressed: null },
         bolt: { sent: [], sheet: 'Actions', download: false, pressed: null },
-        sliders: { sent: [], sheet: 'Scheduled unlock', download: false, pressed: null },
+        sliders: { sent: [], sheet: 'Settings', download: false, pressed: null },
     },
 };
+
+/**
+ * The Settings sheet of each kind of phone was named by its content at the base of step 5b. Step
+ * 5b makes it one sheet named Settings (p5-settings-sheet); either name is the Settings sheet of
+ * that phone.
+ */
+const SETTINGS_TITLES = { android: ['Stream settings', 'Settings'], ios: ['Scheduled unlock', 'Settings'] };
+const sheetName = (platform, title) => (SETTINGS_TITLES[platform].includes(title) ? 'Settings' : title);
 
 function frame(type, id, data) {
     const body = Buffer.from(data);
@@ -193,7 +201,7 @@ async function sends(browser, platform) {
             await control.click();
             await pause(300);
             await settleMotion(page);
-            const sheet = (await openSheet(page).count()) ? await openSheet(page).locator('.kit-sheet-title').innerText() : null;
+            const sheet = (await openSheet(page).count()) ? sheetName(platform, await openSheet(page).locator('.kit-sheet-title').innerText()) : null;
             found[icon] = { sent: test.sent(), sheet, download: test.downloads > 0, pressed: await control.getAttribute('aria-pressed') };
             if (sheet) {
                 await page.keyboard.press('Escape');
