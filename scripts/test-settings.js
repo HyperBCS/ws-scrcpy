@@ -10,7 +10,17 @@ const {
     settingsReport, childEnvironment, takeIosSettingsKey, IOS_KEY_ENV,
 } = require('../src/server/Settings');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-settings-'));
-after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+const initialDataEnv = { WS_DATA_DIR: process.env.WS_DATA_DIR, WS_NOTIFICATION_DATA: process.env.WS_NOTIFICATION_DATA };
+process.env.WS_DATA_DIR = path.join(temporary, 'data');
+process.env.WS_NOTIFICATION_DATA = process.env.WS_DATA_DIR;
+after(() => {
+    fs.rmSync(temporary, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(initialDataEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+    }
+    resetSettingsForTests();
+});
 
 test('defaults keep the iPhone start budget, timeout units and host adb server', () => {
     const settings = readSettings({}, temporary);
@@ -344,4 +354,32 @@ test('fully qualified host names keep their trailing dot', () => {
         server: [{ redirectToSecure: { host: 'phone.example.' } }],
         remoteHostList: [{ type: 'ios', hostname: 'remote.example.', port: 8443, secure: true }],
     }));
+});
+
+test('server fixture setup cannot inherit an exported canonical data directory', () => {
+    const { spawnSync } = require('node:child_process');
+    const sandbox = fs.mkdtempSync(path.join(temporary, 'ws-scrcpy-fixture-isolation-'));
+    const poison = path.join(sandbox, 'poison');
+    fs.mkdirSync(poison);
+    const marker = path.join(poison, 'untouched-marker');
+    fs.writeFileSync(marker, 'controlled fixture marker');
+    const before = fs.statSync(marker);
+    const probe = path.join(__dirname, 'fixtures', 'data-dir-probe.js');
+    for (const fixture of ['android-server', 'coredevice', 'crash-paths', 'ios-settings-store',
+        'ios-unlock', 'notification-service', 'notifications', 'review-fixes', 'server-regressions',
+        'settings', 'web-security']) {
+        // No inherited settings, key paths or tool overrides can enter the subprocess.
+        // The probe blocks child tools, sockets and every access to this controlled poison path.
+        const result = spawnSync(process.execPath, [probe, `test-${fixture}.js`], {
+            env: { PATH: process.env.PATH, TMPDIR: sandbox, WS_DATA_DIR: poison, WS_NOTIFICATION_DATA: poison },
+            encoding: 'utf8', timeout: 15000,
+        });
+        assert.equal(result.status, 0, `${fixture}: ${result.stderr}`);
+        assert.equal(result.stdout.trim(), 'Fixture data directory stays isolated');
+        assert.deepEqual(fs.readdirSync(poison), ['untouched-marker']);
+        const after = fs.statSync(marker);
+        assert.equal(after.mtimeMs, before.mtimeMs);
+        assert.equal(after.ctimeMs, before.ctimeMs);
+        assert.equal(after.size, before.size);
+    }
 });

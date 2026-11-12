@@ -15,12 +15,13 @@ const WS = require('ws');
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-crash-paths-'));
 const previousEnv = Object.fromEntries(
-    ['WS_NOTIFICATION_DATA', 'WS_NOTIFICATIONS_COLLECTOR', 'WS_PUBLIC_URL', 'WS_PUSH_SUBJECT'].map((key) => [
+    ['WS_DATA_DIR', 'WS_NOTIFICATION_DATA', 'WS_NOTIFICATIONS_COLLECTOR', 'WS_PUBLIC_URL', 'WS_PUSH_SUBJECT'].map((key) => [
         key,
         process.env[key],
     ]),
 );
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'unused');
+process.env.WS_DATA_DIR = path.join(temporary, 'unused');
 process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
 process.env.WS_PUBLIC_URL = 'https://phone.example';
 delete process.env.WS_PUSH_SUBJECT;
@@ -294,6 +295,7 @@ test('a shell that exits by itself still delivers its last output before closing
 
 async function mounted(directory) {
     process.env.WS_NOTIFICATION_DATA = directory;
+    process.env.WS_DATA_DIR = directory;
     resetSettingsForTests();
     const service = new NotificationService();
     const app = express();

@@ -17,6 +17,7 @@ const FAKE = path.join(__dirname, 'fixtures', 'fake-pymobiledevice3.js');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-coredevice-'));
 // The tracker tests start the unlock scheduler, whose store creates the data directory.
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
+process.env.WS_DATA_DIR = path.join(temporary, 'data');
 // The start budget and the wait after a failed session have their own tests. Everything else
 // starts the same fixture phones far more often than those two would allow.
 process.env.IOS_SESSION_START_LIMIT = '0';
@@ -826,6 +827,8 @@ const runHarness = (mode, act = () => undefined) =>
         const child = spawn(process.execPath, [path.join(__dirname, 'fixtures', 'shutdown-harness.js'), mode], {
             env: {
                 ...process.env,
+                WS_DATA_DIR: path.join(temporary, 'data'),
+                WS_NOTIFICATION_DATA: path.join(temporary, 'data'),
                 HARNESS_PYMOBILEDEVICE3: shim,
                 FAKE_LOG: logFile,
                 FAKE_SHUTDOWN_MS: '600',

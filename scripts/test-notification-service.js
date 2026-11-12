@@ -12,6 +12,7 @@ const { resetSettingsForTests } = require('../src/server/Settings');
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-notification-service-'));
 process.env.WS_NOTIFICATION_DATA = temporary;
+process.env.WS_DATA_DIR = temporary;
 process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
 const { NotificationService } = require('../src/server/notifications/NotificationService');
 const { NotificationFeed, shouldRelay } = require('../src/server/notifications/NotificationFeed');

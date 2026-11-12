@@ -19,6 +19,7 @@ fs.mkdirSync(publicDir);
 fs.writeFileSync(path.join(publicDir, 'index.html'), '<!doctype html><title>fixture</title>');
 
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
+process.env.WS_DATA_DIR = path.join(temporary, 'data');
 process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
 process.env.WS_SCRCPY_STREAM_CONFIG_PATH = path.join(temporary, 'streams.json');
 process.env.WS_PUBLIC_URL = 'https://phone.example';

@@ -14,7 +14,9 @@ const previousConfigPath = process.env.WS_SCRCPY_STREAM_CONFIG_PATH;
 process.env.WS_SCRCPY_STREAM_CONFIG_PATH = path.join(temporary, 'stream-config.json');
 // The iOS tracker starts the unlock scheduler, whose store creates the data directory.
 const previousDataDir = process.env.WS_NOTIFICATION_DATA;
+const previousCanonicalDataDir = process.env.WS_DATA_DIR;
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
+process.env.WS_DATA_DIR = path.join(temporary, 'data');
 // The tracker must not listen on this machine's real usbmuxd socket from a test, and the state
 // monitor must start nothing at all: its observer is the installed pymobiledevice3, its lock walk
 // runs python/probes/lockstate.py with the venv's Python, and a screen read that outlives a test's
@@ -55,6 +57,8 @@ after(() => {
     else process.env.WS_SCRCPY_STREAM_CONFIG_PATH = previousConfigPath;
     if (previousDataDir === undefined) delete process.env.WS_NOTIFICATION_DATA;
     else process.env.WS_NOTIFICATION_DATA = previousDataDir;
+    if (previousCanonicalDataDir === undefined) delete process.env.WS_DATA_DIR;
+    else process.env.WS_DATA_DIR = previousCanonicalDataDir;
 });
 
 function deferred() {

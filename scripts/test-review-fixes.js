@@ -13,6 +13,7 @@ const WS = require('ws');
 const portfinder = require('portfinder');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-review-fixes-'));
 process.env.WS_NOTIFICATION_DATA = temporary;
+process.env.WS_DATA_DIR = temporary;
 process.env.WS_SCRCPY_STREAM_CONFIG_PATH = path.join(temporary, 'streams.json');
 global.__PATHNAME__ = '/';
 require('ts-node').register({ transpileOnly: true });

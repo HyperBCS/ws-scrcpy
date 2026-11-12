@@ -22,6 +22,7 @@ const { resetSettingsForTests } = require('../src/server/Settings');
 const FAKE = path.join(__dirname, 'fixtures', 'fake-pymobiledevice3.js');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-unlock-'));
 process.env.WS_NOTIFICATION_DATA = temporary;
+process.env.WS_DATA_DIR = temporary;
 process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
 process.env.WS_PUBLIC_URL = 'https://phone.example';
 const originalSend = webpush.sendNotification;
