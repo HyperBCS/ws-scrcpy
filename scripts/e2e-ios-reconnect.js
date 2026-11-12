@@ -278,17 +278,20 @@ async function noPicture(browser, { width, height, colorScheme }) {
         assert.notEqual((await header.textContent()).trim(), 'Connected', `${label}: not Connected without a picture`);
         assert.equal(await card.getByRole('button', { name: 'Retry', exact: true }).count(), 0, `${label}: a retry cannot add a decoder`);
         assert.equal(await page.locator('.stream-notice:visible').count(), 0, `${label}: the reason is not a dismissible notice as well`);
-        await hardwareDisabled(true);
+        await hardwareDisabled(false); // the ready session still accepts commands without a decoder
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${label}: no sideways scroll`);
         await page.screenshot({ path: path.join(SCREENSHOTS, `ios-stream-no-decoder-${width}-${colorScheme}.png`) });
-        // The Actions sheet gives the same reason for its paused rows, not "Reconnecting".
+        // The picture failure does not pause commands over the ready session.
         if (width < 600) await page.locator('.floating-toolbar-fab').click();
         await page.locator('button.control-button[title="Actions"]').click();
         const actions = page.getByRole('dialog', { name: 'Actions', exact: true });
-        await actions.getByText('This browser cannot show the phone’s video. Actions that need the stream are off.', { exact: true }).waitFor();
+        assert.equal(await actions.getByText('This browser cannot show the phone’s video. Actions that need the stream are off.', { exact: true }).count(), 0, `${label}: ready session actions are not paused`);
         assert.equal(await actions.getByText(/Reconnecting to the phone/).count(), 0, `${label}: no reconnect is claimed`);
+        assert.equal(await actions.getByRole('button', { name: 'Unlock', exact: true }).isDisabled(), false, `${label}: Unlock remains available without a picture`);
+        assert.equal(await actions.locator('.kit-row').filter({ has: page.getByText('Type text', { exact: true }) }).getByRole('button', { name: 'Open', exact: true }).isDisabled(), false, `${label}: Type text remains available without a picture`);
         await page.getByRole('button', { name: 'Close Actions', exact: true }).click();
         await actions.waitFor({ state: 'hidden' });
+        assert.equal(sockets.length, 3, `${label}: decoder failure and sheets start no new session`);
         const back = card.getByRole('button', { name: 'Phones', exact: true });
         assert.ok(await reachable(page, back));
         await back.click();

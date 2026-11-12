@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
-import { SheetToggleRow } from '../../ui/SheetControls';
+import { SheetRow, SheetToggleRow } from '../../ui/SheetControls';
 import type { StreamClientScrcpy } from '../../googDevice/client/StreamClientScrcpy';
 import type { StreamClientCoreDevice } from '../../applDevice/client/StreamClientCoreDevice';
 import type { Platform } from '../../state/routes';
+import { keyboardCapture, KEYBOARD_SHORTCUTS } from '../../state/keyboardCapture';
+import { phoneKeys } from '../../state/capabilities';
 import { SettingsGroup, SettingsSection } from './Section';
 
 const OPEN_THE_SCREEN = 'Open the screen to change this.';
@@ -24,20 +26,17 @@ interface KeyboardSectionProps {
  */
 export function KeyboardSection({ platform, android, ios, opening }: KeyboardSectionProps) {
     const screenOpen = !!(android || ios);
-    const captured = () => (android ? android.isKeyboardCaptured() : ios ? ios.isHandlingKeyboardEvents() : false);
     const usingUhid = () => (android ? android.isUsingUhidKeyboard() : true);
     // Read when the section is first drawn as well, so a switch that is on does not slide on as
     // the sheet opens.
-    const [capture, setCapture] = useState(captured);
+    const capture = keyboardCapture.value.enabled;
     const [uhid, setUhid] = useState(usingUhid);
 
     useEffect(() => {
-        setCapture(captured());
         setUhid(usingUhid());
     }, [android, ios, opening]);
 
     const onCapture = (checked: boolean) => {
-        setCapture(checked);
         if (android) {
             android.setHandleKeyboardEvents(checked, uhid);
         } else {
@@ -50,7 +49,7 @@ export function KeyboardSection({ platform, android, ios, opening }: KeyboardSec
             <SettingsGroup class="settings-keyboard">
                 <SheetToggleRow
                     title="Send this keyboard to the phone"
-                    description={screenOpen ? 'Keys typed in this browser go to the phone.' : OPEN_THE_SCREEN}
+                    description={screenOpen ? 'Ctrl+Alt+K releases it. On a Mac, use Ctrl+Option+K.' : OPEN_THE_SCREEN}
                     checked={screenOpen && capture}
                     disabled={!screenOpen}
                     onChange={onCapture}
@@ -69,6 +68,14 @@ export function KeyboardSection({ platform, android, ios, opening }: KeyboardSec
                         }}
                     />
                 )}
+            </SettingsGroup>
+            <SettingsGroup title="Keyboard shortcuts">
+                {KEYBOARD_SHORTCUTS.filter(
+                    ({ action }) =>
+                        (action !== 'back' && action !== 'overview') || phoneKeys(platform).includes(action),
+                ).map(({ letter, label }) => (
+                    <SheetRow key={letter} title={label} description={`Ctrl+Alt+${letter}`} />
+                ))}
             </SettingsGroup>
         </SettingsSection>
     );

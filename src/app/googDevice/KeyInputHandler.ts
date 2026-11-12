@@ -11,7 +11,7 @@ export class KeyInputHandler {
     private static readonly repeatCounter: Map<number, number> = new Map();
     private static readonly listeners: Set<KeyEventListener> = new Set();
     private static readonly pressed = new Set<number>();
-    private static releaseKeys = (): void => {
+    public static releaseKeys = (): void => {
         this.pressed.forEach((code) => {
             const message = new KeyCodeControlMessage(KeyEvent.ACTION_UP, code, 0, 0);
             this.listeners.forEach((listener) => listener.onKeyEvent(message));
@@ -19,12 +19,16 @@ export class KeyInputHandler {
         this.pressed.clear();
         this.repeatCounter.clear();
     };
+    public static forgetKeys(): void {
+        this.pressed.clear();
+        this.repeatCounter.clear();
+    }
     private static onFocus = (event: FocusEvent): void => {
         if (isLocalKeyboardTarget(event.target)) {
             this.releaseKeys();
         }
     };
-    private static handler = (event: Event): void => {
+    public static handler = (event: Event): void => {
         const keyboardEvent = event as KeyboardEvent;
         if (isLocalKeyboardTarget(keyboardEvent.target) || keyboardEvent.isComposing) {
             this.releaseKeys();

@@ -1,0 +1,27 @@
+@layer tokens, base, components, views;
+
+@layer components {
+.kit-keyboard-chip {
+    display: none;
+    border-radius: var(--radius-full);
+    font-size: var(--font-size-12);
+}
+@media (pointer: fine) {
+    .kit-keyboard-chip { display: inline-flex; }
+}
+@media (pointer: fine) and (max-width: 600px) {
+    .kit-keyboard-chip {
+        flex: none;
+        max-width: calc(var(--space-32) * 3);
+        height: auto;
+        min-height: var(--control-height-compact);
+        padding: var(--space-4) var(--space-8);
+        white-space: normal;
+    }
+}
+.kit-keyboard-chip[aria-pressed="true"] {
+    background: var(--info-fill);
+    color: var(--info-text);
+    border-color: var(--info-fill);
+}
+}

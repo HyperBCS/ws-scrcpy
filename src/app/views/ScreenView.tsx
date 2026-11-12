@@ -2,6 +2,7 @@ import { ComponentChildren, RefObject } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { openSheet, streamNotice } from '../state/stream';
 import type { ConnectionStatus } from '../state/phoneStatus';
+import { KeyboardChip } from '../ui/KeyboardChip';
 import { NotificationsLink } from '../ui/NotificationsLink';
 import { AppBar, AppBarStatus } from '../ui/AppBar';
 import { Button } from '../ui/Button';
@@ -135,6 +136,7 @@ export function ScreenView<P extends { udid: string }>({ params, useScreen, tabs
                     </>
                 }
             >
+                <KeyboardChip />
                 <NotificationsLink compact udid={screen.inbox} />
                 <Button size="compact" onClick={() => openSheet('devices')} disabled={!screen.mounted}>
                     Switch

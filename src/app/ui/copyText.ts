@@ -6,8 +6,8 @@
  * be used at all. The hidden-textarea + `execCommand('copy')` path still works there, so it is
  * the fallback rather than an error message.
  */
-export async function copyTextToClipboard(text: string): Promise<boolean> {
-    if (!text) {
+export async function copyTextToClipboard(text: string, current: () => boolean = () => true): Promise<boolean> {
+    if (!text || !current()) {
         return false;
     }
     try {
@@ -18,7 +18,8 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
     } catch {
         // Blocked (no permission, no transient activation, or not focused): try the legacy path.
     }
-    return copyWithTextarea(text);
+    // A denied asynchronous write must not steal focus from a later screen or sheet.
+    return current() && copyWithTextarea(text);
 }
 
 function copyWithTextarea(text: string): boolean {
@@ -27,6 +28,7 @@ function copyWithTextarea(text: string): boolean {
     // Off-screen but focusable: `execCommand` copies the *selection*, so the node must be in the
     // document and selectable. `readOnly` keeps the mobile keyboard from appearing.
     area.setAttribute('readonly', 'readonly');
+    area.setAttribute('data-browser-clipboard-copy', '');
     area.style.position = 'fixed';
     area.style.top = '0';
     area.style.left = '-9999px';

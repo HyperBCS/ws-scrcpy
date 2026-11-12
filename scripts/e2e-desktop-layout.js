@@ -8,7 +8,7 @@
 //   from 1024px Actions and Settings open as a panel at the right of the stage, as tall as it:
 //   the picture keeps its size or shrinks and nothing covers or dims it, a press on the picture
 //   closes the panel and reaches nothing, Escape and Back close it, focus stays inside and goes
-//   back to the rail;
+//   back to the picture while keyboard capture is on;
 //   Type text opens in the same place and is not modal: a press on the picture reaches the phone
 //   and typing goes on; the rail is not cut off while it is open;
 //   the panel follows the window across 1024px; Switch phone, and Settings from the list, stay
@@ -343,7 +343,7 @@ async function sidePanel(test, name, title) {
     await pause(150);
     assert.equal(test.touches(), touches, `${where}: the press that closes the panel does not reach the phone`);
     assert.deepEqual(await at(page), home, `${where}: the press leaves no history entry`);
-    assert.equal(await activeName(page), name, `${where}: focus goes back to the rail`);
+    assert.equal(await page.locator('.touch-layer').evaluate(node => node === document.activeElement), true, `${where}: active keyboard capture returns focus to the picture`);
     const after = await geometry(page);
     assert.equal(after.docked, false, `${where}: the stage has its width again`);
     near(after.picture.left, before.picture.left, `${where}: the picture is back where it was`);
@@ -360,7 +360,7 @@ async function sidePanel(test, name, title) {
     await dialog.waitFor({ state: 'hidden' });
     await settle(page);
     assert.deepEqual(await at(page), home, `${where}: Back closes it and stays on the page`);
-    assert.equal(await activeName(page), name, `${where}: focus goes back to the rail after Back`);
+    assert.equal(await page.locator('.touch-layer').evaluate(node => node === document.activeElement), true, `${where}: Back returns active keyboard capture to the picture`);
 }
 
 /**
