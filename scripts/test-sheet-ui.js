@@ -264,22 +264,26 @@ test('tokens.css holds the role names only', () => {
         assert.equal(names.has(older), false, `${older} is gone`);
     }
     // Every name a stylesheet reads is defined, so a rule cannot lean on a name that was removed.
+    // It is defined in a stylesheet, or set by a script (`style.setProperty('--sheet-drag-y', ...)`).
     const defined = new Set(names);
-    const local = /^--(sheet|typing|viewport|swipe|fx|kit|list|notification|toolbar|stream|switcher|card|live-text|device)-/;
     const read = [];
-    const walk = (dir) => {
+    const walk = (dir, visit) => {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
             const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) walk(full);
-            else if (entry.name.endsWith('.css')) {
-                const source = fs.readFileSync(full, 'utf8');
-                // A property a file sets itself is local to it.
-                for (const match of source.matchAll(/(--[\w-]+)\s*:/g)) defined.add(match[1]);
-                for (const match of source.matchAll(/var\((--[\w-]+)/g)) read.push([path.relative(path.join(__dirname, '..'), full), match[1]]);
-            }
+            if (entry.isDirectory()) walk(full, visit);
+            else visit(full, fs.readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, ''));
         }
     };
-    walk(path.join(__dirname, '../src/style'));
-    const unknown = read.filter(([, name]) => !defined.has(name) && !local.test(name)).map(([file, name]) => `${file} reads ${name}`);
+    walk(path.join(__dirname, '../src/style'), (file, source) => {
+        if (!file.endsWith('.css')) return;
+        for (const match of source.matchAll(/(--[\w-]+)\s*:/g)) defined.add(match[1]);
+        for (const match of source.matchAll(/var\((--[\w-]+)/g)) read.push([path.relative(path.join(__dirname, '..'), file), match[1]]);
+    });
+    walk(path.join(__dirname, '../src/app'), (file, source) => {
+        if (!/\.tsx?$/.test(file)) return;
+        for (const match of source.matchAll(/['"`](--[a-z][\w-]*)['"`]/g)) defined.add(match[1]);
+    });
+    assert.ok(defined.has('--sheet-drag-y') && defined.has('--swipe-distance'), 'the names scripts set are found');
+    const unknown = read.filter(([, name]) => !defined.has(name)).map(([file, name]) => `${file} reads ${name}`);
     assert.deepEqual([...new Set(unknown)], []);
 });
