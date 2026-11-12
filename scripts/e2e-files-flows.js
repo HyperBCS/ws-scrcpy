@@ -983,10 +983,14 @@ async function largeFolder(browser, layout, name) {
     await page.evaluate(() => {
         window.__longTasks = [];
         new PerformanceObserver((list) => list.getEntries().forEach((entry) => window.__longTasks.push(Math.round(entry.duration)))).observe({ type: 'longtask' });
+        // Each time the rows are put in order the item count is written. Only the rows near the
+        // view are in the document, so new rows are not a sign of it.
         window.__batches = [];
-        new MutationObserver((records) => {
-            if (records.some((record) => [...record.addedNodes].some((node) => node.matches?.('.fx-row')))) window.__batches.push(performance.now());
-        }).observe(document.querySelector('.fx-table tbody'), { childList: true });
+        const counts = document.querySelector('.fx-counts');
+        new MutationObserver(() => {
+            const text = counts.textContent;
+            if (text !== window.__batches.at(-1)?.text) window.__batches.push({ at: performance.now(), text });
+        }).observe(counts, { childList: true, characterData: true, subtree: true });
     });
     const tasks = [];
     const longTasks = async (what) => {
@@ -1006,10 +1010,18 @@ async function largeFolder(browser, layout, name) {
     await goTo(page, HUGE);
     const listed = Date.now() - started;
     assert.equal(await page.locator('.fx-counts').innerText(), `${HUGE_COUNT} items`);
-    const batches = await page.evaluate(() => window.__batches.splice(0));
-    const gaps = batches.slice(1).map((at, index) => Math.round(at - batches[index]));
-    console.log(`  ${name}: listed in ${listed} ms, rows added ${batches.length} times${gaps.length ? `, ${gaps.join(', ')} ms apart` : ''}`);
-    assert(gaps.every((gap) => gap >= 245), `rows are added at most every 250 ms: ${gaps.join(', ')}`);
+    // The renders while the items arrive, in bursts over about half a second. The one when the
+    // listing ends comes at once.
+    const batches = (await page.evaluate(() => window.__batches.splice(0))).filter(({ text }) => {
+        const count = Number(/^(\d+) items/.exec(text)?.[1]);
+        return count >= HUGE_COUNT / 10 && count < HUGE_COUNT;
+    });
+    const gaps = batches.slice(1).map(({ at }, index) => Math.round(at - batches[index].at));
+    console.log(`  ${name}: listed in ${listed} ms, ${batches.map(({ text }) => text).join(', ')} while it arrived${gaps.length ? `, ${gaps.join(', ')} ms apart` : ''}`);
+    assert(batches.length >= 2, 'the rows are put in order more than once while the items arrive');
+    // The count is seen once a render's work is done, and renders differ in length; one each
+    // frame would be 16 to 60 ms apart.
+    assert(gaps.every((gap) => gap >= 200), `rows are added at most every 250 ms: ${gaps.join(', ')}`);
     // Only the rows near the view are in the document; the spacers keep the list as tall as all of them.
     const first = await rowsAndSpacers();
     assert(first.rows < 200, `${first.rows} rows in the document for ${HUGE_COUNT} items`);
