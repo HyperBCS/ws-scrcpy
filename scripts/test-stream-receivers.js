@@ -1,6 +1,8 @@
 // Run with: node --test scripts/test-stream-receivers.js
 // The two stream receivers without a phone or a server: the audio framing they share
-// (src/app/client/audioPacket.ts). Every socket is the fake below; no address is contacted.
+// (src/app/client/audioPacket.ts) and the two reconnect policies written at the top of
+// src/app/client/StreamReceiver.ts and src/app/applDevice/client/CoreDeviceReceiver.ts.
+// Every socket is the fake below; no address is contacted.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { EventEmitter } = require('node:events');
@@ -266,4 +268,136 @@ test('audio framing: legacy scrcpy_audio_1 packets reach the Android player with
     sockets[0].message(arrayBuffer(Buffer.from('scrcpy_audio_1')));
     assert.deepEqual(events, [['audioMetadata', error('Truncated audio packet.')]]);
     assert.equal(receiver.getAudioConfig(), undefined);
+});
+
+// ------------------------------------------------------------------ reconnect policies
+
+/** The next socket opens exactly `ms` after the close, and only one. */
+function expectSocketAfter(t, sockets, ms, label) {
+    const before = sockets.length;
+    t.mock.timers.tick(ms - 1);
+    assert.equal(sockets.length, before, `${label}: no socket before ${ms} ms`);
+    t.mock.timers.tick(1);
+    assert.equal(sockets.length, before + 1, `${label}: one socket at ${ms} ms`);
+}
+
+function expectNoSocketFor(t, sockets, ms, label) {
+    const before = sockets.length;
+    t.mock.timers.tick(ms);
+    assert.equal(sockets.length, before, label);
+}
+
+const scrcpyInitial = () => arrayBuffer(Buffer.concat([Buffer.from('scrcpy_initial'), Buffer.alloc(64 + 4 + 4 + 4)]));
+
+test('reconnect policy, Android: 1.5^n up to 8 s, reset by scrcpy_initial, never after 4012', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { receiver, sockets } = androidReceiver(t);
+    const closes = [];
+    receiver.on('disconnected', (event) => closes.push(event.code));
+
+    // The socket opens each time, but scrcpy never says it is up. It keeps trying.
+    const delays = [1000, 1500, 2250, 3375, 5063, 7594, 8000, 8000, 8000, 8000];
+    delays.forEach((ms, attempt) => {
+        sockets.at(-1).open();
+        sockets.at(-1).close(1006);
+        expectSocketAfter(t, sockets, ms, `attempt ${attempt + 1}`);
+    });
+
+    // scrcpy_initial starts the count again; an open socket alone did not.
+    sockets.at(-1).open();
+    sockets.at(-1).message(scrcpyInitial());
+    sockets.at(-1).close(4007);
+    expectSocketAfter(t, sockets, 1000, 'after a stream that came up');
+    sockets.at(-1).open();
+    sockets.at(-1).close(4007);
+    expectSocketAfter(t, sockets, 1500, 'the next failure');
+
+    // The owner stopped the stream service: a new socket would start it again.
+    sockets.at(-1).open();
+    sockets.at(-1).close(4012);
+    expectNoSocketFor(t, sockets, 10 * 60 * 1000, 'no socket after 4012');
+    assert.deepEqual(closes.slice(-3), [4007, 4007, 4012]);
+    assert.equal(sockets.length, delays.length + 3, 'one socket per attempt');
+});
+
+test('reconnect policy, Android: stop() during the wait opens nothing', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { receiver, sockets } = androidReceiver(t);
+    sockets[0].open();
+    sockets[0].close();
+    receiver.stop();
+    expectNoSocketFor(t, sockets, 60 * 1000, 'stop() cancels the reconnect');
+});
+
+test('reconnect policy, iPhone: 2^n up to 60 s, reset by the codec, stops on 4011 and on the third 4009', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { receiver, sockets } = iphoneReceiver(t);
+    const statuses = [];
+    receiver.on('status', (status) => statuses.push(status));
+    const say = (message) => sockets.at(-1).message(JSON.stringify(message));
+    const fail = (code, message) => {
+        sockets.at(-1).open();
+        if (message) {
+            say({ type: 'status', state: 'error', message });
+        }
+        sockets.at(-1).close(code);
+    };
+
+    // A lost connection. The server accepts every socket before it starts the session, so an
+    // open socket alone does not reset the delay.
+    const delays = [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000, 60000];
+    delays.forEach((ms, attempt) => {
+        fail(1006);
+        expectSocketAfter(t, sockets, ms, `attempt ${attempt + 1}`);
+    });
+
+    // The codec means the session is up: the count starts again.
+    sockets.at(-1).open();
+    say({ type: 'codec', codec: 'hev1', description: '' });
+    sockets.at(-1).close(4007);
+    expectSocketAfter(t, sockets, 1000, 'after a session that came up');
+
+    // 4010, nothing was started on the phone: retried with the growing delay, not counted.
+    // Three 4009 closes with 4010 between them still stop: no session came up in between.
+    fail(4009, 'The screen stream exited (3)');
+    expectSocketAfter(t, sockets, 2000, 'first failed start');
+    fail(4010);
+    expectSocketAfter(t, sockets, 4000, 'put off');
+    fail(4009, 'The screen stream exited (3)');
+    expectSocketAfter(t, sockets, 8000, 'second failed start');
+    fail(4010);
+    expectSocketAfter(t, sockets, 16000, 'put off again');
+    assert.equal(receiver.isWaitingForRetry(), false);
+    fail(4009, 'The screen stream exited (3)');
+    expectNoSocketFor(t, sockets, 10 * 60 * 1000, 'the third failed start opens no socket');
+    assert.equal(receiver.isWaitingForRetry(), true);
+    assert.deepEqual(statuses.at(-1), {
+        state: 'error',
+        message: 'The screen stream exited (3). Stopped retrying after 3 failed starts.',
+        retrying: false,
+    });
+
+    // Retry opens one socket at once; pressed again while it is opening, none.
+    let count = sockets.length;
+    receiver.retry();
+    receiver.retry();
+    assert.equal(sockets.length, count + 1, 'Retry opens exactly one socket');
+    assert.equal(receiver.isWaitingForRetry(), false);
+
+    // 4011, the start budget is used up: stop at once and keep the server's wording.
+    const budget = "This phone's screen session was started 3 times in the last 5 min. The next start is allowed in 2 min.";
+    fail(4011, budget);
+    expectNoSocketFor(t, sockets, 10 * 60 * 1000, 'no socket after 4011');
+    assert.equal(receiver.isWaitingForRetry(), true);
+    assert.deepEqual(statuses.at(-1), { state: 'error', message: budget, retrying: false });
+
+    // Retry counts from the start again; stop() is final.
+    count = sockets.length;
+    receiver.retry();
+    assert.equal(sockets.length, count + 1);
+    fail(4009, 'The screen stream exited (3)');
+    expectSocketAfter(t, sockets, 1000, 'first failure after Retry');
+    receiver.stop();
+    sockets.at(-1).close(1006);
+    expectNoSocketFor(t, sockets, 10 * 60 * 1000, 'no socket after stop()');
 });

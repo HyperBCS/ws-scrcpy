@@ -10,6 +10,31 @@ import {
 import { AudioMetadata } from '../../../common/AudioProtocol';
 import { AudioEnvelopeReader, AudioFrame } from '../../client/audioPacket';
 
+/*
+ * Reconnect policy (iPhone). Android's is different on purpose; see StreamReceiver.ts.
+ *
+ * - After a close the next socket opens after 1 s * 2^n, at most 60 s: 1, 2, 4, 8, 16, 32, 60,
+ *   60 ... s.
+ * - n and the failed-start count go back to 0 when the codec arrives (the session is up) and on
+ *   retry(), not when the socket opens: the server accepts the socket before it starts the
+ *   session.
+ * - CoreDeviceProxy close codes: 4011 (the phone's start budget is used up) stops at once. 4009
+ *   (serve-web was started and the session failed) is counted, and the third one without a
+ *   session in between stops. 4010 (nothing was started on the phone: the wait after a failed
+ *   session, the phone not attached, a failure before serve-web ran) and any other close are
+ *   retried and not counted.
+ * - After a stop it emits an error 'status' with `retrying: false` and opens no socket until
+ *   retry() (the Retry button). stop() is final.
+ *
+ * It backs off further than Android because every session start runs serve-web, a display
+ * session on the phone. The server allows three starts per phone in five minutes, kept across
+ * server restarts, and waits 30 s after a failed session before the next start. A burst of short
+ * sessions wedges the phone's display service until a reboot (measured: six in about four
+ * minutes). After a few failed starts the next try is left to the person.
+ *
+ * Pinned by scripts/test-stream-receivers.js and scripts/test-coredevice.js.
+ */
+
 export interface CoreDeviceReceiverEvents {
     connected: void;
     disconnected: void;
@@ -28,13 +53,8 @@ export type ParamsCoreDeviceReceiver = ParamsBase & { udid: string };
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 60000;
-// Every failed start is a short display session on the phone, and a burst of those wedges its
-// display service until a reboot. The server spaces and limits starts as well; this is the
-// viewer's share: stop asking after a few and leave the next try to the person.
+// The viewer's share of the start limits; see the policy above.
 const MAX_FAILED_STARTS = 3;
-// `CoreDeviceProxy` close codes. 4009: serve-web was started and the session failed. 4011: the
-// phone's start budget is used up. Any other close (4010 "nothing was started, try later", a
-// dropped connection) is retried.
 const CLOSE_START_FAILED = 4009;
 const CLOSE_START_BUDGET = 4011;
 
@@ -48,11 +68,10 @@ function decodeBase64(value: string): Uint8Array {
 }
 
 /**
- * The browser end of `CoreDeviceProxy`. Binary messages are video access units, text messages
- * are JSON; see `CoreDeviceProtocol`. Reconnects with a growing delay after a close, as the
- * Android `StreamReceiver` does, so a server-side session restart is a short freeze rather than a
- * dead page. After `MAX_FAILED_STARTS` failed starts in a row it stops and waits for `retry()`.
- * `stop()` is final.
+ * The browser end of `CoreDeviceProxy`. Binary messages are video access units, or audio behind
+ * the `COREDEVICE_FRAME_AUDIO` byte; text messages are JSON; see `CoreDeviceProtocol`. It
+ * reconnects by the policy above, so a server-side session restart is a short freeze rather than
+ * a dead page.
  */
 export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, CoreDeviceReceiverEvents> {
     public static readonly ACTION = ACTION.PROXY_COREDEVICE;

@@ -11,6 +11,24 @@ import { STREAM_SERVICE_STOPPED } from '../../common/StreamCloseCode';
 import { AUDIO_MAGIC_BYTES, AudioEnvelopeReader, LEGACY_AUDIO_MAGIC_BYTES } from './audioPacket';
 import type { AudioFrame } from './audioPacket';
 
+/*
+ * Reconnect policy (Android). The iPhone's is different on purpose; see CoreDeviceReceiver.ts.
+ *
+ * - Every close is followed by a new socket, except a close with 4012 (STREAM_SERVICE_STOPPED:
+ *   the owner stopped the stream service, and a new socket would start it again) and a close
+ *   after stop(). It never gives up by itself.
+ * - The delay is 1 s * 1.5^n, at most 8 s: 1, 1.5, 2.25, 3.375, 5.06, 7.59, 8, 8 ... s.
+ * - n goes back to 0 when scrcpy_initial arrives, not when the socket opens: the server accepts
+ *   the socket before scrcpy is up. Only one reconnect timer exists at a time.
+ *
+ * It can be quick: nothing on an Android phone counts or limits stream starts. The socket ends
+ * at this server, which reaches scrcpy through a local adb forward and runs one scrcpy process
+ * per phone for all its viewers, with starts, stops and restarts in one queue per phone. The
+ * usual cause of a close is a stream quality change, which relaunches scrcpy in a few seconds.
+ *
+ * Pinned by scripts/test-stream-receivers.js.
+ */
+
 const DEVICE_NAME_FIELD_LENGTH = 64;
 const MAGIC_BYTES_INITIAL = Util.stringToUtf8ByteArray('scrcpy_initial');
 
