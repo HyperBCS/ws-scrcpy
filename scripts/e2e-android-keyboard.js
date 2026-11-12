@@ -191,7 +191,7 @@ async function reconnect(browser) {
         assert.equal(uhid()[0].readUInt16BE(1), 81);
         fixture.hold(true);
         fixture.connections[0].socket.close({ code: 1011, reason: 'Fixture restart' });
-        await page.getByText('Connecting…', { exact: true }).waitFor();
+        await page.locator('.kit-bar-status').getByText('Reconnecting…', { exact: true }).waitFor();
         await pressKey(page, 'KeyA');
         await waitUntil(page, () => fixture.connections.length === 2, 'the stream reconnects');
         const next = fixture.connections[1];

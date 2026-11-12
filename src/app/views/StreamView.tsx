@@ -16,7 +16,8 @@ import {
     unlockSheetOpen,
 } from '../state/stream';
 import { findDeviceForStream } from '../state/streamDevice';
-import { deviceName } from '../state/devices';
+import { deviceName, isDeviceAvailable } from '../state/devices';
+import { screenConnection } from '../state/phoneStatus';
 import { NotificationsLink } from '../ui/NotificationsLink';
 import { goUp } from '../state/router';
 import { LIST_PAGE_NAME } from '../state/routes';
@@ -51,6 +52,9 @@ export function StreamView({ params, tabs }: StreamViewProps) {
     // Counts the owner's "Start again" after the stream service was stopped: a new connection
     // is what starts the service, so the stream is mounted again.
     const [attempt, setAttempt] = useState(0);
+    // The stream client that has had a connection. A new client (another phone, Start again)
+    // connects; the same one reconnects.
+    const [connectedClient, setConnectedClient] = useState<StreamClientScrcpy>();
 
     useEffect(() => {
         const container = containerRef.current;
@@ -86,6 +90,11 @@ export function StreamView({ params, tabs }: StreamViewProps) {
 
     const session = activeStream.value;
     const stopped = streamServiceStopped.value && !streamConnected.value;
+    useEffect(() => {
+        if (streamConnected.value && session) {
+            setConnectedClient(session.client);
+        }
+    }, [streamConnected.value, session?.client]);
     const liveText = useMemo(() => (session ? scrcpyLiveTextTarget(session.client) : undefined), [session?.client]);
     const entry = findDeviceForStream(params);
     const descriptor = entry?.params.type === 'android' ? (entry.descriptor as GoogDeviceDescriptor) : undefined;
@@ -96,6 +105,13 @@ export function StreamView({ params, tabs }: StreamViewProps) {
     const screenOff = descriptor ? descriptor['screen.power'] === 'off' || descriptor['device.awake'] === false : false;
     // The same name as on the card and in the switcher; the serial until the device list arrives.
     const name = entry ? deviceName(entry) : params.udid;
+    const connection = screenConnection({
+        startError: !!error,
+        connected: streamConnected.value,
+        serviceStopped: stopped,
+        phoneOffline: !!entry && !isDeviceAvailable(entry),
+        hasConnected: !!session && connectedClient === session.client,
+    });
     const wake = () => {
         session?.client.sendMessage(new KeyCodeControlMessage(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_WAKEUP, 0, 0));
         session?.client.sendMessage(new KeyCodeControlMessage(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_WAKEUP, 0, 0));
@@ -107,15 +123,7 @@ export function StreamView({ params, tabs }: StreamViewProps) {
                 title={String(name)}
                 status={
                     <>
-                        <AppBarStatus>
-                            {error
-                                ? 'Unable to connect'
-                                : streamConnected.value
-                                  ? 'Connected'
-                                  : stopped
-                                    ? 'Stopped'
-                                    : 'Connecting…'}
-                        </AppBarStatus>
+                        <AppBarStatus tone={connection.tone}>{connection.label}</AppBarStatus>
                         <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
                     </>
                 }
@@ -182,7 +190,12 @@ export function StreamView({ params, tabs }: StreamViewProps) {
                 <>
                     <ActionsSheet client={session.client} />
                     <DeviceSwitcherSheet />
-                    <SleepOverlay sessionKey={session.client} screenOff={screenOff} onWake={wake} />
+                    <SleepOverlay
+                        sessionKey={session.client}
+                        connection={connection}
+                        screenOff={screenOff}
+                        onWake={wake}
+                    />
                     <UnlockSheet
                         key={params.udid}
                         open={unlockSheetOpen.value}

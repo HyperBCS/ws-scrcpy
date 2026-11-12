@@ -121,7 +121,7 @@ async function lostConnection(page, state, name) {
 
     state.endShell();
     await banner.getByText('The shell session ended.',{exact:true}).waitFor();
-    assert.equal(await chip.innerText(),'Ended');
+    assert.equal(await chip.innerText(),'Stopped');
     await page.waitForTimeout(1600);
     assert.equal(state.starts.length,sessions+1,'a shell that exited is not restarted automatically');
     await banner.getByRole('button',{name:'New session',exact:true}).click();
@@ -135,7 +135,8 @@ async function lostConnection(page, state, name) {
     state.close();
     await chip.getByText('Reconnecting…',{exact:true}).waitFor();
     await banner.getByText('Connection lost.',{exact:true}).waitFor({timeout:20000});
-    assert.equal(await chip.innerText(),'Disconnected');
+    assert.equal(await chip.innerText(),'Unable to connect');
+    assert.equal(await chip.getAttribute('data-tone'),'error');
     assert.equal(await page.getByText(/reconnect/i).count(),1,'one instruction: the Reconnect button');
     assert.equal(state.starts.length,sessions+2,'nothing starts while the server is away');
     const button = banner.getByRole('button',{name:'Reconnect',exact:true});

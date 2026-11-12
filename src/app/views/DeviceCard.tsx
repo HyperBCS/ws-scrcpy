@@ -15,19 +15,23 @@ import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import { buildLinkHref, deviceHref, followLink, isLocalLink } from '../state/links';
 import { parseRoute } from '../state/routes';
 import {
-    DeviceStatusInfo,
     getDeviceProblems,
     getDeviceStatusInfo,
+    hasRunningStreamService,
     isDeviceStarting,
     markStarting,
-} from '../state/deviceStatus';
+    onOffFact,
+    PhoneStatus,
+    sessionFact,
+    yesNoFact,
+} from '../state/phoneStatus';
+import { SCREEN, SESSION } from '../copy';
 import { AsleepBanner } from '../ui/AsleepBanner';
 import { openApplSettingsSheet, openSettingsSheet } from '../state/settingsSheet';
 import { unlockCardLine } from '../state/unlockSchedule';
 import { replyText, sendServiceCommand, TrackerCommandAborted } from '../client/trackerCommand';
 import { deviceTools } from './ToolView';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
-import { hasRunningStreamService } from '../state/streamService';
 import { notificationSummary } from '../state/notifications';
 import { isNotificationSource } from '../state/notificationsTarget';
 import { notificationRoute } from '../state/notificationPage';
@@ -94,7 +98,7 @@ function NavLink({ entry, params, className, variant }: NavLinkProps) {
 }
 
 /** The phone's status in words, as a chip. */
-function StatusBadge({ info }: { info: DeviceStatusInfo }) {
+function StatusBadge({ info }: { info: PhoneStatus }) {
     return (
         <Chip
             tone={info.tone}
@@ -131,7 +135,7 @@ function DeviceHeader({
 }
 
 /** Why the phone cannot be used, at the top of its card. */
-function UnavailableHint({ info }: { info: DeviceStatusInfo }) {
+function UnavailableHint({ info }: { info: PhoneStatus }) {
     return (
         <Banner>
             {info.status === 'unauthorized'
@@ -223,7 +227,7 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const hasPid = hasRunningStreamService(descriptor.pid);
     const isStarting = !hasPid && isDeviceStarting(entry.key);
     const statusInfo = getDeviceStatusInfo(entry);
-    const isAsleep = statusInfo.status === 'asleep';
+    const isAsleep = statusInfo.screen === 'asleep';
     const players = StreamClientScrcpy.getPlayers();
     const primaryPlayer = players.find((player) => player.playerCodeName === 'webcodecs') ?? players[0];
     // Files, then Shell: the order of the tabs on the tool page.
@@ -443,10 +447,8 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
 
     const problems = getDeviceProblems(entry);
     const sessionProblem = problems.find((problem) => problem.kind === 'session');
-    // A phone that needs attention can be asleep as well; the banner still says so.
-    const isAsleep =
-        statusInfo.status === 'asleep' ||
-        ((statusInfo.status === 'attention' || statusInfo.status === 'error') && descriptor['screen.power'] === 'off');
+    // A phone that needs attention or runs a session can be asleep as well; the banner says so.
+    const isAsleep = statusInfo.screen === 'asleep';
     const unlockLine = descriptor.unlockSchedule && unlockCardLine(descriptor.unlockSchedule);
     const hasInbox = isNotificationSource(notificationSummary.value, descriptor.udid);
     const unread = notificationSummary.value.unreadBySource[descriptor.udid] || 0;
@@ -474,6 +476,8 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             data-device-key={entry.key}
         >
             <DeviceHeader entry={entry} platform={`iOS ${descriptor.version}`}>
+                {/* A running session is a second mark beside the status, never in its place. */}
+                {statusInfo.sessionRunning && <Chip class="device-session">{SESSION.running}</Chip>}
                 {/* A connected phone shows an unlock problem as its own line, with an action. An
                     unplugged one has no action to offer, so the problem stays here. */}
                 {unlockLine && (!unlockLine.problem || !isActive) && (
@@ -494,7 +498,7 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                 session={session}
             />
             {!isActive && <UnavailableHint info={statusInfo} />}
-            {isAsleep && <Banner tone="info">Screen is asleep.</Banner>}
+            {isAsleep && <Banner tone="info">{SCREEN.asleepSentence}</Banner>}
             {isActive && developerMode === false && (
                 <CardBanner
                     tone="warning"
@@ -615,17 +619,11 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         <dt>Serial</dt>
                         <dd class="device-serial">{descriptor.udid}</dd>
                         <dt>Session</dt>
-                        <dd>{session}</dd>
+                        <dd>{sessionFact(session)}</dd>
                         <dt>Paired</dt>
-                        <dd>{descriptor.paired === false ? 'no' : 'yes'}</dd>
+                        <dd>{yesNoFact(descriptor.paired !== false)}</dd>
                         <dt>Developer Mode</dt>
-                        <dd>
-                            {developerMode === 'unknown' || developerMode === undefined
-                                ? 'unknown'
-                                : developerMode
-                                  ? 'on'
-                                  : 'off'}
-                        </dd>
+                        <dd>{onOffFact(developerMode)}</dd>
                     </dl>
                     <div class="device-debug-actions">
                         <Button

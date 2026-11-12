@@ -167,7 +167,7 @@ async function main() {
             assert(notice.y + notice.height <= stage.y + 1, 'Lock notice does not cover the controllable stream');
             const awakeNotice = await page.locator('.lock-screen-notice').screenshot({ animations: 'disabled' });
             test.update({ 'screen.power': 'off', 'device.awake': false });
-            await page.getByText('Screen is off', { exact: true }).waitFor();
+            await page.getByText('Screen is asleep', { exact: true }).waitFor();
             const asleepNotice = await page.locator('.lock-screen-notice').screenshot({ animations: 'disabled' });
             assert(awakeNotice.equals(asleepNotice), 'The lock notice is equally bright while the device is asleep');
             await open(page);

@@ -15,7 +15,9 @@ import {
     streamConnected,
     streamNotice,
 } from '../state/stream';
-import { deviceName, findDeviceByUdid } from '../state/devices';
+import { deviceName, findDeviceByUdid, isDeviceAvailable } from '../state/devices';
+import { screenConnection } from '../state/phoneStatus';
+import { SCREEN_CONNECTION } from '../copy';
 import { NotificationsLink } from '../ui/NotificationsLink';
 import { goUp } from '../state/router';
 import { LIST_PAGE_NAME } from '../state/routes';
@@ -43,7 +45,7 @@ type SessionStatus = { state: CoreDeviceSessionState; message?: string; retrying
 // between attempts and does not blink in and out with each one.
 type Failure = { state: 'error' | 'stopped'; message?: string; retrying: boolean };
 
-const FAILURE_TITLE = { error: 'Stream unavailable', stopped: 'Stream stopped' };
+const FAILURE_TITLE = { error: SCREEN_CONNECTION.streamUnavailable, stopped: SCREEN_CONNECTION.streamStopped };
 const FAILURE_FALLBACK = {
     error: 'The phone stream could not be started.',
     stopped: 'The screen session on the phone was stopped.',
@@ -57,6 +59,9 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
     const [failure, setFailure] = useState<Failure>();
     const [decoderError, setDecoderError] = useState('');
     const [linkOpen, setLinkOpen] = useState(false);
+    // The stream client that has shown the picture. A new client connects; the same one
+    // reconnects.
+    const [connectedClient, setConnectedClient] = useState<StreamClientCoreDevice>();
 
     useEffect(() => {
         const container = containerRef.current;
@@ -118,6 +123,11 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
         }
     }, [descriptor?.name, active?.client]);
     const connected = streamConnected.value && session.state === 'ready';
+    useEffect(() => {
+        if (connected && active) {
+            setConnectedClient(active.client);
+        }
+    }, [connected, active?.client]);
     // Read by `DeviceStateMonitor` on the server (backlight + accessibility walk); 'unknown'
     // where that is disabled, which must never show as asleep or locked.
     const locked = descriptor?.['device.locked'] ?? 'unknown';
@@ -143,29 +153,28 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                   kind: failure.state,
                   title: lockedOut ? 'Unlock the iPhone by hand' : FAILURE_TITLE[failure.state],
                   message: lockedOut ? UNLOCK_BY_HAND_MESSAGE : failure.message || FAILURE_FALLBACK[failure.state],
-                  note: trying ? 'Trying again…' : failure.retrying ? 'Trying again shortly.' : '',
+                  note: trying ? SCREEN_CONNECTION.tryingAgain : failure.retrying ? 'Trying again shortly.' : '',
                   retry: true,
               }
             : undefined;
     // "Connected" needs a picture. After a failed start the socket stays closed until the next
     // try, which can be a minute away or wait for Retry; "Connecting" would be wrong for that long.
-    const statusText = error
-        ? 'Unable to connect'
-        : decoderError
-          ? 'No picture'
-          : failure
-            ? trying
-                ? 'Trying again…'
-                : FAILURE_TITLE[failure.state]
-            : connected
-              ? 'Connected'
-              : linkOpen && session.state === 'starting'
-                ? 'Starting the phone stream…'
-                : 'Connecting…';
+    const connection = screenConnection({
+        startError: !!error,
+        decoderError: !!decoderError,
+        failure: failure && { state: failure.state, trying },
+        connected,
+        phoneOffline: !!descriptor && !!entry && !isDeviceAvailable(entry),
+        sessionStarting: linkOpen && session.state === 'starting',
+        hasConnected: !!active && connectedClient === active.client,
+    });
 
     return (
         <div class="stream-view">
-            <AppBar title={String(name)} status={<AppBarStatus>{statusText}</AppBarStatus>}>
+            <AppBar
+                title={String(name)}
+                status={<AppBarStatus tone={connection.tone}>{connection.label}</AppBarStatus>}
+            >
                 <NotificationsLink compact udid={params.udid} />
                 <Button size="compact" onClick={() => openSheet('devices')} disabled={!active}>
                     Switch
@@ -240,6 +249,7 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
                     {!problem && (
                         <SleepOverlay
                             sessionKey={active.client}
+                            connection={connection}
                             screenOff={screenOff}
                             onWake={() => active.client.pressButton('lock')}
                         />

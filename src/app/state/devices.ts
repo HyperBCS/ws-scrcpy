@@ -5,6 +5,7 @@ import { BaseDeviceDescriptor } from '../../types/BaseDeviceDescriptor';
 import { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import { BaseDeviceTracker } from '../client/BaseDeviceTracker';
 import { DeviceState } from '../../common/DeviceState';
+import { capabilities } from './capabilities';
 
 export type DeviceDescriptor = GoogDeviceDescriptor | ApplDeviceDescriptor;
 
@@ -49,7 +50,8 @@ export function canOpenScreen(entry: DeviceEntry): boolean {
 
 /** Files and Shell run over adb, so only Android devices have them. */
 export function supportsDeviceTools(entry: DeviceEntry): boolean {
-    return entry.params.type === 'android';
+    const can = capabilities(entry);
+    return can.files || can.shell;
 }
 
 /**

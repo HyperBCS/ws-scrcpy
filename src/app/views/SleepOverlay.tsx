@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { streamConnected } from '../state/stream';
+import type { ConnectionStatus } from '../state/phoneStatus';
+import { CONNECTION, SCREEN } from '../copy';
 import { goUp } from '../state/router';
 import { LIST_PAGE_NAME } from '../state/routes';
 import '../../style/views/SleepOverlay.css';
@@ -16,6 +18,8 @@ const WAKE_GRACE_MS = 12000;
 interface SleepOverlayProps {
     // Identity of the mounted stream; the overlay's optimistic state resets when it changes.
     sessionKey: unknown;
+    // The page's connection, from `screenConnection`: the card says what the header says.
+    connection: ConnectionStatus;
     // Only on positive evidence from the device (see the callers): an unknown screen must never
     // be treated as a sleeping one.
     screenOff: boolean;
@@ -32,22 +36,19 @@ interface SleepOverlayProps {
  * touches that would have produced a new frame. Screen state comes from the device itself
  * (`screen.power` / `device.awake`, polled server-side) and liveness from the socket.
  */
-export function SleepOverlay({ sessionKey, screenOff, onWake }: SleepOverlayProps) {
+export function SleepOverlay({ sessionKey, connection, screenOff, onWake }: SleepOverlayProps) {
     const [wakeRequestedAt, setWakeRequestedAt] = useState(0);
-    const [hasConnected, setHasConnected] = useState(false);
     const [waiting, setWaiting] = useState(false);
 
     const disconnected = !streamConnected.value;
 
     useEffect(() => {
-        setHasConnected(false);
         setWaiting(false);
         setWakeRequestedAt(0);
     }, [sessionKey]);
 
     useEffect(() => {
         if (!disconnected) {
-            setHasConnected(true);
             setWaiting(false);
             return;
         }
@@ -91,14 +92,16 @@ export function SleepOverlay({ sessionKey, screenOff, onWake }: SleepOverlayProp
             {disconnected ? (
                 <div class="sleep-overlay-card">
                     <div class="sleep-overlay-spinner" aria-hidden="true" />
-                    <div class="sleep-overlay-label">{hasConnected ? 'Reconnecting…' : 'Connecting to device…'}</div>
-                    {waiting && <div class="sleep-overlay-hint">Check that the device is online and unlocked.</div>}
+                    <div class="sleep-overlay-label" data-connection={connection.state}>
+                        {connection.label}
+                    </div>
+                    {waiting && <div class="sleep-overlay-hint">{CONNECTION.slowHint}</div>}
                     {waiting && <Button onClick={goUp}>{LIST_PAGE_NAME}</Button>}
                 </div>
             ) : (
                 <div class="sleep-overlay-card">
                     <Icon name="moon" />
-                    <div class="sleep-overlay-label">Screen is off</div>
+                    <div class="sleep-overlay-label">{SCREEN.asleepSentence}</div>
                     <Button variant="primary" onClick={wake}>
                         Wake
                     </Button>

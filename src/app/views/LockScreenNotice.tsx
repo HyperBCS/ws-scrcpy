@@ -5,6 +5,7 @@ import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
 import { IconButton } from '../ui/IconButton';
 import { Presence } from '../ui/Presence';
+import { LOCK } from '../copy';
 
 export type DeviceLockValue = boolean | 'unknown';
 
@@ -24,7 +25,7 @@ export function LockScreenNotice({ udid, connected, locked, keyguardShowing, onU
     return (
         <Presence show={visible} kind="collapse" class="lock-screen-notice kit-banner kit-banner-info" role="status">
             <Icon name="lock" size={16} />
-            <span class="kit-banner-text">{locked === true ? 'Device locked' : 'Lock screen active'}</span>
+            <span class="kit-banner-text">{locked === true ? LOCK.notice : LOCK.swipeNotice}</span>
             <Button size="compact" class="lock-screen-unlock" onClick={onUnlock}>
                 Unlock
             </Button>

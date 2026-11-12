@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { wakeDevice, WakeTracker } from '../googDevice/client/wake';
 import { Banner } from './Banner';
 import { InlineStatus } from './InlineStatus';
+import { SCREEN } from '../copy';
 
 type WakeState = 'idle' | 'sending' | 'sent' | 'failed';
 
@@ -40,7 +41,7 @@ export function AsleepBanner({ tracker, udid }: { tracker: WakeTracker; udid: st
     return (
         <div class="device-asleep-banner">
             <Banner tone="info" action={{ label: sending ? 'Waking…' : 'Wake', run: onWake, disabled: sending }}>
-                Screen is asleep.
+                {SCREEN.asleepSentence}
             </Banner>
             {state === 'sent' && <InlineStatus>Wake sent. Waiting for the screen.</InlineStatus>}
             {state === 'failed' && <InlineStatus tone="error">Could not wake the screen. {failure}</InlineStatus>}
