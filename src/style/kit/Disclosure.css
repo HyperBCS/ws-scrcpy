@@ -12,6 +12,7 @@
     margin-right: 4px;
     border: solid currentColor;
     border-width: 0 1.5px 1.5px 0;
+    color: var(--text-muted);
     transform: rotate(45deg);
     transition: transform var(--motion-settle) var(--ease-out);
 }
@@ -48,9 +49,6 @@
 }
 .kit-disclosure > summary::-webkit-details-marker {
     display: none;
-}
-.kit-disclosure > summary::after {
-    color: var(--text-muted);
 }
 .kit-disclosure > summary:focus-visible {
     outline: var(--focus-ring);
