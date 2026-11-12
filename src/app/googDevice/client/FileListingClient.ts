@@ -660,8 +660,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             // A new width can change how many tiles fit on a line and how tall they are. A new
             // height changes only which lines are in view.
             this.resizeObserver = new ResizeObserver(() => {
-                if (this.items.clientWidth !== this.listWidth) {
-                    this.listWidth = this.items.clientWidth;
+                const width = this.items.clientWidth;
+                // A hidden tab has no size. Its rows and their measures wait until it is shown.
+                if (!width) {
+                    return;
+                }
+                if (width !== this.listWidth) {
+                    this.listWidth = width;
                     this.forgetRowGeometry();
                 }
                 this.onListScroll();

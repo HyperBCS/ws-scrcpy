@@ -1700,9 +1700,13 @@ test('a folder of 5,000 items: sorted once per change, rows added at most every 
     assert.ok(client.rows.built < built + 200, 'and built only rows that came into view');
 });
 
-test('a long list whose lines differ in height: what is in view stays in place while it scrolls', async (t) => {
-    // About one row in three is taller, in no regular order, as tiles are where some names take
-    // two lines and folders have no size.
+/**
+ * A list of 1,000 items, of which about one row in three is taller, in no regular order, as
+ * tiles are where some names take two lines and folders have no size. `scrollTo` scrolls it as
+ * the owner does and notes when a row in view where the scroll lands moves once the rows near
+ * the view have changed.
+ */
+async function unevenList(t) {
     const rowHeight = FakeElement.prototype.rowHeight;
     const tall = (name) => (Number(/\d+/.exec(name)[0]) * 7919) % 13 < 4;
     t.mock.method(FakeElement.prototype, 'rowHeight', function () {
@@ -1714,6 +1718,7 @@ test('a long list whose lines differ in height: what is in view stays in place w
     const items = wrapper.querySelector('.fx-items');
     const tbody = wrapper.querySelector('tbody');
     items.clientHeight = 660;
+    items.clientWidth = 390;
     items.scrollTop = 0;
     tbody.layout = () => ({ left: 0, top: -items.scrollTop, right: 0, bottom: 0, width: 0, height: 0 });
     for (let round = 0; round < 5 && !phone.lists.length; round++) {
@@ -1733,20 +1738,27 @@ test('a long list whose lines differ in height: what is in view stays in place w
             return !row.classes.has('fx-spacer') && box.bottom > 0 && box.top < items.clientHeight;
         });
     const moved = [];
-    // The owner scrolls down to the end and back up, about eight lines at a time. A row in view
-    // when the scroll lands is where it was once the rows near the view have changed.
-    const scrollTo = (top) => {
-        items.scrollTop = Math.max(0, Math.min(top, length() - items.clientHeight));
+    /** Runs `change`, then the frame it asked for, and notes whether the first row in view moved. */
+    const steady = (change) => {
         const [anchor] = inView();
         const before = anchor.getBoundingClientRect().top;
-        items.dispatch('scroll');
-        // The frame the scroll asked for.
+        change();
         frames.splice(0).forEach((run) => run());
         const row = client.rows.element(anchor.dataset.name);
         const after = row.isConnected ? row.getBoundingClientRect().top : NaN;
         if (!(Math.abs(after - before) < 1)) moved.push(`${anchor.dataset.name} ${before} to ${after}`);
+    };
+    const scrollTo = (top) => {
+        items.scrollTop = Math.max(0, Math.min(top, length() - items.clientHeight));
+        steady(() => items.dispatch('scroll'));
         assert.ok(inView().length >= 13, `the view is full of rows at ${items.scrollTop}`);
     };
+    return { client, items, frames, length, tall, moved, inView, steady, scrollTo };
+}
+
+test('a long list whose lines differ in height: what is in view stays in place while it scrolls', async (t) => {
+    const { items, length, tall, moved, scrollTo } = await unevenList(t);
+    // The owner scrolls down to the end and back up, about eight lines at a time.
     while (items.scrollTop < length() - items.clientHeight) scrollTo(items.scrollTop + 300);
     while (items.scrollTop > 0) scrollTo(items.scrollTop - 300);
     assert.deepEqual(moved, [], 'nothing in view moved');
@@ -1755,6 +1767,41 @@ test('a long list whose lines differ in height: what is in view stays in place w
     const rows = Array.from({ length: 1000 }, (_, index) => (tall(`IMG_${index}`) ? 49 : 33));
     const total = rows.reduce((sum, height) => sum + height, 0);
     assert.ok(Math.abs(length() - total) <= 16, `the list is ${length()} px long, its rows ${total} px`);
+});
+
+test('a long list keeps the measures of its rows while its tab is hidden, and forgets them at a new width', async (t) => {
+    const observers = [];
+    global.ResizeObserver = class {
+        constructor(callback) {
+            observers.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+    };
+    t.after(() => delete global.ResizeObserver);
+    const { client, items, frames, moved, inView, steady, scrollTo } = await unevenList(t);
+    const resized = (width, height) => {
+        items.clientWidth = width;
+        items.clientHeight = height;
+        observers.forEach((callback) => callback([]));
+    };
+    // The first report of a new observer.
+    resized(390, 660);
+    frames.splice(0).forEach((run) => run());
+    while (items.scrollTop < 15000) scrollTo(items.scrollTop + 300);
+    assert.deepEqual(moved, []);
+    // Another tab of the phone is shown, then Files again: the list had no size meanwhile.
+    resized(0, 0);
+    steady(() => resized(390, 660));
+    assert.deepEqual(moved, [], 'the rows in view are where they were');
+    // A new height changes only which rows are in view.
+    resized(390, 500);
+    assert.ok(client.rowGeometry, 'a new height keeps the measures');
+    // A new width can change how tall the rows are.
+    resized(600, 500);
+    assert.equal(client.rowGeometry, undefined, 'a new width forgets them');
+    frames.splice(0).forEach((run) => run());
+    assert.ok(inView().length >= 10, 'and the rows near the view are measured again');
 });
 
 // ------------------------------------------------------------------ what goes over the wire
