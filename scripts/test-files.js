@@ -1222,7 +1222,7 @@ test('while a file uploads, folders open and folder operations run; the folder i
 });
 
 test('an upload row shows the name, a bar, how much of how much is sent, and Cancel', async (t) => {
-    const { client, settle, upload, wrapper } = openFiles(t);
+    const { settle, upload, wrapper } = openFiles(t);
     await settle();
     upload({ size: 2 * 1024 * 1024 });
     const row = wrapper.querySelector('.fx-transfers').children[0];
@@ -1242,7 +1242,6 @@ test('an upload row shows the name, a bar, how much of how much is sent, and Can
     assert.equal(state.textContent, 'Saving');
     assert.equal(bar.getAttribute('aria-valuenow'), '100');
     assert.equal(row.querySelector('.fx-upload-cancel').hidden, true, 'a file being saved cannot be stopped');
-    void client;
 });
 
 test('a Files tab that is shown again lists its folder again, reports what it missed and keeps a selection', async (t) => {
