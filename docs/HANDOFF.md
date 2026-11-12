@@ -3351,3 +3351,338 @@ route, router, service worker or server file changed.
   header says Offline while the list lists it as offline, else Reconnecting…; the page keeps
   trying as before and opens no extra stream.
 - Files: the chip goes Connecting…, Connected. In Shell, `exit` makes it Stopped.
+
+### Redesign step 5b: one screen, one set of sheets, one row (2026-11-12, tested without a phone)
+
+Six packages merged into `redesign` in this order: p5-settings-sheet, p5-actions-sheet,
+p5-unlock, p5-controls, p5-screen-shell, p5-list-rows (each from its `review/` branch). Findings
+U-settings-9, U-settings-4, U-settings-7, U-stream-8, U-system-5 (Actions part), U-settings-6,
+U-settings-8, U-stream-7, C-client-ui-14, C-client-stream-9 (button hold), U-stream-11,
+U-stream-14, C-client-ui-10, U-home-5, U-home-12 and U-system-7 (card part). Nothing was run on
+a phone. Not deployed: steps 5a and 5b go live together after the phone check below.
+
+**One screen view.** `src/app/views/ScreenView.tsx` draws the screen of both kinds of phone: the
+kit header, one banner slot, the stage and the sheets. What differs is a hook adapter that
+ScreenView calls with its own mount ref: `views/screen/android.tsx` (`useAndroidScreen`) and
+`views/screen/iphone.tsx` (`useIphoneScreen`). Each adapter holds the effect that starts its
+stream client, copied line for line from the old views: the same keys (Android: udid, player,
+ws and the Start again count; iPhone: udid), the same cleanup order, the same `closeAllSheets`
+and signals. The mount node is made once and never moved; the state card and the controls are
+its siblings. `DevicePage` renders `ScreenView` with the adapter of the phone, Android and
+iPhone at separate places among its children, so one view never changes its adapter (its
+hooks). The two wrappers `StreamView.tsx` and `CoreDeviceStreamView.tsx` are gone; `App.tsx`
+imports `./screen/android`, `./ScreenView` and `./screen/iphone` where it imported them, and the
+CSS bundle kept its rule order. Keep this effect untouched whenever the view changes: a view
+that mounts twice starts two sessions.
+
+**Header.** The title is `phoneName` (an unplugged phone keeps its name; a phone that is not
+listed shows a name the page saw, else the serial). The connection line takes the colour of its
+tone (`style/kit/AppBar.css`): Failed red, Connecting and Reconnecting amber, Connected in the
+text colour, Offline and Stopped grey. The Files and Shell chip does the same
+(`style/views/ToolView.css`). The Android stream service line shows only while that service is
+Stopped, Starting or Unknown (`StreamServiceStatus` with `unlessRunning`), on the screen and on
+the tool header, so an Android header is two lines when all is well.
+
+**Banner slot and state card.** `.stream-banners` sits in the layout under the header and the
+tabs and stacks the lock notice, the first-start progress line and the stream notice, in that
+order. The stage takes the height that is left, so no banner lies over the picture; Android
+refits by CSS, the iPhone through its existing viewport observer and 150 ms `applyBounds`.
+`views/screen/StateCard.tsx` is the one card on the stage for every state without a picture, at
+z-index 5 (above the controls' shield, under the controls button), centred on the picture's
+part of the stage through `--stream-rail-width`. In order: a known problem (start error, no
+decoder, iPhone failed or stopped or unlock by hand with Retry, Android service stopped with
+Start again; each with Phones as a second button), Unauthorized (the list's hint), Offline (no
+spinner), Connecting or Reconnecting (a spinner and after 12 s a one-line hint), Asleep (Wake).
+While the screen is asleep the lock notice is held back (`connected && !screenOff`) and comes
+back once the screen is on. `SleepOverlay` is deleted. A tool tab whose code is gone after a
+deploy shows the same card with Reload. The tabs and the page title's views come from
+`capabilities()`.
+
+**Controls.** `src/app/controls/definition.ts` holds every control as data: id, label, caption,
+icon, slot (row and column of a 3-column grid), hold, needsConnection and the capability it
+needs (`power`, `typeText`, or the new `phoneKeys()` block in `state/capabilities.ts`). Rows 1 to
+4 are the same on both phones: Back, Home, Overview / Volume down, Mute phone, Volume up / Lock,
+Listen, Screenshot / Type text, Actions, Settings. An iPhone leaves the Back and Overview cells
+empty and has Siri at row 5, column 1. `controls/androidControls.ts` and
+`controls/iphoneControls.ts` supply the actions; `ControlPanel.tsx` (floating button and panel,
+touch) and `ControlRail.tsx` (rail, mouse) draw them through `ControlButton.tsx`, which disables a
+control from `needsConnection` and takes the hold behaviour from `hold`; no code compares a label
+or a title. `controls/heldButtons.ts` is the one code that turns a press into down and up: an
+iPhone tap is one `press`, a hold past 700 ms is down then up; a press ends once on pointer up,
+cancel, lost capture, blur, page hide or the panel closing, and a disconnect ends it without
+sending. The toolbox classes (`src/app/toolbox/*`, `GoogToolBox.ts`, `ApplToolBox.ts`) are
+deleted; `FloatingToolbar({ client })` stays the one thing the screen mounts, and the clients
+expose `getControls()`. The side button is Lock on both phones, in the controls and in Actions.
+
+**Settings.** One sheet, `views/SettingsSheet.tsx`, titled Settings and mounted once in `App`,
+for a phone of either kind in any state, from the list or from the screen. Its sections are
+files in `views/settings/` and always come in this order: Stream, Sound, Keyboard, Unlock, About
+and troubleshooting (`sections.ts`); a section is left out only where `capabilities()` gives the
+platform nothing for it, so an iPhone has no Stream. There is one way to open it:
+`openSettings(udid, { deviceKey, section })` in `state/settingsSheet.ts`; a section scrolls to
+its heading and focuses it. The Unlock sheet's Open Settings and the card's iPhone unlock problem
+open the Unlock section; an unavailable Listen on Android opens Sound. Rows that need the phone
+or its open screen stay, disabled, with a one-line reason.
+- Stream: presets and the advanced values of the old Android sheet, Playback (player, quality
+  stats). A value applies when it is changed (`StreamConfigSession.change` sends only what
+  differs): 'Restarting stream…' then 'Settings saved.' or the error under the control's group.
+  The restart is asked first only when the open screen reports other viewers
+  (`getClientsCount()`); from the list it applies at once. The sheet cannot be closed while a
+  change is applied. A refused or unconfirmed change puts the control back; a change still out
+  when the phone goes offline or the sheet closes is given up as a timeout
+  (`StreamConfigSession.givenUp`). The Apply bar is gone.
+- Sound: the kit's `SoundRows` on both phones, plus capture, source and format on Android.
+- Keyboard: 'Send this keyboard to the phone' on both, and Native keyboard (UHID) on Android.
+- Unlock: Saved passcode with one row per store: This browser (Android: Saved or Not saved,
+  Forget at any time) or Server (iPhone: stored, empty or rejected, Replace and Remove). The
+  scheduled unlock panel moved as one unit into `settings/ScheduledUnlock.tsx`; only its passcode
+  row moved up. `state/unlockSchedule.ts` did not change.
+- About and troubleshooting: the facts in `copy.ts` words (Status, Model, System, Serial,
+  Connection, Screen, Lock; on an iPhone also Session, Paired, Developer Mode and, with its
+  screen open, Decoder), the service rows (`settings/ServiceRows.tsx`: Android stream service
+  Start or Stop; iPhone Stop stream service, Restart services, Remount developer image, Refresh
+  info, each with its prompt as before) and, for an Android phone whose screen is not open here,
+  Open with another player. The iPhone's Stop is off while this browser shows its screen,
+  because the screen would reconnect at once and start a counted session. When the list socket
+  drops, the rows stay, off, until the phone is listed again, so a command's outcome is still
+  shown (an integration fix; ios-settings checks it).
+- `settings/useRetainedTarget.ts` keeps the target through the exit and releases it when the
+  dialog closes, so a closed sheet holds no hidden text. `SheetContent` wraps the content in a
+  component because Preact keeps stale parent links on element children when `Sheet` renders
+  itself, and a later `useId` would restart at the title's id.
+
+**Actions.** `views/actions/PhoneActionsSheet.tsx` is the one sheet. `ActionsSheet({ client })` and
+`ApplActionsSheet({ client, descriptor })` keep their names and props and only build an
+`ActionsAdapter` (`views/actions/adapter.ts`) of what their platform sends; they stay because
+that is real per-platform code. Groups in a fixed order: Clipboard, Screen, Lock, Power, then an
+untitled Settings row. Android has no Power group. Rows come from `capabilities()` and the new
+`actionCapabilities()` block (`pictureRecovery`). Every title, description, label, prompt and
+result line is in `views/actions/actionRows.ts`. Clipboard is one group with one limit, one busy
+state and one message set; Type text stays where pasting is not possible (the iPhone). Android's
+panel rows moved into Screen. Unlock is a row on both phones whatever the lock state, and a new
+Lock the phone row sends one side-button press (Power key down and up on Android,
+`pressButton('lock', 'press')` on an iPhone), closes the sheet, and is off while the screen is
+asleep. What each action sends is unchanged. Group state is held in PhoneActionsSheet above
+`Sheet` for the same Preact reason as above, and the wrappers read no signal while rendering.
+
+**Unlock.** `PhoneUnlockSheet` in `views/UnlockSheet.tsx` is the one sheet; `androidUnlock` and
+`iphoneUnlock` in `state/unlockDevice.ts` are its adapters. `UnlockSheet` and `ApplUnlockSheet`
+keep their names and props; ApplUnlockSheet adds the banners for a missing, rejected or locked
+out server passcode. Both phones: title 'Unlock phone', one primary 'Unlock', states idle,
+waiting, confirmed and failed (`data-unlock-state`), failures in the error tone, one hint. Only
+Android has the field and the PIN or Password choice. An attempt (`unlockOnce`) sends once and
+waits up to 25 s from the send for the list to report the phone unlocked; it never resends. The
+sheet closes once the phone reports itself unlocked, also when that happens another way. A stream
+drop ends an attempt only on Android; an iPhone run is the server's and goes on. The field takes
+focus on a pointer device, not on touch.
+One tap: with a passcode saved for the phone, the lock notice's Unlock sends it through
+`oneTapUnlock(udid)` and says 'Unlocking…' with a busy button; the sheet opens only after a
+failure, with the reason. Saved means remembered in this browser on Android (only behind
+Remember in this browser and only after a confirmed unlock, as before), or on an iPhone a server
+passcode that is stored, not rejected and not locked out. oneTapUnlock returns nothing, and the
+sheet opens instead, without a live stream (`streamConnected`), with another screen over an
+Android lock screen, or with no usable passcode. The iPhone tap is the same RUN_UNLOCK_NOW with
+keepUnlocked as the sheet, with the same cooldown and start budget, and it reuses the open
+session. An Android copy that was sent without a confirmed unlock is removed. In the swipe case
+the notice has no Unlock and hides while `keyguard.occluded` is true. With a passcode saved, the
+prefilled sheet is reached from Actions, Unlock.
+
+**Row and card.** `src/app/ui/PhoneRow.tsx` is the head of a list card and a switcher row: tile,
+`phoneName`, the platform line (`Android 16 · 80%`, battery only while connected; `iOS 27.2`), a
+dot with 'In use' while `getDeviceStatusInfo().sessionRunning`, the unread count (switcher only)
+and one status chip; no serial and no tracker name. The card's rules are a pure function,
+`state/phoneCard.ts`. At most one line under the head, in this order: unauthorized hint, offline
+hint (both from `copy.ts` UNAVAILABLE_HINT, the same words as the screen's card), the first
+problem (Developer Mode first when it blocks the screen), no player, then on an otherwise ready
+Android phone the stream service line when the service is not running ('The stream service is
+stopped. Opening the screen starts it.' with Start). Open screen is always the first button,
+disabled with the line saying why. Wake sits beside Asleep (`ui/WakeButton.tsx`, the same
+`wakeDevice` request; a late reply does not speak for a later sleep). The Details disclosure is
+gone, Settings is on every card in every state, Files and Shell are icon links from
+`capabilities()` and the new `cardCapabilities()` block. The card keeps Enable and restart,
+Restart services, Open settings and Start, each on its line. The switcher puts the phone on
+screen first with 'Viewing', then the phones that can be opened, then the rest greyed, not
+focusable; 'Switch phone', 'Find a phone…'; the search matches the name and the platform line.
+
+**Where everything went.** Nothing the base offered was dropped.
+- Card Details, Android: serial and connection to About (Connection now gives the live word in
+  place of the fixed 'Automatic · via server'); Open with a player to About; stream service Stop
+  and Start to About, and Start also on the card's line.
+- Card Details, iPhone: model, serial, Session, Paired, Developer Mode to About; Refresh info,
+  Stop stream service, Restart services, Remount developer image to About's service rows.
+- Android Actions: Sound to Settings; Clipboard stays; Phone panels into Screen; Open Stream
+  settings becomes the Settings row; Unlock device (shown only while locked) becomes Unlock the
+  phone, always shown.
+- iPhone Actions: Sound and Send keystrokes to Settings; Screen (Rotate, Refresh picture, Restart
+  video, Reconnect) stays; Type text into Clipboard; Unlock device becomes Unlock the phone;
+  Open Scheduled unlock becomes the Settings row; Reboot and Shut down into Power; the Phone
+  hint (model, iOS, Developer Mode) and Troubleshooting (Decoder, Session, Connection, Screen,
+  Lock, Restart services, Remount, Refresh info) to About.
+- Android Settings: quality and advanced values, Playback to Stream; capture, source, format,
+  Listen and volume to Sound; Physical keyboard (now 'Send this keyboard to the phone') and UHID
+  to Keyboard. iPhone Settings: the schedule and Run now to Unlock, the facts to About.
+
+**What the owner sees change.**
+- List: one chip per card and at most one line under it; In use after the platform line in
+  place of Session running and Stream service: Running; Wake beside Asleep in place of the
+  banner; Open screen always, disabled with a reason, in place of Device unavailable, Waiting
+  for trust and Browser cannot play; no Details; Settings on every card; Files and Shell as
+  icons; an idle Android card says the stream service is stopped, with Start.
+- Switcher: Switch phone, Find a phone…, the phone on screen first as Viewing, unavailable
+  phones last and greyed, no serial or tracker.
+- Screen: the coloured connection line; no Running line on Android (the header is 10 px
+  shorter); banners push the picture down instead of covering it; one card per state on the
+  stage, which dims the stage only; Offline and Stopped without a spinner; Unauthorized says so;
+  asleep shows only Wake; a dismissed lock notice comes back after a sleep and wake.
+- Controls: the new cell order; Lock on Android (was Power); Mute phone (was Mute device), on
+  the iPhone too; the heading Phone controls; empty Back and Overview cells and Siri on row 5 on
+  the iPhone; a key held when the panel closes is let go at once.
+- Actions: the four groups and the Settings row; no Sound, keystroke switch or Troubleshooting;
+  Unlock always; the new Lock row; 'Copy here'; 'Reconnecting to the phone. …' as the paused
+  banner and 'No answer from the phone. Check that it is still connected.' for a clipboard read
+  on both phones.
+- Settings: one sheet named Settings for both phones, also from the list in any state; the
+  iPhone has Sound and Keyboard there; a change applies at once and restarts the stream; Saved
+  passcode with Forget for this browser.
+- Unlock: Unlock phone with one Unlock button and a hint; one tap from the notice when a
+  passcode is saved; the sheet closes once the phone is unlocked; the field is focused only with
+  a mouse.
+- Words: Waiting for phones, No phones available, Android phones are unavailable, Shell is not
+  available for this phone, Phone root and Phone files in Files, the sound messages and the file
+  errors say phone, a dropped file says 'To upload files, open the Files tab.', a link to another
+  server says 'Open the phone from the Phones page.', a phone with no reported name is 'Android
+  phone' or 'iPhone'. `scripts/test-phone-status.js` now also fails on the retired words
+  (Session running, Device unavailable, Unlock device, Mute device, Switch device and others).
+
+**Proof.** `npm run check` passes: 628 node tests plus the Python suites, lint 0 errors and 29
+warnings (38 before; the deleted toolbox held 9). All 32 default browser suites pass in one run
+of `node scripts/test-browser.js`, with the new `actions-sheet`, `controls` and `screen-states`
+suites, and `scripts/test-settings-sheet.js` runs in `npm test`. The offline check of the
+settings suite raced the sheet's reload about one run in three; it now waits for the reload. Stream sockets: navigation, device-page and screen-states assert one stream socket
+per open of a screen on both fixtures, none from a banner, a card, Wake or a sheet, and exactly
+one more for a tab change and return, Start again or Retry; ios-reconnect counts each iPhone
+start and finds no extra one. The stream effects were read against 5cab921 and are identical. No server file,
+`src/common`, the service worker, `state/unlockSchedule.ts` or `state/savedPasscode.ts` changed.
+The integration added two checks that left with the old groups: the Settings service rows in
+the confirm suite (danger style, prompt, one command, Cancel, withdrawn prompt, kill_server
+payload) and Remount with a dropped tracker socket plus Refresh info in ios-settings. The atlas
+of 5cab921 (built from an export) and of the merged head are compared below.
+
+**Atlas against 5cab921.** 292 files in the base, 276 in the head. list-details and
+list-confirm (16 files) are gone with the disclosure. Of the 276 shared files, 98 pictures and
+138 style files differ, and 40 are the same.
+- Phone screens, both phones (screen, actions, settings, unlock, switcher, type-text, asleep at
+  both sizes; controls on the phone): the coloured status line, no Running line on Android, the
+  banner slot, the state card on the stage, the controls in their new cells and names, and the
+  new Actions, Settings and Unlock sheets.
+- List and its two Settings states: the new cards behind the one Settings sheet.
+- Android Files and Shell states: the tool header without the Running line, Connected in the
+  text colour, and Phone root among the Files places.
+- tool-unavailable: 'Shell is not available for this phone' and 'Android phones only'.
+- notifications-* and phone-not-listed: styles only. The closed Settings dialog holds no content
+  now, and the `useId` numbers moved; nothing painted differs.
+Each group was looked at on a phone width and a desktop width, light and dark. The pictures of
+the changed states and one contact sheet per state are in the session scratchpad under
+int5b/screens, and the head atlas is in int5b/atlas-head.
+
+**Left for step 5c and phase 6.**
+- p5-input and p5-reconnect (5c): the rest of C-client-stream-9 (shared audio framing, point
+  mapper, resize timing). `scripts/test-coredevice.js` lost its ApplToolBox mock. The iPhone
+  picture refits after a banner only through the existing observer; a real iPhone shows whether
+  that is fast enough.
+- p6-touch-button: idle translucency and edge snapping in `controls/ControlPanel.tsx`; the
+  button is still named Show controls and Hide controls (`ControlPanel.tsx:356`).
+- p6-desktop-layout: `controls/ControlRail.tsx`, the rail rules in
+  `style/views/FloatingToolbar.css` and `--stream-rail-width` in `style/views/StreamView.css`,
+  which the state card follows. The iPhone rail (13 cells of 56 px) fits 1280x800 and scrolls in
+  a shorter window.
+- p6-desktop-input: the release chord (D9) belongs in the Keyboard row
+  (`settings/KeyboardSection.tsx`).
+- p6-list: the stale state of a row; `rememberedPhone(udid).name` is not yet used for the title
+  of a reloaded page after a server restart.
+- The kit: `ui/Sheet.tsx` should wrap its children in a component so sheets need no
+  `SheetContent` or state lifted above `Sheet`; SheetGroup has no heading level option
+  (`settings/Section.tsx`), Banner takes no class or data attributes (`DeviceCard.tsx` CardLine),
+  Badge has no inline form (`ui/PhoneRow.tsx`).
+- `phoneStatus.ts` has no occluded fact; `LockScreenNotice.tsx:50` and `unlockDevice.ts:377` read
+  `keyguard.occluded` raw.
+- Dead code: `BaseDeviceTracker.tools` and `registerTool`, their registrations in
+  `src/app/index.tsx:109` and `:126`, `applDevice/client/coreDeviceTool.ts` and the
+  `createEntryForDeviceList` methods. `DEVICE_TABS` in `state/routes.ts:37` is read only by
+  `scripts/test-routes.js`.
+- The clearStarting rule is in both `views/DeviceCard.tsx:138` and `ui/StreamServiceStatus.tsx:40`.
+- Server strings: 'Preparing the device' (`appl-device/services/CoreDeviceRunner.ts:489`, `:523`)
+  still says device, and the server does not answer the Android stream service start and stop
+  (`goog-device/mw/DeviceTracker.ts`), so About sends them without waiting.
+- p6-docs: the older sections of this file still describe the toolbox, Stream settings,
+  Scheduled unlock as a sheet and the Apply bar.
+- Hardware-only scripts were edited without being run (card lookups by `data-device-key`,
+  `.stream-state`), and `scripts/e2e-deeplink.js:50` still looks for a toolbar button named
+  Switch device.
+
+**Phone check for steps 5a and 5b** (after the deploy; one iPhone screen start, a second only if
+needed and at least five minutes later). Items marked (fixture) are already covered by the
+browser suites against fixtures and only need a glance; the rest need the phones. A headless
+browser cannot decode the iPhone picture, so the iPhone state card, Wake, the lock notice, the
+refit and Type text focus need a person.
+1. During the deploy, keep only the Android screen open in a browser (no iPhone screen): the
+   header and the card say Reconnecting…, then Connected, with one new stream (5a).
+2. Phones list, no screen open: one chip and at most one line per card, the platform line with
+   battery and OS from the real phones, no serial (fixture for the layout). An Android phone
+   whose stream service runs shows In use; an idle one says the service is stopped, with Start.
+   Start: Starting…, then In use, and no stream opens.
+3. Turn the Android screen off on the phone: the card says Asleep with Wake beside it; one press
+   sends one wake, opens no stream, and the screen lights.
+4. Settings from each card (fixture for the sections): Android has five sections and About shows
+   the real model, Android version and serial. The iPhone shows Sound, Keyboard, Unlock and
+   About; the time field and Replace and Remove behave as before. Do not press Run now: it is a
+   counted start.
+5. Open the Android screen once: one stream, a two-line header with Connected in the text
+   colour, the slot map on the panel (phone) or the rail (desktop). Tap Lock: one press, screen
+   off, no power menu; hold it about 1 s: one press, no menu. With the screen off only the Wake
+   card shows and no lock notice; Wake wakes it once and the card goes; with a PIN set the
+   notice says Phone locked and comes back once the screen is on.
+6. Unlock with nothing remembered: on the desktop the field has focus and Enter sends; on the
+   phone no keyboard comes up until the field is tapped and the footer stays above the keyboard.
+   Tick Remember in this browser: once the phone reports unlocked the sheet closes by itself and
+   Settings, Unlock shows This browser as Saved. Lock it with Actions, Lock the phone (one press,
+   the sheet closes), press Wake on the card, then tap Unlock on the notice: Unlocking…, the PIN
+   is typed once, the phone unlocks and no sheet opens. Forget in Settings removes the copy.
+7. Actions on Android: Read returns the phone clipboard; Paste puts the text once into the
+   focused field; Notifications, Quick settings and Collapse act and close the sheet.
+8. Settings on the Android screen: Data saver shows Restarting stream… under the presets, the
+   stream comes back at the new quality, then Settings saved. Capture audio off and on restarts
+   the stream each time. With a second browser on the same phone, the restart is asked first.
+   Listen in this browser plays the phone's sound.
+9. Drop a file on the picture: the band pushes the picture down and touches still land where
+   pressed; dismissing it gives the height back.
+10. Files then Screen opens one stream; the Files chip goes Connecting…, Connected; `exit` in
+    Shell makes it Stopped (5a). Switch phone lists the phone on screen first as Viewing.
+11. Settings, About, Stop stream service on the Android phone: asked first; the screen shows one
+    card with Start again, no spinner, and Stopped in grey; Start again opens one stream.
+12. Unplug the Android phone with its screen open: the name stays, the header and the card say
+    Offline in grey without a spinner, no extra stream opens. Settings from its card then says
+    Offline and why each row is off.
+13. Open the iPhone screen (start 1): the Preparing band sits in the slot with the stage and the
+    Starting card under it; the picture fits once connected; Connected in the text colour; no
+    tabs. Home sits alone in the middle of the top row and Siri under Lock.
+14. Tap Lock: the phone locks and Siri does not start. With the screen off only the Wake card
+    shows (it says Screen is asleep); Wake taps the side button; the lock notice appears once the
+    screen is on and the picture refits about 150 ms later with touches still aimed right.
+15. With a passcode stored on the server, tap Unlock on the notice: Unlocking… until the phone
+    reports unlocked, no sheet. The server log shows exactly one RUN_UNLOCK_NOW with
+    keepUnlocked, no new serve-web start and no Lock press after. Repeat only after the phone
+    has locked again.
+16. Hold Lock or Siri past 0.7 s: Siri starts and ends on release. On a phone browser, hold
+    Volume up in the panel and close the panel: the volume stops at once.
+17. Actions on the iPhone: Read; Send to phone, then paste by hand; Rotate Left and Right;
+    Refresh picture; Restart video; Reboot and Shut down each ask first (Cancel them). Do not
+    press Reconnect: it is a counted start.
+18. Settings on the iPhone screen: Listen plays sound, the keyboard switch is on, the schedule
+    is there, About says Session Running and names the decoder, and Stop stream service is off
+    with 'stop it from the list'. Type text: the field takes focus and the text reaches the
+    focused field on the phone.
+19. Leave the iPhone screen: its card shows In use during the grace and then not, with Ready,
+    Asleep or Locked as its status (5a).
+20. Only if needed, start 2, at least five minutes after start 1: Restart services from Settings
+    on the iPhone screen reconnects the screen once and the outcome shows under the service rows.
