@@ -294,7 +294,9 @@ Ordered by how much time they cost.
   safe areas and the visual viewport, and opens a scrollable grid when space is limited. A media
   query change updates layout and stream sizing. The stream header keeps device identity,
   connection status, return navigation, and switching accessible. iOS streaming shares the
-  same chrome through `ToolbarClient.getControlButtonsElement()`.
+  same chrome through `ToolbarClient.getControlButtonsElement()`. (Step 6a: the touch button is
+  now a tab on the left or right edge of the stage and the desktop rail stands against the
+  picture; see the step 6a section.)
 - **The remote-control PWA keeps its shell fixed.** The device list and sheet bodies scroll
   internally; opening a sheet preserves the list position and locks its background scroller.
   Browser pinch zoom is suppressed so multi-touch belongs to the remote screen. Safari gesture
@@ -441,8 +443,8 @@ historical audio-disabled state below describes the original refactor, not today
 **Known limitations still applicable:**
 
 - **Drag-and-drop APK push over the stream is explicitly blocked.** A drop displays a notice
-  directing the user to **Files** on the device list, whose uploads use adb
-  (`AdbkitFilePushStream`). Do not bring back a push over the stream's control socket (the
+  directing the user to **Files** on the device list, whose uploads use adb (the upload of
+  `googDevice/files/FileService.ts` since step 6a; `AdbkitFilePushStream` is gone). Do not bring back a push over the stream's control socket (the
   deleted `ScrcpyFilePushStream`): its control type `102` is a NetrisTV extension that stock
   scrcpy misparses, potentially killing all input.
 - `ROTATE_DEVICE` and `SET_DISPLAY_POWER` do nothing on MIUI; omitted from the UI rather than
@@ -691,7 +693,7 @@ sites too. When you discover something the hard way, leave it in the code.
   `shellInput.ts` caps what the browser reports; a very tall window would otherwise get no
   shell at all. It provides
   native keyboard focus plus Esc/Tab/Ctrl/history buttons, and avoids opening the phone keyboard on
-  entry. Files has a native multiple-file upload picker, compact folder shortcuts, responsive
+  entry. (Step 6a replaced those buttons with the Extra keys row, on touch screens only.) Files has a native multiple-file upload picker, compact folder shortcuts, responsive
   rows, empty/error states, downloads, and scoped upload cleanup. The Files section below
   replaces that first implementation.
 - `ui/StreamServiceStatus` is shown on Android home cards and Screen/tool headers. It describes
@@ -757,7 +759,9 @@ sites too. When you discover something the hard way, leave it in the code.
   not open anything. `paintSelection()` updates classes, `aria-selected` and the checkboxes in
   place; `renderItems()` is only for listing, view, sort, filter and transfer changes. Row
   rendering is coalesced with `requestAnimationFrame` so a large folder stays responsive, and
-  download progress lives in a map keyed by path so it survives a re-render.
+  download progress lives in a map keyed by path so it survives a re-render. (Step 6a: rows are
+  kept per item, a listing renders at most every 250 ms, and a list of more than 200 items shows
+  only the rows near the view.)
 - **Folder operations are shell commands, not adb sync.** Stock adb sync has no mkdir/rename/
   copy/delete, so `FileCommand` adds `MKDR`, `MOVE`, `COPY` and `DELE` to the Files channel and
   the server runs them through `AdbUtils`. Every argument is single-quoted, every path must be
@@ -2349,7 +2353,8 @@ does not have yet, and takes focus on a desktop. A hidden Files keeps its folder
 uploads, closes its menu and dialog, handles no keys and writes no address or history. Shown again
 it writes its folder into the address with a replace when the address names none, tags the entry
 with its place, shows a result or failure it held while hidden, and lists the folder again unless
-a selection, a filter, a listing or an upload is under way. The upload leave guard compares the
+a selection, a filter, a listing or an upload is under way. (Step 6a: an upload no longer holds
+the relist back; uploads no longer block the explorer.) The upload leave guard compares the
 phone (udid and the proxied-host keys), not the view: a tab change asks nothing, and leaving the
 phone's page asks from whichever tab is shown. The question ("Leaving this phone stops the upload,
 and the file is not saved on it.") opens from a holder on `document.body` with the class
@@ -2804,6 +2809,7 @@ open is asserted in navigation, device-page, history-walk and overlay-back.
   labels "←", "→", "⌫ Delete" and "Enter ↵" are icons with the same names (Move cursor left, Move
   cursor right, Delete previous character, Send Enter).
 - Shell keys: "↑" and "↓" are arrow icons with the same names (Previous command, Next command).
+  Step 6a renamed them Up arrow and Down arrow and added Left arrow and Right arrow.
 - Card Settings button tooltip: "Stream settings" or "Scheduled unlock", then
   "Settings for <name>" (its name was already this).
 - The bell no longer shows the word "Notifications" at 480px and wider; its name is unchanged.
@@ -3064,7 +3070,8 @@ as a change.
   (`toolbox/ToolBoxButton.ts:13`); `openedOverSheet` in `views/FloatingToolbar.tsx` is in use (see
   above), so it is not dead code.
 - `src/app/googDevice/client/ShellClient.ts:54`: xterm's `fontSize: 14` is off the type scale. It
-  stays because a change resizes the terminal sent to the phone.
+  stays because a change resizes the terminal sent to the phone. (Step 6a: the size is now 12, 14,
+  16 or 18 px, chosen with A− and A+ and kept per browser; 14 is the default.)
 - Rules still in the base layer or written by ID: the `.notification-page-header` and
   `#devices .device` entrances and `.notification-panels` (`app.css:160-192`), and the `#devices`
   selectors in `views/DeviceList.css`. No test rejects ID selectors or a selector written twice
@@ -3909,3 +3916,413 @@ effect on a phone needs a person.
   secondary click, and Ctrl+drag has not been tried on a Mac.
 - `applDevice/client/CoreDeviceReceiver.ts:206` throws a RangeError on an empty binary message.
   The server never sends one; unchanged from before.
+
+### Redesign step 6a: Shell keys, Files service, Notifications setup, the list while reconnecting, the touch button and the desktop stage (2026-11-12, tested without a phone)
+
+Six packages merged into `redesign` in this order, each from its `review/` branch: p6-shell-keys,
+p6-files-service, p6-notification-setup, p6-list, p6-touch-button, p6-desktop-layout. Findings
+U-tools-11, C-client-tools-css-9 (service half only; the view half was dropped by D6),
+C-client-tools-css-13, U-tools-9, U-notifications-13, U-notifications-4 (header part only),
+C-notifications-9 (feed extraction only), U-home-8, U-home-9, U-stream-9, U-stream-10, and two
+step 5b leftovers (U-stream-11 remembered name, U-home-12 card link names). p6-android-device is
+not part of this merge. Nothing was run on a phone. Not deployed: live still runs e2fd657, and
+steps 5a, 5b and 5c are merged and waiting for the owner's iPhone.
+
+Server and shared files: only `src/server/notifications/` changed (NotificationFeed.ts new,
+NotificationService.ts, NotificationStorage.ts), so the deploy of this step restarts the server.
+`src/common/Notification.ts` gained the `MutedApp` interface and the optional
+`NotificationSource.muted` field; the file declares interfaces only, so no compiled code changes
+there. No router, route, `App.tsx`, service worker, stream client or screen adapter file changed.
+In the kit, the Sheet has a docked presentation (p6-desktop-layout); p6-list also gave
+`ui/PhoneRow.tsx` its stale look (its brief owns that) and `ui/WakeButton.tsx` an optional
+`disabled` prop, and p6-touch-button added the `--idle-opacity` token to `style/tokens.css`.
+
+**Shell key row (p6-shell-keys, U-tools-11).** `src/app/views/shell/ShellKeys.tsx` is one row of
+kit buttons named Extra keys that scrolls sideways: Esc, Tab, Ctrl, Left arrow, Up arrow, Down
+arrow, Right arrow, Paste, Copy, A− (Smaller text) and A+ (Larger text). It is drawn only while
+the browser matches `(pointer: coarse)`, read once and kept current by a change listener; with a
+mouse there is no row and the terminal takes that height. Show keyboard is gone: a tap on the
+terminal focuses xterm, and every typing key focuses it too. A mousedown on the row is cancelled
+so a press does not take the focus from the terminal. The row talks to the terminal through
+`ShellTerminal` (sendKey, setControl, focus, pasteText, textToCopy, setTextSize); `MountedTool`
+in ToolView extends `Partial<ShellTerminal>`, so a public member of FileListingClient with one of
+those names must keep the same signature. The bytes come from pure functions in
+`shellInput.ts`: the arrows send ESC O x while a program has application cursor keys on and
+ESC [ x otherwise; a paste turns line ends into CR, is bracketed only in bracketed paste mode and
+loses an embedded end marker. Ctrl stays one-shot, and neither the row's keys nor a paste use it.
+- Paste reads the clipboard only when pressed and sends the text once. On the plain http address
+  it reads nothing and says "Paste needs this app's secure (HTTPS) address."; a secure page that
+  refuses says "This browser blocked reading the clipboard.". Text over the 256 KB clipboard limit
+  is refused.
+- Copy takes the xterm selection, or with none the rows in view (wrapped rows joined, trailing
+  blanks dropped), through `copyTextToClipboard` (execCommand fallback on http). Copy stays on
+  without a session, so the output of a session that ended can still be copied; every other key
+  is off until the shell is connected.
+- The row's toasts carry `shell-keys-toast`; a views-layer rule in `ToolView.css` lifts them above
+  the row. If the kit toast's `bottom` formula changes, that rule must follow.
+- Text size is 12, 14, 16 or 18 px (default 14), kept per browser through `ui/storage.ts` under
+  `ws-scrcpy.shell.text-size`. ShellClient builds xterm at the kept size, so the start message
+  already has the right columns and rows. A change refits the terminal and reuses the 100 ms
+  debounced resize: one resize per press, and quick presses send one resize with the final size.
+- The session, its socket, reconnect and the Stopped state are unchanged. `shellInput.ts` is now in
+  the main bundle; xterm stays in the lazy Shell chunk.
+
+**Files service, large folders and uploads (p6-files-service).**
+- `src/app/googDevice/files/FileService.ts` builds and reads every request on the Files channel:
+  STAT, LIST, SIZE, MKDR, MOVE, COPY, DELE, the upload push protocol, the FSLS channel init and the
+  HTTP download link. Each request returns a promise with `cancel()` and rejects with one
+  `FileError` whose kind and message can be shown ('refused' carries the phone's own words, also
+  when they come as a close reason). Replies after `cancel()` or `release()` are ignored.
+  FileListingClient.ts (3,503 lines) keeps the DOM and builds no protocol bytes.
+  AdbkitFilePushStream.ts and FilePushStream.ts are deleted; FilePushHandler is only the queue (two
+  at a time), drag and drop, the name question and Cancel. The frames are unchanged:
+  `scripts/test-files.js` runs a fixed script and compares every frame with
+  `scripts/fixtures/files-wire.json`, recorded at f0862e3; `FILES_WIRE_RECORD=1` rewrites it, and
+  only on purpose.
+- Rendering: `files/FolderEntries.ts` holds the folder by name and sorts once per change (one
+  `Intl.Collator`, keys computed once, the same order as before). `files/KeyedRows.ts` keeps one
+  row per item; filter, sort and a growing listing move rows instead of rebuilding them. While a
+  listing arrives, a render waits until 250 ms after the previous one. A list of more than 200
+  items has only the rows near the view, with a spacer above and below (`files/RowWindow.ts`).
+  Each line measured between two others keeps its pitch, other lines take the mean, and only a
+  change of view or width forgets the measures (a hidden tab keeps them). Folders of 200 items or
+  fewer render as before. In a long list the keys scroll the target row into view first; when the
+  focused row leaves the document, focus moves to the list container and the keys continue from
+  it.
+- Uploads no longer block: folders open, commands run and more files can be dropped while uploads
+  run. Each upload goes to the folder it was planned for. When a batch ends, only the folder on
+  screen (or the one being opened) is listed again, and only if files went to it; a Files tab shown
+  again also relists during uploads now. A drop is refused only while a folder loads, an operation
+  runs or a question is open: "Wait for the current folder or operation to finish before adding
+  files." Each upload row shows the name, a bar (role progressbar), the bytes sent of the total
+  ('Waiting', 'Starting' and 'Saving' otherwise) and Cancel. Downloads are unchanged.
+- Other changes the owner may notice: a LIST that the server ends with close(4000, reason) now
+  shows the phone's reason instead of "The connection to the phone was interrupted.".
+
+**Notifications setup and header (p6-notification-setup).**
+- Server: `src/server/notifications/NotificationFeed.ts` is the pure feed (receive, replay hints,
+  pruning, counts, history, forgetText, removeSource) with an injectable clock and key generator
+  and its own unit tests. `shouldRelay(event, source, sub?)` is the only app filter: without a
+  subscription it decides what is kept, with one it decides the push. Process supervision and the
+  routes are still in NotificationService.ts.
+- Mute list: each iPhone record has an optional `muted: [{app, name}]` beside the older allow-list
+  `apps`. A muted app's new notifications are neither kept nor pushed, also on top of an
+  allow-list, and a push already queued for one is dropped. Notifications stored before the mute
+  stay. Anything that arrives between a mute and its Undo is lost. The name is stored so Setup can
+  show a muted app after its history has aged out.
+- Compatibility. POST /sources accepts the request a page left open across the deploy sends:
+  without `muted` the existing mute list is kept, and a new record is stored exactly as before
+  (no `muted` field). A changed iPhone now keeps its place in the list (before, every change moved
+  it to the end, which reordered Setup and changed the inbox opened without a chosen iPhone).
+  Settings files written before the mute list are read unchanged, and reading them writes nothing
+  back. The collector is still sent the whole sources list and reads only `address` and `id`, and
+  a mute change does not restart it. After a rollback, the older server ignores `muted` and drops
+  it at the next change of that iPhone. Tests: `scripts/test-notification-service.js` 'an existing
+  allow-list keeps filtering exactly as before', 'a request in the old shape is still accepted and
+  means what it meant', 'settings saved before the mute list existed are read as they are and keep
+  working', and 'a changed iPhone keeps its place in the list'.
+- Setup (`src/app/views/notifications/SourceSettings.tsx`, state in
+  `src/app/state/notificationSources.ts`): Settings for an iPhone has an Apps list of the apps seen
+  from it (newest name from history, plus muted apps with no history left), each with its icon
+  (fetched when the list is first opened) and a switch (on comes through, off is muted). An older
+  allow-list shows as "Only these apps" with "Clear the list and use muting". Every setting applies
+  when it is changed, with a toast and Undo (12 s): Include notification text, mute, clear list,
+  the "Get notifications from" switches and "This app is open on". A refused change puts the
+  control back and the error banner says why. Save app filter, Save changes and the typed
+  identifier field are gone. Removing an iPhone also removes it from this browser's saved
+  choices.
+- Header: one AppBar row with back, "Notifications" and a status line "<iPhone> · Connected",
+  "Reconnecting" or "Action needed" in the state's tone ("Setup & delivery" on Setup), the unread
+  badge, Switch (aria-label Switch iPhone, only with two or more iPhones; a sheet with unread
+  counts), and Search and Setup icon buttons, pressed while open. The Inbox and Setup tabs, the
+  iPhone select, the name row and the Last notification row are gone. Search opens the search row
+  with Filters; text or an app in the address opens it, closing it clears the search, and Search
+  pressed on Setup shows the inbox with the field in focus. "Open iPhone screen" is the first item
+  of the list's Notification actions sheet. The first card starts at 129 px on a 390x844 screen
+  without safe-area insets.
+- Two traps the worker found. A kit ConfirmPrompt mounted during an ancestor's own re-render can
+  repeat ids already on the page (Preact `useId`); Setup's armed prompt is therefore held in
+  NotificationsView and the Switch sheet mounts only after its first use. The review's check finds
+  no repeated ids with both iPhones' settings open and a prompt armed; the Preact cause was not
+  reproduced. And a replace within the same page does not close an open sheet
+  (`state/router.ts` commit), so a sheet that changes the address must close itself.
+
+**Phones list while reconnecting, and the grid (p6-list).**
+- A closed list socket no longer empties the list. `BaseDeviceTracker.onSocketClose` marks the
+  tracker's entries stale (`DeviceEntry.stale`, `markTrackerDevicesStale` in `state/devices.ts`);
+  the tracker's next list replaces them, and a phone missing from it goes. `STALE_LIST_LIMIT_MS`
+  (30 s, from the first close) clears them if no list comes; the 2 s reconnect is unchanged. A
+  restarted server lists its phones under a new tracker id (it hashes `os.uptime()`), and
+  `setIdAndHostName` removes the old id's entries.
+- Stale is a flag on the entry; the status model ignores it, so a stale card keeps its last chip
+  (title "Last known status: …") and is never Offline. `isDeviceAvailable` and `canOpenScreen` are
+  false for it (`reportedConnected` is the old check). `findDeviceByUdid`,
+  `findDeviceWithoutTools`, `findDeviceForStream` and `findDeviceForTool` skip stale entries, so
+  phone pages, screens, tools, Actions and Unlock behave as before a drop. Only the list, the
+  switcher, the page title, Notifications setup's iPhone picker and Settings see stale entries.
+- The list shows the cards dimmed under one Banner, "Reconnecting… The phones are shown as last
+  reported.", outside the scroller, and the AppBar line says Reconnecting…. Open screen, Wake,
+  Files, Shell, Enable and restart and Restart services are off; Settings, Open settings and the
+  Notifications bell stay on. Settings opened for a stale phone says "Reconnecting to the server.
+  Settings that need it are off until it is back."; its service rows, stream controls and the
+  scheduled unlock controls are off, and it finds the phone again by its serial when the next list
+  names it under a new key (`views/settings/phone.ts`).
+- Before the first list a delayed "Loading phones…" box shows. `listReceived` is computed over the
+  trackers that have listed, plus a host list that named none, so "No phones connected" needs an
+  empty list. The page restores scroll as before, refocuses the card link a page was opened from,
+  and gives the focus back to the card control that had it when the list turned stale.
+- Grid: `repeat(auto-fill, minmax(min(100%, 340px), 1fr))` inside 1200 px, so at most three
+  columns of up to 392 px, two at 1024, one on a phone. Each card's action row sits at its foot,
+  so the cards of a row line up. The 720 and 1040 breakpoints are gone and the gutter widens at
+  600; the 360 narrow-phone rule stays (VIEW_BREAKPOINTS lists only it for DeviceList.css).
+- `phoneName` falls back to the name this browser kept (`rememberedPhone(udid).name`), so a
+  phone page reloaded after a server restart is named before the list is back. The card's tool
+  links are named "Files on <name>" and "Shell on <name>".
+
+**Touch controls button (p6-touch-button, U-stream-9, D4).** On a touch screen the controls
+button is a 44x56 tab on the left or right edge of the stage, named Phone controls, with
+`aria-expanded`. Its place is a side plus a fraction of the height it can move in (pure logic in
+`src/app/controls/buttonPlace.ts`, tested by `scripts/test-controls-place.js`), kept per browser
+under `controls_button_place`; an old `floating_toolbar_position` corner is converted once and
+left in storage. It sits only inside the stage, cut to the visual viewport and the safe-area
+insets, so it never covers the header, the tabs, the banner slot or the Type text sheet. It is
+placed again when the stage or the picture changes size, the picture element changes, the
+window or the visual viewport changes size or scrolls, the `.stream-view` style or class changes
+(Type text pans it with the keyboard), or a sheet docks beside the stage (below). With no saved
+place it sits on the right at 44% of its height range. After a drag it slides to the nearer edge
+through `ui/motion.ts` (no motion when reduced). It goes to `var(--idle-opacity)` (a new token,
+0.5 rather than about 45%, because at 0.45 it falls under 3:1 against a white picture) from mount
+and 3 s after the last touch, and is fully opaque while touched, while its panel is open and with
+keyboard focus. The 3 s clock pauses under the modal sheets (Actions, Switch, Unlock, Settings),
+not under Type text. The panel opens beside the button, centred on it (above or below under
+about 358 px), and never below the stage. Back and Home stay in the panel.
+
+**Desktop stage (p6-desktop-layout, U-stream-10, D5).**
+- With a mouse, at every window width, the rail stands against the right edge of the picture and
+  is as tall as it. `ScreenView.tsx` (`usePictureBox`) reads the touch layer's box (the mount
+  node's box until the player has sized the canvas) and writes `--stream-picture-top`, `-right`,
+  `-width` and `-height` on the stage. It only observes. The mount node keeps the rail's width
+  and a docked panel's width free at its right, so the picture and the rail are centred together.
+  `ControlRail.tsx` picks one or two columns from its own height (slots x 56 px) and applies a
+  change on the next frame. Under a mouse `.video` is transparent, so the stage is one colour
+  (#05080e) around the picture and the rail.
+- The kit Sheet has a docked presentation: the `dock` prop, `SHEET_DOCK = (min-width: 1024px)`
+  and `useSheetDock(ref)` to name the host. From 1024 px, while a phone's screen is shown, Actions,
+  Settings and Type text open as a 380 px panel (`--kit-sheet-dock-width`) at the stage's right
+  edge, as tall as the stage, with nothing dimmed. This applies on a touch screen too. It is only
+  a presentation: modal, history, focus, Escape and Back and the event stop are the code they were.
+  The host has `data-sheet-docked` while the panel is shown, including its exit. Actions and
+  Settings stay modal (a press beside the panel closes it and reaches nothing); Type text stays
+  not modal (a press on the picture reaches the phone while the field keeps typing). Settings
+  docks only while ScreenView is mounted, so from the list, Files and Shell it is the centred
+  dialog. Rows in the panel are laid out as on a phone. Below 1024 px the sheets are where they
+  were. `dialog.kit-sheet[open]` still matches every open sheet, so `localKeyboardTarget.ts` is
+  unchanged: a docked Actions or Settings blocks keys to the phone and a docked Type text takes
+  them once.
+- The state layer dims the stage up to a docked panel or the stage edge and keeps the rail's width
+  free, so the state card is centred on the picture; the card is no wider than the picture, so the
+  rail never covers it. Long messages on a narrow portrait iPhone picture wrap to more lines.
+
+**Integration.**
+- No textual conflicts. `scripts/e2e-tools.js` from p6-shell-keys still opened the Shell from its
+  card by the old link name 'Shell'; it now uses 'Shell on Fixture Phone A' (9d172c7).
+- `scripts/test-controls-place.js` is in `npm test` and `desktop-layout` in the default browser
+  suites (9d6e6b4).
+- Touch button beside a docked sheet (39d0e72): from 1024 px a touch screen docks the sheets too,
+  and the button stayed at the stage's edge under the docked panel, unreachable while Type text
+  was open. `ControlPanel.tsx` now keeps the button and its panel to the part of the stage the
+  sheet leaves (`dockedWidth`, read from `data-sheet-docked` and `--stream-dock-width`, watched
+  through a MutationObserver on the stage), and the button goes back to the edge when the sheet
+  closes. New check `besideDockedSheet` in the controls suite at 1180x820 on both phones; it fails
+  on the merge without the fix ("the button stands against the docked sheet (1180, sheet from
+  800)").
+- `scripts/e2e-device-page.js` focusFollowsTheTabs (b6df8e8): failed once in four runs because the
+  terminal takes the focus when it is created on a desktop, and the Shell code sometimes arrived
+  before the check read the focus. The lazy code is now held until the focus has been read. The
+  assertion is unchanged; the race was there before this step.
+- `scripts/e2e-android-stream.js` (903cfa9): with a mouse the rail takes a second column for the
+  shorter picture after a rotation, a frame after the picture changes size, and the picture moves
+  again (1191 px wide with one column, 1103 px with two, at 1280x800). The desktop-dark pass read
+  the box in between once and missed its aim. It now reads the box after it has stayed the same
+  for three frames; the assertion is unchanged. A person clicking does not meet this, but a
+  script that measures the picture right after a change of its size must wait the same way.
+- Assertion changes in default suites made by the packages, kept: sheet-chrome
+  typeTextKeepsPicture, ios-typing desktopFlow and pictureFlow, and ios-input mouseHelp asserted
+  the step 4d placement of Type text (under the picture) on windows of 1024 px and wider, or a
+  point measured while Actions was open; from 1024 px they now assert the panel beside the picture.
+  Below 1024 px the old assertions run unchanged. overlay-back changed only how Notifications
+  reaches Filters (through Search). The renamed "Phone controls", "Files on <name>" and "Shell on
+  <name>" names and the removed "Show keyboard" button changed selectors in settings, sheets,
+  android-stream, device-page, navigation, tools and files-flows.
+
+**What the owner sees change.**
+- Shell on a phone: a sideways row of Esc, Tab, Ctrl, four arrows, Paste, Copy, A− and A+ under the
+  terminal; no Show keyboard button (tap the terminal); the text size is kept per browser. Shell on
+  a desktop: no key row.
+- Files: a large folder scrolls without stalls; folders and commands work while files upload;
+  each upload has a bar, bytes of total and Cancel; a refused listing shows the phone's reason.
+- Notifications: one-row bar with Switch, Search and Setup; Setup has a mute switch per app and
+  applies every change at once with Undo; "Open iPhone screen" moved into the list's actions.
+- Phones list: cards stay, dimmed, during a reconnect or a deploy shorter than 30 s; "Loading
+  phones…" before the first list; on a desktop the cards are an even grid of up to three columns;
+  one column from 600 to about 739 px.
+- Phone screen on a touch screen: the controls button is an edge tab, translucent when idle, and
+  starts on the right at 44% height instead of the bottom right.
+- Phone screen with a mouse: the rail is attached to the picture; from 1024 px Actions, Settings
+  and Type text open beside the picture and the picture moves left to make room; the stage around
+  the picture is #05080e instead of black.
+
+**Proof.** `npm run check` passes: 697 node tests (653 at f0862e3; new:
+`scripts/test-controls-place.js`, now in `npm test`, and new tests in test-shell, test-files,
+test-notification-service, test-notification-page, test-home and test-client-lifecycle), the
+Python suites, lint with 0 errors and 29 warnings (29 at f0862e3), and the production build.
+All 34 default browser suites pass in one run of `node scripts/test-browser.js`, with
+`desktop-layout` new in the list. The `files` suite took 157 to 158 s of its 240 s limit in
+three runs (about 155 s before). Two earlier full runs at the merged head each stopped once on a
+timing race in a test, fixed as described under Integration. The main bundle grew from 446 KB to
+463 KB. Stream sockets, as the suites assert them at the merged head:
+- desktop-layout: one stream socket per open of the screen on both fixtures, at 1440x900 and
+  1366x650, light and dark, after Actions, Settings, Type text, Switch phone, the window crossing
+  1024 px and six more panel opens; the stage and the mount node stay the same elements; the
+  state card check and Settings from the list open none.
+- controls (besideDockedSheet): one stream socket on a 1180x820 touch screen with Type text docked
+  and closed, on both phones, and the same stage element.
+- navigation: one socket per open of a phone screen on both fixtures, none from Back or the list
+  arriving, and one iPhone session per open.
+- ios-input: one screen session per visit.
+- device-page: the stream stops and starts once across the tabs, and a player change restarts it
+  once.
+No package opens a socket from a new place: the stream clients, adapters, routes and `App.tsx`
+are unchanged, and the new code on the screen (`usePictureBox`, the docked Sheet, the
+ControlPanel observers) only reads layout and sets styles.
+
+**Atlas against f0862e3.** The base was built from an export of f0862e3. 276 files at the base,
+284 at the head (the new `notifications-search` state, 8 files). 198 files differ (90 pictures,
+108 style records). Files (its six states, 44 files), `phone-not-listed` and `tool-unavailable`
+do not differ.
+- Phone screen at 390x844 (both phones, every state): only the touch button changes (its
+  `floating-toolbar` elements): the edge tab on the right, translucent when idle, and the panel
+  opened beside it in the controls state. Pixels differ only in a band at the right edge, except
+  in the controls state. Nothing else on the phone screen changes.
+- Phone screen at 1440x900 (screen, asleep, actions, settings, switcher, type-text, unlock, both
+  phones): the rail is attached to the mount node's right edge (the atlas has no decoded picture),
+  the stage is one colour, and Actions, Settings and Type text are the docked panel; asleep has
+  the state layer dimmed to the edge.
+- Shell: the Extra keys row at 390 (the row is wider than the screen and scrolls); at 1440 the old
+  shortcut row is gone.
+- Phones list (with its two Settings states): the even grid at 1440 (pixels); at 390 only the
+  computed styles of the grid and the cards change, no pixel.
+- Notifications (every state, both sizes): the one-row bar; Setup with the Apps list; the new
+  search state.
+Two atlas runs of the merged build match byte for byte. The two atlases are in the session
+scratchpad under int6a/atlas-base and int6a/atlas-head, and
+pictures of each changed screen at both sizes and in both themes under int6a/screens.
+
+**Phone check for step 6a** (after the deploy, which restarts the server; at most one iPhone
+screen start for the screen items, a second only if needed and at least five minutes later).
+Items marked (headless) are covered by the browser suites against fixtures and need only a
+glance; the rest need the phones or a person. A headless browser cannot decode the iPhone picture,
+see a phone keyboard, or see what a phone does with a touch.
+1. Deploy with the Phones list open in a desktop browser and on a phone (no screen open there):
+   the cards stay, dimmed, under "Reconnecting… The phones are shown as last reported.", Open
+   screen and Wake are off, and the cards come back live under the restarted server's new ids,
+   with a focused card link still focused. No iPhone session starts from the list (server log:
+   no serve-web start). A deploy longer than 30 s shows Connection lost, then "Loading phones…".
+   A Settings sheet left open on a card shows the phone again afterwards. (headless for the
+   behaviour; the real deploy timing needs the server)
+2. Notifications (no screen session): on the bench iPhone, mute one app in Setup >
+   Settings for <iPhone> > Apps. Send a notification from that app and one from another app: the
+   muted one neither appears nor pushes, the other does both. Unmute with the switch and check the
+   next one comes through. Press Undo once after a mute and check the switch goes back. (phone)
+3. Notifications header in the installed app on the iPhone: the one-row bar sits under the notch,
+   the status line reads "<iPhone> · Connected", and Search and Setup open and close. With two
+   iPhones linked the status line may be cut short at 390 px (known). (phone; the layout at
+   390x844 without insets is headless)
+4. Shell on the Android phone in Chrome and on the iPhone in Safari: tap the terminal and check the
+   on-screen keyboard opens; with it open, the Extra keys row sits just above it and Esc, Ctrl and
+   the arrows do not close it; arrows move the cursor in a shell line and in `vi`/`less`; a toast
+   from Paste or Copy sits above the row. Paste over https: on iOS Safari the system Paste bubble
+   appears and one paste reaches the shell; over plain http the toast reads "Paste needs this
+   app's secure (HTTPS) address.". Copy over http with the keyboard open: the text reaches the
+   phone clipboard; note whether the keyboard flickers. A+ and A− change the size and the shell's
+   columns follow (`stty size`). (phone; the bytes and the single resize are headless)
+5. Files on the Android phone: open a real folder with several thousand items on /sdcard (for
+   example DCIM), in Details and in Tiles: scroll, filter, arrow
+   keys and Shift selection, with no stutter and no rows jumping. Upload a large file and cancel it
+   half way: no partial file is left. Upload again and, while it runs, open another folder and
+   make a folder there: the upload ends in the folder it started in, and the bar shows bytes of
+   total. (phone; the 5,000-item fixture and the upload flows are headless)
+6. Touch controls button on the iPhone in Safari and in the installed app, portrait and landscape
+   (one screen session): the tab sits clear of the notch and the home indicator; drag it to each
+   edge and to the very bottom; it stays inside the safe area; a tap soon after a drag opens the
+   panel; at 50% over a light picture in the light theme it is still easy to find. With Type text
+   open and the keyboard up, scroll or pan the page: the tab stays on the stage and does not
+   cover the header or the sheet. On the Android phone in Chrome: the same drag and tap. (phone;
+   placement against fixtures and simulated insets is headless)
+7. Desktop with a mouse, a real Android picture and a real iPhone picture, at about 1440x900 and
+   1366x650: the rail is flush against the picture's right edge, one column at 900 high and two at
+   650. Actions, Settings and Type text open beside the picture without covering it; the picture
+   moves left without shrinking. With Type text open, a click on the picture lands where pressed
+   while the field keeps typing. With a state card shown (asleep, reconnecting), the card sits on
+   the picture, not under the rail, and the stage is evenly dimmed. Open and close Actions and
+   Settings a few times on the iPhone: still one serve-web session (server log). (person at a
+   desktop; geometry and the socket count are headless) Items 6 and 7 each open one iPhone
+   screen session; leave at least five minutes between them.
+8. Phones list on a desktop at 1024, 1280 and 1920 wide: an even grid, up to three columns, action
+   rows lined up. (headless)
+
+**Left for later steps.**
+- p6-desktop-input (6b): keys are blocked by `dialog.kit-sheet[open]` in any presentation, so a
+  docked Actions or Settings still blocks keys to the phone and a docked Type text takes them
+  once. The keyboard chip and the release chord can go anywhere in the header; the stage only
+  changes styles. `scripts/e2e-controls.js` slotMap expects one rail column at 1280x800, where the
+  iPhone rail fits with 1 px to spare (13 slots of 56 px in 729 px); a taller header (the chip) or
+  a banner gives two columns, and that check then needs the two-column mapping.
+- p6-inbox (6b): "Mute this app" on a card's menu should call `setAppMuted(source, item.app,
+  item.appName || item.app, true)` (`src/app/state/notificationSources.ts:70`), refresh, and offer
+  Undo with `muted` false. The filter row with counts is unchanged; the search row
+  (`views/NotificationHistory.tsx:592`) opens only from the bar's Search and holds Filters,
+  which could move into the filter row. "Open iPhone screen" is in the list's actions sheet
+  (`NotificationHistory.tsx:764`). `.notification-history-tools` margin-bottom went from 8 to 4 px.
+  At 390 px with two or more iPhones, or with a long name and the unread badge, the bar's status
+  line is cut short; an icon-only Switch or the title as the switcher would fix it.
+- C-notifications-9, remaining: process supervision (`startCollector`,
+  `src/server/notifications/NotificationService.ts:257`, and the restart and backoff code) and the
+  routes with a schema validator (`mount` at :578, POST /sources at :908).
+- Kit: `src/app/ui/ConfirmAction.tsx:128-129` uses `useId`; ids from a module counter would avoid
+  the repeated ids the worker saw. `src/app/ui/Presence.tsx:53`: a docked panel enters with the
+  dialog's rise; a slide from the right would need a new motion kind.
+- `src/style/views/StreamView.css:63-69`: the base `.stream-controls-slot` rule no longer has a
+  visible effect; it was kept so phone states compute the same styles. Remove it with a new atlas
+  baseline. `src/app/controls/ControlRail.tsx:7` SLOT_HEIGHT repeats the CSS row height.
+- Touch button: `--idle-opacity` is 0.5 (`src/style/tokens.css:51`), not the 45% of D4; raise it
+  if the idle tab is too faint over light pictures. The old `floating_toolbar_position` key stays
+  in each browser (`ui/storage.ts` has no remove helper). The button starts translucent rather
+  than opaque for its first 3 s. Non-default scripts that rely on its old place
+  (`scripts/e2e-ux.js`, against the live server) were not run.
+- Phones list: `scripts/e2e-atlas.js:315` listStates has no loading or reconnecting state. A
+  single `device` message does not end the stale limit (`src/app/client/BaseDeviceTracker.ts:189`);
+  only a list does, and the server always sends the list first. The switcher shows stale phones
+  greyed with no Reconnecting line (`views/DeviceSwitcherSheet.tsx:74`). For a stale phone,
+  Settings' service rows say "Not available while the phone is not connected."
+  (`views/settings/AboutSection.tsx:198`) while Connection says Reconnecting…. A card link to
+  another server is also remembered for the focus return (`views/DeviceList.tsx:135`). With
+  several servers, one server reconnecting puts the Reconnecting… bar on the whole page.
+  `state/streamDevice.ts:37` findDeviceForSettings is used only by a test.
+- Files: the view half of C-client-tools-css-9 (Preact components, BottomSheet reuse) was dropped
+  by D6; FileListingClient.ts is 3,503 lines and the row-window glue (`renderWindow`,
+  `measureLines`, `measureRows`, `viewInBody`, `reveal`, :896-1019) could move next to
+  `files/RowWindow.ts`. When a batch ends, the relist clears a selection or filter in that folder.
+  Two batches uploading the same name to one folder are not checked against each other; the
+  phone refuses the second. In Tiles of a large folder of uneven tiles, scrolling back through
+  lines never measured can still move the rows in view in Safari.
+- Dead code named in step 5b: `ShellClient.createEntryForDeviceList`
+  (`src/app/googDevice/client/ShellClient.ts:326`), `FileListingClient.createEntryForDeviceList`
+  (`FileListingClient.ts:217`), `BaseDeviceTracker.tools/registerTool` and the registrations in
+  `src/app/index.tsx`.
+- Shell: the tab's hint "Use the terminal of this phone. Tap it to type."
+  (`src/app/views/ToolView.tsx:63`) is now the only instruction for opening the keyboard.
+- p6-docs (6c): README.md lines 518-536 still describe the old Notifications page (Setup &
+  delivery, app filters, Save changes, the name row with Last notification and Open screen).
+- p6-android-device is still to come in 6a, with its own Android check and deploy after 5b is
+  live.
