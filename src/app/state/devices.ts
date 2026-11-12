@@ -39,7 +39,7 @@ function reportedName(entry: DeviceEntry): string {
 }
 
 export function deviceName(entry: DeviceEntry): string {
-    return reportedName(entry) || (entry.params.type === 'android' ? 'Android device' : 'iOS device');
+    return reportedName(entry) || (entry.params.type === 'android' ? 'Android phone' : 'iPhone');
 }
 
 /**

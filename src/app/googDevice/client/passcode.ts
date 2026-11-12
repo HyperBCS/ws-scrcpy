@@ -17,7 +17,7 @@ export function validatePasscode(passcode: string): void {
     // silently truncated credential. Printable ASCII is covered by Android's virtual keymap.
     if (!/^[\x20-\x7e]+$/.test(passcode)) {
         throw new UnlockRequestError(
-            'Remote passwords support English letters, numbers and standard symbols. Use the device for other characters.',
+            'Remote passwords support English letters, numbers and standard symbols. Use the phone for other characters.',
         );
     }
 }

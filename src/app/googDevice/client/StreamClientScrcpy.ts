@@ -348,7 +348,7 @@ export class StreamClientScrcpy
         player.setVideoSettings(videoSettings);
         const element = player.getTouchableElement();
         element.tabIndex = 0;
-        element.setAttribute('aria-label', 'Remote device screen');
+        element.setAttribute('aria-label', 'Remote phone screen');
         element.addEventListener('pointerdown', () => {
             this.releaseVirtualKeyboard();
             // Touch handlers prevent the browser's default focus action, so explicitly focusing
@@ -384,7 +384,7 @@ export class StreamClientScrcpy
     private onFileDrop = (event: DragEvent): void => {
         if (event.dataTransfer?.files.length) {
             event.preventDefault();
-            streamNotice.value = 'To upload files, open Files from the device list.';
+            streamNotice.value = 'To upload files, open the Files tab.';
         }
     };
 

@@ -889,8 +889,8 @@ async function toolLinkForIphone(browser, { width, height, mobile, colorScheme }
         const test = await start(browser, { width, height, mobile, colorScheme, hash: { action, udid: LINKED } });
         const { page } = test;
         try {
-            await page.getByRole('heading', { name: `${tool} is not available for this device`, exact: true }).waitFor();
-            await page.getByText('Files and Shell work on Android devices only. iPhone linked is an iPhone or iPad.', { exact: true }).waitFor();
+            await page.getByRole('heading', { name: `${tool} is not available for this phone`, exact: true }).waitFor();
+            await page.getByText('Files and Shell work on Android phones only. iPhone linked is an iPhone or iPad.', { exact: true }).waitFor();
             await page.waitForFunction((title) => document.title === title, `iPhone linked · ${tool} · ws-scrcpy`);
             assert.equal(await page.locator('.tool-view, .terminal-container, .file-listing-client').count(), 0, 'no tool is mounted for an iPhone');
             assert.deepEqual(test.channels.filter((code) => !['HSTS', 'GTRC', 'ATRC'].includes(code)), [], 'no tool channel was opened for the iPhone, also not before the device list arrived');
@@ -911,7 +911,7 @@ async function toolLinkForIphone(browser, { width, height, mobile, colorScheme }
     {
         const test = await start(browser, { width, height, mobile, colorScheme, hash: { action: 'shell', udid: 'HOME-IPAD-NODEV' } });
         try {
-            await test.page.getByRole('heading', { name: 'Shell is not available for this device', exact: true }).waitFor();
+            await test.page.getByRole('heading', { name: 'Shell is not available for this phone', exact: true }).waitFor();
             assert.equal(await test.page.getByRole('link', { name: 'Open screen', exact: true }).count(), 0);
             await test.page.getByRole('button', { name: 'Phones', exact: true }).last().waitFor();
         } finally {

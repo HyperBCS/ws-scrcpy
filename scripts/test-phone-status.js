@@ -221,8 +221,8 @@ test('the optimistic Start flag counts until the phone confirms its stream servi
 });
 
 test('the list header keeps its summary and its count of phones that need attention', () => {
-    assert.equal(status.listSummary(0, 0, 0), 'Waiting for devices');
-    assert.equal(status.listSummary(2, 0, 0), 'No devices available');
+    assert.equal(status.listSummary(0, 0, 0), 'Waiting for phones');
+    assert.equal(status.listSummary(2, 0, 0), 'No phones available');
     assert.equal(status.listSummary(3, 3, 1), '3 available · 1 needs attention');
     assert.equal(status.listSummary(4, 3, 2), '3 available · 2 need attention');
     const running = iphoneEntry({ trusted: true, connected: true, session: 'running', problems: [ATTENTION], screen: 'on', lock: 'unlocked', viewed: false });
@@ -352,7 +352,7 @@ test('a phone that drops out of the list keeps its last name', () => {
     // Listed again without its properties (untrusted): the last name, where the card says what it can.
     devices.updateTrackerDevice('android', 'Host', { type: 'android' }, tracker, { udid: 'NAME-PIXEL', state: 'unauthorized', pid: -1, interfaces: [] });
     const bare = devices.findDeviceByUdid('NAME-PIXEL');
-    assert.equal(devices.deviceName(bare), 'Android device');
+    assert.equal(devices.deviceName(bare), 'Android phone');
     assert.equal(devices.phoneName('NAME-PIXEL', bare), 'Google Pixel 9');
     // An iPhone the same way.
     devices.setTrackerDevices('ios', 'Host', { type: 'ios' }, tracker, [{ udid: 'NAME-IPHONE', state: 'Connected', name: 'Bench iPhone', model: 'iPhone 13 Pro Max', version: '27.2' }]);
@@ -423,7 +423,12 @@ test('the capabilities table says what each kind of phone can do today', () => {
 });
 
 test('no older status word and no status literal is left outside copy.ts', () => {
-    const OLDER = ['Screen is off', 'Screen is asleep.', 'Device locked', 'Lock screen active', 'streaming service', 'Connecting to device…', 'Connecting…', 'Reconnecting…', "'Streaming'"];
+    const OLDER = ['Screen is off', 'Screen is asleep.', 'Device locked', 'Lock screen active', 'streaming service', 'Connecting to device…', 'Connecting…', 'Reconnecting…', "'Streaming'",
+        // Step 5b: the words the one card, row, sheets and controls replaced, and the marks that
+        // live in copy.ts only.
+        'Session running', 'Stream service: ', 'Device unavailable', 'Waiting for trust', 'Browser cannot play this stream',
+        'Unlock device', 'Mute device', 'Device controls', 'Switch device', 'Open Stream settings', 'Open Scheduled unlock',
+        'Unlock with stored passcode', 'Use remote screen', 'Send PIN', "'In use'", "'Unlocking…'", "'Viewing'"];
     const found = [];
     const walk = (dir) => {
         for (const item of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
@@ -438,5 +443,6 @@ test('no older status word and no status literal is left outside copy.ts', () =>
     walk('src/app');
     assert.deepEqual(found, []);
     const words = read('src/app/copy.ts');
-    for (const word of ['Connecting…', 'Reconnecting…']) assert.ok(words.includes(word), `copy.ts holds ${word}`);
+    for (const word of ['Connecting…', 'Reconnecting…', "'In use'", "'Unlocking…'", "'Viewing'"]) assert.ok(words.includes(word), `copy.ts holds ${word}`);
+    assert.ok(!words.includes('Session running'), 'the In use mark replaced the Session running chip');
 });

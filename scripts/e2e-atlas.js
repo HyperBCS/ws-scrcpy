@@ -434,7 +434,7 @@ async function iphoneStates(test) {
 async function otherStates(test) {
     const { page } = test;
     await page.goto(`${BASE}#!action=device&udid=${IPHONE}&view=shell`);
-    await page.getByRole('heading', { name: 'Shell is not available for this device', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Shell is not available for this phone', exact: true }).waitFor();
     await shoot(test, 'tool-unavailable');
 
     await page.goto(`${BASE}#!action=device&udid=${MISSING}&view=screen`);

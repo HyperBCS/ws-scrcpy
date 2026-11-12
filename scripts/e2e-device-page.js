@@ -841,7 +841,7 @@ async function toolAddressForIphone(browser) {
     const test = await start(browser, { hash: `action=device&udid=${IPHONE}&view=shell` });
     const { page } = test;
     try {
-        await page.getByRole('heading', { name: 'Shell is not available for this device', exact: true }).waitFor();
+        await page.getByRole('heading', { name: 'Shell is not available for this phone', exact: true }).waitFor();
         assert.equal(await page.locator('.kit-bar-back').getAttribute('aria-label'), 'Phones');
         assert.equal(await page.locator('nav.kit-tabs').count(), 0);
         assert.deepEqual(await page.locator('h1').evaluateAll((list) => list.map((h1) => h1.className)), ['kit-bar-name'], 'refused tool: one h1, the name in the bar');

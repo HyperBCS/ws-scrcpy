@@ -97,7 +97,7 @@ const DEFAULT_PREFERENCES: Preferences = { view: 'details', sort: 'name', ascend
 // actually visit. Any of them can be missing on a given device; opening one then reports the
 // device's own error instead of hiding the shortcut based on a guess.
 const PLACES: { title: string; path: string }[] = [
-    { title: 'Device root', path: '/' },
+    { title: 'Phone root', path: '/' },
     { title: 'Internal storage', path: '/sdcard' },
     { title: 'Downloads', path: '/sdcard/Download' },
     { title: 'Camera', path: '/sdcard/DCIM/Camera' },
@@ -343,7 +343,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.historyKey = `ws-scrcpy.files.history.${this.serial}`;
         this.phone = FileListingClient.phoneOf(new URLSearchParams(location.hash.replace(/^#!/, '')));
         this.adoptHistory();
-        const fragment = html`<section class="file-listing-client file-explorer" aria-label="Device files">
+        const fragment = html`<section class="file-listing-client file-explorer" aria-label="Phone files">
             <div class="fx-chrome">
                 <div class="fx-history">
                     <button
@@ -373,8 +373,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                         type="button"
                         class="${ICON_BUTTON} fx-home"
                         data-command="home"
-                        aria-label="Device root"
-                        title="Device root"
+                        aria-label="Phone root"
+                        title="Phone root"
                     ></button>
                     <button
                         type="button"
@@ -682,7 +682,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const segments = this.path.split('/').filter(Boolean);
         let walked = '';
         const parts = [
-            `<button type="button" class="fx-crumb fx-crumb-root" data-place="/" aria-label="Device root" title="Device root"${
+            `<button type="button" class="fx-crumb fx-crumb-root" data-place="/" aria-label="Phone root" title="Phone root"${
                 this.path === '/' ? ' aria-current="page"' : ''
             }>/</button>`,
         ];
@@ -2009,7 +2009,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         // eslint-disable-next-line no-control-regex
         if (/[\x00-\x1f\x7f]/.test(name)) {
-            return 'This name contains characters that cannot be used on the device.';
+            return 'This name contains characters that cannot be used on the phone.';
         }
         const key = nameKey(this.path);
         const taken = this.entries.find((entry) => key(entry.name) === key(name));
@@ -2504,7 +2504,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 this.handleReply(channel, request, Buffer.from(event.data));
             } catch {
                 request.failed = true;
-                request.error = 'The answer from the device could not be read.';
+                request.error = 'The answer from the phone could not be read.';
                 channel.close();
             }
         };
@@ -2525,7 +2525,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     ((kind === 'stat' || kind === 'mutate') && !request.completed))
             ) {
                 request.failed = true;
-                request.error = 'The connection to the device was interrupted.';
+                request.error = 'The connection to the phone was interrupted.';
             }
             if (kind === 'list' || (kind === 'stat' && (!request.completed || request.failed))) {
                 this.finishListing(request);
@@ -2573,7 +2573,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             request.failed = true;
             request.error =
                 data.subarray(8, 8 + data.readUInt32LE(4)).toString('utf8') ||
-                (request.kind === 'mutate' ? 'The device refused it.' : 'The device gave no reason.');
+                (request.kind === 'mutate' ? 'The phone refused it.' : 'The phone gave no reason.');
             channel.close();
         } else if (code === Protocol.STAT) {
             request.completed = true;
@@ -2585,7 +2585,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             );
             if (!entry.mode) {
                 request.failed = true;
-                request.error = 'There is no such folder on the device, or it cannot be read.';
+                request.error = 'There is no such folder on the phone, or it cannot be read.';
                 channel.close();
             } else if (entry.isDirectory()) {
                 this.list(request.path, request.path);
@@ -2631,7 +2631,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             }
             this.entries = [];
             this.selection.clear();
-            this.listingError = request.error || 'The device gave no reason.';
+            this.listingError = request.error || 'The phone gave no reason.';
             this.renderItems();
             return;
         }
@@ -3238,7 +3238,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 key,
                 pushId: 0,
                 fileName: upload.name,
-                message: 'The connection to the device was lost.',
+                message: 'The connection to the phone was lost.',
                 progress: -1,
                 error: true,
                 finished: true,

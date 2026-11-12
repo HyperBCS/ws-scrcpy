@@ -23,8 +23,8 @@ export function ToolUnavailable({ entry, tool }: { entry: DeviceEntry; tool: str
         <main class="tool-unavailable">
             <AppBar title={name} />
             <section class="tool-unavailable-body" role="alert">
-                <h2>{tool} is not available for this device</h2>
-                <p>Files and Shell work on Android devices only. {name} is an iPhone or iPad.</p>
+                <h2>{tool} is not available for this phone</h2>
+                <p>Files and Shell work on Android phones only. {name} is an iPhone or iPad.</p>
                 <div class="tool-unavailable-actions">
                     {canOpenScreen(entry) && (
                         <Button

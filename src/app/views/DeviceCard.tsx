@@ -11,7 +11,7 @@ import type { DeviceView } from '../state/routes';
 import { capabilities } from '../state/capabilities';
 import { CardLineKind, phoneCard } from '../state/phoneCard';
 import { clearStarting, markStarting } from '../state/phoneStatus';
-import { STREAM_SERVICE } from '../copy';
+import { STREAM_SERVICE, UNAVAILABLE_HINT } from '../copy';
 import { openSettings } from '../state/settingsSheet';
 import { unlockCardLine } from '../state/unlockSchedule';
 import { replyText, sendServiceCommand, TrackerCommandAborted } from '../client/trackerCommand';
@@ -197,14 +197,14 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
         case 'unauthorized':
             lineView = (
                 <CardLine kind={line.kind} look="warning">
-                    Unlock this phone and approve the USB debugging or trust prompt to connect.
+                    {UNAVAILABLE_HINT.unauthorized}
                 </CardLine>
             );
             break;
         case 'offline':
             lineView = (
                 <CardLine kind={line.kind} look="warning">
-                    Not connected. Check the phone's cable or network connection.
+                    {UNAVAILABLE_HINT.offline}
                 </CardLine>
             );
             break;

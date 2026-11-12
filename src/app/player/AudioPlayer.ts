@@ -67,7 +67,7 @@ export function extractOpusHead(data: Uint8Array): Uint8Array | undefined {
 export class AudioPlayer {
     public readonly status = signal<AudioPlaybackStatus>({
         state: 'muted',
-        message: 'Tap Listen to hear this device.',
+        message: 'Tap Listen to hear this phone.',
     });
     private context?: AudioContext;
     private gainNode?: GainNode;
@@ -181,7 +181,7 @@ export class AudioPlayer {
             return;
         }
         if (metadata.sampleRate !== AUDIO_SAMPLE_RATE || metadata.channels !== AUDIO_CHANNELS) {
-            this.fail('This device sent an unsupported audio format. Reconnect the stream.');
+            this.fail('This phone sent an unsupported audio format. Reconnect the stream.');
             return;
         }
         const changed = metadata.codec !== this.metadata?.codec || metadata.status !== this.metadata?.status;
@@ -270,7 +270,7 @@ export class AudioPlayer {
             }
             this.schedule(buffer, frame.timestamp, peak);
         } catch (error) {
-            this.fail(`Could not play device audio: ${this.errorMessage(error)}`);
+            this.fail(`Could not play phone audio: ${this.errorMessage(error)}`);
         }
     }
 
@@ -566,7 +566,7 @@ export class AudioPlayer {
         } else if (this.metadata?.status === 'error') {
             state = 'error';
             message =
-                this.metadata.message || 'The device could not capture audio. Try another audio source in Settings.';
+                this.metadata.message || 'The phone could not capture audio. Try another audio source in Settings.';
         } else if (this.metadata?.status === 'disabled') {
             state = 'disabled';
             message = this.metadata.message || 'Audio forwarding is off. Enable it in Settings.';
@@ -581,7 +581,7 @@ export class AudioPlayer {
             message = 'Audio will resume when the screen reconnects.';
         } else if (this.muted) {
             state = 'muted';
-            message = 'Tap Listen to hear this device.';
+            message = 'Tap Listen to hear this phone.';
         } else if (this.context?.state !== 'running') {
             state = 'blocked';
             message = 'Tap Listen to allow audio playback in this browser.';
@@ -590,13 +590,13 @@ export class AudioPlayer {
             message = 'Audio pauses while this tab is hidden.';
         } else if (this.played) {
             state = 'playing';
-            message = 'Listening to device audio.';
+            message = 'Listening to phone audio.';
         } else {
             state = 'waiting';
             message =
                 this.metadata?.status === 'pending'
-                    ? 'Audio is starting on the device…'
-                    : 'Waiting for device audio. Start playback on the device.';
+                    ? 'Audio is starting on the phone…'
+                    : 'Waiting for phone audio. Start playback on the phone.';
         }
         const current = this.status.peek();
         const codec = this.metadata?.codec;

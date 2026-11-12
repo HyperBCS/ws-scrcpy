@@ -29,7 +29,7 @@ async function main() {
                     const response = await route.fetch();
                     // Match an AudioPlayer-only string rather than a development chunk name;
                     // this also catches the content-hashed/minified production audio chunk.
-                    if ((await response.text()).includes('Could not play device audio:')) {
+                    if ((await response.text()).includes('Could not play phone audio:')) {
                         audioChunkBlocked = true;
                         return route.abort('failed');
                     }

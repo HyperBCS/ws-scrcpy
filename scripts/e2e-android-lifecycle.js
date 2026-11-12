@@ -110,7 +110,7 @@ async function adbUnavailable(browser, layout, label) {
     await page.goto(BASE);
     const notice = page.locator('.devices-content > .kit-banner');
     await notice.waitFor();
-    assert.match(await notice.textContent(), /Android devices are unavailable\. The server cannot reach adb/);
+    assert.match(await notice.textContent(), /Android phones are unavailable\. The server cannot reach adb/);
     assert.equal(await notice.getAttribute('role'), 'status');
     await fits(page, notice, `${label} adb notice`);
     await page.screenshot({ path: path.join(OUT, `${label}-adb-unavailable.png`) });

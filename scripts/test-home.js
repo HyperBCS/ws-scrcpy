@@ -224,8 +224,8 @@ test('a screen opens only on a connected device, and not on an iPhone with Devel
 });
 
 test('the Devices header counts devices that need attention', () => {
-    assert.equal(listSummary(0, 0, 0), 'Waiting for devices');
-    assert.equal(listSummary(2, 0, 0), 'No devices available');
+    assert.equal(listSummary(0, 0, 0), 'Waiting for phones');
+    assert.equal(listSummary(2, 0, 0), 'No phones available');
     assert.equal(listSummary(3, 3, 0), '3 available');
     assert.equal(listSummary(3, 3, 1), '3 available · 1 needs attention');
     assert.equal(listSummary(4, 3, 2), '3 available · 2 need attention');

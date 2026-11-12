@@ -176,7 +176,7 @@ async function streamLinks(browser) {
     for (const ws of ['wss://attacker.example/?action=proxy-adb&remote=tcp%3A8886&udid=' + ANDROID, `ws://${PHONE_ADDRESS}:8886/`]) {
         for (const mobile of [true, false]) {
             const refused = await start(browser, { mobile, hash: { action: 'stream', udid: ANDROID, player: 'mse', ws } });
-            await refused.page.getByText('This link connects to another server. Open the device from the Devices page.').waitFor();
+            await refused.page.getByText('This link connects to another server. Open the phone from the Phones page.').waitFor();
             await refused.page.waitForTimeout(300);
             assertOnlyOwnSockets(refused.sockets, `refused ${ws}`);
             assert.equal(refused.sockets.filter((url) => url.searchParams.get('action') === 'proxy-adb').length, 0, 'no stream socket was opened');

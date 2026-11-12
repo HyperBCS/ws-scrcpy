@@ -29,7 +29,7 @@ export class StreamReceiverScrcpy extends StreamReceiver<ParamsStreamScrcpy> {
         // this socket, so the link may not point it at another host.
         const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
         if (url.protocol !== protocol || url.host !== location.host || url.username || url.password) {
-            throw Error('This link connects to another server. Open the device from the Devices page.');
+            throw Error('This link connects to another server. Open the phone from the Phones page.');
         }
         return url;
     }

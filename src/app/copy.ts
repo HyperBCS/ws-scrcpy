@@ -67,8 +67,6 @@ export const LOCK = {
 
 /** The screen session of a phone: an iPhone's session, or an Android phone's stream service. */
 export const SESSION = {
-    /** The second chip of a phone whose screen session runs, beside its status. */
-    running: 'Session running',
     /** The switcher's mark on the phone this page shows. */
     viewing: 'Viewing',
     /** The value of the Session fact, by the iPhone's session state. */
@@ -82,8 +80,8 @@ export const SESSION = {
 
 /** The status line of the list: "3 available · 1 needs attention". */
 export const LIST_SUMMARY = {
-    waiting: 'Waiting for devices',
-    noneAvailable: 'No devices available',
+    waiting: 'Waiting for phones',
+    noneAvailable: 'No phones available',
     separator: ' · ',
     available: (count: number): string => `${count} available`,
     attention: (count: number): string => `${count} ${count === 1 ? 'needs' : 'need'} attention`,
@@ -135,12 +133,12 @@ export const UNLOCK = {
 
 // p5-screen-shell
 /**
- * Why a listed phone cannot be reached, under its status word: the card on the stage of its
- * screen. The list's card can say the same.
+ * Why a listed phone cannot be reached, under its status word: the line on its list card and the
+ * card on the stage of its screen say the same.
  */
 export const UNAVAILABLE_HINT = {
     unauthorized: 'Unlock this phone and approve the USB debugging or trust prompt to connect.',
-    offline: 'Check the phone connection and keep it connected to the server.',
+    offline: "Not connected. Check the phone's cable or network connection.",
 } as const;
 
 // p5-list-rows

@@ -160,7 +160,7 @@ export default class FilePushHandler implements DragEventListener {
                 key,
                 pushId: 0,
                 fileName,
-                message: 'The connection to the device is closed.',
+                message: 'The connection to the phone is closed.',
                 progress: -1,
                 error: true,
                 finished: true,
