@@ -321,12 +321,13 @@ async function missingCode(browser) {
     await page.goto(BASE);
     const card = page.locator('.device').filter({hasText:'Phone A'});
     await card.getByRole('link',{name:'Shell',exact:true}).click();
-    const banner = page.locator('.tool-error');
-    await banner.getByText('Shell could not be loaded. Reload the page to try again.',{exact:true}).waitFor();
+    // The page's state card in place of the tool (p5-screen-shell).
+    const offer = page.locator('.tool-state .stream-state-card');
+    await offer.getByRole('heading',{name:'Shell could not be loaded',exact:true}).waitFor();
     assert(blocked,'the fixture refused the Shell chunk');
-    assert.equal(await banner.getByRole('button').innerText(),'Reload','the banner offers a reload, not a reconnect');
+    assert.equal(await offer.getByRole('button').innerText(),'Reload','the card offers a reload, not a reconnect');
     await page.unroute('**/*.js');
-    await Promise.all([page.waitForEvent('load'), banner.getByRole('button',{name:'Reload',exact:true}).click()]);
+    await Promise.all([page.waitForEvent('load'), offer.getByRole('button',{name:'Reload',exact:true}).click()]);
     await page.locator('.terminal-container .xterm').waitFor();
     assert.deepEqual(errors,[]);
     console.log('PASS a tool whose code is gone after a deploy offers Reload, which opens it');

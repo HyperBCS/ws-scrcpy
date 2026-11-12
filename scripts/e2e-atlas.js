@@ -452,7 +452,7 @@ async function otherStates(test) {
 
     await page.goto(BASE + screenOf(PIXEL_3));
     await connected(page);
-    await page.locator('.sleep-overlay .kit-button').waitFor();
+    await page.locator('.stream-state .kit-button').waitFor();
     await shoot(test, 'android-asleep');
 }
 

@@ -165,13 +165,14 @@ async function main() {
             const notice = await page.locator('.lock-screen-notice').boundingBox();
             const stage = await page.locator('.stream-stage').boundingBox();
             assert(notice.y + notice.height <= stage.y + 1, 'Lock notice does not cover the controllable stream');
-            const awakeNotice = await page.locator('.lock-screen-notice').screenshot({ animations: 'disabled' });
             test.update({ 'screen.power': 'off', 'device.awake': false });
             await page.getByText('Screen is asleep', { exact: true }).waitFor();
-            const asleepNotice = await page.locator('.lock-screen-notice').screenshot({ animations: 'disabled' });
-            assert(awakeNotice.equals(asleepNotice), 'The lock notice is equally bright while the device is asleep');
-            await open(page);
+            // While the screen is asleep the stage shows the card with Wake and the lock notice
+            // waits; it shows again once the screen is on (p5-screen-shell).
+            await page.locator('.lock-screen-notice').waitFor({ state: 'detached' });
             test.update({ 'screen.power': 'on', 'device.awake': true });
+            await page.locator('.lock-screen-notice').waitFor();
+            await open(page);
             assert.equal(await status(page).getAttribute('aria-live'), 'polite', 'The feedback is a live region before its first message');
             const remember = page.getByRole('checkbox', { name: 'Remember in this browser', exact: true });
             assert.equal(await remember.isChecked(), false, 'Remembering is off unless the owner asks for it');

@@ -1,7 +1,7 @@
 /* eslint-disable */
 // node scripts/test-browser.js phone-status
 // The status words of a phone's page against socket fixtures, for an Android phone and an
-// iPhone: after a drop the header and the card over the picture both say Reconnecting, in the
+// iPhone: after a drop the header and the card on the stage both say Reconnecting, in the
 // warning tone and its amber; a phone that leaves the list keeps its name in the header and the
 // tab title; a phone the list reports as disconnected is Offline, in the neutral tone and grey.
 // At 390x844 and 1280x800, light and dark. No device, adb or pymobiledevice3 is involved.
@@ -97,14 +97,14 @@ const tokenColour = (page, token) =>
 const TONE_TOKEN = { warning: '--warning-text', neutral: '--text-muted', success: '--text', error: '--danger-text' };
 
 /**
- * The header and the card over the picture say `text` in the tone of `state`, and the header's
- * line is drawn in the colour of that tone.
+ * The header and the card on the stage say `text` in the tone of `state`, and the header's line
+ * is drawn in the colour of that tone.
  */
 async function bothSay(page, label, text, state, tone) {
     await headerSays(page, text);
-    const card = page.locator('.sleep-overlay-label');
-    await card.getByText(text, { exact: true }).waitFor();
-    assert.equal(await card.getAttribute('data-connection'), state, `${label}: the card is ${state}`);
+    const card = page.locator('.stream-state-card');
+    await card.locator('.stream-state-title').getByText(text, { exact: true }).waitFor();
+    assert.equal(await card.getAttribute('data-state'), state, `${label}: the card is ${state}`);
     assert.equal(await statusLine(page).getAttribute('data-tone'), tone, `${label}: the header has the ${tone} tone`);
     assert.equal(
         await statusLine(page).evaluate((line) => getComputedStyle(line).color),
@@ -150,12 +150,12 @@ async function phonePage(browser, layout, kind) {
         assert.equal(await statusLine(page).evaluate((line) => getComputedStyle(line).color), await tokenColour(page, '--text'), `${label}: Connected is in the text colour`);
         assert.equal(await page.locator('h1.kit-bar-name').textContent(), name);
 
-        // The card over the picture follows the screen fact of the list, on both platforms.
-        const sleepCard = page.locator('.sleep-overlay-card');
+        // The card on the stage follows the screen fact of the list, on both platforms.
+        const sleepCard = page.locator('.stream-state-card[data-state="asleep"]');
         test.trackers[kind]([listed(kind === 'android' ? { 'screen.power': 'off', 'device.awake': false } : { 'screen.power': 'off' })]);
         await sleepCard.getByText('Screen is asleep', { exact: true }).waitFor();
         test.trackers[kind]([listed()]);
-        await page.locator('.sleep-overlay').waitFor({ state: 'hidden' });
+        await page.locator('.stream-state').waitFor({ state: 'hidden' });
 
         // The lock notice. Its swipe text is only for a phone that reports no passcode lock.
         const notice = page.locator('.lock-screen-notice .kit-banner-text');

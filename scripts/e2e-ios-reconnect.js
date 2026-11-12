@@ -7,6 +7,7 @@
 const assert = require('node:assert/strict');
 const { chromium } = require('playwright');
 const path = require('node:path');
+const { settleMotion } = require('./ui-motion');
 const SCREENSHOTS = process.env.SCREENSHOTS || '/tmp';
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const UDID = 'fixture-iphone-reconnect';
@@ -88,8 +89,9 @@ async function run(browser, { width, height, colorScheme, checkTiming }) {
         assert.match(await header.textContent(), /Stream unavailable/, `${label}: the header does not say Connecting`);
         assert.equal(await header.getAttribute('data-tone'), 'error', `${label}: a failure has the error tone`);
         // No spinner claiming a reconnect, and nothing lying over the card and its buttons.
-        await page.locator('.sleep-overlay').waitFor({ state: 'hidden' });
         await page.locator('.stream-notice').waitFor({ state: 'hidden' });
+        assert.equal(await page.locator('.stream-state-card').count(), 1, `${label}: one card on the stage`);
+        assert.equal(await page.locator('.stream-state-spinner').count(), 0, `${label}: without a spinner`);
         assert.equal(await notice.count(), 1, `${label}: the error is shown once`);
         assert.equal(await notice.getAttribute('data-stream-problem'), 'error');
         assert.equal(await notice.getByRole('heading').textContent(), 'Stream unavailable');
@@ -103,11 +105,13 @@ async function run(browser, { width, height, colorScheme, checkTiming }) {
         for (const name of ['Retry', 'Phones']) {
             assert.ok(await reachable(page, notice.getByRole('button', { name, exact: true })), `${label}: ${name} can be pressed`);
         }
+        // Centred on the picture's part of the stage: under a mouse the rail of controls is beside it.
         const stage = await page.locator('.stream-stage').boundingBox();
+        const picture = await page.locator('.stream-mount').boundingBox();
         const card = await notice.boundingBox();
         assert.ok(
-            Math.abs(card.x + card.width / 2 - width / 2) <= 2 && card.y >= stage.y && card.y + card.height <= stage.y + stage.height,
-            `${label}: the card is centred on the stage`,
+            Math.abs(card.x + card.width / 2 - (picture.x + picture.width / 2)) <= 2 && card.y >= stage.y && card.y + card.height <= stage.y + stage.height,
+            `${label}: the card is centred on the picture's part of the stage`,
         );
         await noOverflow();
         if (checkTiming) {
@@ -208,14 +212,16 @@ async function noPicture(browser, { width, height, colorScheme }) {
         // A first start is progress, not a problem: the notice, no card.
         const progress = page.locator('.stream-notice').filter({ hasText: 'Preparing the device' });
         await progress.waitFor();
-        // The progress of a start is the kit's banner, hung under the header without moving the stage.
+        // The progress of a start is the kit's banner, in the slot under the header. The stage
+        // starts under it, so it never lies over the picture.
         assert.equal(await progress.evaluate((notice) => notice.matches('.kit-banner.kit-banner-info[role="status"]')), true, `${label}: the notice is an info banner`);
+        await settleMotion(page);
         const hung = await page.evaluate(() => {
             const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
-            return { bar: rect('.kit-bar').bottom, notice: rect('.stream-notice').top, stage: rect('.stream-stage').top };
+            return { bar: rect('.kit-bar').bottom, notice: rect('.stream-notice'), stage: rect('.stream-stage').top };
         });
-        assert.ok(hung.notice >= hung.bar, `${label}: the notice is under the header (${hung.notice}, ${hung.bar})`);
-        assert.ok(Math.abs(hung.stage - hung.bar) <= 1, `${label}: the stage starts under the header while a notice shows (${hung.stage}, ${hung.bar})`);
+        assert.ok(Math.abs(hung.notice.top - hung.bar) <= 1, `${label}: the notice is directly under the header (${hung.notice.top}, ${hung.bar})`);
+        assert.ok(Math.abs(hung.stage - hung.notice.bottom) <= 1, `${label}: the stage starts under the notice (${hung.stage}, ${hung.notice.bottom})`);
         await headerIs('Starting the phone stream…');
         assert.equal(await card.count(), 0);
         await hardwareDisabled(true); // no controls before the stream is up
@@ -253,7 +259,7 @@ async function noPicture(browser, { width, height, colorScheme }) {
         // picture say Reconnecting, also while the new session starts.
         sockets.at(-1).close({ code: 4000, reason: 'Fixture drop' });
         await headerIs('Reconnecting…');
-        await page.locator('.sleep-overlay-label').getByText('Reconnecting…', { exact: true }).waitFor();
+        await page.locator('.stream-state-card .stream-state-title').getByText('Reconnecting…', { exact: true }).waitFor();
         assert.equal(await header.getAttribute('data-tone'), 'warning');
         await page.locator('.stream-notice').filter({ hasText: 'Preparing the device' }).waitFor();
         assert.equal(sockets.length, 3, `${label}: one new socket`);

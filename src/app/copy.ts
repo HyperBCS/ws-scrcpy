@@ -126,3 +126,13 @@ export const STREAM_SERVICE = {
     stoppedTitle: 'Stream service stopped',
     stoppedMessage: 'The stream service on this phone was stopped. Start it to see the screen again.',
 } as const;
+
+// p5-screen-shell
+/**
+ * Why a listed phone cannot be reached, under its status word: the card on the stage of its
+ * screen. The list's card can say the same.
+ */
+export const UNAVAILABLE_HINT = {
+    unauthorized: 'Unlock this phone and approve the USB debugging or trust prompt to connect.',
+    offline: 'Check the phone connection and keep it connected to the server.',
+} as const;

@@ -51,6 +51,18 @@
     flex: none;
 }
 
+/* A tool whose code could not be loaded: the screen's state card (`screen/StateCard.tsx`) in
+   place of the tool, centred in the workspace. */
+.tool-state {
+    display: flex;
+    flex: 1 1 0;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    box-sizing: border-box;
+    padding: var(--space-16);
+}
+
 .tool-mount {
     flex: 1 1 0;
     min-height: 0;
