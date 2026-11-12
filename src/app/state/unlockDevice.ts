@@ -351,8 +351,8 @@ export const noticeUnlockFailure = signal<{ udid: string; message: string } | un
  * The lock notice's Unlock in one tap, when a passcode is saved for the phone: on Android one
  * kept in this browser behind "Remember in this browser", on an iPhone one stored on the server
  * that is usable. Returns undefined when there is none, or when the phone is in a state the
- * sheet explains (another screen over the lock screen, a rejected passcode, the lockout): the
- * notice then opens the sheet.
+ * sheet explains (no live stream, another screen over the lock screen, a rejected passcode, the
+ * lockout): the notice then opens the sheet.
  *
  * The attempt resolves 'failed' with the reason in `noticeUnlockFailure`; the notice then opens
  * the sheet. Nothing is saved by it. A saved Android passcode that sent without a confirmed
@@ -361,6 +361,11 @@ export const noticeUnlockFailure = signal<{ udid: string; message: string } | un
 export function oneTapUnlock(
     udid: string,
 ): ((signal: AbortSignal) => Promise<'unlocked' | 'failed' | 'canceled'>) | undefined {
+    // Only over a live stream, as the notice is shown. An iPhone run without a ready screen
+    // session would start one; the sheet says to wait for the phone instead.
+    if (!streamConnected.peek()) {
+        return undefined;
+    }
     let adapter: UnlockAdapter | undefined;
     let passcode = '';
     let browserCopy = false;

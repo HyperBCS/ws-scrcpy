@@ -518,6 +518,10 @@ test('one tap on Android: nothing saved means the sheet opens; a saved passcode 
 
     const f = oneTapFixture(t, JSON.stringify({ value: '000719', mode: 'pin' }));
     const before = [...f.values.entries()];
+    // No live stream: the sheet says to wait for the phone instead.
+    streamConnected.value = false;
+    assert.equal(oneTapUnlock('test'), undefined, 'nothing is sent without a live stream');
+    streamConnected.value = true;
     // Another screen over the lock screen: the sheet explains it instead.
     f.report({ 'keyguard.occluded': true });
     assert.equal(oneTapUnlock('test'), undefined);
@@ -601,9 +605,11 @@ function iphoneFixture(t, schedule, replies) {
     });
     devices.value = new Map([['ios:phone', entry()]]);
     activeCoreDeviceStream.value = { params: { action: 'stream-coredevice', udid: 'phone' }, client: {} };
+    streamConnected.value = true;
     t.after(() => {
         devices.value = new Map();
         activeCoreDeviceStream.value = undefined;
+        streamConnected.value = false;
         unlockingFromNotice.value = undefined;
         noticeUnlockFailure.value = undefined;
     });
@@ -623,6 +629,11 @@ test('one tap on an iPhone: one server run with the stored passcode, the list co
     }
 
     const ok = iphoneFixture(t, stored, [{ result: JSON.stringify({ at: 1, trigger: 'manual', outcome: 'unlocked' }) }]);
+    // No ready screen session: a run would start one. The sheet says to wait instead.
+    streamConnected.value = false;
+    assert.equal(oneTapUnlock('phone'), undefined, 'no run without a live stream');
+    assert.deepEqual(ok.sent, []);
+    streamConnected.value = true;
     let outcome;
     const done = oneTapUnlock('phone')(new AbortController().signal).then((value) => (outcome = value));
     assert.equal(unlockingFromNotice.value, 'phone');
