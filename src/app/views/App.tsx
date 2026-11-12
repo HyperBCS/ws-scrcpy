@@ -4,16 +4,18 @@ import '../ui/viewport';
 import { route } from '../state/router';
 import { devices } from '../state/devices';
 import { pageTitle } from '../state/pageTitle';
-// `DevicePage` mounts the tool and stream views. They are still named here, where `App` used to
+// `DevicePage` mounts the tool and screen views. They are still named here, where `App` used to
 // import them, because the order of these imports is the order of their styles in the bundle,
-// and rules of equal weight are decided by that order.
+// and rules of equal weight are decided by that order. The screen adapters import `ScreenView`
+// for its type only, so it is named after the Android adapter, where its styles always came.
 import './ToolRoute';
 import { DeviceList } from './DeviceList';
-import './StreamView';
+import './screen/android';
+import './ScreenView';
 import { SettingsSheet } from './SettingsSheet';
 import { startHostTracker } from '../state/hosts';
 import { isToolAction } from './ToolView';
-import './CoreDeviceStreamView';
+import './screen/iphone';
 import { DevicePage } from './DevicePage';
 import { startNotificationSummary } from '../state/notifications';
 import { ErrorBoundary, ScreenFailed } from '../ui/ErrorBoundary';

@@ -22,8 +22,9 @@ import {
 import { AppBar } from '../ui/AppBar';
 import { Button } from '../ui/Button';
 import { Tab, TabStrip } from '../ui/TabStrip';
-import { StreamView } from './StreamView';
-import { CoreDeviceStreamView } from './CoreDeviceStreamView';
+import { ScreenView } from './ScreenView';
+import { useAndroidScreen } from './screen/android';
+import { useIphoneScreen } from './screen/iphone';
 import { ToolRoute } from './ToolRoute';
 import { deviceTools } from './ToolView';
 import '../../style/views/ToolUnavailable.css';
@@ -216,8 +217,10 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
 
     return (
         <>
-            {android && <StreamView params={android} tabs={tabs()} />}
-            {ios && <CoreDeviceStreamView params={ios} tabs={tabs()} />}
+            {/* One screen view, with the adapter of the phone's platform. Each platform keeps its
+                own place among the children, so a view never changes its adapter (its hooks). */}
+            {android && <ScreenView params={android} useScreen={useAndroidScreen} tabs={tabs()} />}
+            {ios && <ScreenView params={ios} useScreen={useIphoneScreen} tabs={tabs()} />}
             {view === 'screen' &&
                 !android &&
                 !ios &&
