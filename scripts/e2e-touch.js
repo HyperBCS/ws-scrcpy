@@ -101,7 +101,7 @@ async function main() {
         const cx = Math.round(r.left + r.width / 2);
         const cy = Math.round(r.top + r.height / 2);
         const el = document.elementFromPoint(cx, cy);
-        const overlay = document.querySelector('.sleep-overlay');
+        const overlay = document.querySelector('.stream-state');
         return {
             videoRect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
             point: { cx, cy },
