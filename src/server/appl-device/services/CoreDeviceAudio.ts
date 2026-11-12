@@ -1,3 +1,4 @@
+import { childEnvironment, getSettings } from '../../Settings';
 import { ChildProcess, spawn } from 'child_process';
 import * as http from 'http';
 import {
@@ -303,7 +304,7 @@ export class CoreDeviceAudioRelay {
      * stdin and must write the same PCM.
      */
     private startDecoder(): ChildProcess | undefined {
-        const override = process.env.IOS_AUDIO_DECODER;
+        const override = getSettings().iosAudioDecoder;
         const command = override || 'ffmpeg';
         const args = override
             ? []
@@ -338,7 +339,7 @@ export class CoreDeviceAudioRelay {
               ];
         let decoder: ChildProcess;
         try {
-            decoder = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+            decoder = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env: childEnvironment() });
         } catch (error) {
             this.setMetadata('error', `The audio decoder could not start: ${(error as Error).message}`);
             return undefined;

@@ -1,3 +1,4 @@
+import { getSettings } from '../../Settings';
 import { ChildProcess } from 'child_process';
 import { TypedEmitter } from '../../../common/TypedEmitter';
 import { KnownBoolean } from '../../../types/AndroidLockState';
@@ -138,11 +139,11 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
     }
 
     public static isEnabled(): boolean {
-        return process.env.IOS_STATE_PROBE !== '0';
+        return getSettings().iosStateProbe;
     }
 
     public static isLockProbeEnabled(): boolean {
-        return this.isEnabled() && process.env.IOS_LOCK_PROBE !== '0';
+        return this.isEnabled() && getSettings().iosLockProbe;
     }
 
     /** Starts watching a paired, connected device; a second call updates its options. */
@@ -560,10 +561,7 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
         if (!Array.isArray(items) || items.length === 0) {
             return 'unknown';
         }
-        const custom = (process.env.IOS_LOCKED_CAPTIONS || '')
-            .split(',')
-            .map((caption) => caption.trim().toLowerCase())
-            .filter(Boolean);
+        const custom = getSettings().iosLockedCaptions;
         const locked = [...LOCKED_CAPTIONS, ...custom];
         const captions = (items as AccessibilityItem[]).flatMap((item) =>
             (typeof item === 'string' ? [item] : [item?.caption, item?.spoken_description])
@@ -583,7 +581,7 @@ export class DeviceStateMonitor extends TypedEmitter<DeviceStateMonitorEvents> {
     // ------------------------------------------------------------------ notifications
 
     private startObserver(entry: Watched): void {
-        if (entry.stopped || process.env.IOS_STATE_NOTIFICATIONS === '0') {
+        if (entry.stopped || !getSettings().iosStateNotifications) {
             return;
         }
         const child = PyMobileDevice.spawnDetached([

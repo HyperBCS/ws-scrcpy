@@ -14,7 +14,9 @@ const previousConfigPath = process.env.WS_SCRCPY_STREAM_CONFIG_PATH;
 process.env.WS_SCRCPY_STREAM_CONFIG_PATH = path.join(temporary, 'stream-config.json');
 // The iOS tracker starts the unlock scheduler, whose store creates the data directory.
 const previousDataDir = process.env.WS_NOTIFICATION_DATA;
+const previousCanonicalDataDir = process.env.WS_DATA_DIR;
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
+process.env.WS_DATA_DIR = path.join(temporary, 'data');
 // The tracker must not listen on this machine's real usbmuxd socket from a test, and the state
 // monitor must start nothing at all: its observer is the installed pymobiledevice3, its lock walk
 // runs python/probes/lockstate.py with the venv's Python, and a screen read that outlives a test's
@@ -23,6 +25,7 @@ process.env.IOS_USBMUX_LISTEN = '0';
 process.env.IOS_STATE_NOTIFICATIONS = '0';
 process.env.IOS_STATE_PROBE = '0';
 require('ts-node').register({ transpileOnly: true });
+const { resetSettingsForTests } = require('../src/server/Settings');
 // Webpack treats these imports as assets. Node only needs the surrounding server classes.
 require.extensions['.jar'] = () => {};
 require.cache[require.resolve('../vendor/Genymobile/scrcpy/LICENSE')] = { exports: {} };
@@ -54,6 +57,8 @@ after(() => {
     else process.env.WS_SCRCPY_STREAM_CONFIG_PATH = previousConfigPath;
     if (previousDataDir === undefined) delete process.env.WS_NOTIFICATION_DATA;
     else process.env.WS_NOTIFICATION_DATA = previousDataDir;
+    if (previousCanonicalDataDir === undefined) delete process.env.WS_DATA_DIR;
+    else process.env.WS_DATA_DIR = previousCanonicalDataDir;
 });
 
 function deferred() {
@@ -1422,6 +1427,7 @@ test('usbmuxd listener: reports ready after Listen is accepted, then every attac
     const previous = { socket: process.env.IOS_USBMUXD_SOCKET, listen: process.env.IOS_USBMUX_LISTEN };
     process.env.IOS_USBMUXD_SOCKET = daemon.socketPath;
     delete process.env.IOS_USBMUX_LISTEN;
+    resetSettingsForTests();
     const listener = new UsbmuxListener();
     const events = [];
     listener.on('ready', (ready) => events.push(`ready ${ready}`));
@@ -1457,6 +1463,7 @@ test('usbmuxd listener: reports ready after Listen is accepted, then every attac
         if (previous.socket === undefined) delete process.env.IOS_USBMUXD_SOCKET;
         else process.env.IOS_USBMUXD_SOCKET = previous.socket;
         process.env.IOS_USBMUX_LISTEN = previous.listen;
+        resetSettingsForTests();
     }
 });
 
@@ -1468,9 +1475,11 @@ test('usbmuxd listener: a refused Listen or a missing socket leaves the tracker 
     const previous = { socket: process.env.IOS_USBMUXD_SOCKET, listen: process.env.IOS_USBMUX_LISTEN };
     assert.equal(UsbmuxListener.isEnabled(), false, 'IOS_USBMUX_LISTEN=0 turns it off');
     delete process.env.IOS_USBMUX_LISTEN;
+    resetSettingsForTests();
     try {
         for (const socketPath of [daemon.socketPath, path.join(temporary, 'no-usbmuxd-here')]) {
             process.env.IOS_USBMUXD_SOCKET = socketPath;
+            resetSettingsForTests();
             const listener = new UsbmuxListener();
             let changes = 0;
             listener.on('change', () => changes++);
@@ -1491,6 +1500,7 @@ test('usbmuxd listener: a refused Listen or a missing socket leaves the tracker 
         if (previous.socket === undefined) delete process.env.IOS_USBMUXD_SOCKET;
         else process.env.IOS_USBMUXD_SOCKET = previous.socket;
         process.env.IOS_USBMUX_LISTEN = previous.listen;
+        resetSettingsForTests();
     }
 });
 

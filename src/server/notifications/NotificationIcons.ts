@@ -1,3 +1,4 @@
+import { childEnvironment } from '../Settings';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -137,6 +138,7 @@ export class NotificationIcons {
                     [...probe.args, source, app],
                     {
                         encoding: 'buffer',
+                        env: childEnvironment(),
                         timeout: 8000,
                         killSignal: 'SIGKILL',
                         maxBuffer: MAX_BYTES,

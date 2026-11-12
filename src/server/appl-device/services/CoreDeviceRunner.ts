@@ -1,3 +1,4 @@
+import { getSettings } from '../../Settings';
 import * as http from 'http';
 import { ChildProcess } from 'child_process';
 import * as portfinder from 'portfinder';
@@ -20,7 +21,7 @@ const READY_POLL_MS = 500;
 // stays 503 far longer, the device-side CoreDevice display daemon is wedged (it accepts the
 // session but never starts capture) -- a phone reboot is the only fix, so say so rather than
 // waiting out the full mount budget below.
-const DISPLAY_WEDGED_TIMEOUT_MS = 25000;
+// Default in Settings.ts: DISPLAY_WEDGED_TIMEOUT_MS = 25000.
 // The last viewer leaving usually means a navigation, not the end of the session: keep the
 // device stream for a moment so a switch/reload does not pay the cold start again.
 const RELEASE_GRACE_MS = 15000;
@@ -39,18 +40,18 @@ const SIGKILL_GRACE_MS = 30000;
 // exactly like SIGKILL. So a stop waits until the process is known to handle the signal, but no
 // longer than this after it was spawned. python/patches/pymobiledevice3-serve-signals.py installs
 // the handlers before the preflight; the wait stays for a venv that does not have that patch yet.
-const SIGNAL_READY_TIMEOUT_MS = 35000;
+// Default in Settings.ts: SIGNAL_READY_TIMEOUT_MS = 35000.
 // Logged by serve-web once it serves HTTP; its signal handlers are installed just before.
 const SIGNAL_READY_PATTERN = /Open https?:\/\//;
 // After a failed session the phone may still hold what serve-web started (a start that fails on
 // "camera in use" exits before its cleanup), and the RTCP timeout takes ~20 s to reclaim it.
-const ERROR_COOLDOWN_MS = 30000;
+// Default in Settings.ts: ERROR_COOLDOWN_MS = 30000.
 // `/restart` stops and starts the phone's video inside serve-web. Each one is a display session
 // on the phone, and a burst of those is what wedges its display service (docs/HANDOFF.md).
 const VIDEO_RESTART_INTERVAL_MS = 30000;
 const MOUNT_TIMEOUT_MS = 180000;
 // Each session's serve-web gets the first free loopback port from here up.
-const SERVE_WEB_BASE_PORT = 18100;
+// Default in Settings.ts: SERVE_WEB_BASE_PORT = 18100.
 const PASTEBOARD_PROBE_SCRIPT = 'pasteboard_restart.py';
 // The probe brings up its own short-lived tunnel, lists the phone's processes and sends one
 // signal; measured end to end at 0.8 s on the bench iPhone over USB.
@@ -361,7 +362,7 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
      */
     public audio(udid: string): CoreDeviceAudioRelay | undefined {
         const session = this.sessions.get(udid);
-        if (!session || session.state !== 'ready' || process.env.IOS_AUDIO === '0') {
+        if (!session || session.state !== 'ready' || !getSettings().iosAudio) {
             return undefined;
         }
         if (!session.audio) {
@@ -486,7 +487,7 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
         this.setState(
             session,
             'starting',
-            previous ? 'Waiting for the previous session to stop' : 'Preparing the device',
+            previous ? 'Waiting for the previous session to stop' : 'Preparing the phone',
         );
         // Publish ownership before any asynchronous work, including port allocation.
         session.ready = this.prepare(session, previous)
@@ -520,7 +521,7 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
             ]);
             clearTimeout(timer);
             if (this.sessions.get(udid) !== session) throw new Error('Session stopped');
-            this.setState(session, 'starting', 'Preparing the device');
+            this.setState(session, 'starting', 'Preparing the phone');
         }
         const port = await CoreDeviceRunner.reservePort(session);
         session.port = port;
@@ -679,28 +680,22 @@ export class CoreDeviceRunner extends TypedEmitter<CoreDeviceRunnerEvents> imple
     // Overridable so test files that run in parallel, each with its own fake serve-web, do not
     // find the same port free at once and answer each other's requests.
     private static serveWebBasePort(): number {
-        const override = Number(process.env.IOS_SERVE_WEB_BASE_PORT);
-        return Number.isInteger(override) && override > 1024 && override < 65536 ? override : SERVE_WEB_BASE_PORT;
+        return getSettings().iosServeWebBasePort;
     }
 
     // Overridable so tests do not have to wait the full 25 s for the wedged-display path.
     private static displayWedgedTimeoutMs(): number {
-        const override = Number(process.env.IOS_DISPLAY_WEDGED_TIMEOUT_MS);
-        return Number.isFinite(override) && override > 0 ? override : DISPLAY_WEDGED_TIMEOUT_MS;
+        return getSettings().iosDisplayWedgedTimeoutMs;
     }
 
     // Overridable so a test can see the bound without a 35 s preflight.
     private static signalReadyTimeoutMs(): number {
-        const override = Number(process.env.IOS_SIGNAL_READY_TIMEOUT_MS);
-        return Number.isFinite(override) && override > 0 ? override : SIGNAL_READY_TIMEOUT_MS;
+        return getSettings().iosSignalReadyTimeoutMs;
     }
 
     // `IOS_SESSION_COOLDOWN_MS`: 0 turns the wait after a failed session off.
     private static errorCooldownMs(): number {
-        const override = Number(process.env.IOS_SESSION_COOLDOWN_MS);
-        return process.env.IOS_SESSION_COOLDOWN_MS && Number.isFinite(override) && override >= 0
-            ? override
-            : ERROR_COOLDOWN_MS;
+        return getSettings().iosSessionCooldownMs;
     }
 
     private setState(session: Session, state: CoreDeviceSessionState, message?: string): void {

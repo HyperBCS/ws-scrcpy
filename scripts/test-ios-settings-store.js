@@ -12,15 +12,18 @@ const path = require('node:path');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-ios-settings-'));
 const previousEnv = {
     WS_NOTIFICATION_DATA: process.env.WS_NOTIFICATION_DATA,
+    WS_DATA_DIR: process.env.WS_DATA_DIR,
     IOS_STATE_PROBE: process.env.IOS_STATE_PROBE,
 };
 // The store defaults to the data directory; the monitor must not probe anything from here.
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
+process.env.WS_DATA_DIR = path.join(temporary, 'data');
 process.env.IOS_STATE_PROBE = '0';
 // The tracker must not listen on this machine's real usbmuxd socket from a test.
 process.env.IOS_USBMUX_LISTEN = '0';
 
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
+const { resetSettingsForTests } = require('../src/server/Settings');
 
 const {
     IosSettingsStore,
@@ -62,11 +65,13 @@ const withEnv = (env, run) => {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
     }
+    resetSettingsForTests();
     const restore = () => {
         for (const [key, value] of Object.entries(previous)) {
             if (value === undefined) delete process.env[key];
             else process.env[key] = value;
         }
+        resetSettingsForTests();
     };
     try {
         const result = run();

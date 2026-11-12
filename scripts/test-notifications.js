@@ -7,11 +7,13 @@ const vm = require('node:vm');
 const express = require('express');
 const webpush = require('web-push');
 require('ts-node').register({ transpileOnly: true });
-const { NotificationService, validateSubscription, shouldRelay } = require('../src/server/notifications/NotificationService');
+const { resetSettingsForTests } = require('../src/server/Settings');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-notifications-'));
 process.env.WS_NOTIFICATION_DATA = temporary;
+process.env.WS_DATA_DIR = temporary;
 process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
 process.env.WS_PUBLIC_URL = 'https://phone.example';
+const { NotificationService, validateSubscription, shouldRelay } = require('../src/server/notifications/NotificationService');
 const originalSend = webpush.sendNotification;
 after(() => { webpush.sendNotification = originalSend; fs.rmSync(temporary, { recursive: true, force: true }); });
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -30,12 +32,14 @@ const withPushEnv = async (values, run) => {
             if (value === undefined) delete process.env[key];
             else process.env[key] = value;
         }
+        resetSettingsForTests();
         await run();
     } finally {
         for (const [key, value] of Object.entries(previous)) {
             if (value === undefined) delete process.env[key];
             else process.env[key] = value;
         }
+        resetSettingsForTests();
     }
 };
 

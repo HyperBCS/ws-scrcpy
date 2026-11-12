@@ -1,3 +1,4 @@
+import { childEnvironment, getSettings } from '../../Settings';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ChildProcess, spawn } from 'child_process';
@@ -5,8 +6,6 @@ import { ChildProcess, spawn } from 'child_process';
 const TAG = '[pymobiledevice3]';
 const PATCH_CHECK_SCRIPT = 'check_patches.py';
 const PATCH_CHECK_TIMEOUT_MS = 15000;
-// `IOS_SETTINGS_KEY_ENV` in IosSettingsStore.ts, repeated so this file does not import the store.
-const SETTINGS_KEY_ENV = 'WS_IOS_SETTINGS_KEY';
 
 export type OneShotResult = { stdout: string; stderr: string; code: number | null };
 
@@ -28,8 +27,9 @@ export class PyMobileDevice {
         if (this.resolved) {
             return this.resolved;
         }
-        if (process.env.IOS_PYMOBILEDEVICE3) {
-            return (this.resolved = process.env.IOS_PYMOBILEDEVICE3);
+        const configured = getSettings().iosPython;
+        if (configured) {
+            return (this.resolved = configured);
         }
         const name = process.platform === 'win32' ? 'Scripts/pymobiledevice3.exe' : 'bin/pymobiledevice3';
         for (const root of [process.cwd(), path.resolve(process.cwd(), '..')]) {
@@ -61,7 +61,7 @@ export class PyMobileDevice {
      * (a system install, or the tests' fake), so there is no interpreter known to see the package.
      */
     public static patchCheckCommand(): { command: string; args: string[] } | undefined {
-        if (process.env.IOS_PATCH_CHECK === '0') {
+        if (!getSettings().iosPatchCheck) {
             return undefined;
         }
         const script = this.resolvePython('patches', PATCH_CHECK_SCRIPT);
@@ -171,15 +171,9 @@ export class PyMobileDevice {
      * `undefined` when the script cannot be found, so the caller can degrade instead of throwing.
      */
     public static probeCommand(name: string): { command: string; args: string[] } | undefined {
-        if (process.env.IOS_PROBE_CMD) {
-            let extra: string[];
-            try {
-                const parsed = JSON.parse(process.env.IOS_PROBE_ARGS || '[]');
-                extra = Array.isArray(parsed) ? parsed.map(String) : [];
-            } catch {
-                extra = [];
-            }
-            return { command: process.env.IOS_PROBE_CMD, args: [...extra, name] };
+        const settings = getSettings();
+        if (settings.iosProbeCommand) {
+            return { command: settings.iosProbeCommand, args: [...settings.iosProbeArgs, name] };
         }
         const script = this.resolveProbe(name);
         if (!script) {
@@ -252,9 +246,7 @@ export class PyMobileDevice {
      * leaving it out here as well covers a variable that was set afterwards.
      */
     public static childEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-        const env: NodeJS.ProcessEnv = { ...process.env, PYTHONUNBUFFERED: '1', ...extra };
-        delete env[SETTINGS_KEY_ENV];
-        return env;
+        return childEnvironment({ PYTHONUNBUFFERED: '1', ...extra });
     }
 
     public static spawnDetached(args: string[], env: NodeJS.ProcessEnv = {}): ChildProcess {
@@ -355,7 +347,7 @@ export class PyMobileDevice {
      * the default. `IOS_TUNNEL=tunneld` opts into an already running `pymobiledevice3 remote tunneld`.
      */
     public static tunnelArgs(udid: string): string[] {
-        return process.env.IOS_TUNNEL === 'tunneld' ? ['--tunnel', udid] : ['--userspace'];
+        return getSettings().iosTunnel === 'tunneld' ? ['--tunnel', udid] : ['--userspace'];
     }
 
     /**
@@ -375,7 +367,7 @@ export class PyMobileDevice {
     }
 
     public static log(line: string): void {
-        if (process.env.WS_SCRCPY_DEBUG) {
+        if (getSettings().debug) {
             process.stderr.write(`${TAG} ${line}\n`);
         }
     }

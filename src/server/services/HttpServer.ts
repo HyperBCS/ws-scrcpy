@@ -7,8 +7,7 @@ import { Utils } from '../Utils';
 import express, { Express } from 'express';
 import { Config } from '../Config';
 import { TypedEmitter } from '../../common/TypedEmitter';
-import * as process from 'process';
-import { EnvName } from '../EnvName';
+import { getSettings } from '../Settings';
 import { knownHost, securityHeaders } from '../requestOrigin';
 /// #if INCLUDE_GOOG && INCLUDE_FILE_LISTING
 import { mountFileDownloads } from '../goog-device/filePush/HttpDownload';
@@ -16,7 +15,7 @@ import { mountFileDownloads } from '../goog-device/filePush/HttpDownload';
 
 const DEFAULT_STATIC_DIR = path.join(__dirname, './public');
 
-const PATHNAME = process.env[EnvName.WS_SCRCPY_PATHNAME] || __PATHNAME__;
+const PATHNAME = getSettings().pathname || __PATHNAME__;
 
 export type ServerAndPort = {
     server: https.Server | http.Server;

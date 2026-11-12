@@ -10,7 +10,7 @@
 set -eu
 
 RUN_AS="${WS_SCRCPY_USER:-node}"
-DATA_DIR="${WS_NOTIFICATION_DATA:-/app/data}"
+DATA_DIR="${WS_DATA_DIR:-${WS_NOTIFICATION_DATA:-/app/data}}"
 
 if [ "$(id -u)" != "0" ]; then
     exec "$@"

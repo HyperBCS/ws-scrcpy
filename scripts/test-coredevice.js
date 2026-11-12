@@ -11,11 +11,13 @@ const os = require('node:os');
 const path = require('node:path');
 
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
+const { resetSettingsForTests } = require('../src/server/Settings');
 
 const FAKE = path.join(__dirname, 'fixtures', 'fake-pymobiledevice3.js');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-coredevice-'));
 // The tracker tests start the unlock scheduler, whose store creates the data directory.
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
+process.env.WS_DATA_DIR = path.join(temporary, 'data');
 // The start budget and the wait after a failed session have their own tests. Everything else
 // starts the same fixture phones far more often than those two would allow.
 process.env.IOS_SESSION_START_LIMIT = '0';
@@ -52,6 +54,7 @@ PyMobileDevice.useBin(shim);
 process.env.IOS_PROBE_CMD = shim;
 // The probe's own name is passed through as its last argument, so the fake knows which one ran.
 process.env.IOS_PROBE_ARGS = JSON.stringify([]);
+resetSettingsForTests();
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 // What `runner.acquire()` hands a proxy; the tests that fake the runner set it by hand.
@@ -64,6 +67,7 @@ const withEnv = async (env, run) => {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
     }
+    resetSettingsForTests();
     try {
         return await run();
     } finally {
@@ -71,6 +75,7 @@ const withEnv = async (env, run) => {
             if (value === undefined) delete process.env[key];
             else process.env[key] = value;
         }
+        resetSettingsForTests();
     }
 };
 
@@ -739,7 +744,7 @@ test('a replacement session starts only after the previous serve-web has closed'
         assert.deepEqual(messages.slice(0, 3), [
             'Restarting the phone session',
             'Waiting for the previous session to stop',
-            'Preparing the device',
+            'Preparing the phone',
         ]);
         runner.release();
     });
@@ -822,6 +827,8 @@ const runHarness = (mode, act = () => undefined) =>
         const child = spawn(process.execPath, [path.join(__dirname, 'fixtures', 'shutdown-harness.js'), mode], {
             env: {
                 ...process.env,
+                WS_DATA_DIR: path.join(temporary, 'data'),
+                WS_NOTIFICATION_DATA: path.join(temporary, 'data'),
                 HARNESS_PYMOBILEDEVICE3: shim,
                 FAKE_LOG: logFile,
                 FAKE_SHUTDOWN_MS: '600',
@@ -3108,6 +3115,7 @@ test('the state monitor reads the screen from the backlight and the lock from th
     assert.equal(DeviceStateMonitor.lockedFromAccessibilityItems([], 'en-US'), 'unknown');
     assert.equal(DeviceStateMonitor.lockedFromAccessibilityItems('nonsense', 'en-US'), 'unknown');
     process.env.IOS_LOCKED_CAPTIONS = 'Gesperrt, Code eingeben';
+    resetSettingsForTests();
     try {
         assert.equal(DeviceStateMonitor.lockedFromAccessibilityItems(items('1:38', 'Gesperrt'), 'de-DE'), true);
         assert.equal(
@@ -3117,6 +3125,7 @@ test('the state monitor reads the screen from the backlight and the lock from th
         );
     } finally {
         delete process.env.IOS_LOCKED_CAPTIONS;
+        resetSettingsForTests();
     }
 
     assert.equal(

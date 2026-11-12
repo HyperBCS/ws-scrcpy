@@ -12,7 +12,9 @@ const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-android-serve
 const previousConfigPath = process.env.WS_SCRCPY_STREAM_CONFIG_PATH;
 process.env.WS_SCRCPY_STREAM_CONFIG_PATH = path.join(temporary, 'stream-config.json');
 const previousDataDir = process.env.WS_NOTIFICATION_DATA;
+const previousCanonicalDataDir = process.env.WS_DATA_DIR;
 process.env.WS_NOTIFICATION_DATA = path.join(temporary, 'data');
+process.env.WS_DATA_DIR = path.join(temporary, 'data');
 require('ts-node').register({ transpileOnly: true });
 // Webpack treats these imports as assets. Node only needs the surrounding server classes.
 require.extensions['.jar'] = () => {};
@@ -58,6 +60,8 @@ after(() => {
     else process.env.WS_SCRCPY_STREAM_CONFIG_PATH = previousConfigPath;
     if (previousDataDir === undefined) delete process.env.WS_NOTIFICATION_DATA;
     else process.env.WS_NOTIFICATION_DATA = previousDataDir;
+    if (previousCanonicalDataDir === undefined) delete process.env.WS_DATA_DIR;
+    else process.env.WS_DATA_DIR = previousCanonicalDataDir;
 });
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));

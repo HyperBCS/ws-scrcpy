@@ -8,9 +8,11 @@ const os = require('node:os');
 const path = require('node:path');
 const express = require('express');
 require('ts-node').register({ transpileOnly: true });
+const { resetSettingsForTests } = require('../src/server/Settings');
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-notification-service-'));
 process.env.WS_NOTIFICATION_DATA = temporary;
+process.env.WS_DATA_DIR = temporary;
 process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
 const { NotificationService } = require('../src/server/notifications/NotificationService');
 const { NotificationFeed, shouldRelay } = require('../src/server/notifications/NotificationFeed');
@@ -158,6 +160,7 @@ function fakeInterpreter(body) {
 async function withCollector(interpreter, run) {
     process.env.WS_BLUETOOTH_PYTHON = interpreter;
     process.env.WS_NOTIFICATIONS_COLLECTOR = '1';
+    resetSettingsForTests();
     try {
         await mounted(async (context) => {
             context.service.closed = false;
@@ -167,6 +170,7 @@ async function withCollector(interpreter, run) {
     } finally {
         delete process.env.WS_BLUETOOTH_PYTHON;
         process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
+        resetSettingsForTests();
     }
 }
 const until = async (condition, what) => {

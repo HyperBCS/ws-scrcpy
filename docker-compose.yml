@@ -56,8 +56,10 @@ services:
       retries: 3
       start_period: 30s
     environment:
-      WS_NOTIFICATION_DATA: /app/data
-      WS_SCRCPY_STREAM_CONFIG_PATH: /app/data/stream-config.json
+      # WS_NOTIFICATION_DATA remains accepted for older deployment environments.
+      WS_DATA_DIR: ${WS_DATA_DIR:-${WS_NOTIFICATION_DATA:-/app/data}}
+      WS_NOTIFICATION_DATA: ${WS_DATA_DIR:-${WS_NOTIFICATION_DATA:-/app/data}}
+      WS_SCRCPY_STREAM_CONFIG_PATH: ${WS_SCRCPY_STREAM_CONFIG_PATH:-${WS_DATA_DIR:-${WS_NOTIFICATION_DATA:-/app/data}}/stream-config.json}
       WS_PUBLIC_URL: https://mini-nuc.tailea1801.ts.net
     volumes:
       - ws-scrcpy-data:/app/data
@@ -94,8 +96,9 @@ services:
       # The first webpack build has to finish before anything is served.
       start_period: 180s
     environment:
-      WS_NOTIFICATION_DATA: /app/data
-      WS_SCRCPY_STREAM_CONFIG_PATH: /app/data/stream-config.json
+      WS_DATA_DIR: ${WS_DATA_DIR:-${WS_NOTIFICATION_DATA:-/app/data}}
+      WS_NOTIFICATION_DATA: ${WS_DATA_DIR:-${WS_NOTIFICATION_DATA:-/app/data}}
+      WS_SCRCPY_STREAM_CONFIG_PATH: ${WS_SCRCPY_STREAM_CONFIG_PATH:-${WS_DATA_DIR:-${WS_NOTIFICATION_DATA:-/app/data}}/stream-config.json}
       WS_PUBLIC_URL: https://mini-nuc.tailea1801.ts.net
     volumes:
       - ws-scrcpy-data:/app/data

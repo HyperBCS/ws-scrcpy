@@ -1,8 +1,8 @@
+import { getSettings } from '../../Settings';
 import * as net from 'net';
 import { TypedEmitter } from '../../../common/TypedEmitter';
 
 const TAG = '[UsbmuxListener]';
-const DEFAULT_SOCKET = '/var/run/usbmuxd';
 const HEADER_BYTES = 16;
 const PLIST_MESSAGE = 8;
 // Far above any real message; a length beyond it means the stream is not usbmuxd's.
@@ -50,11 +50,11 @@ export class UsbmuxListener extends TypedEmitter<UsbmuxListenerEvents> {
     private failureLogged = false;
 
     public static isEnabled(): boolean {
-        return process.env.IOS_USBMUX_LISTEN !== '0' && process.platform !== 'win32';
+        return getSettings().iosUsbmuxListen && process.platform !== 'win32';
     }
 
     public static socketPath(): string {
-        return process.env.IOS_USBMUXD_SOCKET || DEFAULT_SOCKET;
+        return getSettings().iosUsbmuxSocket;
     }
 
     /** Whether usbmuxd accepted the `Listen` request and the connection is still open. */

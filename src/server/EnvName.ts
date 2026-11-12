@@ -1,4 +1,7 @@
 export enum EnvName {
+    DATA_DIR = 'WS_DATA_DIR',
+    /** Kept for existing setups. WS_DATA_DIR takes precedence. */
+    NOTIFICATION_DATA = 'WS_NOTIFICATION_DATA',
     CONFIG_PATH = 'WS_SCRCPY_CONFIG',
     WS_SCRCPY_PATHNAME = 'WS_SCRCPY_PATHNAME',
     STREAM_CONFIG_PATH = 'WS_SCRCPY_STREAM_CONFIG_PATH',

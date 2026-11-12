@@ -1,3 +1,4 @@
+import { getSettings } from '../../Settings';
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveDataDir } from '../../dataDir';
@@ -7,8 +8,6 @@ const FILE_NAME = 'ios-session-starts.json';
 // A burst of short display sessions is what wedges the phone's display service until a reboot:
 // six inside about four minutes did it on the bench phone (docs/HANDOFF.md). Three in five
 // minutes stays well under that and still covers a retry or two.
-const START_LIMIT = 3;
-const START_WINDOW_MS = 5 * 60 * 1000;
 
 /**
  * How many times serve-web was started for each phone, and when. Kept in the data directory so a
@@ -20,16 +19,12 @@ export class StartBudget {
 
     /** `IOS_SESSION_START_LIMIT`: starts allowed per window. 0 turns the budget off. */
     public static limit(): number {
-        const override = Number(process.env.IOS_SESSION_START_LIMIT);
-        return process.env.IOS_SESSION_START_LIMIT && Number.isInteger(override) && override >= 0
-            ? override
-            : START_LIMIT;
+        return getSettings().iosSessionStartLimit;
     }
 
     /** `IOS_SESSION_START_WINDOW_MS`: the length of the window. */
     public static windowMs(): number {
-        const override = Number(process.env.IOS_SESSION_START_WINDOW_MS);
-        return Number.isFinite(override) && override > 0 ? override : START_WINDOW_MS;
+        return getSettings().iosSessionStartWindowMs;
     }
 
     /** Milliseconds until this phone may be started again; 0 when it may be started now. */

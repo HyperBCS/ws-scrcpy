@@ -17,10 +17,12 @@ const express = require('express');
 const webpush = require('web-push');
 
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
+const { resetSettingsForTests } = require('../src/server/Settings');
 
 const FAKE = path.join(__dirname, 'fixtures', 'fake-pymobiledevice3.js');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-unlock-'));
 process.env.WS_NOTIFICATION_DATA = temporary;
+process.env.WS_DATA_DIR = temporary;
 process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
 process.env.WS_PUBLIC_URL = 'https://phone.example';
 const originalSend = webpush.sendNotification;
@@ -77,6 +79,7 @@ fs.writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${FAKE}" "$@"\n`,
 PyMobileDevice.useBin(shim);
 process.env.IOS_PROBE_CMD = shim;
 process.env.IOS_PROBE_ARGS = JSON.stringify([]);
+resetSettingsForTests();
 
 // Digits 2, 5, 8, 0: HID usages 0x1f, 0x22, 0x25, 0x27.
 const PASSCODE = '2580';
@@ -98,6 +101,7 @@ const withEnv = async (env, run) => {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
     }
+    resetSettingsForTests();
     try {
         return await run();
     } finally {
@@ -105,6 +109,7 @@ const withEnv = async (env, run) => {
             if (value === undefined) delete process.env[key];
             else process.env[key] = value;
         }
+        resetSettingsForTests();
     }
 };
 // Everything the code under test writes to the console, so a test can assert what is not there.
