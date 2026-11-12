@@ -230,6 +230,8 @@ async function pasteFlow(browser, platform, options = {}) {
         });
         await page.keyboard.press('Control+Alt+c');
         await page.getByText('This browser blocked copying. Read the clipboard in Actions and copy it there.', { exact: true }).waitFor();
+        assert.equal(await page.locator('[data-browser-clipboard-copy]').count(), 0, 'the fallback removes its temporary field');
+        assert.equal(await chip(page).innerText(), 'Keyboard: phone', 'the fallback restores phone focus');
         assert.equal(t.sockets.length, 1); assert.deepEqual(t.errors, []);
         console.log(`PASS: ${platform} direct paste, limits, Copy from phone and clipboard failures`);
     } finally { await t.context.close(); }
@@ -298,7 +300,7 @@ async function narrowMouseHeader(browser, platform, width) {
     try {
         const selected = process.env.DESKTOP_INPUT_CASE;
         if (selected === 'narrow-header') { for (const platform of ['android', 'ios']) for (const width of [320, 390]) await narrowMouseHeader(browser, platform, width); return; }
-        if (selected === 'paste') { for (const platform of ['android', 'ios']) await pasteFlow(browser, platform); return; }
+        if (selected === 'paste') { for (const platform of ['android', 'ios']) await pasteFlow(browser, platform); await pasteFlow(browser, 'android', { uhid: false }); return; }
         if (selected === 'no-decoder') { await noDecoder(browser); return; }
         for (const platform of ['android', 'ios']) {
             await captureFlow(browser, platform, { width: 1280, theme: 'light' });
