@@ -13,7 +13,9 @@
 //     safe-area insets, without motion when motion is reduced, and 3:1 against a white and a
 //     black picture when idle, light and dark; with Type text open, the button and the panel
 //     beside it stay above its sheet, and the button keeps its place on the stage when the
-//     keyboard shrinks the part in view and the browser pans it.
+//     keyboard shrinks the part in view and the browser pans it; on a touch screen 1180px wide,
+//     where Type text docks beside the stage, the button and its panel keep to the part of the
+//     stage the sheet leaves.
 // CONTROLS_ONLY=button runs only the checks of the controls button.
 // CONTROLS_ONLY=sends runs only the check of what each control sends. It finds the controls by
 // their icons, so it also runs on a build from before the slot map; that is how the sends were
@@ -53,6 +55,8 @@ const IOS = {
 };
 const PHONE = { name: 'phone', width: 390, height: 844, mobile: true };
 const DESKTOP = { name: 'desktop', width: 1280, height: 800, mobile: false };
+// A tablet on its side: wide enough for a docked sheet (`ui/Sheet.tsx`, from 1024px).
+const TABLET = { name: 'tablet', width: 1180, height: 820, mobile: true };
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The cells of the slot map: row and column in the grid of three. */
@@ -666,6 +670,66 @@ async function followsTypingView(browser, platform) {
     console.log(`PASS ${label}: the button stays on the stage when the view is panned`);
 }
 
+/**
+ * A touch screen 1024px or wider docks Type text beside the stage (`ui/Sheet.tsx`). The button
+ * then keeps to the part of the stage the sheet leaves, so it stays in reach and its panel opens
+ * beside it, not under the sheet; when the sheet closes the button goes back to the stage's
+ * edge. The stage is not built again and the page keeps one stream socket.
+ */
+async function besideDockedSheet(browser, platform) {
+    const label = `tablet ${platform} Type text docked`;
+    const test = await start(browser, platform, { viewport: TABLET });
+    const { page } = test;
+    const touch = await finger(page);
+    try {
+        await page.evaluate(() => { window.__controlsStage = document.querySelector('.stream-stage'); });
+        const before = await buttonState(page);
+        const edge = onEdge(`${label} before`, before, 'right');
+        assert.ok(Math.abs(before.fab.right - before.stage.right) < 0.5, `${label}: at the stage's right edge (${before.fab.right}, stage to ${before.stage.right})`);
+        await touch.tap(centre(before.fab));
+        await page.locator('.floating-toolbar.open').waitFor();
+        await settleMotion(page);
+        await touch.tap(centre(await byName(page, 'Type text').evaluate((button) => button.getBoundingClientRect().toJSON())));
+        const sheet = openSheet(page).filter({ has: page.locator('.kit-sheet-title', { hasText: /^Type text$/ }) });
+        await sheet.waitFor();
+        await page.locator('.stream-stage[data-sheet-docked]').waitFor({ state: 'attached' });
+        await settleMotion(page);
+        const dock = await sheet.locator('.kit-sheet-panel').boundingBox();
+        const typing = await buttonState(page);
+        assert.ok(Math.abs(dock.x + dock.width - typing.stage.right) < 1, `${label}: the sheet is docked at the stage's right edge (${dock.x + dock.width}, stage to ${typing.stage.right})`);
+        assert.equal(typing.side, 'right', `${label}: still on the right side`);
+        assert.ok(Math.abs(typing.fab.right - dock.x) < 0.5, `${label}: the button stands against the docked sheet (${typing.fab.right}, sheet from ${dock.x})`);
+        assert.ok(Math.abs(typing.fab.top - before.fab.top) < 0.5, `${label}: at the same height (${typing.fab.top}, was ${before.fab.top})`);
+        assert.equal(
+            await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('.floating-toolbar-fab'), centre(typing.fab)),
+            true,
+            `${label}: the button is not under the sheet`,
+        );
+        await touch.tap(centre(typing.fab));
+        await page.locator('.floating-toolbar.open').waitFor();
+        await settleMotion(page);
+        const panel = await page.locator('.floating-toolbar-panel').boundingBox();
+        assert.ok(panel.x + panel.width <= dock.x + 0.5, `${label}: the panel opens beside the button, not under the sheet (${panel.x}+${panel.width}, sheet at ${dock.x})`);
+        await touch.tap(centre(typing.fab));
+        await page.locator('.floating-toolbar.open').waitFor({ state: 'detached' });
+        await settleMotion(page);
+        await sheet.getByRole('button', { name: 'Close Type text', exact: true }).click();
+        await page.locator('.stream-stage[data-sheet-docked]').waitFor({ state: 'detached' });
+        await settleMotion(page);
+        const after = await buttonState(page);
+        const back = onEdge(`${label} closed`, after, 'right');
+        assert.ok(Math.abs(after.fab.right - after.stage.right) < 0.5, `${label}: back at the stage's right edge (${after.fab.right}, stage to ${after.stage.right})`);
+        assert.ok(Math.abs(back - edge) < 0.01, `${label}: at the height it had (${back}, was ${edge})`);
+        assert.equal(await page.evaluate(() => document.querySelector('.stream-stage') === window.__controlsStage), true, `${label}: the stage is the same element`);
+        assert.equal(test.streams, 1, `${label}: one stream socket`);
+        assert.deepEqual(test.errors, []);
+    } finally {
+        await touch.detach().catch(() => undefined);
+        await test.context.close();
+    }
+    console.log(`PASS ${label}: the button and its panel stay beside the sheet, and the stage keeps one stream`);
+}
+
 /** With motion reduced, the button let go is at its edge at once. */
 async function snapWithoutMotion(browser) {
     const test = await start(browser, 'android', { viewport: PHONE, reducedMotion: 'reduce' });
@@ -782,6 +846,7 @@ async function main() {
                       for (const platform of ['android', 'ios']) {
                           await panelAboveTypeText(browser, platform);
                           await followsTypingView(browser, platform);
+                          await besideDockedSheet(browser, platform);
                       }
                       await snapWithoutMotion(browser);
                       await idleContrast(browser);

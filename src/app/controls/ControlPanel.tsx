@@ -71,25 +71,40 @@ function visibleBox(): Box {
 }
 
 /**
+ * The width a sheet docked at the right edge of the stage takes from it (`ui/Sheet.tsx`, from
+ * 1024px, also on a touch screen). The stage has `data-sheet-docked` while the panel is shown.
+ */
+function dockedWidth(stage: Element | null): number {
+    if (!stage?.hasAttribute('data-sheet-docked')) {
+        return 0;
+    }
+    return parseFloat(getComputedStyle(stage).getPropertyValue('--stream-dock-width')) || 0;
+}
+
+/**
  * Where the panel may open: the part in view, inside the safe area and 12px from its edges. It
- * may lie over the header, but not below the stage, where Type text docks its sheet.
+ * may lie over the header, but not below the stage, where Type text docks its sheet, and not
+ * over a sheet docked beside the stage.
  */
 function panelArea(stage: Element | null): Box {
     const view = visibleBox();
     const inset = safeInsets();
-    const bottom = stage?.getBoundingClientRect().bottom ?? view.bottom;
+    const box = stage?.getBoundingClientRect();
+    const bottom = box?.bottom ?? view.bottom;
+    const docked = dockedWidth(stage);
+    const right = view.right - Math.max(EDGE_MARGIN, inset.right);
     return {
         left: view.left + Math.max(EDGE_MARGIN, inset.left),
         top: view.top + Math.max(EDGE_MARGIN, inset.top),
-        right: view.right - Math.max(EDGE_MARGIN, inset.right),
+        right: box && docked ? Math.min(right, box.right - docked - EDGE_MARGIN) : right,
         bottom: Math.min(view.bottom - Math.max(EDGE_MARGIN, inset.bottom), bottom - EDGE_MARGIN),
     };
 }
 
 /**
  * Where the button may sit: the stage, which starts under the header, the tabs and the banners,
- * within the part in view and the safe area. The button touches the side edges of that area and
- * keeps 12px from its top and bottom.
+ * within the part in view and the safe area, and left of a docked sheet. The button touches the
+ * side edges of that area and keeps 12px from its top and bottom.
  */
 function buttonArea(stage: Element | null): Box {
     const view = visibleBox();
@@ -98,7 +113,7 @@ function buttonArea(stage: Element | null): Box {
     return {
         left: Math.max(box.left, view.left + inset.left),
         top: Math.max(box.top, view.top + inset.top) + EDGE_MARGIN,
-        right: Math.min(box.right, view.right - inset.right),
+        right: Math.min(box.right - dockedWidth(stage), view.right - inset.right),
         bottom: Math.min(box.bottom, view.bottom - inset.bottom) - EDGE_MARGIN,
     };
 }
@@ -238,6 +253,8 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
         const moved = new MutationObserver(() => layout());
         const view = rootRef.current?.closest('.stream-view');
         if (view) moved.observe(view, { attributes: true, attributeFilter: ['style', 'class'] });
+        // A sheet docked beside the stage on a wide touch screen takes its right edge.
+        if (current) moved.observe(current, { attributes: true, attributeFilter: ['data-sheet-docked'] });
         window.addEventListener('resize', layout);
         window.visualViewport?.addEventListener('resize', layout);
         window.visualViewport?.addEventListener('scroll', layout);
