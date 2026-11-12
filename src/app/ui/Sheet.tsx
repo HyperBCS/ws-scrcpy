@@ -56,7 +56,7 @@ interface SheetProps {
  * panel. The panel is what moves, so the backdrop can be pressed in every browser and a toast
  * inside the dialog stays where it is. A modal sheet is the default; see `modal`.
  *
- * The children stay mounted while the sheet is closed, as they did in `BottomSheet`.
+ * The children stay mounted while the sheet is closed, so they keep their state.
  */
 export function Sheet({
     open,

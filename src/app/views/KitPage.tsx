@@ -471,7 +471,7 @@ function Messages() {
                 </Demo>
             </Section>
             <Section title="Toast">
-                <Demo name="kit">
+                <Demo name="with an action, plain, error">
                     <Button onClick={() => setToast({ message: 'Archived.', undo: true })}>Show with Undo</Button>
                     <Button onClick={() => setToast({ message: 'Restored to the inbox.' })}>Show</Button>
                     <Button onClick={() => setToast({ message: 'The phone did not answer.', tone: 'error' })}>
@@ -858,7 +858,7 @@ function Bars() {
                 </Demo>
             </Section>
             <Section title="TabStrip">
-                <Demo name="kit">
+                <Demo name="a phone's views">
                     <div class="kit-demo-frame">
                         <TabStrip label="Phone views" tabs={TABS} current={tab} onSelect={setTab} />
                     </div>

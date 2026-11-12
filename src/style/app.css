@@ -194,9 +194,4 @@ details > summary {
     display: flow-root;
     min-width: 0;
 }
-/* The Type text field keeps the faint halo it had before the kit, inside the kit's focus ring.
-   Type text is rebuilt in its own package, which decides whether it stays. */
-.live-text-input:focus-visible {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-text) 12%, transparent);
-}
 }
