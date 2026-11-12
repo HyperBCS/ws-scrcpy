@@ -22,9 +22,10 @@ const sleep = (page) => page.waitForTimeout(80);
 const chip = (page) => page.locator('.kit-keyboard-chip');
 const control = (page, name) => page.locator(`.control-buttons-list [title="${name}"]`);
 
-async function start(browser, platform, { uhid = true, width = 1280, decode = true, theme = 'light', mobile = false } = {}) {
+async function start(browser, platform, { uhid = true, width = 1280, decode = true, theme = 'light', mobile = false, nativeClipboard = false } = {}) {
     const context = await browser.newContext({ viewport: { width, height: mobile ? 844 : 900 }, colorScheme: theme, isMobile: mobile, hasTouch: mobile });
-    await context.addInitScript((decode) => {
+    if (nativeClipboard) await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await context.addInitScript(({ decode, nativeClipboard }) => {
         window.VideoDecoder = class {
             static async isConfigSupported() { return { supported: decode }; }
             constructor({ output }) { this.output = output; this.state = 'unconfigured'; }
@@ -37,8 +38,10 @@ async function start(browser, platform, { uhid = true, width = 1280, decode = tr
             close() { this.state = 'closed'; }
         };
         if (!decode && window.MediaSource) window.MediaSource.isTypeSupported = () => false;
-        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text) => { window.__copied = text; } } });
-    }, decode);
+        window.__trustedPastes = 0;
+        window.addEventListener('paste', event => { if (event.isTrusted) window.__trustedPastes++; }, true);
+        if (!nativeClipboard) Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text) => { window.__copied = text; } } });
+    }, { decode, nativeClipboard });
     const page = await context.newPage();
     const messages = [], errors = [], sockets = [];
     let pendingSet, failSet = false, holdSet = false;
@@ -83,7 +86,6 @@ async function start(browser, platform, { uhid = true, width = 1280, decode = tr
     const ws = new URL('/__desktop_input__', BASE); ws.protocol = 'ws:';
     url.hash = `!${new URLSearchParams(platform === 'android' ? { action: 'stream', udid: 'keyboard-phone', player: 'webcodecs', ws: ws.href } : { action: 'stream-coredevice', udid: 'keyboard-phone' })}`;
     await page.goto(url.href);
-    await chip(page).waitFor({ state: 'attached' });
     await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent === 'Connected' || document.querySelector('.stream-state')?.textContent.includes('cannot show'));
     if (platform === 'ios' && decode) await page.waitForFunction(() => document.querySelector('.touch-layer')?.width === 428);
     if (!uhid) {
@@ -111,7 +113,7 @@ async function captureFlow(browser, platform, options) {
         assert.equal(await chip(page).innerText(), 'Keyboard: phone');
         if (OUT) await page.screenshot({ path: path.join(OUT, `${platform}-${options.width || 1280}-${options.theme || 'light'}-${options.uhid === false ? 'fallback' : 'native'}.png`) });
         const before = keys().length;
-        await page.keyboard.press('Control+Alt+k'); await sleep(page);
+        await page.keyboard.press('Control+Alt+k'); await page.waitForTimeout(650);
         assert.equal(await chip(page).innerText(), 'Keyboard: this page');
         assert.equal(keys().length, before, 'the release chord sends no key or modifier');
         await page.keyboard.press('Tab');
@@ -149,10 +151,11 @@ async function captureFlow(browser, platform, options) {
         assert.equal(await chip(page).innerText(), 'Keyboard: this page', 'settings and chip share capture');
         await chip(page).click(); await sleep(page);
         await page.keyboard.press('Control+Alt+t'); await page.locator('.live-text-input').waitFor();
-        const n = keys().length;
+        const n = keys().length, textStart = messages.length;
         await t.paste('local field', '.live-text-input');
         await page.waitForTimeout(300);
         assert.equal(keys().length - n, platform === 'ios' ? 22 : 0, 'Type text alone handles its paste once');
+        if (platform === 'android') assert.deepEqual(messages.slice(textStart).filter(m => m[0] === 1).map(m => m.subarray(5).toString()), ['local field'], 'Android Type text injects the pasted text exactly once');
         assert.equal(messages.filter(m => platform === 'ios' ? m.type === 'clipboard' && m.op === 'set' : m[0] === 9).length, 0);
         assert.equal(await page.locator('.stream-stage').evaluate(node => !!node.closest('[inert]')), false, 'Type text leaves the stage active');
         const inert = await page.locator('.stream-view [inert]').evaluateAll(nodes => nodes.map(node => ({ class: node.className, exiting: node.hasAttribute('data-exiting') })));
@@ -173,15 +176,16 @@ async function captureFlow(browser, platform, options) {
     } finally { await t.context.close(); }
 }
 
-async function pasteFlow(browser, platform) {
-    const t = await start(browser, platform), { page, messages } = t;
+async function pasteFlow(browser, platform, options = {}) {
+    const t = await start(browser, platform, { ...options, nativeClipboard: true }), { page, messages } = t;
     try {
-        await page.keyboard.down('Control'); await page.keyboard.press('v'); await page.keyboard.up('Control'); await sleep(page);
-        assert.equal(t.keys().length, 0, 'native paste chord is not sent as phone keys');
-        await t.paste('Browser paste ✓');
+        await page.evaluate(() => navigator.clipboard.writeText('Browser paste ✓'));
+        await page.keyboard.press('Control+v'); await page.waitForTimeout(200);
+        assert.equal(await page.evaluate(() => window.__trustedPastes), 1, 'Ctrl+V raises one real browser paste event');
         const writes = () => messages.filter(m => platform === 'ios' ? m.type === 'clipboard' && m.op === 'set' : m[0] === 9);
-        assert.equal(writes().length, 1, 'one paste writes once');
+        assert.equal(writes().length, 1, 'one real Ctrl+V paste writes once');
         if (platform === 'android') {
+            assert.equal(t.keys().length, 0, 'Ctrl+V sends no Android phone keys');
             assert.equal(writes()[0][9], 1); assert.equal(writes()[0].subarray(14).toString(), 'Browser paste ✓');
         } else {
             assert.equal(writes()[0].text, 'Browser paste ✓');
@@ -195,12 +199,37 @@ async function pasteFlow(browser, platform) {
             assert.equal(t.keys().length, before, 'moving into a sheet cancels pending paste');
             await page.goBack(); await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'detached' }); await sleep(page);
         }
+        const localWrites = writes().length;
+        await control(page, 'Actions').click();
+        const draft = page.getByRole('dialog', { name: 'Actions', exact: true }).locator('textarea:not([readonly])');
+        await draft.focus();
+        await page.evaluate(() => navigator.clipboard.writeText('Keep in this page'));
+        await page.keyboard.press('Control+v'); await sleep(page);
+        assert.equal(await draft.inputValue(), 'Keep in this page', 'native paste stays in a local field');
+        assert.equal(writes().length, localWrites, 'a local field sends no direct phone clipboard write');
+        await page.goBack(); await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'detached' }); await sleep(page);
+        await control(page, 'Type text').click(); await page.locator('.live-text-input').waitFor();
+        const typedAt = messages.length;
+        await page.evaluate(() => navigator.clipboard.writeText('once'));
+        await page.keyboard.press('Control+v'); await page.waitForTimeout(250);
+        if (platform === 'android') assert.deepEqual(messages.slice(typedAt).filter(m => m[0] === 1).map(m => m.subarray(5).toString()), ['once']);
+        else assert.equal(messages.slice(typedAt).filter(m => m.type === 'key').length, 8, 'Type text alone handles the trusted native paste once');
+        assert.equal(writes().length, localWrites, 'native Type text paste sends no direct clipboard write');
+        await page.getByRole('button', { name: 'Close Type text', exact: true }).click();
+        await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'detached' }); await sleep(page);
         const total = writes().length;
         await t.paste('x'.repeat(262144));
         await page.getByText('This text is too long to send. The limit is 256 KB.', { exact: true }).waitFor();
         assert.equal(writes().length, total);
         await t.focus(); await page.keyboard.press('Control+Alt+c');
-        await page.waitForFunction(() => window.__copied === 'Copied phone text');
+        await page.waitForTimeout(100);
+        assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'Copied phone text');
+        await page.evaluate(() => {
+            Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw Error('Denied'); } } });
+            document.execCommand = () => false;
+        });
+        await page.keyboard.press('Control+Alt+c');
+        await page.getByText('This browser blocked copying. Read the clipboard in Actions and copy it there.', { exact: true }).waitFor();
         assert.equal(t.sockets.length, 1); assert.deepEqual(t.errors, []);
         console.log(`PASS: ${platform} direct paste, limits, Copy from phone and clipboard failures`);
     } finally { await t.context.close(); }
@@ -232,6 +261,8 @@ async function phoneLayout(browser, platform, theme) {
         await dialog.waitFor();
         await dialog.locator('[data-section="keyboard"]').scrollIntoViewIfNeeded();
         assert.match(await dialog.locator('.settings-keyboard').innerText(), /Ctrl\+Alt\+K/);
+        const before = t.keys().length; await page.keyboard.press('x'); await sleep(page);
+        assert.equal(t.keys().length, before, 'a bottom sheet keeps keys local');
         if (OUT) await page.screenshot({ path: path.join(OUT, `${platform}-390-${theme}-keyboard.png`) });
         assert.equal(t.sockets.length, 1); assert.deepEqual(t.errors, []);
         console.log(`PASS: ${platform} phone Keyboard settings and unchanged touch header (${theme})`);
@@ -241,12 +272,16 @@ async function phoneLayout(browser, platform, theme) {
 (async () => {
     const browser = await chromium.launch({ headless: true });
     try {
+        const selected = process.env.DESKTOP_INPUT_CASE;
+        if (selected === 'paste') { for (const platform of ['android', 'ios']) await pasteFlow(browser, platform); return; }
+        if (selected === 'no-decoder') { await noDecoder(browser); return; }
         for (const platform of ['android', 'ios']) {
             await captureFlow(browser, platform, { width: 1280, theme: 'light' });
             await captureFlow(browser, platform, { width: 900, theme: 'dark' });
             await pasteFlow(browser, platform);
         }
         await captureFlow(browser, 'android', { uhid: false });
+        await pasteFlow(browser, 'android', { uhid: false });
         await noDecoder(browser);
         for (const platform of ['android', 'ios']) for (const theme of ['light', 'dark']) await phoneLayout(browser, platform, theme);
     } finally { await browser.close(); }
