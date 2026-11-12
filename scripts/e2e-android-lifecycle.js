@@ -133,7 +133,7 @@ async function wakeFromCard(browser, layout, label) {
     const banner = card.locator('.device-asleep-banner');
     const wake = banner.getByRole('button', { name: 'Wake', exact: true });
     await wake.waitFor();
-    assert.match(await banner.textContent(), /Screen is asleep\./);
+    assert.match(await banner.textContent(), /Screen is asleep/);
 
     // The reply is held back so the pending state can be seen.
     let answer;
@@ -193,6 +193,7 @@ async function stoppedStream(browser, layout, label) {
     const panel = page.locator('.stream-service-stopped');
     await panel.waitFor();
     await status.getByText('Stopped', { exact: true }).waitFor();
+    assert.equal(await status.getAttribute('data-tone'), 'neutral');
     assert.match(await panel.textContent(), /Stream service stopped/);
     // Longer than the first reconnect delays of the stream receiver (1 s, then 1.5 s).
     await pause(3500);
@@ -211,9 +212,13 @@ async function stoppedStream(browser, layout, label) {
     await panel.waitFor({ state: 'detached' });
     assert.equal(state.streams.length, 2, 'Start again opens a new connection, which starts the service');
 
-    // Any other close still reconnects by itself.
+    // Any other close still reconnects by itself. A page that was connected says Reconnecting,
+    // in the header and on the card over the picture alike.
     state.streams[1].close({ code: 4007, reason: 'Stream restarted' });
     await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.trim() !== 'Connected');
+    await status.getByText('Reconnecting…', { exact: true }).waitFor();
+    await page.locator('.sleep-overlay-label').getByText('Reconnecting…', { exact: true }).waitFor();
+    assert.equal(await status.getAttribute('data-tone'), 'warning');
     await status.getByText('Connected', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(state.streams.length, 3);
     assert.equal(await panel.count(), 0);
@@ -233,7 +238,7 @@ async function sleepCard(browser, layout, label) {
     await page.locator('.kit-bar-status').getByText('Connected', { exact: true }).waitFor();
     const overlay = page.locator('.sleep-overlay');
     const card = overlay.locator('.sleep-overlay-card');
-    await card.getByText('Screen is off', { exact: true }).waitFor();
+    await card.getByText('Screen is asleep', { exact: true }).waitFor();
     const wake = card.getByRole('button', { name: 'Wake', exact: true });
     assert.deepEqual(
         await card.locator('button').evaluateAll((buttons) => buttons.map((button) => button.className)),
@@ -241,7 +246,7 @@ async function sleepCard(browser, layout, label) {
         `${label}: the card has one action, the kit's primary button`,
     );
     assert.equal(await card.locator('svg.kit-icon').count(), 1, `${label}: the moon is an icon of the set`);
-    assert.equal((await card.textContent()).trim(), 'Screen is offWake', `${label}: no character stands in for an icon`);
+    assert.equal((await card.textContent()).trim(), 'Screen is asleepWake', `${label}: no character stands in for an icon`);
     const box = await wake.boundingBox();
     assert(box.height >= 44 && box.width >= 44, `${label}: Wake is a 44px target`);
     await fits(page, card, `${label} sleep card`);

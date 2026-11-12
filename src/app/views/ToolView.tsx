@@ -4,7 +4,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { ACTION } from '../../common/Action';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { BaseClient } from '../client/BaseClient';
-import { deviceName, DeviceEntry, supportsDeviceTools } from '../state/devices';
+import { DeviceEntry, isDeviceAvailable, phoneName, supportsDeviceTools } from '../state/devices';
+import { toolConnection } from '../state/phoneStatus';
 import { DEFAULT_FILES_PATH } from '../googDevice/client/deviceTools';
 import { findDeviceForTool } from '../state/toolDevice';
 import { deviceHref, followLink } from '../state/links';
@@ -144,7 +145,6 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
     // The tool's code could not be downloaded, usually because a deploy replaced it. Only a
     // reload of the page fetches the new names; reconnecting would ask for the old ones again.
     const [codeMissing, setCodeMissing] = useState(false);
-    const [loaded, setLoaded] = useState(false);
     const [connected, setConnected] = useState(false);
     const [lost, setLost] = useState<Lost>('');
     // Outlives the mount effect: a tool that cannot reconnect in place is mounted again for each
@@ -198,7 +198,6 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
         const openedAt = Date.now();
         setError('');
         setCodeMissing(false);
-        setLoaded(false);
         setConnected(false);
         setLost(retrying ? 'reconnecting' : '');
         setControl(false);
@@ -216,7 +215,6 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                 tellActive();
                 client.onControlChange?.(setControl);
                 client.navigate?.(routeRef.current.get('path') || DEFAULT_FILES_PATH);
-                setLoaded(true);
                 wasConnected ||= client.hasConnection();
                 setConnected(client.hasConnection());
             })
@@ -321,6 +319,12 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
 
     /** A key of the row under the terminal, sent as the terminal would send it. */
     const sendKey = (input: string) => clientRef.current?.sendInput?.(input);
+    const connection = toolConnection({
+        failed: !!error || codeMissing,
+        connected,
+        lost,
+        phoneOffline: !!entry && !isDeviceAvailable(entry),
+    });
 
     const switchPhone = (next: DeviceEntry) => {
         if (tool) {
@@ -344,7 +348,7 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
         >
             {active && (
                 <AppBar
-                    title={entry ? deviceName(entry) : udid}
+                    title={phoneName(udid, entry)}
                     status={<StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />}
                 >
                     <NotificationsLink compact />
@@ -355,20 +359,12 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
             )}
             {active &&
                 tabs(
-                    <span class={`tool-connection ${connected ? 'connected' : ''}`} role="status">
-                        {error
-                            ? 'Unavailable'
-                            : connected
-                              ? 'Connected'
-                              : lost === 'reconnecting'
-                                ? 'Reconnecting…'
-                                : lost === 'ended'
-                                  ? 'Ended'
-                                  : lost === 'closed'
-                                    ? 'Disconnected'
-                                    : loaded
-                                      ? 'Connecting…'
-                                      : 'Opening…'}
+                    <span
+                        class={`tool-connection ${connected ? 'connected' : ''}`}
+                        role="status"
+                        data-tone={connection.tone}
+                    >
+                        {connection.label}
                     </span>,
                 )}
             <section ref={workspaceRef} class="tool-workspace" aria-label={tool?.title}>

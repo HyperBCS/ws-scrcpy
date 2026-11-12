@@ -3,7 +3,8 @@ import { Sheet } from '../ui/Sheet';
 import { canOpenScreen, devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/devices';
 import { activeStream, deviceSwitcherOpen, activeCoreDeviceStream, openSheet } from '../state/stream';
 import { deviceHref, followLink } from '../state/links';
-import { getDeviceStatusInfo } from '../state/deviceStatus';
+import { getDeviceStatusInfo } from '../state/phoneStatus';
+import { SESSION } from '../copy';
 import { isSwitcherShortcut, nextHighlight } from '../state/switcherKeys';
 import { DeviceIcon } from '../ui/DeviceIcon';
 import { Chip } from '../ui/Chip';
@@ -221,9 +222,15 @@ export function DeviceSwitcherSheet({
                         </span>
                         <span class="device-switcher-status">
                             {isCurrent ? (
-                                <Chip tone="info">Viewing</Chip>
+                                <Chip tone="info">{SESSION.viewing}</Chip>
                             ) : !available ? (
-                                <Chip tone={info.tone}>{info.label}</Chip>
+                                <>
+                                    <Chip tone={info.tone}>{info.label}</Chip>
+                                    {/* As on the card: an iPhone's running session is a second mark. */}
+                                    {info.sessionRunning && entry.params.type === 'ios' && (
+                                        <Chip class="device-session">{SESSION.running}</Chip>
+                                    )}
+                                </>
                             ) : (
                                 <>
                                     {/* What the row opens. A sleeping screen matters to a stream, not

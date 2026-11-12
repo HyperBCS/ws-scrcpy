@@ -42,6 +42,7 @@ import { formatMode, formatModified, formatSize, iconMarkup, kindOf, typeLabel }
 import { h, render } from 'preact';
 import { Toast } from '../../ui/Toast';
 import { deviceName } from '../../state/devices';
+import { CONNECTION } from '../../copy';
 import { findDeviceForTool } from '../../state/toolDevice';
 
 type Request = {
@@ -565,7 +566,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             <div class="fx-statusbar">
                 <span class="fx-counts"></span>
                 <span class="file-listing-status fx-status" role="status" aria-live="polite"
-                    >Connecting to device…</span
+                    >${CONNECTION.connecting}</span
                 >
             </div>
             <div class="kit-menu kit-menu-compact files-menu" role="menu" tabindex="-1" hidden></div>

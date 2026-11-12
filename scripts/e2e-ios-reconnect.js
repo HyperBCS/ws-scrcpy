@@ -86,6 +86,7 @@ async function run(browser, { width, height, colorScheme, checkTiming }) {
         assert.ok(opened[2] - opened[1] >= 1900, `${label}: the third try waits about 2 s`);
         assert.match(await notice.textContent(), /The screen stream exited \(3\)\. Stopped retrying after 3 failed starts\./);
         assert.match(await header.textContent(), /Stream unavailable/, `${label}: the header does not say Connecting`);
+        assert.equal(await header.getAttribute('data-tone'), 'error', `${label}: a failure has the error tone`);
         // No spinner claiming a reconnect, and nothing lying over the card and its buttons.
         await page.locator('.sleep-overlay').waitFor({ state: 'hidden' });
         await page.locator('.stream-notice').waitFor({ state: 'hidden' });
@@ -247,6 +248,19 @@ async function noPicture(browser, { width, height, colorScheme }) {
         say({ type: 'status', state: 'ready' });
         await card.waitFor({ state: 'hidden' });
         await headerIs('Connected');
+
+        // The socket drops under a picture, with no failure. The header and the card over the
+        // picture say Reconnecting, also while the new session starts.
+        sockets.at(-1).close({ code: 4000, reason: 'Fixture drop' });
+        await headerIs('Reconnecting…');
+        await page.locator('.sleep-overlay-label').getByText('Reconnecting…', { exact: true }).waitFor();
+        assert.equal(await header.getAttribute('data-tone'), 'warning');
+        await page.locator('.stream-notice').filter({ hasText: 'Preparing the device' }).waitFor();
+        assert.equal(sockets.length, 3, `${label}: one new socket`);
+        assert.equal((await header.textContent()).trim(), 'Reconnecting…');
+        say({ type: 'status', state: 'ready' });
+        await headerIs('Connected');
+        await page.locator('.stream-notice').filter({ hasText: 'Preparing the device' }).waitFor({ state: 'detached' });
 
         // The phone's video arrives in a codec this browser has no decoder for.
         say({ type: 'codec', codec: 'hev1.9.9.L999.B0', description: Buffer.from([1, 2, 3, 4]).toString('base64') });

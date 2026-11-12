@@ -159,7 +159,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
             'android:HOME-PIXEL-0001': 'Ready', 'android:HOME-TAB-0002': 'Asleep', 'android:HOME-LOCKED-0003': 'Locked',
             'android:HOME-OFFLINE-0004': 'Offline', 'android:HOME-UNAUTH-0005': 'Unauthorized',
             [`ios:${LINKED}`]: 'Ready', 'ios:HOME-IPAD-NODEV': 'Needs attention', 'ios:HOME-IPHONE-ERROR': 'Error',
-            'ios:HOME-IPHONE-UNLOCK': 'Needs attention', 'ios:HOME-IPHONE-STREAM': 'Streaming', 'ios:HOME-IPHONE-START': 'Starting…',
+            'ios:HOME-IPHONE-UNLOCK': 'Needs attention', 'ios:HOME-IPHONE-STREAM': 'Ready', 'ios:HOME-IPHONE-START': 'Starting…',
             'ios:HOME-IPHONE-AWAY': 'Offline',
         };
         for (const [key, status] of Object.entries(expected)) {
@@ -169,6 +169,12 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
             assert.ok(size >= 12, `${label} ${status}: status text is ${size}px`);
             assert.ok(ratio >= 4.5, `${label} ${status}: status contrast is ${ratio.toFixed(2)}`);
         }
+        // A running session is a second, neutral chip beside the status, on the iPhone only.
+        const sessionChips = await page.locator('article.device .device-session').evaluateAll((chips) =>
+            chips.map((chip) => [chip.closest('[data-device-key]').dataset.deviceKey, chip.textContent, chip.className]));
+        assert.deepEqual(sessionChips, [['ios:HOME-IPHONE-STREAM', 'Session running', 'kit-chip device-session']], `${label}: one session chip`);
+        assert.ok((await contrastOf(card(page, 'ios:HOME-IPHONE-STREAM').locator('.device-session'))).ratio >= 4.5, `${label}: the session chip is readable`);
+        assert.equal(await page.getByText('Streaming', { exact: true }).count(), 0, `${label}: Streaming is not a status`);
         const small = await page.locator('#devices .device').first().evaluate((el) =>
             [...el.querySelectorAll('.device-meta, .device-serial, summary, .stream-service-status, .desc-block')]
                 .map((node) => parseFloat(getComputedStyle(node).fontSize)).filter((size) => size < 12));
@@ -247,7 +253,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         const unlockLine = unlock.locator('.device-problem[data-problem="unlock"]');
         assert.match(await unlockLine.locator('.device-unlock-schedule.problem').textContent(), /^Scheduled unlock 03:00 and 15:00 · /);
         assert.equal(await unlock.locator('.device-meta .device-unlock-schedule').count(), 0, 'the problem is not repeated in the meta line');
-        await unlock.getByText('Screen is asleep.', { exact: true }).waitFor();
+        await unlock.getByText('Screen is asleep', { exact: true }).waitFor();
         await page.screenshot({ path: path.join(OUT, `devices-${label}.png`), fullPage: true });
         // An unplugged iPhone has no action for its unlock problem, so the problem stays in its meta line.
         const away = card(page, 'ios:HOME-IPHONE-AWAY');
@@ -314,11 +320,14 @@ function auditList({ mobile }) {
     if (bars.length !== 1 || !bars[0].matches('.kit-bar.kit-bar-root')) faults.push('the header is not the kit bar of the list');
     const headings = [...document.querySelectorAll('h1')].map((heading) => heading.textContent);
     if (headings.join('|') !== 'Phones') faults.push(`the page has these h1: ${headings.join('|') || 'none'}`);
-    // A status is a chip with words, never a glyph alone.
+    // A status is a chip with words, never a glyph alone. A running session is a second chip.
     for (const item of page.querySelectorAll('article.device')) {
-        const chips = item.querySelectorAll('.device-header .kit-chip');
+        const chips = item.querySelectorAll('.device-header .kit-chip:not(.device-session)');
         if (chips.length !== 1) faults.push(`${chips.length} status chips: ${name(item)}`);
         else if (!/^[A-Za-z][A-Za-z ]{3,}…?$/.test(chips[0].textContent)) faults.push(`a status without words: "${chips[0].textContent}"`);
+        for (const chip of item.querySelectorAll('.device-header .device-session')) {
+            if (chip.textContent !== 'Session running') faults.push(`a session chip says "${chip.textContent}"`);
+        }
     }
     // Text glyphs that stood in for icons.
     const glyphs = page.textContent.match(/[☾⚠✕▶●▣◐○→←]/g);

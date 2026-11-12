@@ -2,6 +2,7 @@ import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { useEffect } from 'preact/hooks';
 import { clearStarting, isDeviceStarting } from '../state/deviceStatus';
 import { getStreamServiceStatus } from '../state/streamService';
+import { STREAM_SERVICE } from '../copy';
 import '../../style/ui/StreamServiceStatus.css';
 
 interface StreamServiceStatusProps {
@@ -30,7 +31,7 @@ export function StreamServiceStatus({ descriptor, deviceKey, className = '', ses
             title={info.description}
             role="status"
         >
-            Stream service: <strong>{info.label}</strong>
+            {STREAM_SERVICE.name}: <strong>{info.label}</strong>
         </span>
     );
 }

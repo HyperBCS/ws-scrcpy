@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/devices';
-import { listSummary, needsAttention } from '../state/deviceStatus';
+import { connectionStatus, listSummary, needsAttention } from '../state/phoneStatus';
 import { rememberListScroll, savedListScroll } from '../state/deviceListView';
 import { hostsError, hostsStatus } from '../state/hosts';
 import { LIST_PAGE_NAME } from '../state/routes';
@@ -81,7 +81,7 @@ export function DeviceList() {
                             <h2>{disconnected ? 'Connection lost' : 'No devices connected'}</h2>
                             <p>
                                 {disconnected
-                                    ? 'Reconnecting…'
+                                    ? connectionStatus('reconnecting').label
                                     : 'Connect a device by USB or wireless debugging, then unlock it.'}
                             </p>
                             {hostsError.value && disconnected && (

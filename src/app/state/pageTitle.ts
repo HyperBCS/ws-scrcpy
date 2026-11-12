@@ -1,4 +1,4 @@
-import { DeviceEntry, deviceName } from './devices';
+import { DeviceEntry, phoneName } from './devices';
 import { DeviceView, LIST_PAGE_NAME, parseRoute } from './routes';
 
 /** The one name of the app: tab titles, the manifest, index.html and push banners use it. */
@@ -15,9 +15,9 @@ const VIEWS: Record<DeviceView, { label: string; type?: 'android' | 'ios' }> = {
  * The tab title of a route. Every page uses this, so browser history and the task switcher read
  * the same way everywhere: "<Device> · Screen · ws-scrcpy", "<Device> · Files · ws-scrcpy",
  * "Phones · ws-scrcpy", "Notifications · ws-scrcpy". The device is named like its card
- * (`deviceName`), or by its serial until the device list has arrived. A `title` parameter in a
- * device link replaces the whole title, as it always has. Both forms of a phone's address
- * (`state/routes.ts`) give the same title.
+ * (`phoneName`): while it is not listed by the last name the page saw, and by its serial until
+ * the device list has arrived. A `title` parameter in a device link replaces the whole title, as
+ * it always has. Both forms of a phone's address (`state/routes.ts`) give the same title.
  */
 export function pageTitle(route: URLSearchParams, list: Iterable<DeviceEntry>): string {
     const page = parseRoute(route);
@@ -47,5 +47,5 @@ export function pageTitle(route: URLSearchParams, list: Iterable<DeviceEntry>): 
         }
         match ??= entry;
     }
-    return `${match ? deviceName(match) : page.udid} · ${screen.label} · ${APP_NAME}`;
+    return `${phoneName(page.udid, match)} · ${screen.label} · ${APP_NAME}`;
 }

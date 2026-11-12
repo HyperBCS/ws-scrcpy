@@ -2,6 +2,7 @@ import { ComponentChildren } from 'preact';
 import { goUp } from '../state/router';
 import { LIST_PAGE_NAME } from '../state/routes';
 import { Icon } from './Icon';
+import type { ChipTone } from './Chip';
 import '../../style/kit/AppBar.css';
 
 interface AppBarProps {
@@ -71,10 +72,13 @@ export function AppBar({
     );
 }
 
-/** The status line of the bar: one muted line. */
-export function AppBarStatus({ children }: { children: ComponentChildren }) {
+/**
+ * The status line of the bar: one muted line. `tone` is the tone of the state it says
+ * (`state/phoneStatus.ts`), kept as `data-tone` for the browser checks; the line does not show it.
+ */
+export function AppBarStatus({ tone, children }: { tone?: ChipTone; children: ComponentChildren }) {
     return (
-        <span class="kit-bar-status" role="status">
+        <span class="kit-bar-status" role="status" data-tone={tone}>
             {children}
         </span>
     );

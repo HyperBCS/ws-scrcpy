@@ -175,9 +175,11 @@ test('blocked and failed iPhones do not read as Ready', () => {
     );
     assert.equal(status(iphone('D4', { unlockSchedule: { ...schedule, enabled: false, hasPasscode: false } })), 'ready');
 
-    // A running or starting stream still says so; the header count includes the phone anyway.
+    // A running session is a second mark and does not hide the problem; a starting one still
+    // says so. The header count includes the phone anyway.
     const streaming = iphone('E', { session: 'ready', developerMode: false });
-    assert.equal(status(streaming), 'streaming');
+    assert.equal(status(streaming), 'attention');
+    assert.equal(getDeviceStatusInfo(streaming).sessionRunning, true);
     assert.equal(needsAttention(streaming), true);
     assert.equal(status(iphone('E2', { session: 'starting', developerMode: false })), 'starting');
 
@@ -323,16 +325,20 @@ test('a status is words and a chip tone, with no glyph and no colour of its own'
         offline: [android('D', { state: 'offline' }), 'Offline', 'neutral'],
         unauthorized: [android('E', { state: 'unauthorized' }), 'Unauthorized', 'error'],
         starting: [iphone('F', { session: 'starting' }), 'Starting…', 'warning'],
-        streaming: [iphone('G', { session: 'ready' }), 'Streaming', 'info'],
         attention: [iphone('H', { unlockSchedule: schedule }), 'Needs attention', 'warning'],
         error: [iphone('I', { session: 'error' }), 'Error', 'error'],
     };
     for (const [status, [entry, label, tone]] of Object.entries(cases)) {
         const info = getDeviceStatusInfo(entry);
-        assert.deepEqual(info, { status, label, tone }, status);
+        assert.deepEqual({ status: info.status, label: info.label, tone: info.tone }, { status, label, tone }, status);
         assert.match(info.label, /^[A-Z][a-z]+( [a-z]+)?…?$/, `${status} is said in words`);
     }
-    assert.equal(/icon:|color:|[▶●▣☾◐○⚠✕]/.test(read('src/app/state/deviceStatus.ts')), false, 'the status module holds no glyph or colour');
+    // A running session is not a status of its own: the phone is Ready, with a second mark.
+    const running = getDeviceStatusInfo(iphone('G', { session: 'ready' }));
+    assert.deepEqual([running.status, running.label, running.sessionRunning], ['ready', 'Ready', true]);
+    for (const file of ['src/app/state/phoneStatus.ts', 'src/app/copy.ts']) {
+        assert.equal(/color:|[▶●▣☾◐○⚠✕]/.test(read(file)), false, `${file} holds no glyph or colour`);
+    }
 });
 
 test('the status chip and the unread badge of the kit', () => {
