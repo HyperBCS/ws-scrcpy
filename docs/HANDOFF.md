@@ -93,7 +93,7 @@ should generally be left alone.
 | `googDevice/client/FileListingClient.ts` | The file explorer: navigation, views, selection, transfers, folder operations |
 | `googDevice/client/fileTypes.ts` | File kind/icon/size/permission formatting for the explorer |
 | `player/AudioPlayer.ts` | PCM Web Audio playback, optional Opus WebCodecs decode, buffering and browser unlock |
-| `ui/BottomSheet.tsx`, `ui/viewport.ts` | Shared dialog focus/viewport behavior and remote-control PWA gesture handling |
+| `ui/` | The design kit (`Sheet`, `Menu`, `Button`, `AppBar`, ...; styles in `style/kit/`), `dialogFocus.ts` and `viewport.ts`: shared dialog focus and viewport behaviour and remote-control PWA gesture handling |
 | `controlMessage/` | Wire formats — **be extremely careful here, see §4** |
 | `interactionHandler/` | Touch/mouse → control messages. Multi-touch already works; don't rewrite |
 
@@ -2859,7 +2859,8 @@ view files with only a stacking order or a black: `views/FloatingToolbar.css` z-
   views, FloatingToolbar's disable-by-title and 17 scripts find the controls by it. p5-controls
   removes it with the title matching.
 - `views/FloatingToolbar.tsx:104-110, 195-197, 405` (`openedOverSheet`, the `liveTextOpen` part
-  of `sheetOpen`) is dead now that a modal sheet covers the controls button.
+  of `sheetOpen`) is dead now that a modal sheet covers the controls button. Step 4d made Type
+  text not modal again, so this code is in use again: do not remove it.
 - Kit decisions: a toast above a bottom sheet covers the sheet's last action
   (`ui/Toast.tsx:151`, `ui/Sheet.tsx:262`); Notifications holds its toasts while a sheet is open
   (`views/NotificationHistory.tsx:228`, `views/NotificationsView.tsx:440`). `ui/Sheet.tsx:154`
@@ -2872,9 +2873,9 @@ view files with only a stacking order or a black: `views/FloatingToolbar.css` z-
 - `scripts/e2e-deeplink.js:41-61` (phone only, already stale) looks for a control titled
   "Switch device".
 
-**Behaviour that changed, beyond the look.** Type text is modal: a press on the picture closes
-it and does not reach the phone (U-stream-5 withdrawn until the phase 6 side panel; owner to
-confirm). The list's bar stays in place. Notifications sets body class `notifications`, not
+**Behaviour that changed, beyond the look.** Type text was modal in this step: a press on the
+picture closed it and did not reach the phone. Step 4d undid this (U-stream-5 holds again; see
+that section). The list's bar stays in place. Notifications sets body class `notifications`, not
 `list`, and pads its own sides and bottom. Notifications hides a toast while a sheet is open
 and shows it again, with its timer restarted, when the sheet has gone. Files menus sit in the
 top layer, close when their button is pressed again or scrolled away, and keep list shortcuts
@@ -2897,3 +2898,277 @@ outside the form; Back on Android reaching a kit sheet, the switcher or the File
 native time field in Scheduled unlock; the switch, tick boxes and selects in iOS Safari;
 swiping notifications by finger; the Files sheet over the keyboard and the menu in the top layer
 in Safari 17. Nothing ran in WebKit or Firefox.
+
+### Redesign step 4d: one look, and Type text leaves the picture in use (2026-11-12, tested without a phone)
+
+Packages p4-type-text and p4-close, merged into `redesign` from their `review/` branches in that
+order, then joined. This ends phase 4. It is not deployed on its own: the live container still
+runs 2f17e28, and `redesign` carries steps 6s and 4a to 4d. The phone check and the deploy come
+next; the walk for it is at the end of this section.
+
+**The kit look is the only look.** `AppBar`, `AppBarStatus`, `TabStrip`, `Toast`,
+`ConfirmPrompt` and the sheet parts in `ui/SheetControls.tsx` (`SheetGroup`, `SheetRow`,
+`SheetToggleRow`, `SheetStatus`, `VolumeSlider`, `SoundRows`) have one markup with the `kit-`
+class names and no `kit` prop; `AppBarStatus` also lost `connected`. No caller passes `kit`, and
+the type check refuses one. The side-by-side rule of step 4b is over: a new part or a new rule
+for a view uses the kit classes and the role tokens from the start, and nothing older is kept
+beside it.
+
+**What was deleted.** `ui/BottomSheet.tsx` and `SheetFooter`; the stylesheets
+`ui/BottomSheet.css`, `ui/AppBar.css`, `ui/Toast.css`, `ui/ConfirmAction.css`,
+`ui/SheetControls.css`, `ui/NotificationsLink.css` (its 359px bell rule moved to
+`views/StreamView.css`) and `morebox.css` (never imported); the old tab rules in
+`views/ToolView.css` and the older header rule in `ui/StreamServiceStatus.css`; `DESKTOP_DIALOG`
+in `ui/sheetDrag.ts` and its copy in `ui/Presence.tsx` (a sheet passes `SHEET_DIALOG`, and a
+`sheet` presence without a query always slides); `.bottom-sheet-root.open` in
+`googDevice/localKeyboardTarget.ts`; the `.svg` rule in `webpack/ws-scrcpy.common.ts` and
+`typings/custom_svg.d.ts`. In `app.css`: the page-wide button rules
+(`:where(#devices, .notifications-page, ...) button` and `:where(.tool-view, ...) button`),
+`.flex-center`, `.wait`, `.ui-button*`, `.notification-unread-count`, the toolbar glyphs,
+`.live-text-backdrop`, the older field rules, `.device-list-header`, `body.list` and
+`body.shell`. At integration also the Type text field's halo from before the kit
+(`.live-text-input:focus-visible`), so the field has the kit focus ring only, as every other
+field. `svg-inline-loader` (`package.json:83`) is now an unused dependency; removing it needs the
+owner's leave.
+
+**Tokens.** `tokens.css` holds the role tokens, the motion tokens (`--motion-fast`,
+`--motion-settle`, `--motion-exit`, `--ease-out` and the new `--press-transform`) and the font
+stacks (and the new `--font-size-root`). The 51 older names are gone with no alias; each use
+moved onto the role token with the same meaning, and where the values differed the role token
+won. Body text is 15px (`--font-size-15`, was 14px). `scripts/test-sheet-ui.js` fails when a
+stylesheet reads a custom property that no stylesheet defines and no script in `src/app` sets.
+
+**Reduced motion without `!important`.** Under `prefers-reduced-motion` the motion tokens are
+0.01ms and `--press-transform` is `none`, and `app.css` gives every other transition and
+animation 0.01ms in the base layer. So a press scale is written
+`transform: var(--press-transform)`, and a raw duration in a components or views rule is not
+shortened unless that rule has its own reduced-motion block. xterm's CSS is outside the layers:
+the Shell cursor now blinks at its normal rate under reduced motion (`!important` used to force
+0.01ms).
+
+**Small kit changes.** `Button` has a `danger-solid` variant for the answer that confirms a
+removal. `ConfirmPrompt` with `danger` and the Files dialogs (Replace and the removals) use it;
+`kit-confirm-go` is a hook class only. On a touch screen `kit-button` and `kit-icon-button` take
+no text selection and no iOS callout on a long press, so a long press on Open screen, a card's
+Files or Shell link or the bell no longer offers "Open in new tab". A select at the end of a row
+is never narrower than its options and takes at most 70% of the row. The Notifications unread
+count is the kit badge (`kit-badge kit-badge-inline`, with `notification-unread-count` kept as a
+hook class). Toast buttons have a press of their own on every page; the back control, the tabs
+and the switcher rows no longer scale on press on Files and Shell (that came from the deleted
+`.tool-view button` rule, and Screen never had it).
+
+**The style test** (`scripts/test-style-rules.js`, in `npm test`). No stylesheet holds
+`!important`. A width in a media or container query is 600 or 1024px (599 or 1023 for the side
+under it); the other widths the views still use are listed in `VIEW_BREAKPOINTS` for phase 6, and
+a view may not add one. `ALLOWED` holds four entries, each with its reason, and each must equal
+the file's real count, so a value that goes away must leave the list too:
+- `views/FloatingToolbar.css`, z-index 2: the controls (8) and their shield (4) over the picture.
+- `views/SleepOverlay.css`, z-index 1: the sleep overlay over the picture, under the header.
+- `views/StreamView.css`, colours 2 and z-index 4: the black behind the picture, and the order of
+  the picture, its touch layer and the two failure cards.
+- `views/ToolView.css`, colours 1: the black around the terminal, the colour xterm draws it in.
+  The brief named only the black behind the picture; this one was kept as the same case. The
+  owner may want it made a token.
+Every other stylesheet holds tokens only.
+
+**The sheet that is not modal.** `ui/Sheet.tsx` takes `modal` (default true). With
+`modal={false}` the dialog is opened with `show()`, not `showModal()`, and has the class
+`kit-sheet-modeless` (`kit/Sheet.css`): no backdrop, no drag and no handle; the dialog lets
+presses through and only the panel takes them, at `z-index: var(--z-sheet)`. The page is not
+inert, the body gets no `sheet-open` class, and the sheet is never `topSheet`, so a toast raised
+meanwhile stays on the page. It keeps what every sheet has: the header and its close control, the
+history entry (Back closes it; a tab change or another page closes it), Escape and the Tab trap
+while focus is inside it, focus back to the opener, the visual-viewport variables, and the stop
+of touch, mouse and wheel events inside it. Only Type text and the kit page's specimen "Sheet
+that leaves the page in use" use it. Every other sheet is modal as before.
+
+Why Type text: the owner taps the next field on the phone and goes on typing (U-stream-5, as in
+phase 2 at 4031c80). Step 4c had made Type text modal, so a press on the picture closed it and
+was lost. Now a press on the picture reaches the phone, Type text stays open and its field keeps
+focus: `LiveTextOverlay.tsx` gives focus straight back to the field when the Android screen
+(`.touch-layer`) takes it, as at 4031c80; the iPhone screen does not take focus. Type text keeps
+its place from step 4c, at the bottom of the window with the picture fitted above it. With the
+controls button in reach again, the panel opened over Type text (`openedOverSheet` and the
+`liveTextOpen` part of `sheetOpen` in `views/FloatingToolbar.tsx`) is in use again; Back closes
+the panel first, then Type text.
+
+One exception to the step 4b rule that a closing sheet stays modal for its exit: when a sheet
+that is not modal opens while a modal sheet is still playing its exit (iPhone Actions, then Open
+Type text), the modal one's dialog closes at once (`endExit` and `exitEnded` in `Sheet.tsx`). A
+closing modal dialog keeps the whole page inert for about 220 ms, so the field could not take
+focus in the tap, and iPhone Safari raises its keyboard only for a focus in the tap. If that
+sheet opens again before its exit would have ended, it is shown again as a modal. The visible
+effect: Actions goes without its exit animation when it hands over to Type text.
+
+**Keys.** `localKeyboardTarget.ts` matches `dialog.kit-sheet[open]`, which also matches a dialog
+shown with `show()`. While Type text is open no key reaches the phone through the capture path,
+wherever focus is, and a key typed in the field is sent once (Android: one text message and no
+key event; iPhone: one key press). The selector must stay `[open]`: `:modal` would let keys
+reach the phone while Type text is open.
+
+**Proof without a phone.** New checks in default suites, each shown to fail on a build of
+7cca59f: `e2e-ios-typing.js` `pictureFlow` (an iPhone picture from a stubbed `VideoDecoder`:
+presses reach the phone, the field keeps focus, one key press per key, one session, and focus in
+the press from Actions); `e2e-sheet-chrome.js` `typeTextKeepsPicture` (replaces
+`typeTextIsASheet`; Android at 390x844 and 1280x800, both themes); `e2e-overlay-back.js`
+`pageInUseUnderTyping` (replaces `nothingOpensOverTyping`) and the Type text `modal: false` and
+typed-once checks; `e2e-kit-sheet.js` `modeless`. overlay-back still presses a key on the picture
+under every sheet of the screen on both kinds of phone and checks that nothing reaches the phone,
+and that every sheet but Type text is modal. At integration `e2e-sheet-chrome.js`
+`modalSheetsHoldPresses` was added: on an Android screen at both widths, Actions, Stream settings
+and Switch are modal with their backdrop over the picture, and a press or a wheel there reaches
+nothing and closes the sheet; with nothing open the same press reaches the phone. It passes on
+7cca59f too: it guards the other sheets, not the change. Unit checks:
+`test-style-rules.js` (no `!important`, breakpoints, exact `ALLOWED`), `test-kit.js` (one look
+for the sheet parts, the long press, the select width, the unread badge, `danger-solid`) and
+`test-sheet-ui.js` (role tokens only); the kit suite measures the row select in the browser. No
+test file is new, so `package.json` and `scripts/test-browser.js` did not change.
+
+**Atlas.** At integration the base (7cca59f, built from an export) and the merged head were
+each taken twice, with style hashes and with `ATLAS_STYLES=full`. 44 of 292 files have pictures
+that differ, and each was looked at:
+- 36 are the Notifications unread count in the bar, now the kit badge (`#c82e40` to
+  `--danger-fill`, 11px to 12px, the same size and place).
+- 8 are Type text, on both kinds of phone at both widths in both themes: no scrim over the
+  picture and the bar, no handle, the field's focus ring whole on a phone (4px moved from the
+  header to the body; the sheet keeps its height), and the field without its older halo.
+Every other difference is in computed style only and paints nothing in any state: text that
+inherits 15px instead of 14px, `user-select: none` on kit buttons and links on a touch screen,
+the body colours under the views (`body.stream` is `--surface-sunken`, `body.shell` has no black),
+the badge's own box, the Shell's hidden textarea taking the kit focus ring, and lists of
+transition durations. The style differences outside Type text are the same as p4-close's own
+comparison, and the motion differences match it exactly. The Type text states also lose
+`body.sheet-open`, and every stream state has one element fewer (the Type text backdrop, which
+is not rendered). The atlas still checks every state for an older class name and finds none.
+
+**Left for phase 5.**
+- Kit decisions: a toast drawn above a bottom sheet covers the sheet's last action
+  (`ui/Toast.tsx:107`, `AboveSheet`); Escape is heard only inside a sheet (`ui/Sheet.tsx:195`;
+  the switcher works round it, `views/DeviceSwitcherSheet.tsx:158`); `ui/Banner.tsx` takes no
+  event and no label, hence `CardBanner` (`views/DeviceCard.tsx:150`); `kit-button-compact`
+  keeps 13px labels on a touch screen (`kit/Button.css:60`).
+- p5-controls: `control-button` stays a hook class without rules
+  (`toolbox/ToolBoxButton.ts:13`); `openedOverSheet` in `views/FloatingToolbar.tsx` is in use (see
+  above), so it is not dead code.
+- `src/app/googDevice/client/ShellClient.ts:54`: xterm's `fontSize: 14` is off the type scale. It
+  stays because a change resizes the terminal sent to the phone.
+- Rules still in the base layer or written by ID: the `.notification-page-header` and
+  `#devices .device` entrances and `.notification-panels` (`app.css:160-192`), and the `#devices`
+  selectors in `views/DeviceList.css`. No test rejects ID selectors or a selector written twice
+  in one file.
+- Wording: "Unlock device", "Device locked", "Device media", "Device controls", "Switch device"
+  and "Find a device…" still say device. `scripts/e2e-deeplink.js:41-61` (phone only, not in the
+  default list) still looks for a control titled "Switch device".
+
+**Left for phase 6 (p6-desktop-layout).**
+- The widths in `VIEW_BREAKPOINTS` (`scripts/test-style-rules.js:43`): `filelisting.css` 360,
+  380, 700, 720 (a container query) and 900; `views/DeviceList.css` 360, 720 and 1040;
+  `views/StreamView.css` 359 (the compact bell); `views/ToolView.css` 700 and 1000. Take each out
+  of the list as its layout moves.
+- The Type text side panel from 1024px is not built. Type text is `<Sheet modal={false}>`
+  (`views/LiveTextOverlay.tsx:274`), placed from 600px by `views/LiveTextOverlay.css:39-50`, and
+  the stream view reserves the dock height (`views/StreamView.css:17-25`). With Type text open on
+  a desktop the reserved dock cuts off the bottom of the control rail (Type text and Settings are
+  partly hidden at 1440x900), as in 4c and at 4031c80. This matters more now that the rail can be
+  pressed while typing.
+- `kit-sheet-modeless` (`ui/Sheet.tsx:264`, `kit/Sheet.css:178-196`) is a separate axis from the
+  presentation: a docked side panel should be one more presentation, not a change to modal.
+- The controls panel (z-index 8) draws under the Type text sheet (`--z-sheet`, 20) where they
+  overlap, as at 4031c80.
+
+**Risks the owner should know.** A sheet that is not modal cuts short the exit of any modal sheet
+animating out when it opens; only iPhone Actions to Type text does this today. For about 220 ms
+after that, `topSheet` still names the closed Actions dialog, so a toast raised then would stay
+hidden until the window ends; no toast exists on the stream page. Two presses within about 220 ms
+(Type text closing, then Open Type text in Actions) do not run `endExit`, and the field may miss
+focus in that press. Escape closes Type text only while focus is inside it, as at 4031c80.
+
+**Phone check for steps 6s and 4a to 4d.** See the walk below. Nothing in steps 4a to 4d changed
+a route, the router, the service worker or what decides whether a stream view mounts: the stream
+path files (`StreamView.tsx`, `CoreDeviceStreamView.tsx`, `DevicePage.tsx`) changed in 4d only by
+the removed `kit` prop. Type text still begins and ends its typing session on `open`.
+
+The walk is ordered so that it takes two iPhone screen starts in all (step 4 and the reconnect
+in step 6). Keep the server log open and count `display serve-web` starts. Do not open and close
+the iPhone screen in quick succession: three starts in five minutes is the limit, and a burst of
+short sessions wedges the phone's display service.
+1. Deploy, then reload the installed app once on each phone. A page without styles means an old
+   cached stylesheet; reload again.
+2. No screen open, on both phones (installed app and browser) and on the desktop:
+   - Phones list on the notched iPhone, portrait and landscape: the bar reaches under the status
+     bar once and the last card clears the home indicator (`body.list` is gone; only emulated
+     insets were checked). Text is 15px and reads as before.
+   - Long press on Open screen, on a card's Files or Shell link and on the bell: no text
+     selection and no callout. Arm Stop stream service (or Restart services on the iPhone card):
+     the confirm answer is solid red. Press Cancel.
+   - Notifications: the unread count in the bar is the red kit badge. The search field is 44px
+     and does not zoom on focus. The switch, tick boxes and selects work in iOS Safari. Swipe a
+     card by finger to read and to archive. Drag a sheet down by its header. A toast raised
+     while a sheet is open shows after the sheet closes, and its Undo works. On Android, Back
+     with a card sheet open and a prompt armed cancels the prompt first, then closes the sheet.
+     Setup: the Bluetooth pairing part looks right.
+   - `#!action=kit` (no stream): on the iPhone, Sheet with a text field raises no keyboard until
+     a field is tapped, then stands on the keyboard with no zoom. On Android, Back closes Short
+     sheet and stays on the page; with the confirm prompt armed, the first Back cancels it; a
+     busy sheet stays on Back. On both: a drag past halfway closes a sheet, a short drag settles
+     back, a tap on the dimmed backdrop closes it, the long sheet scrolls only its body, Toast
+     over a sheet can be pressed, a stacked sheet closes first on Back, the menu opens at More
+     and closes by an outside tap and by Back, Rename returns focus to More. New: Sheet that
+     leaves the page in use has no dimming, the page beside it can be pressed and scrolled while
+     it stays open, its field raises the keyboard, and Close, Escape and Back close it. From
+     Short sheet, Go to the page in use: the short sheet goes at once and its field can be
+     tapped in the same press.
+   - Desktop with a mouse: hover and Tab through the sheets; the focus rings show. With reduced
+     motion on, sheets and toasts appear at once; the Shell cursor blinks at its normal rate
+     (known).
+3. Android screen (no iPhone start):
+   - The bar (61px, 71px with the stream service line) and the tabs (45px) sit above the
+     picture. Touches near the top, the bottom and the edges land where pressed. Hold Power and
+     the volume keys on the controls tiles: a hold is a hold, a tap is a tap.
+   - Type text: the keyboard comes up, the sheet stands on it, and nothing dims the picture or
+     the bar. Tap a text field in the picture: the tap reaches the phone, Type text stays open,
+     the keyboard stays up (it may flicker as focus comes back to the field) and typing goes into
+     the new field, each key once. The field's focus ring is whole. Open the controls panel over
+     Type text: Back closes the panel, then Type text, then leaves the page. The Files tab closes
+     Type text, and it does not come back on Screen. Close ends typing.
+   - Each other sheet (Settings, Actions, Unlock, Switch phone): a tap beside it closes it and
+     does not reach the phone. The Back gesture closes it and stays on the page. A hardware or
+     Bluetooth keyboard sends nothing to the phone while any sheet is open, Type text included;
+     with nothing open its keys reach the phone. In Stream settings, Listen sits beside its text.
+   - With the screen off, Wake: one wake, the card goes, no second stream. With the phone
+     locked, the lock notice is the blue banner; Unlock opens the sheet, its footer stays above
+     the keyboard and Enter submits.
+   - Files: New folder and Rename stand above the keyboard; row menus open on top and close on a
+     second press of their button; Replace in a name conflict is solid red; a quick second Back
+     on that question does not skip the next one; the upload bar and Properties look right.
+     Shell: the keys work with the on-screen keyboard and the terminal fills its area.
+   - Stop the stream service from the card and open the screen: the failure card and the
+     notices look right. Open and leave the screen a few times: one stream per open.
+4. iPhone screen, one session (first start). Keep this page open for step 5.
+   - Bar, tabs and touch aim as on Android. Hold Siri on its tile: a hold is a hold, a tap is a
+     tap.
+   - Type text from the controls: the keyboard comes up in the same tap, the sheet stands on it
+     and the picture shows above it. Tap a text field in the picture: the tap reaches the iPhone,
+     the keyboard stays up, Type text stays open and typing goes into the new field. Also in
+     landscape. Close ends typing.
+   - Actions, then Open Type text: Actions goes at once, without its animation, and the keyboard
+     comes up in that same tap.
+   - Unlock sheet, only with the right passcode: the footer stays above the keyboard and Enter
+     submits. The lock notice stays bright while the screen is asleep. Scheduled unlock: the time
+     field works and the status is as before.
+   - Open the same iPhone page in a desktop browser while the phone's page is still open. It joins
+     the running session (the log shows no new start). With each sheet open, keys from the
+     desktop keyboard do not reach the iPhone; with nothing open they do; in Type text each key
+     arrives once.
+5. With that iPhone screen still open, stop the container once (normal stop, 80 s grace). After
+   `Received signal SIGTERM` the log shows `Stopping iDevice Tracker [...]`, then
+   `Stopping iOS CoreDevice session runner`, then serve-web's `shutdown complete` for the phone,
+   and Node exits well inside the grace. No `mounter auto-mount`, `Preparing the device` or new
+   `display serve-web` start after the signal; no `did not stop in time`, `Still running after
+   shutdown` or `Failed to stop`.
+6. Start the container. The open iPhone page reconnects with one serve-web start (second start);
+   the screen, touch, keys and buttons work. If the display service looks stuck, reboot the
+   phone and keep the log. The Phones list shows each iPhone's session, screen and lock state,
+   and the scheduled unlock status is as before. The next scheduled unlock run finishes.
+7. Optional: stop the container with an iPhone page open and no screen session. It exits within
+   a few seconds.
