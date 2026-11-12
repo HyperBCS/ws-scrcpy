@@ -334,3 +334,13 @@ test('probe argument null characters fail before starting a child', () => {
     assert.throws(() => readSettings({ IOS_PROBE_ARGS: JSON.stringify(['invalid\0argument']) }),
         /IOS_PROBE_ARGS/);
 });
+
+test('fully qualified host names keep their trailing dot', () => {
+    const settings = readSettings({ WS_ALLOWED_HOSTS: 'Phone.Example.', ADB_HOST: 'Adb.Example.' });
+    assert.deepEqual(settings.allowedHosts, ['phone.example.']);
+    assert.equal(settings.adbHost, 'adb.example.');
+    assert.doesNotThrow(() => validateConfiguration({ allowedHosts: ['phone.example.'],
+        server: [{ redirectToSecure: { host: 'phone.example.' } }],
+        remoteHostList: [{ type: 'ios', hostname: 'remote.example.', port: 8443, secure: true }],
+    }));
+});

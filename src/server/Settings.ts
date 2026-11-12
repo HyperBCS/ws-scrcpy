@@ -82,7 +82,8 @@ function host(value: unknown, field: string): string {
     const bracketed = name.startsWith('[') && name.endsWith(']');
     const bare = bracketed ? name.slice(1, -1) : name;
     if (net.isIP(bare) && (!bracketed || net.isIP(bare) === 6)) return name;
-    if (name.length > 253 || !name.split('.').every((part) => /^[a-z\d](?:[a-z\d-]*[a-z\d])?$/.test(part)))
+    const domain = name.endsWith('.') ? name.slice(0, -1) : name;
+    if (domain.length > 253 || !domain.split('.').every((part) => /^[a-z\d](?:[a-z\d-]*[a-z\d])?$/.test(part)))
         invalid(field, 'a host name or IP address');
     return name;
 }
