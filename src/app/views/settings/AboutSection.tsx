@@ -1,3 +1,4 @@
+import { useRef } from 'preact/hooks';
 import { Button } from '../../ui/Button';
 import { SheetRow } from '../../ui/SheetControls';
 import { DeviceEntry, isDeviceAvailable } from '../../state/devices';
@@ -265,11 +266,22 @@ export function AboutSection({ platform, udid, entry, name, opening, screenOpen,
         ? [android['ro.product.manufacturer'], android['ro.product.model']].filter(Boolean).join(' ')
         : ios?.model;
     const version = android ? android['ro.build.version.release'] : ios?.version;
-    const rows = !entry
+    // The phone as last listed in this opening of the sheet. The list is empty for a moment when
+    // its socket drops: the service rows stay, off until the phone is listed again, so the outcome
+    // of a command that was out when the socket dropped is still shown under them.
+    const last = useRef<{ opening?: object; entry?: DeviceEntry }>({});
+    if (last.current.opening !== opening) {
+        last.current = { opening };
+    }
+    if (entry) {
+        last.current.entry = entry;
+    }
+    const known = entry ?? last.current.entry;
+    const rows = !known
         ? []
-        : platform === 'android'
-          ? androidServices(entry, name, connected)
-          : iosServices(entry, name, connected, screenOpen);
+        : known.params.type === 'android'
+          ? androidServices(known, name, connected)
+          : iosServices(known, name, connected, screenOpen);
     return (
         <SettingsSection name="about">
             <SettingsGroup title="Phone" class="settings-facts">

@@ -675,7 +675,7 @@ async function streamSheetsFlow(browser) {
     const stored = { enabled: true, time: '03:00', hasPasscode: true, timeZone: ZONE, nextRunAt: Date.UTC(2026, 10, 11, 8, 0) };
     for (const [width, height, mobile] of [[390, 844, true], [1280, 800, false]]) {
         const test = await start(browser, { width, height, mobile, status: stored, device: { session: 'ready', 'screen.power': 'on', 'device.locked': false }, stream: true });
-        const { page, handlers, sockets } = test;
+        const { page, commands, handlers, sockets } = test;
         const label = mobile ? 'phone' : 'desktop';
         const settingsDialog = page.getByRole('dialog', { name: 'Settings', exact: true });
         const actionsDialog = page.getByRole('dialog', { name: 'Actions', exact: true });
@@ -770,9 +770,39 @@ async function streamSheetsFlow(browser) {
                 const button = Array.from(document.querySelectorAll('dialog.kit-sheet[open] button')).find((el) => el.textContent.trim() === 'Send to phone');
                 return button && !button.disabled;
             });
+            await page.getByRole('button', { name: 'Close Actions' }).click();
+            await actionsDialog.waitFor({ state: 'hidden' });
+
+            // Remount with no answer, from Settings on the screen: the tracker socket drops, and
+            // the service rows are not left disabled.
+            await control('Settings');
+            await settingsDialog.waitFor();
+            const services = settingsDialog.locator('.settings-services');
+            const remount = services.getByRole('button', { name: 'Remount developer image', exact: true });
+            await remount.scrollIntoViewIfNeeded();
+            await remount.click();
+            await settingsDialog.getByRole('alertdialog', { name: 'Remount the developer image on iPhone fixture?', exact: true })
+                .locator('.kit-confirm-go:not([aria-disabled])').waitFor();
+            await settingsDialog.getByRole('button', { name: 'Remount', exact: true }).click();
+            await services.getByText('Remounting the developer image…').waitFor();
+            assert.equal(await remount.isDisabled(), true);
+            assert.equal(ofType(commands, 'remount_ddi').length, 1);
+            sockets.tracker.close();
+            await settingsDialog.getByText('The connection to the server dropped before it answered. Check the result once it is back.').waitFor();
+            // With the tracker back, a command is answered by request id and its text is shown.
+            await page.waitForFunction(() => !!document.querySelector('.kit-bar-name')?.textContent.includes('iPhone fixture'), undefined, { timeout: 10000 });
+            for (const name of ['Restart services', 'Remount developer image', 'Refresh info']) {
+                const button = name === 'Refresh info' ? services.locator('[data-service="refresh"]').getByRole('button') : services.getByRole('button', { name, exact: true });
+                await page.waitForFunction((el) => !el.disabled, await button.elementHandle(), { timeout: 10000 });
+            }
+            handlers.onCommand = (command) => (command.type === 'refresh_device' ? { result: null } : undefined);
+            await page.waitForTimeout(2500);
+            await services.locator('[data-service="refresh"]').getByRole('button').click();
+            await services.getByText('Phone info refreshed.', { exact: true }).waitFor({ timeout: 10000 });
+            assert.equal(ofType(commands, 'refresh_device').length, 1);
 
             assert.deepEqual(test.errors, []);
-            console.log('PASS iOS stream sheets', label, 'Settings from the controls and Actions, restart reply, a request ends when the stream socket drops');
+            console.log('PASS iOS stream sheets', label, 'Settings from the controls and Actions, restart reply, a request ends when its socket drops');
         } finally {
             await test.context.close();
         }
