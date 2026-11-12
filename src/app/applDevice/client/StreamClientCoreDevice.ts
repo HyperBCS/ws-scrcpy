@@ -127,7 +127,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
             key: this.onKey,
             release: () => this.releaseAllKeys(),
             controls: () => this.controls,
-            paste: (text, current) => this.pasteText(text, current),
+            paste: (text, current, signal) => this.pasteText(text, current, signal),
             requestClipboard: () => this.requestClipboard(),
         });
         this.receiver.on('connected', this.onConnected);
@@ -192,7 +192,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
 
     /** `x`/`y` in video pixels; the wire wants the 0..65535 screen-normalised form. */
     public sendTouch(op: 'contact' | 'release' | 'tap', x: number, y: number, videoSize: Size): void {
-        if (this.decoderProblem || !videoSize.width || !videoSize.height) {
+        if ((this.decoderProblem && op !== 'release') || !videoSize.width || !videoSize.height) {
             return;
         }
         this.receiver.send({
@@ -207,7 +207,10 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         contacts: import('../../../common/CoreDeviceProtocol').CoreDeviceContact[],
         videoSize: Size,
     ): void {
-        if (this.decoderProblem || !videoSize.width || !videoSize.height) return;
+        if (!videoSize.width || !videoSize.height) return;
+        // A lost picture blocks new contacts, but held fingers must still be lifted.
+        if (this.decoderProblem) contacts = contacts.filter((contact) => !contact.touching);
+        if (!contacts.length) return;
         this.receiver.send({
             type: 'touch-frame',
             contacts: contacts.map((c) => ({
@@ -264,15 +267,21 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
      * produced it. The proxy serialises the loopback POSTs behind it as well; the short gap is
      * for the device, which coalesces a press and release that arrive in the same instant.
      */
-    private enqueueReports(reports: number[][]): Promise<void> {
+    private enqueueReports(reports: number[][], current: () => boolean = () => true): Promise<void> {
         this.beginTyping();
         const generation = this.inputGeneration;
         const run = this.typing.then(async () => {
+            let held = false;
             for (const report of reports) {
                 if (this.stopped || generation !== this.inputGeneration) {
                     return;
                 }
+                if (!current()) {
+                    if (held) this.sendKeyboardReport([]);
+                    return;
+                }
                 this.sendKeyboardReport(report);
+                held = report.length > 0;
                 await new Promise((resolve) => setTimeout(resolve, 8));
             }
         });
@@ -338,7 +347,9 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     }
 
     /** Set the clipboard once and paste only after the phone confirms the write. */
-    public async pasteText(text: string, current: () => boolean): Promise<void> {
+    public async pasteText(text: string, current: () => boolean, signal?: AbortSignal): Promise<void> {
+        if (!current()) return;
+        if (signal?.aborted) throw Error('The paste was cancelled.');
         const generation = this.inputGeneration;
         await new Promise<void>((resolve, reject) => {
             const id = this.nextRequestId++;
@@ -346,6 +357,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
                 clearTimeout(timer);
                 this.off('result', onResult);
                 this.off('link', onLink);
+                signal?.removeEventListener('abort', onAbort);
                 if (error) reject(Error(error));
                 else resolve();
             };
@@ -356,12 +368,15 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
             const onLink = ({ open }: { open: boolean }) => {
                 if (!open) done('The phone disconnected before the paste finished.');
             };
+            const onAbort = () => done('The paste was cancelled.');
             const timer = setTimeout(() => done('No answer from the phone clipboard.'), 25000);
             this.on('result', onResult);
             this.on('link', onLink);
+            signal?.addEventListener('abort', onAbort, { once: true });
             if (!this.receiver.send({ type: 'clipboard', op: 'set', text, id })) done('The phone is not connected.');
         });
-        if (current() && generation === this.inputGeneration) await this.pressKey(0x19, [0xe3]);
+        if (current() && generation === this.inputGeneration)
+            await this.enqueueReports([[0xe3], [0xe3, 0x19], [0xe3], []], () => current() && !signal?.aborted);
     }
 
     private onKey = (event: KeyboardEvent): void => {
@@ -423,6 +438,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
             return;
         }
         this.decoderProblem = message;
+        if (message) this.touchHandler?.releaseActiveTouch();
         this.updateConnected();
         this.emit('decoderError', { message });
     }

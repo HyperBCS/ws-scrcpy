@@ -1666,3 +1666,132 @@ test('reserved phone shortcuts use the offered controls and skip keys absent fro
     assert.deepEqual(calls, ['home down', 'home up'], 'capabilities omit Back and Overview on an iPhone');
     t.after(() => iphone.release());
 });
+
+
+test('iPhone direct paste rechecks its target inside the queued reports and lifts sent modifiers', async t => {
+    const { client, sent } = iphoneClient(t, 'paste-report-cancel');
+    let current = true;
+    const original = client.sendKeyboardReport.bind(client);
+    t.mock.method(client, 'sendKeyboardReport', usages => {
+        original(usages);
+        if ([...usages].includes(0xe3)) current = false;
+    });
+    const pasted = client.pasteText('cancel after modifier', () => current);
+    client.emit('result', { id: 1, ok: true });
+    await pasted;
+    assert.deepEqual(sent.filter(m => m.type === 'key').map(m => m.usages), [[0xe3], []],
+        'a target change after Cmd goes down releases it and never presses V');
+});
+
+test('a changed keyboard target cancels the clipboard write wait and permits the next paste', async t => {
+    const writes = [];
+    const f = captureFixture(t, { paste: (_text, _current, signal) => new Promise(resolve => {
+        writes.push(signal);
+        signal?.addEventListener('abort', resolve, { once: true });
+    }) });
+    const paste = () => f.capture.onPaste({ target: element(), clipboardData: { getData: () => 'text' },
+        preventDefault() {}, stopImmediatePropagation() {} });
+    paste(); await Promise.resolve();
+    f.capture.invalidate();
+    assert.equal(writes[0]?.aborted, true, 'focus change aborts the waiting clipboard operation');
+    paste(); await Promise.resolve();
+    assert.equal(writes.length, 2, 'a cancelled clipboard operation does not block the new target');
+});
+
+test('iPhone paste cancellation removes pending clipboard listeners without waiting for a reply', async t => {
+    const { client } = iphoneClient(t, 'paste-abort');
+    const abort = new AbortController();
+    const pasted = client.pasteText('cancel pending ack', () => true, abort.signal);
+    abort.abort();
+    // A late reply is sent so the old implementation also settles; it must have rejected first.
+    client.emit('result', { id: 1, ok: true });
+    await assert.rejects(pasted, /cancel/i);
+    assert.equal(client.listenerCount('result'), 0);
+    assert.equal(client.listenerCount('link'), 0);
+});
+
+test('decoder loss lifts iPhone contacts and blocks new touches while keeping commands ready', t => {
+    const { client, sent } = iphoneClient(t, 'decoder-touch-release');
+    const { streamConnected } = require('../src/app/state/stream');
+    client.socketOpen = true; client.sessionState = 'ready';
+    const size = new Size(100, 200);
+    client.touchHandler = { releaseActiveTouch() {
+        client.sendTouch('release', 25, 40, size);
+        client.sendContacts([{ id: 1, x: 25, y: 40, touching: false }], size);
+    }, release() {} };
+    client.setDecoderProblem('decoder unavailable');
+    assert.equal(streamConnected.value, true, 'session commands stay ready without decoding');
+    assert.deepEqual(sent.filter(m => m.type.startsWith('touch')).map(m => m.type), ['touch', 'touch-frame'],
+        'losing the picture lifts the active drag and all fingers');
+    sent.length = 0;
+    client.sendTouch('contact', 25, 40, size);
+    client.sendTouch('tap', 25, 40, size);
+    client.sendContacts([{ id: 1, x: 25, y: 40, touching: true }], size);
+    assert.deepEqual(sent, [], 'no new touch is sent without a usable picture');
+    client.sendTouch('release', 25, 40, size);
+    client.sendContacts([{ id: 1, x: 25, y: 40, touching: false }], size);
+    assert.equal(sent.length, 2, 'release remains possible after decoding fails');
+});
+
+
+test('a late browser clipboard completion does not replace the new screen notice', async t => {
+    const { deviceClipboard, deviceClipboardError, streamNotice } = require('../src/app/state/stream');
+    deviceClipboard.value = undefined; deviceClipboardError.value = '';
+    let finish;
+    const before = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () => new Promise(resolve => { finish = resolve; }) } });
+    t.after(() => { if (before) Object.defineProperty(navigator, 'clipboard', before); else delete navigator.clipboard; });
+    const f = captureFixture(t);
+    const copied = f.capture.copy();
+    deviceClipboard.value = 'phone text';
+    await Promise.resolve(); await Promise.resolve();
+    assert.equal(typeof finish, 'function', 'the browser copy is in flight');
+    f.capture.invalidate();
+    streamNotice.value = 'New screen notice';
+    finish(); await copied;
+    assert.equal(streamNotice.value, 'New screen notice');
+});
+
+
+test('a repeated native paste chord keeps the outstanding clipboard action busy', async t => {
+    const writes = [];
+    const f = captureFixture(t, { paste: (_text, _current, signal) => {
+        writes.push(signal); return new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    } });
+    const paste = () => f.capture.onPaste({ target: element(), clipboardData: { getData: () => 'text' },
+        preventDefault() {}, stopImmediatePropagation() {} });
+    paste(); await Promise.resolve();
+    f.key('keydown', 'ControlLeft', { ctrlKey: true });
+    f.key('keydown', 'KeyV', { ctrlKey: true });
+    paste(); await Promise.resolve();
+    assert.equal(writes.length, 1, 'the repeated paste waits for the first action');
+    assert.equal(writes[0].aborted, false, 'its native chord does not cancel the first action');
+});
+
+
+test('unmount rejects a pending iPhone paste and ignores a late clipboard acknowledgement', async t => {
+    const { client, sent } = iphoneClient(t, 'paste-unmount');
+    const pasted = client.pasteText('pending on unmount', () => true);
+    client.stop();
+    client.emit('result', { id: 1, ok: true });
+    await assert.rejects(pasted, /disconnected/);
+    assert.deepEqual(sent.filter(m => m.type === 'key'), []);
+    assert.equal(client.listenerCount('result'), 0);
+    assert.equal(client.listenerCount('link'), 0);
+});
+
+
+test('a stale rejected browser copy never focuses the fallback textarea', async t => {
+    const { copyTextToClipboard } = require('../src/app/ui/copyText');
+    let fail, current = true;
+    const before = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+        writeText: () => new Promise((_resolve, reject) => { fail = reject; }),
+    } });
+    t.after(() => { if (before) Object.defineProperty(navigator, 'clipboard', before); else delete navigator.clipboard; });
+    t.mock.method(document, 'createElement', () => { throw Error('A stale copy tried to focus a fallback textarea'); });
+    const copied = copyTextToClipboard('old phone text', () => current);
+    current = false;
+    fail(Error('Browser denied copying'));
+    assert.equal(await copied, false, 'the stale copy ends without creating or focusing a field');
+});

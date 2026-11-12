@@ -28,7 +28,7 @@ interface CaptureOptions {
     key(event: KeyboardEvent): void;
     release(): void;
     controls(): PhoneControls | undefined;
-    paste(text: string, current: () => boolean): Promise<void> | void;
+    paste(text: string, current: () => boolean, signal: AbortSignal): Promise<void> | void;
     requestClipboard(): void;
     onEnabledChange?(enabled: boolean): void;
 }
@@ -48,6 +48,7 @@ export class KeyboardCapture {
     private hadSheet = false;
     private observer?: MutationObserver;
     private clipboardBusy = false;
+    private pendingPaste?: AbortController;
     private cancelRead?: () => void;
     private chipWasPhone?: boolean;
     private windowFocused = true;
@@ -111,6 +112,9 @@ export class KeyboardCapture {
         this.generation++;
         this.cancelRead?.();
         this.cancelRead = undefined;
+        this.pendingPaste?.abort();
+        this.pendingPaste = undefined;
+        this.clipboardBusy = false;
         this.modifiers.clear();
         this.sentModifiers.clear();
         this.options.release();
@@ -198,7 +202,11 @@ export class KeyboardCapture {
             // Keep the browser's default so it raises a paste event, also over plain HTTP.
             this.consume(event, false);
             this.swallowed.add(event.code);
-            this.invalidate();
+            // A second native paste must leave an outstanding clipboard action alone. The
+            // paste event below owns the busy check and starts a new generation when idle.
+            this.modifiers.clear();
+            this.sentModifiers.clear();
+            this.options.release();
             return;
         }
         this.consume(event, false);
@@ -229,14 +237,19 @@ export class KeyboardCapture {
         this.invalidate();
         const generation = this.generation;
         const current = () => !this.stopped && generation === this.generation && this.options.connected();
+        const pending = new AbortController();
+        this.pendingPaste = pending;
         this.clipboardBusy = true;
         void Promise.resolve()
-            .then(() => current() && this.options.paste(text, current))
+            .then(() => current() && this.options.paste(text, current, pending.signal))
             .catch((error: Error) => {
                 if (current()) streamNotice.value = error.message || 'The text could not be pasted on the phone.';
             })
             .finally(() => {
-                this.clipboardBusy = false;
+                if (this.pendingPaste === pending) {
+                    this.pendingPaste = undefined;
+                    this.clipboardBusy = false;
+                }
             });
     };
 
@@ -272,19 +285,27 @@ export class KeyboardCapture {
             });
             if (!current()) return;
             if (clipboardTextTooLong(text)) throw Error(CLIPBOARD_TOO_LONG_NOTE);
-            streamNotice.value = !text
+            const notice = !text
                 ? 'The phone clipboard is empty.'
-                : (await copyTextToClipboard(text))
+                : (await copyTextToClipboard(text, current))
                   ? 'Copied to this browser.'
                   : 'This browser blocked copying. Read the clipboard in Actions and copy it there.';
+            if (current()) streamNotice.value = notice;
         } catch (error) {
             if (current()) streamNotice.value = (error as Error).message;
         } finally {
-            this.clipboardBusy = false;
+            if (generation === this.generation) this.clipboardBusy = false;
         }
     }
 
     private onFocus = (): void => {
+        // The copy helper restores focus synchronously after selecting its temporary field.
+        // Its own focus is not a user choosing another keyboard target.
+        if (
+            document.activeElement instanceof Element &&
+            document.activeElement.hasAttribute('data-browser-clipboard-copy')
+        )
+            return;
         if (isLocalKeyboardTarget(document.activeElement)) this.invalidate();
         else this.refresh();
     };
