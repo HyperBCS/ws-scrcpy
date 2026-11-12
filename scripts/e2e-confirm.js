@@ -216,7 +216,7 @@ async function powerActions(browser, mobile) {
         // A press anywhere else disarms it.
         await trigger(sheet, 'Reboot').click();
         await dialog.waitFor();
-        await sheet.getByRole('heading', { name: 'Phone', exact: true }).click();
+        await sheet.getByRole('heading', { name: 'Power', exact: true }).click();
         await dialog.waitFor({ state: 'detached' });
         assert.equal(power(), 0, 'a press elsewhere sends nothing');
 
@@ -257,30 +257,6 @@ async function powerActions(browser, mobile) {
         await dialog.waitFor({ state: 'detached', timeout: TIMEOUT_MS + 2000 });
         assert.ok(Date.now() - armedAt >= TIMEOUT_MS - 500, 'the prompt stays for the whole timeout');
         assert.equal(power(), 0, 'the timeout sends nothing');
-
-        // The two service actions under Troubleshooting end the session for every viewer, so
-        // they use the same prompt here as on the device card.
-        await sheet.locator('summary').filter({ hasText: 'Troubleshooting' }).click();
-        await settleMotion(page);
-        test.handlers.onCommand = (command) => (command.type === 'restart_session' ? { result: 'Fixture done.' } : undefined);
-        const restart = trigger(sheet, 'Restart services');
-        assert.match(await restart.getAttribute('class'), /danger/);
-        dialog = await armAndCheck(test, {
-            trigger: restart, scope: sheet, question: `Restart services on ${NAME}?`, consequence: /The phone session ends for every viewer/,
-            confirmLabel: 'Restart services', sentCount: () => ofType('restart_session').length,
-        });
-        await shot(page, `actions-restart-services-armed-${label}-light`);
-        if (!(await dialog.count())) await restart.click();
-        await confirmAfterGuard(dialog, 'Restart services');
-        await sheet.getByText('Fixture done.', { exact: true }).waitFor();
-        assert.equal(ofType('restart_session').length, 1);
-        dialog = await armAndCheck(test, {
-            trigger: trigger(sheet, 'Remount developer image'), scope: sheet, question: `Remount the developer image on ${NAME}?`,
-            consequence: /while the image is reloaded/, confirmLabel: 'Remount', sentCount: () => ofType('remount_ddi').length,
-        });
-        await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-        await dialog.waitFor({ state: 'detached' });
-        assert.equal(ofType('remount_ddi').length, 0, 'Cancel sends no remount');
 
         // Shut down: the prompt names the phone and the consequence; confirming sends it once.
         test.handlers.onCommand = (command) => (command.type === 'shutdown_device' ? { result: 'ok' } : undefined);

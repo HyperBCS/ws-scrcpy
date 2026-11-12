@@ -88,3 +88,21 @@ const TABLE: Record<Platform, PhoneCapabilities> = { android: ANDROID, ios: IOS 
 export function capabilities(target: DeviceEntry | Platform): PhoneCapabilities {
     return TABLE[typeof target === 'string' ? target : target.params.type];
 }
+
+// p5-actions-sheet: rows of the Actions sheet that the table above does not cover.
+/** What the Actions sheet of a phone can do beyond `PhoneCapabilities`. */
+export interface ActionCapabilities {
+    /** Refresh picture, Restart video and Reconnect in the Screen group. */
+    pictureRecovery: boolean;
+}
+
+const ACTION_TABLE: Record<Platform, ActionCapabilities> = {
+    // The scrcpy stream client sends none of these.
+    android: { pictureRecovery: false },
+    // views/ApplActionsSheet.tsx: requestKeyframe, restartStream and restartSession.
+    ios: { pictureRecovery: true },
+};
+
+export function actionCapabilities(target: DeviceEntry | Platform): ActionCapabilities {
+    return ACTION_TABLE[typeof target === 'string' ? target : target.params.type];
+}

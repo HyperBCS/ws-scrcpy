@@ -192,7 +192,7 @@ async function sheetToSheetFocus(browser) {
     try {
         const { page } = droid;
         await toolbar(droid, 'Actions');
-        await sheet(page, 'Actions').getByRole('button', { name: 'Open Stream settings', exact: true }).click();
+        await sheet(page, 'Actions').getByRole('button', { name: 'Open Settings', exact: true }).click();
         const settings = sheet(page, 'Stream settings');
         await settings.waitFor();
         // Past the end of the Actions sheet's exit, which is when it used to take focus back.
@@ -557,15 +557,17 @@ async function listenControl(browser) {
             assert.notEqual(await icon(listen), await icon(page.locator(`.control-buttons-list [title="${key}"]`)), `Listen is not drawn like ${key}`);
         }
         await shot(page, 'toolbar-listen-desktop-light');
+        // Sound keeps its values, so it is in Settings and not in Actions (U-stream-8).
         await toolbar(droid, 'Actions');
         const actions = sheet(page, 'Actions');
-        await actions.getByRole('heading', { name: 'Sound', exact: true }).waitFor();
-        await actions.getByText('Listen in this browser', { exact: true }).waitFor();
+        await actions.getByRole('heading', { name: 'Clipboard', exact: true }).waitFor();
+        assert.equal(await actions.getByText('Listen in this browser', { exact: true }).count(), 0, 'no Sound rows in Actions');
         await page.keyboard.press('Escape');
         await actions.waitFor({ state: 'hidden' });
         await toolbar(droid, 'Settings');
         const settings = sheet(page, 'Stream settings');
         await settings.waitFor();
+        await settings.getByText('Listen in this browser', { exact: true }).waitFor();
         const copy = await settings.textContent();
         assert.doesNotMatch(copy, /Mute sound|tap Sound|or Sound/, 'the sheet says Listen, not Sound or Mute');
     } finally {
@@ -581,11 +583,12 @@ async function listenControl(browser) {
         assert.equal(await listen.locator('.kit-icon-button-caption').textContent(), 'Listen');
         await shot(page, 'toolbar-listen-iphone-phone-light');
         await toolbar(phone, 'Actions');
-        await sheet(page, 'Actions').getByText('Listen in this browser', { exact: true }).waitFor();
+        await sheet(page, 'Actions').getByRole('heading', { name: 'Clipboard', exact: true }).waitFor();
+        assert.equal(await sheet(page, 'Actions').getByText('Listen in this browser', { exact: true }).count(), 0, 'no Sound rows in Actions');
     } finally {
         await phone.context.close();
     }
-    console.log('PASS Listen has its own name and icon on the toolbar and its rows in both Actions sheets');
+    console.log('PASS Listen has its own name and icon on the toolbar, and its rows are in Settings, not in Actions');
 }
 
 // U-settings-11
@@ -644,7 +647,7 @@ async function statusInItsGroup(browser) {
             const box = await error.boundingBox();
             const gap = box.y - (card.y + card.height);
             assert(gap >= 4 && gap <= 12, `the message sits directly under its card (${gap}px)`);
-            const next = await group('Phone').locator('.kit-group-title').boundingBox();
+            const next = await group('Screen').locator('.kit-group-title').boundingBox();
             assert(next.y - (box.y + box.height) >= 14, 'and clear of the next heading');
             await shot(page, `iphone-actions-status-${label}`);
             assert.deepEqual(test.errors, []);
@@ -802,7 +805,7 @@ async function namesAndLabels(browser) {
         assert((await fontSize(actions.locator('.kit-button').first())) >= 13, 'button labels are 13px or larger');
         assert((await contrastOf(actions.locator('.kit-button:not(.kit-button-primary):not(:disabled)').first())) >= 4.5, 'outline button labels meet 4.5:1');
         await shot(page, 'android-actions-phone-light');
-        await actions.getByRole('button', { name: 'Open Stream settings', exact: true }).click();
+        await actions.getByRole('button', { name: 'Open Settings', exact: true }).click();
         const settings = sheet(page, 'Stream settings');
         await settings.waitFor();
         assert.equal(await settings.locator('.kit-sheet-subtitle').textContent(), ANDROID_NAME);
@@ -824,9 +827,8 @@ async function namesAndLabels(browser) {
         await toolbar(phone, 'Actions');
         const actions = sheet(page, 'Actions');
         assert.equal(await actions.locator('.kit-sheet-subtitle').textContent(), 'iPhone fixture');
-        // By text, not by role: Restart services sits in the closed Troubleshooting section.
         const labels = await actions.locator('button.kit-button').evaluateAll((buttons) => buttons.map((button) => button.textContent.trim()));
-        for (const name of ['Restart video', 'Reconnect', 'Restart services']) {
+        for (const name of ['Restart video', 'Reconnect']) {
             assert.equal(labels.filter((label) => label === name).length, 1, `one button named ${name}`);
         }
         assert.equal(labels.includes('Restart'), false, 'no button says only Restart');

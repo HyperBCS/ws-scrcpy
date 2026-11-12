@@ -303,7 +303,7 @@ async function streamPage(browser, viewport, platform) {
                 await control(test, 'Actions');
                 await title(/^Actions$/).waitFor();
                 await settleMotion(page);
-                await press(test, sheet(page).getByRole('button', { name: /^Open (Stream settings|Scheduled unlock)$/ }));
+                await press(test, sheet(page).getByRole('button', { name: 'Open Settings', exact: true }));
             }, title(/^(Stream settings|Scheduled unlock)$/)],
             ['Actions to Unlock', async () => {
                 await control(test, 'Actions');

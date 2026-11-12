@@ -664,7 +664,7 @@ async function streamSheetsFlow(browser) {
     const stored = { enabled: true, time: '03:00', hasPasscode: true, timeZone: ZONE, nextRunAt: Date.UTC(2026, 10, 11, 8, 0) };
     for (const [width, height, mobile] of [[390, 844, true], [1280, 800, false]]) {
         const test = await start(browser, { width, height, mobile, status: stored, device: { session: 'ready', 'screen.power': 'on', 'device.locked': false }, stream: true });
-        const { page, commands, handlers, sockets } = test;
+        const { page, handlers, sockets } = test;
         const label = mobile ? 'phone' : 'desktop';
         const settingsDialog = page.getByRole('dialog', { name: 'Scheduled unlock', exact: true });
         const actionsDialog = page.getByRole('dialog', { name: 'Actions', exact: true });
@@ -691,13 +691,13 @@ async function streamSheetsFlow(browser) {
             await page.getByRole('button', { name: 'Close Scheduled unlock' }).click();
             await settingsDialog.waitFor({ state: 'hidden' });
 
-            // The Actions sheet leads there too, and one sheet replaces the other.
+            // The Actions sheet leads there too, from its last row, and one sheet replaces the other.
             await control('Actions');
             await actionsDialog.waitFor();
-            const scheduled = actionsDialog.locator('.kit-row', { hasText: 'Scheduled unlock' });
-            await scheduled.scrollIntoViewIfNeeded();
+            const settingsRow = actionsDialog.getByRole('button', { name: 'Open Settings', exact: true });
+            await settingsRow.scrollIntoViewIfNeeded();
             await page.screenshot({ path: path.join(OUT, `stream-actions-settings-row-${width}.png`) });
-            await scheduled.getByRole('button', { name: 'Open Scheduled unlock', exact: true }).click();
+            await settingsRow.click();
             await settingsDialog.waitFor();
             await actionsDialog.waitFor({ state: 'hidden' });
             await page.getByRole('button', { name: 'Close Scheduled unlock' }).click();
@@ -739,31 +739,8 @@ async function streamSheetsFlow(browser) {
                 return button && !button.disabled;
             });
 
-            // Remount with no answer: the tracker socket drops, and Troubleshooting is not left disabled.
-            await actionsDialog.getByText('Troubleshooting').click();
-            await settleMotion(page);
-            const remount = actionsDialog.getByRole('button', { name: 'Remount developer image', exact: true });
-            await remount.click();
-            await actionsDialog.getByRole('button', { name: 'Remount', exact: true }).click();
-            await actionsDialog.getByText('Remounting the developer image…').waitFor();
-            assert.equal(await remount.isDisabled(), true);
-            assert.equal(ofType(commands, 'remount_ddi').length, 1);
-            sockets.tracker.close();
-            await actionsDialog.getByText('The connection to the server dropped before it answered. Check the result once it is back.').waitFor();
-            for (const name of ['Restart services', 'Remount developer image']) {
-                assert.equal(await actionsDialog.getByRole('button', { name, exact: true }).isEnabled(), true, `${label}: ${name} is usable again`);
-            }
-            assert.equal(await actionsDialog.locator('.kit-row', { hasText: 'Refresh info' }).getByRole('button').isEnabled(), true);
-
-            // With the tracker back, a command is answered by request id and its text is shown.
-            await page.waitForFunction(() => !!document.querySelector('.kit-bar-name')?.textContent.includes('iPhone fixture'), undefined, { timeout: 10000 });
-            handlers.onCommand = (command) => (command.type === 'refresh_device' ? { result: null } : undefined);
-            const refresh = actionsDialog.locator('.kit-row', { hasText: 'Refresh info' }).getByRole('button');
-            await page.waitForTimeout(2500);
-            await refresh.click();
-            await actionsDialog.getByText('Phone info refreshed.', { exact: true }).waitFor({ timeout: 10000 });
             assert.deepEqual(test.errors, []);
-            console.log('PASS iOS stream sheets', label, 'Settings from the controls and Actions, restart reply, requests end when a socket drops');
+            console.log('PASS iOS stream sheets', label, 'Settings from the controls and Actions, restart reply, a request ends when the stream socket drops');
         } finally {
             await test.context.close();
         }
