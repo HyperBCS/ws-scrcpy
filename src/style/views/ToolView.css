@@ -31,11 +31,6 @@
     max-width: 420px;
 }
 
-.tool-tabs button {
-    flex: 1 1 0;
-    min-width: 0;
-}
-
 /* The connection state of the open tool, at the end of the tab row. The row gives it its size
    and colour. It keeps to the right edge, and the ellipsis is for a narrow phone. */
 .tool-connection {
