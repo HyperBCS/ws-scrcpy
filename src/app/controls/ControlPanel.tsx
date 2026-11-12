@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { deviceSwitcherOpen, liveTextOpen, toolsSheetOpen, unlockSheetOpen } from '../state/stream';
-import { applSettingsSheetTarget, settingsSheetTarget } from '../state/settingsSheet';
+import { settingsSheetTarget } from '../state/settingsSheet';
 import { Icon } from '../ui/Icon';
 import { iconButtonClass } from '../ui/IconButton';
 import { useOverlayHistory } from '../ui/overlayHistory';
@@ -96,8 +96,7 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
         deviceSwitcherOpen.value ||
         liveTextOpen.value ||
         unlockSheetOpen.value ||
-        !!settingsSheetTarget.value ||
-        !!applSettingsSheetTarget.value;
+        !!settingsSheetTarget.value;
 
     // Another stream's controls start closed.
     useEffect(() => setOpen(false), [controls]);

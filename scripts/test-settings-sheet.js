@@ -1,5 +1,5 @@
 // Run with: node --test scripts/test-settings-sheet.js
-// The one Settings sheet without a browser: every opener opens the same sheet, a target can name
+// The one Settings sheet without a browser: one opener for both kinds of phone, a target can name
 // a section, the sections come in one order with only what a platform has nothing for left out,
 // and opening at a section scrolls to its heading and focuses it. No browser and no phone.
 const assert = require('node:assert/strict');
@@ -11,23 +11,20 @@ const sheet = require('../src/app/state/settingsSheet');
 const { SETTINGS_SECTIONS, SECTION_TITLES, sectionsFor, focusSection } = require('../src/app/views/settings/sections');
 const { capabilities } = require('../src/app/state/capabilities');
 
-test('every opener opens the one sheet for a serial, and openSettings can name a section', () => {
-    sheet.openSettingsSheet('PIXEL', 'android:PIXEL');
+test('one opener opens the one sheet for a serial, and can name a section', () => {
+    sheet.openSettings('PIXEL', { deviceKey: 'android:PIXEL' });
     assert.deepEqual(sheet.settingsSheetTarget.value, { udid: 'PIXEL', deviceKey: 'android:PIXEL', section: undefined });
-    sheet.openApplSettingsSheet('IPHONE');
-    assert.deepEqual(sheet.settingsSheetTarget.value, { udid: 'IPHONE', deviceKey: undefined, section: undefined }, 'the iPhone opener opens the same sheet');
+    sheet.openSettings('IPHONE');
+    assert.deepEqual(sheet.settingsSheetTarget.value, { udid: 'IPHONE', deviceKey: undefined, section: undefined }, 'an iPhone opens the same sheet');
     const before = sheet.settingsSheetTarget.value;
-    sheet.openApplSettingsSheet('IPHONE');
+    sheet.openSettings('IPHONE');
     assert.notEqual(sheet.settingsSheetTarget.value, before, 'each opening is a new target, so it loads again');
     sheet.openSettings('IPHONE', { deviceKey: 'ios:IPHONE', section: 'unlock' });
     assert.deepEqual(sheet.settingsSheetTarget.value, { udid: 'IPHONE', deviceKey: 'ios:IPHONE', section: 'unlock' });
-    // The names the iPhone code used are the one sheet's.
-    assert.equal(sheet.applSettingsSheetTarget, sheet.settingsSheetTarget);
-    sheet.closeApplSettingsSheet();
-    assert.equal(sheet.settingsSheetTarget.value, undefined);
-    sheet.openSettings('PIXEL');
     sheet.closeSettingsSheet();
     assert.equal(sheet.settingsSheetTarget.value, undefined);
+    // The openers of the two former sheets are gone: every caller uses openSettings.
+    assert.deepEqual(Object.keys(sheet).sort(), ['closeSettingsSheet', 'openSettings', 'settingsSheetTarget']);
 });
 
 test('the sections keep one order, and a platform leaves out only what it has nothing for', () => {

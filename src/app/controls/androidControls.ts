@@ -4,7 +4,7 @@ import type { ControlMessage } from '../controlMessage/ControlMessage';
 import type { BasePlayer } from '../player/BasePlayer';
 import type { AudioSession } from '../state/audio';
 import { closeAllSheets, openSheet } from '../state/stream';
-import { openSettingsSheet } from '../state/settingsSheet';
+import { openSettings, SettingsSection } from '../state/settingsSheet';
 import { createPhoneControls, KeyAction, PhoneControls, RunAction } from './definition';
 import { watchListenNotice } from './listen';
 
@@ -30,9 +30,9 @@ export function createAndroidControls(
     audioSession?: AudioSession,
 ): PhoneControls {
     // The settings sheet looks the tracker connection up by udid (`state/settingsSheet.ts`).
-    const openSettings = () => {
+    const settings = (section?: SettingsSection) => {
         closeAllSheets();
-        openSettingsSheet(udid);
+        openSettings(udid, { section });
     };
     return createPhoneControls(
         'android',
@@ -44,14 +44,14 @@ export function createAndroidControls(
             mute: key(client, KeyEvent.KEYCODE_VOLUME_MUTE),
             volumeUp: key(client, KeyEvent.KEYCODE_VOLUME_UP),
             lock: key(client, KeyEvent.KEYCODE_POWER),
-            // Stream settings explain an unavailable sound and offer the way back.
-            listen: { kind: 'listen', session: audioSession, onUnavailable: openSettings },
+            // The Sound section of Settings explains an unavailable sound and offers the way back.
+            listen: { kind: 'listen', session: audioSession, onUnavailable: () => settings('sound') },
             screenshot: player.supportsScreenshot
                 ? run(() => player.createScreenshot(client.getDeviceName()))
                 : undefined,
             typeText: run(() => openSheet('liveText')),
             actions: run(() => openSheet('tools')),
-            settings: run(openSettings),
+            settings: run(() => settings()),
         },
         [watchListenNotice(audioSession)],
     );

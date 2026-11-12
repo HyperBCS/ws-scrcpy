@@ -7,12 +7,12 @@ import { ControlCenterCommand } from '../../common/ControlCenterCommand';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import { DEFAULT_FILES_PATH } from '../googDevice/client/deviceTools';
 import { deviceHref, followLink, isLocalLink } from '../state/links';
-import type { DeviceView, Platform } from '../state/routes';
+import type { DeviceView } from '../state/routes';
 import { capabilities } from '../state/capabilities';
 import { CardLineKind, phoneCard } from '../state/phoneCard';
 import { clearStarting, markStarting } from '../state/phoneStatus';
 import { STREAM_SERVICE } from '../copy';
-import { openApplSettingsSheet, openSettingsSheet } from '../state/settingsSheet';
+import { openSettings } from '../state/settingsSheet';
 import { unlockCardLine } from '../state/unlockSchedule';
 import { replyText, sendServiceCommand, TrackerCommandAborted } from '../client/trackerCommand';
 import { deviceTools } from './ToolView';
@@ -28,12 +28,6 @@ import type { IconName } from '../ui/icons';
 import { InlineStatus, StatusTone } from '../ui/InlineStatus';
 import { PhoneRow } from '../ui/PhoneRow';
 import { useWake, WakeButton, WakeOutcome } from '../ui/WakeButton';
-
-// The Settings sheet of each kind of phone. Both open the one sheet for that phone.
-const OPEN_SETTINGS: Record<Platform, (udid: string, deviceKey?: string) => void> = {
-    android: openSettingsSheet,
-    ios: openApplSettingsSheet,
-};
 
 const TOOL_ICON: Record<DeviceView, IconName> = { screen: 'phone', files: 'folder', shell: 'terminal' };
 
@@ -120,7 +114,7 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
     const hasInbox = isNotificationSource(notificationSummary.value, udid);
     const unread = notificationSummary.value.unreadBySource[udid] || 0;
     const wake = useWake(tracker, udid, model.wake);
-    const openSettings = () => OPEN_SETTINGS[params.type](udid, entry.key);
+    const settings = () => openSettings(udid, { deviceKey: entry.key });
 
     const [enabling, setEnabling] = useState(false);
     const [feedback, setFeedback] = useState<{ place: FeedbackPlace; tone: StatusTone; text: string }>();
@@ -261,7 +255,7 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
                         <Button
                             size="compact"
                             attributes={{ 'aria-label': `Open settings for ${name}` }}
-                            onClick={openSettings}
+                            onClick={() => openSettings(udid, { deviceKey: entry.key, section: 'unlock' })}
                         >
                             Open settings
                         </Button>
@@ -408,7 +402,7 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
                     icon="sliders"
                     label={`Settings for ${name}`}
                     class="stream-settings-button"
-                    onClick={openSettings}
+                    onClick={settings}
                 />
             </div>
         </article>

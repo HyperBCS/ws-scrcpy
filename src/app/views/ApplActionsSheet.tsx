@@ -1,5 +1,5 @@
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
-import { openApplSettingsSheet } from '../state/settingsSheet';
+import { openSettings } from '../state/settingsSheet';
 import { sendServiceCommand } from '../client/trackerCommand';
 import { findDeviceByUdid } from '../state/devices';
 import { ControlCenterCommand } from '../../common/ControlCenterCommand';
@@ -65,7 +65,7 @@ export function ApplActionsSheet({ client }: ApplActionsSheetProps) {
                 command === 'reboot' ? ControlCenterCommand.REBOOT_DEVICE : ControlCenterCommand.SHUTDOWN_DEVICE;
             return sendServiceCommand(entry.tracker, type, udid, signal);
         },
-        openSettings: () => openApplSettingsSheet(udid),
+        openSettings: () => openSettings(udid),
     };
     return <PhoneActionsSheet adapter={adapter} />;
 }

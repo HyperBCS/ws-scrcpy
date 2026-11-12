@@ -4,7 +4,7 @@ import { ControlMessage } from '../controlMessage/ControlMessage';
 import { CommandControlMessage, CopyKey } from '../controlMessage/CommandControlMessage';
 import { KeyCodeControlMessage } from '../controlMessage/KeyCodeControlMessage';
 import { activeStream, deviceClipboard, deviceClipboardError, streamConnected } from '../state/stream';
-import { openSettingsSheet } from '../state/settingsSheet';
+import { openSettings } from '../state/settingsSheet';
 import { findDeviceForStream } from '../state/streamDevice';
 import { ActionsAdapter, NOT_SENT, PanelAction, SENT } from './actions/adapter';
 import { PhoneActionsSheet } from './actions/PhoneActionsSheet';
@@ -55,7 +55,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
                 return SENT;
             },
         },
-        // The Power key, pressed and let go, as the Power control sends it from the keyboard.
+        // The Power key, pressed and let go, as the Lock control sends it from the keyboard.
         sideButton: () => {
             client.sendMessage(new KeyCodeControlMessage(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_POWER, 0, 0));
             client.sendMessage(new KeyCodeControlMessage(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_POWER, 0, 0));
@@ -63,7 +63,7 @@ export function ActionsSheet({ client }: ActionsSheetProps) {
         openSettings: () => {
             const session = activeStream.value;
             if (session) {
-                openSettingsSheet(session.params.udid);
+                openSettings(session.params.udid);
             }
         },
     };

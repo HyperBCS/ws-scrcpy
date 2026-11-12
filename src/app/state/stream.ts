@@ -1,7 +1,7 @@
 import { signal } from '@preact/signals';
 import { ParamsStreamScrcpy } from '../../types/ParamsStreamScrcpy';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
-import { closeApplSettingsSheet, closeSettingsSheet } from './settingsSheet';
+import { closeSettingsSheet } from './settingsSheet';
 import type { ParamsStreamCoreDevice } from '../../types/ParamsStreamCoreDevice';
 import type { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
 
@@ -61,7 +61,6 @@ export function closeAllSheets(): void {
     liveTextOpen.value = false;
     unlockSheetOpen.value = false;
     closeSettingsSheet();
-    closeApplSettingsSheet();
 }
 
 /**

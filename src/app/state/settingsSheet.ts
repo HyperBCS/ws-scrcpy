@@ -17,7 +17,8 @@ export interface SettingsSheetTarget {
 export const settingsSheetTarget = signal<SettingsSheetTarget | undefined>(undefined);
 
 /**
- * Opens the Settings sheet for a phone in any state. Only the udid is needed: the sheet resolves
+ * Opens the Settings sheet for a phone in any state, the one way to open it for either kind of
+ * phone; `section` scrolls to that section and focuses its heading. Only the udid is needed: the sheet resolves
  * the tracker itself from the device store. Taking the tracker here meant the caller had to have
  * found the device already, so on a reloaded stream deep link -- where the store is still
  * filling -- the button silently did nothing.
@@ -26,21 +27,6 @@ export function openSettings(udid: string, options: { deviceKey?: string; sectio
     settingsSheetTarget.value = { udid, deviceKey: options.deviceKey, section: options.section };
 }
 
-/** The opener the Android controls, Actions and the list card call. */
-export function openSettingsSheet(udid: string, deviceKey?: string): void {
-    openSettings(udid, { deviceKey });
-}
-
-/** The opener the iPhone controls, Actions, Unlock and the list card call. It opens the same sheet. */
-export function openApplSettingsSheet(udid: string, deviceKey?: string): void {
-    openSettings(udid, { deviceKey });
-}
-
 export function closeSettingsSheet(): void {
     settingsSheetTarget.value = undefined;
 }
-
-// The names the iPhone callers used while the iPhone had a sheet of its own. They act on the one
-// target, so code that reads or closes either sees the one sheet.
-export const applSettingsSheetTarget = settingsSheetTarget;
-export const closeApplSettingsSheet = closeSettingsSheet;

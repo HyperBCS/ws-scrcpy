@@ -2,7 +2,7 @@ import type { CoreDeviceButton } from '../../common/CoreDeviceProtocol';
 import type { BasePlayer } from '../player/BasePlayer';
 import type { AudioSession } from '../state/audio';
 import { closeAllSheets, openSheet, streamNotice } from '../state/stream';
-import { openApplSettingsSheet } from '../state/settingsSheet';
+import { openSettings } from '../state/settingsSheet';
 import { createPhoneControls, KeyAction, PhoneControls, RunAction } from './definition';
 import { watchListenNotice } from './listen';
 
@@ -51,10 +51,9 @@ export function createIphoneControls(client: IphoneControlClient, audioSession?:
             screenshot: run(() => client.getPlayer()?.createScreenshot(client.getDeviceName())),
             typeText: run(() => openSheet('liveText')),
             actions: run(() => openSheet('tools')),
-            // The scheduled unlock and its stored passcode.
             settings: run(() => {
                 closeAllSheets();
-                openApplSettingsSheet(client.getDeviceUdid());
+                openSettings(client.getDeviceUdid());
             }),
         },
         [watchListenNotice(audioSession)],

@@ -1,7 +1,7 @@
 import { useMemo } from 'preact/hooks';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
 import { deviceName, findDeviceByUdid } from '../state/devices';
-import { openApplSettingsSheet } from '../state/settingsSheet';
+import { openSettings } from '../state/settingsSheet';
 import { streamConnected, unlockSheetOpen } from '../state/stream';
 import { iphoneUnlock } from '../state/unlockDevice';
 import { UNLOCK_BY_HAND_MESSAGE } from '../../common/IosUnlockSchedule';
@@ -24,7 +24,7 @@ export function ApplUnlockSheet({ client }: { client: StreamClientCoreDevice }) 
         label: 'Open Settings',
         run: () => {
             unlockSheetOpen.value = false;
-            openApplSettingsSheet(udid, entry?.key);
+            openSettings(udid, { deviceKey: entry?.key, section: 'unlock' });
         },
     };
     // One sentence for each state of the stored passcode that the server would refuse.
