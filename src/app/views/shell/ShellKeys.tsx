@@ -45,7 +45,7 @@ const ARROWS: ReadonlyArray<{ key: ShellKey; icon: IconName; label: string }> = 
 const keepFocus = (event: MouseEvent) => event.preventDefault();
 
 interface ShellKeysProps {
-    /** The keys are off while the shell has no session. */
+    /** Every key but Copy is off while the shell has no session. */
     connected: boolean;
     /** Ctrl is waiting for the next character. */
     control: boolean;
@@ -145,7 +145,8 @@ export function ShellKeys({ connected, control, onControl, terminal }: ShellKeys
                 <Button size="compact" disabled={!connected} onClick={paste}>
                     Paste
                 </Button>
-                <Button size="compact" disabled={!connected} onClick={copy}>
+                {/* What the terminal shows can be copied after its session ended or was lost. */}
+                <Button size="compact" onClick={copy}>
                     Copy
                 </Button>
                 <Button

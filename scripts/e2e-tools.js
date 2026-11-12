@@ -134,9 +134,9 @@ async function lostConnection(page, state, name) {
     state.close();
     await chip.getByText('Reconnecting…',{exact:true}).waitFor();
     assert.equal(await banner.count(),0,'no banner while reconnecting');
-    if (await page.locator('.shell-keys').count()) {
-        assert.deepEqual(await page.locator('.shell-keys button').evaluateAll(keys=>keys.filter(key=>!key.disabled).length),0,'terminal keys are off while offline');
-    }
+    const keysOn = () => page.locator('.shell-keys button').evaluateAll(keys=>keys.filter(key=>!key.disabled).map(key=>key.textContent));
+    const touch = (await page.locator('.shell-keys').count()) > 0;
+    if (touch) assert.deepEqual(await keysOn(),['Copy'],'only Copy is on while offline');
     await page.locator('.tool-connection.connected').waitFor({state:'attached'});
     await until(()=>state.starts.length===sessions+1,'the automatic attempt starts one new session');
     await until(async()=>await sessionsShown()===2,'the new session continues in the same terminal');
@@ -146,6 +146,19 @@ async function lostConnection(page, state, name) {
     state.endShell();
     await banner.getByText('The shell session ended.',{exact:true}).waitFor();
     assert.equal(await chip.innerText(),'Stopped');
+    if (touch) {
+        // The output of a session that ended can still be copied.
+        await until(async()=>(await keysOn()).join()==='Copy','the keys that type are off');
+        await page.evaluate(()=>navigator.clipboard.writeText(''));
+        // A click on the terminal clears the selection the key row checks left.
+        await page.locator('.terminal-container .xterm-screen').click();
+        await page.locator('.shell-keys').getByRole('button',{name:'Copy',exact:true}).click();
+        const toast = page.locator('.kit-toast');
+        await toast.getByText('Copied the text on screen.',{exact:true}).waitFor();
+        assert((await page.evaluate(()=>navigator.clipboard.readText())).includes('Fixture terminal ready'),'Copy works after the session ended');
+        await toast.getByRole('button',{name:'Dismiss message',exact:true}).click();
+        await toast.waitFor({state:'detached'});
+    }
     await page.waitForTimeout(1600);
     assert.equal(state.starts.length,sessions+1,'a shell that exited is not restarted automatically');
     await banner.getByRole('button',{name:'New session',exact:true}).click();
