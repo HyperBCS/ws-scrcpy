@@ -178,8 +178,11 @@ function iosServices(entry: DeviceEntry, name: string, connected: boolean, scree
     ];
 }
 
-/** Links that open the screen with another player, for a picture the default player cannot show. */
-function OtherPlayers({ entry }: { entry: DeviceEntry }) {
+/**
+ * Links that open the screen with another player, for a picture the default player cannot show.
+ * They need the phone, and say so while it is not connected.
+ */
+function OtherPlayers({ entry, connected }: { entry: DeviceEntry; connected: boolean }) {
     const players = StreamClientScrcpy.getPlayers();
     const primary = players.find((player) => player.playerCodeName === 'webcodecs') ?? players[0];
     const others = players.filter((player) => player !== primary);
@@ -191,7 +194,7 @@ function OtherPlayers({ entry }: { entry: DeviceEntry }) {
         <SettingsGroup class="settings-players">
             <SheetRow
                 title="Open with another player"
-                description="For a picture this browser does not show."
+                description={connected ? 'For a picture this browser does not show.' : NOT_CONNECTED}
                 layout="stack"
             >
                 {others.map((player) => {
@@ -202,6 +205,7 @@ function OtherPlayers({ entry }: { entry: DeviceEntry }) {
                         <Button
                             key={player.playerCodeName}
                             href={href}
+                            disabled={!connected}
                             class="settings-player-link"
                             attributes={{
                                 target: local ? undefined : '_blank',
@@ -299,7 +303,8 @@ export function AboutSection({ platform, udid, entry, name, opening, screenOpen,
             {rows.length > 0 && (
                 <ServiceRows rows={rows} opening={opening} unavailable={connected ? undefined : NOT_CONNECTED} />
             )}
-            {entry && android && connected && !screenOpen && <OtherPlayers entry={entry} />}
+            {/* With the screen open, Playback under Stream changes the player. */}
+            {entry && android && !screenOpen && <OtherPlayers entry={entry} connected={connected} />}
         </SettingsSection>
     );
 }

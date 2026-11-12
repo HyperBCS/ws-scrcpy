@@ -575,11 +575,18 @@ async function listFlow(browser) {
                         assert.equal(await dialog.locator('[data-setting="quality"] .kit-row-desc').textContent(), 'Not available while the phone is not connected.');
                         assert.equal(await dialog.getByRole('radio', { name: 'Balanced', exact: true }).isDisabled(), true, `${what}: rows that need the phone are off, not hidden`);
                         assert.equal(await about.locator('.settings-services .kit-group-hint').textContent(), 'Not available while the phone is not connected.');
+                        // The other players are listed and cannot be followed: a link without an address.
+                        const players = about.locator('a.settings-player-link');
+                        assert.ok((await players.count()) >= 1, `${what}: the other players are listed`);
+                        assert.equal(await players.first().getAttribute('aria-disabled'), 'true');
+                        assert.equal(await players.first().getAttribute('href'), null);
+                        assert.equal(await about.locator('.settings-players .kit-row-desc').textContent(), 'Not available while the phone is not connected.');
                         assert.equal(commands.slice(before).filter((command) => command.type === 'list_encoders').length, 0, `${what}: nothing is asked of a phone that is not there`);
                     } else {
                         await dialog.locator('[data-setting="quality"] .kit-row-desc', { hasText: 'Balanced' }).waitFor();
                         assert.equal(await dialog.getByRole('radio', { name: 'Balanced', exact: true }).isDisabled(), false);
                         assert.equal(await service.locator('.kit-row-desc').textContent(), 'Running. Stopping it ends the stream for every viewer.');
+                        assert.match(await about.locator('a.settings-player-link').first().getAttribute('href'), /view=screen&player=/);
                     }
                     // Rows that need the screen say so.
                     assert.equal(await dialog.locator('.settings-keyboard .kit-row-desc').first().textContent(), 'Open the screen to change this.');
