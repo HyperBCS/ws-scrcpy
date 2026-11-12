@@ -2365,7 +2365,9 @@ async function viewStateInAddress(browser) {
         await sleep(350);
         assert.deepEqual(f.streams, ['phone-a', 'phone-a'], 'exactly one stream socket for each open');
         await page.goBack();
-        await article(page, 'Message 40').waitFor();
+        await article(page, 'Message 41').waitFor();
+        assert.equal(await article(page, 'Message 40').count(), 0, 'opening the screen marks its notification read, so it leaves Unread');
+        assert.deepEqual(f.readRequests.at(-1), { keys: ['a-many-39'], read: true });
         assert.equal(await shown(), 50, 'as many notifications are listed as before');
         assert.ok(Math.abs(await main.evaluate(el => el.scrollTop) - top) <= 2, `the list is where it was (${await main.evaluate(el => el.scrollTop)}, was ${top})`);
         assert.equal(await page.getByRole('dialog').count(), 0, 'no sheet is open');
