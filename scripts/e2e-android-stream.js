@@ -2,12 +2,15 @@
 // Run with: node scripts/test-browser.js android-stream
 // The Android stream page in a real browser, with every socket mocked: recovery from a real
 // decoder error, a second scrcpy_initial (rotation), a swipe that starts beside the picture, the
-// mouse wheel, and the Settings sheet without the Fit screen toggle.
+// mouse (wheel, a drag that leaves the picture, right-click Back, Ctrl+drag pinch, also at a
+// device pixel ratio of 2), the Settings sheet without the Fit screen toggle, and the Mouse and
+// keyboard row of the Actions sheet.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
 const { fixture, UDID } = require('./e2e-settings');
+const { settleMotion } = require('./ui-motion');
 const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-android-stream';
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -40,6 +43,7 @@ const touchMessages = (packets) =>
         .filter((packet) => packet[0] === 2 && packet.length === 32)
         .map((packet) => ({
             action: packet[1],
+            pointer: packet.readUInt32BE(6),
             x: packet.readUInt32BE(10),
             y: packet.readUInt32BE(14),
             width: packet.readUInt16BE(18),
@@ -50,7 +54,18 @@ const scrollMessages = (packets) =>
     packets
         .filter((packet) => packet[0] === 3 && packet.length === 21)
         .map((packet) => ({ hscroll: packet.readInt16BE(13), vscroll: packet.readInt16BE(15) }));
+// INJECT_KEYCODE: type 0, action, keycode(4), repeat(4), meta(4)
+const keyMessages = (packets) =>
+    packets.filter((packet) => packet[0] === 0 && packet.length === 14).map((packet) => [packet[1], packet.readInt32BE(2)]);
 const [DOWN, UP, MOVE] = [0, 1, 2];
+const KEYCODE_BACK = 4;
+// What the Mouse and keyboard row lists for an Android phone.
+const MOUSE_HELP = [
+    'Wheel: scrolls.',
+    'Drag: swipes, and keeps going past the edge of the picture.',
+    'Right-click: Back.',
+    'Ctrl+drag: pinches around the middle. With Shift too, around where you pressed.',
+];
 
 async function touch(cdp, points) {
     for (const [index, [x, y]] of points.entries()) {
@@ -155,17 +170,19 @@ async function main() {
     const browser = await chromium.launch({ headless: true });
     try {
         await decoderRecovery(browser);
-        for (const [label, width, height, mobile, colorScheme] of [
-            ['phone-light', 390, 844, true, 'light'],
-            ['phone-dark', 390, 844, true, 'dark'],
-            ['desktop-light', 1280, 800, false, 'light'],
-            ['desktop-dark', 1280, 800, false, 'dark'],
+        for (const [label, width, height, mobile, colorScheme, deviceScaleFactor] of [
+            ['phone-light', 390, 844, true, 'light', 1],
+            ['phone-dark', 390, 844, true, 'dark', 1],
+            ['desktop-light', 1280, 800, false, 'light', 1],
+            // A pointer lands in the same place at another pixel ratio.
+            ['desktop-dark', 1280, 800, false, 'dark', 2],
         ]) {
             const context = await browser.newContext({
                 viewport: { width, height },
                 hasTouch: mobile,
                 isMobile: mobile,
                 colorScheme,
+                deviceScaleFactor,
             });
             const page = await context.newPage();
             const cdp = await context.newCDPSession(page);
@@ -233,18 +250,82 @@ async function main() {
                 assert.equal(off.at(-1).action, UP);
                 assert.equal(off.at(-1).x, 719, label + ': a finger that slides off rides the right edge');
             } else {
-                // One wheel notch over the picture.
+                // One wheel notch over the picture. At a pixel ratio of 2 Playwright's wheel
+                // reports half the pixels, so the notch is read from what the browser reported.
+                await page.evaluate(() => {
+                    window.__wheel = [];
+                    addEventListener('wheel', (event) => window.__wheel.push(event.deltaY), { capture: true, passive: true });
+                });
                 await page.mouse.move(picture.x + picture.width / 2, middle);
                 await page.mouse.wheel(0, 100);
                 await pause(150);
                 const scrolls = scrollMessages(packets);
+                const [deltaY] = await page.evaluate(() => window.__wheel);
                 assert.equal(scrolls.length, 1, label + ': one wheel notch is one message');
-                assert.deepEqual(scrolls[0], { hscroll: 0, vscroll: -0x0800 }, label + ': one notch, not sixteen');
+                assert.deepEqual(scrolls[0], { hscroll: 0, vscroll: Math.round((-deltaY / 100) * 0x0800) }, label + ': one notch, not sixteen');
+                if (deviceScaleFactor === 1) assert.equal(scrolls[0].vscroll, -0x0800);
                 // A click on the black area beside the picture is not a tap on the device.
                 packets.length = 0;
                 await page.mouse.click(picture.x - band / 2, middle);
                 await pause(50);
                 assert.deepEqual(touchMessages(packets), [], label + ': a click beside the picture sends nothing');
+
+                // A drag that leaves the picture rides its right edge, then goes up over the bar
+                // above it, and lifts where the button comes up: the top right corner.
+                packets.length = 0;
+                const right = picture.x + picture.width + band / 2;
+                await page.mouse.move(picture.x + picture.width / 2, middle);
+                await page.mouse.down();
+                await page.mouse.move(right, middle, { steps: 4 });
+                await page.mouse.move(right, picture.y - 10, { steps: 4 });
+                await page.mouse.up();
+                await pause(50);
+                const drag = touchMessages(packets);
+                assert.equal(drag[0].action, DOWN, label + ': the drag starts with a touch-down');
+                assert.deepEqual(
+                    drag.filter((message) => message.action === UP).map(({ x, y }) => [x, y]),
+                    [[719, 0]],
+                    label + ': one touch-up, where the button came up, clamped to the corner',
+                );
+                assert.equal(drag.at(-1).action, UP);
+                assert(drag.some((message) => message.action === MOVE && message.x === 719 && message.y > 0), label + ': it rode the right edge');
+
+                // Right-click is Back, sends no touch and opens no browser menu.
+                packets.length = 0;
+                await page.evaluate(() => {
+                    window.__menus = [];
+                    document.addEventListener('contextmenu', (event) => window.__menus.push(event.defaultPrevented));
+                });
+                await page.mouse.click(picture.x + picture.width / 2, middle, { button: 'right' });
+                await pause(50);
+                assert.deepEqual(touchMessages(packets), [], label + ': right-click sends no touch');
+                assert.deepEqual(keyMessages(packets), [[DOWN, KEYCODE_BACK], [UP, KEYCODE_BACK]], label + ': right-click is Back');
+                assert.deepEqual(await page.evaluate(() => window.__menus), [true], label + ': the browser menu stays shut');
+
+                // Ctrl+drag: a second finger mirrored through the middle of the 720x1800 screen.
+                packets.length = 0;
+                await page.keyboard.down('Control');
+                await page.mouse.move(picture.x + picture.width * 0.25, picture.y + picture.height * 0.25);
+                await page.mouse.down();
+                await page.mouse.move(picture.x + picture.width * 0.4, picture.y + picture.height * 0.3, { steps: 3 });
+                await page.mouse.up();
+                await page.keyboard.up('Control');
+                await pause(50);
+                const pinch = touchMessages(packets);
+                const fingers = [0, 1].map((pointer) => pinch.filter((message) => message.pointer === pointer));
+                assert.deepEqual(
+                    fingers.map((finger) => [finger[0].action, finger.at(-1).action]),
+                    [[DOWN, UP], [DOWN, UP]],
+                    label + ': two fingers go down and come up',
+                );
+                fingers[0].forEach((finger, index) => {
+                    const mirror = fingers[1][index];
+                    assert(
+                        Math.abs(finger.x + mirror.x - 720) <= 2 && Math.abs(finger.y + mirror.y - 1800) <= 2,
+                        `${label}: the second finger mirrors the first (${finger.x},${finger.y} and ${mirror.x},${mirror.y})`,
+                    );
+                });
+                assert(Math.abs(fingers[0][0].x - 180) <= 4 && Math.abs(fingers[0][0].y - 450) <= 4, `${label}: and lands where it was aimed`);
             }
 
             // The device rotates: the server sends scrcpy_initial again with the new size.
@@ -283,9 +364,40 @@ async function main() {
             await dialog.locator('.settings-playback').scrollIntoViewIfNeeded();
             await page.screenshot({ path: path.join(OUT, label + '-settings.png') });
 
+            // The Mouse and keyboard row of the Actions sheet lists what the mouse does here.
+            await page.keyboard.press('Escape');
+            await dialog.waitFor({ state: 'hidden' });
+            const actionsControl = page.locator('.control-buttons-list [title="Actions"]');
+            if (mobile && !(await actionsControl.isVisible())) {
+                await page.getByRole('button', { name: 'Show controls', exact: true }).click();
+            }
+            await actionsControl.click();
+            const actions = page.getByRole('dialog', { name: 'Actions', exact: true });
+            await actions.waitFor();
+            const help = actions.locator('.kit-row[data-mouse-help]');
+            await help.scrollIntoViewIfNeeded();
+            await help.getByRole('button', { name: 'Show', exact: true }).click();
+            const hide = help.getByRole('button', { name: 'Hide', exact: true });
+            await hide.waitFor();
+            assert.equal(await hide.getAttribute('aria-expanded'), 'true');
+            assert.deepEqual((await help.locator('.kit-row-desc').innerText()).split('\n'), MOUSE_HELP, label + ': the lines for an Android phone');
+            assert(await actions.locator('.kit-sheet-body').evaluate((body) => body.scrollWidth <= body.clientWidth + 1), label + ': the lines fit the sheet');
+            // The card grows to hold them.
+            await page.waitForFunction(() => {
+                const row = document.querySelector('[data-mouse-help]');
+                return row && row.getBoundingClientRect().bottom <= row.closest('.auto-height').getBoundingClientRect().bottom + 1;
+            });
+            await settleMotion(page);
+            await help.scrollIntoViewIfNeeded();
+            await page.screenshot({ path: path.join(OUT, label + '-mouse-help.png') });
+            await hide.click();
+            await help.getByRole('button', { name: 'Show', exact: true }).waitFor();
+            await page.keyboard.press('Escape');
+            await actions.waitFor({ state: 'hidden' });
+
             assert.deepEqual(errors, [], label + ': no browser runtime errors');
             await context.close();
-            console.log(`PASS ${label}: rotation, input beside the picture, ${mobile ? 'edge swipe' : 'wheel'}, settings without Fit screen`);
+            console.log(`PASS ${label}: rotation, input beside the picture, ${mobile ? 'edge swipe' : 'wheel, drag off the picture, right-click Back, Ctrl+drag pinch'}, settings without Fit screen, mouse help`);
         }
     } finally {
         await browser.close();

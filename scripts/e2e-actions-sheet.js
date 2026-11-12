@@ -41,6 +41,8 @@ const ORDER = ['Clipboard', 'Screen', 'Lock', 'Power', ''];
 const READ = ['Clipboard', "Read the phone's clipboard", 'Copy from the phone to this browser.', ['Read', 'Copy here']];
 const LOCK = ['Lock', 'Lock the phone', 'Turns the screen off with the side button.', ['Lock']];
 const SETTINGS = ['', 'Settings', '', ['Open']];
+// The last row of Screen on both; its lines show on Show (scripts/e2e-ios-input.js).
+const MOUSE = ['Screen', 'Mouse and keyboard', 'What the mouse does on this phone.', ['Show']];
 const ROWS = {
     android: [
         READ,
@@ -48,6 +50,7 @@ const ROWS = {
         ['Screen', 'Notifications', '', ['Open']],
         ['Screen', 'Quick settings', '', ['Open']],
         ['Screen', 'Collapse panels', '', ['Collapse']],
+        MOUSE,
         ['Lock', 'Unlock the phone', "Enter the phone's PIN or password.", ['Unlock']],
         LOCK,
         SETTINGS,
@@ -60,6 +63,7 @@ const ROWS = {
         ['Screen', 'Refresh picture', 'Refresh a smeared picture.', ['Refresh']],
         ['Screen', 'Restart video', 'For frozen or broken video.', ['Restart video']],
         ['Screen', 'Reconnect', 'Reconnect video, touch and keyboard.', ['Reconnect']],
+        MOUSE,
         ['Lock', 'Unlock the phone', 'Uses the passcode stored on the server.', ['Unlock']],
         LOCK,
         ['Power', 'Reboot', 'Reconnects after restarting. If a passcode is set, unlock on the phone.', ['Reboot']],

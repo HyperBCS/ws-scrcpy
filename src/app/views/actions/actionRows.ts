@@ -1,4 +1,5 @@
 import type { UnlockKind } from '../../state/capabilities';
+import type { MouseContract } from '../../input/mouseContract';
 
 /**
  * The words of the Actions sheet for both kinds of phone, in one table: the group titles, the
@@ -91,6 +92,21 @@ export const ROW = {
         button: 'Reconnect',
         sent: 'Reconnecting to the phone…',
     },
+    /** The last row of the Screen group. `mouseHelp` picks its lines by the phone's facts. */
+    mouse: {
+        title: 'Mouse and keyboard',
+        description: 'What the mouse does on this phone.',
+        show: 'Show',
+        hide: 'Hide',
+        wheel: { gesture: 'Wheel', scroll: 'scrolls.', swipe: 'scrolls with a short swipe.' },
+        drag: { gesture: 'Drag', effect: 'swipes, and keeps going past the edge of the picture.' },
+        rightClick: { gesture: 'Right-click', back: 'Back.', nothing: 'nothing. This phone has no Back button.' },
+        ctrlDrag: {
+            gesture: 'Ctrl+drag',
+            pinch: 'pinches around the middle. With Shift too, around where you pressed.',
+            nothing: 'nothing. This phone takes one finger from the mouse.',
+        },
+    },
     unlock: {
         title: 'Unlock the phone',
         description: UNLOCK_DESCRIPTION,
@@ -126,6 +142,20 @@ export const ROW = {
         label: 'Open Settings',
     },
 } as const;
+
+/**
+ * What the mouse does on a phone, one line per gesture. The lines follow the facts the
+ * interaction handlers act on, so they cannot claim what the phone does not do.
+ */
+export function mouseHelp(contract: MouseContract): string[] {
+    const { wheel, drag, rightClick, ctrlDrag } = ROW.mouse;
+    return [
+        `${wheel.gesture}: ${wheel[contract.wheel]}`,
+        `${drag.gesture}: ${drag.effect}`,
+        `${rightClick.gesture}: ${rightClick[contract.rightClick]}`,
+        `${ctrlDrag.gesture}: ${contract.pinch ? ctrlDrag.pinch : ctrlDrag.nothing}`,
+    ];
+}
 
 /** The outcome lines that are not one row's own. */
 export const NOTE = {
