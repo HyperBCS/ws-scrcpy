@@ -39,19 +39,27 @@ function keyHandlers(id: string, action: KeyAction, held: HeldButtons): JSX.HTML
     };
 }
 
+/** The handlers of a control, by its definition and its action. */
+function handlersOf(
+    definition: ControlDefinition,
+    action: ControlAction,
+    held: HeldButtons,
+): JSX.HTMLAttributes<HTMLButtonElement> {
+    if (action.kind === 'key') {
+        // A key the definition does not hold is one tap per click, never a hold.
+        return definition.hold ? keyHandlers(definition.id, action, held) : { onClick: () => held.tap(action) };
+    }
+    return action.kind === 'listen' ? { onClick: () => pressListen(action) } : { onClick: () => action.run() };
+}
+
 /**
  * One control of a phone's screen: the kit's icon button with a caption. `control-button` has no
  * rule; the browser checks find the controls by it.
  */
 export function ControlButton({ definition, action, held, style }: ControlButtonProps) {
-    const { id, label, icon } = definition;
+    const { label, icon } = definition;
     const listen = action.kind === 'listen' ? listenView(action as ListenAction) : undefined;
-    const handlers: JSX.HTMLAttributes<HTMLButtonElement> =
-        action.kind === 'key'
-            ? keyHandlers(id, action, held)
-            : action.kind === 'listen'
-              ? { onClick: () => pressListen(action) }
-              : { onClick: () => action.run() };
+    const handlers = handlersOf(definition, action, held);
     return (
         <button
             type="button"

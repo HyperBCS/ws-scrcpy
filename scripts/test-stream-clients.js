@@ -826,14 +826,14 @@ test('iPhone: a key event that lands on a local control releases the keys held o
 
 /**
  * A control as `ControlButton` draws it: `press(type, init)` calls its handler for that event the
- * way the browser would. The props are on `press.props`.
+ * way the browser would. The props are on `press.props`. `change` replaces fields of its definition.
  */
-function controlOf(controls, id) {
+function controlOf(controls, id, change = {}) {
     const { ControlButton } = require('../src/app/controls/ControlButton');
     const { shownControls } = require('../src/app/controls/definition');
     const shown = shownControls(controls).find((control) => control.definition.id === id);
     assert.ok(shown, `control ${id}`);
-    const { props } = ControlButton({ ...shown, held: controls.held, style: {} });
+    const { props } = ControlButton({ ...shown, definition: { ...shown.definition, ...change }, held: controls.held, style: {} });
     const target = { setPointerCapture() {} };
     const HANDLERS = { pointerdown: 'onPointerDown', pointerup: 'onPointerUp', pointercancel: 'onPointerCancel', lostpointercapture: 'onLostPointerCapture', click: 'onClick' };
     const press = (type, init = {}) => props[HANDLERS[type]]?.({ type, button: 0, pointerId: 1, detail: 1, preventDefault() {}, currentTarget: target, ...init });
@@ -1030,6 +1030,30 @@ test('one slot map for both kinds of phone, with an empty slot where one has no 
         assert.deepEqual(disabled(true), [], `${controls.platform}: none once connected`);
     }
     assert.deepEqual(CONTROLS.filter((control) => control.needsConnection).map(({ id }) => id), CONTROLS.filter((control) => control.hold).map(({ id }) => id));
+});
+
+test('whether a key can be held comes from its definition', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { client: android, sent: packets } = androidClient(t, fakePlayer());
+    const { client: iphone, sent: messages } = iphoneClient(t, 'iphone-no-hold');
+    const keys = () => packets.filter((packet) => packet[0] === 0).map((packet) => [packet[1], packet.readInt32BE(2)]);
+    const buttons = () => messages.filter((message) => message.type === 'button').map((message) => [message.name, message.state]);
+
+    // Without `hold`, a press is one tap when the click comes, however long it lasts.
+    const lock = controlOf(android.getControls(), 'lock', { hold: false });
+    lock('pointerdown');
+    assert.deepEqual(keys(), [], 'Android: nothing goes down while the pointer is down');
+    lock('pointerup');
+    lock('click');
+    assert.deepEqual(keys(), [[0, 26], [1, 26]], 'Android: the click is one down and one up');
+
+    const siri = controlOf(iphone.getControls(), 'siri', { hold: false });
+    siri('pointerdown');
+    t.mock.timers.tick(1000);
+    siri('pointerup');
+    assert.deepEqual(buttons(), [], 'iPhone: no hold after the hold time');
+    siri('click');
+    assert.deepEqual(buttons(), [['siri', 'press']], 'iPhone: the click is one press');
 });
 
 test('no code picks a control by its name or title', () => {

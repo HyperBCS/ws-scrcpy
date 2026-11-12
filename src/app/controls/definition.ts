@@ -36,7 +36,10 @@ export interface ControlDefinition {
      * stays empty where a phone lacks the control, so a control is in the same place on both.
      */
     slot: { row: number; column: number };
-    /** A key of the phone: down while pressed, up when let go (`HeldButtons`). */
+    /**
+     * A key of the phone that can be held: down while pressed, up when let go (`HeldButtons`).
+     * Without it, a key is one tap per click (`ControlButton`).
+     */
     hold: boolean;
     /** Sends to the phone, so it is disabled while the stream is not connected. */
     needsConnection: boolean;

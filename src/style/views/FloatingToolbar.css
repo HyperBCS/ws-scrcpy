@@ -29,7 +29,7 @@
 }
 
 /* The controls button is the kit's icon button. Only what its place over the picture needs is
-   set here: the size `FloatingToolbar` clamps and drags by, a shadow, and the drag itself. */
+   set here: the size `ControlPanel` clamps and drags by, a shadow, and the drag itself. */
 .floating-toolbar-fab {
     pointer-events: auto;
     width: 56px;
