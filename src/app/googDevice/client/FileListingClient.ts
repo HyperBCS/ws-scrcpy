@@ -25,7 +25,7 @@ import FilePushHandler, { DragAndPushListener, PlannedUpload, PushUpdateParams }
 import { Cancellable, FileError, FileService } from '../files/FileService';
 import { FolderEntries, SortKey } from '../files/FolderEntries';
 import { KeyedRows } from '../files/KeyedRows';
-import { RowGeometry, RowWindow } from '../files/RowWindow';
+import { RowGeometry, RowRange, RowWindow } from '../files/RowWindow';
 import {
     ConflictAnswer,
     ConflictChoice,
@@ -310,6 +310,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private readonly spacerAfter: HTMLElement;
     /** How the rows lie, measured; forgotten when the layout or the width changes. */
     private rowGeometry?: RowGeometry;
+    /** The width of the list when the rows were last measured. */
+    private listWidth = 0;
     private windowFrame = 0;
     /** What the list showed when it was last put in order. */
     private listed: Entry[] = [];
@@ -655,9 +657,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.tableBody.addEventListener('pointercancel', this.cancelLongPress);
         this.items.addEventListener('scroll', this.onListScroll, { passive: true });
         if (typeof ResizeObserver === 'function') {
-            // A new width can change how many tiles fit on a line.
+            // A new width can change how many tiles fit on a line and how tall they are. A new
+            // height changes only which lines are in view.
             this.resizeObserver = new ResizeObserver(() => {
-                this.rowGeometry = undefined;
+                if (this.items.clientWidth !== this.listWidth) {
+                    this.listWidth = this.items.clientWidth;
+                    this.forgetRowGeometry();
+                }
                 this.onListScroll();
             });
             this.resizeObserver.observe(this.items);
@@ -747,7 +753,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private applyPreferences(): void {
         const { view, sort, ascending } = this.preferences;
         if (this.wrapper.dataset.view !== view) {
-            this.rowGeometry = undefined;
+            this.forgetRowGeometry();
         }
         this.wrapper.dataset.view = view;
         this.tableHead.querySelectorAll<HTMLElement>('th[aria-sort]').forEach((cell) => {
@@ -878,12 +884,15 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /**
      * The rows of a long list near the view, between two spacers. The rows are measured after
      * they are in place; when they lie differently from what the range assumed (the first time,
-     * or after the view or the width changed), the range is worked out again from them.
+     * or after the view or the width changed), the range is worked out again from them. A
+     * measure that stands is kept (`RowWindow.fits`), and each line in the document is kept at
+     * the pitch it has, so the spacers stand for the lines as they are.
      */
     private renderWindow(list: Entry[]): void {
         for (let pass = 0; pass < 3; pass++) {
-            const assumed = this.rowGeometry ?? this.measureRows() ?? this.guessGeometry();
-            const range = this.rowWindow.range(list.length, this.viewInBody(), assumed);
+            const settled = this.rowGeometry;
+            const assumed = settled ?? this.measureRows() ?? this.guessGeometry();
+            const range = this.rowWindow.range(list, this.viewInBody(), assumed);
             this.spacerBefore.style.height = `${range.before}px`;
             this.spacerAfter.style.height = `${range.after}px`;
             this.rows.show(list.slice(range.from, range.to), {
@@ -891,21 +900,43 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 after: range.after ? this.spacerAfter : undefined,
             });
             const measured = this.measureRows();
-            this.rowGeometry = measured;
-            if (
-                !measured ||
-                (measured.columns === assumed.columns &&
-                    Math.abs(measured.pitch - assumed.pitch) < 0.5 &&
-                    Math.abs(measured.gap - assumed.gap) < 0.5 &&
-                    Math.abs(measured.padding - assumed.padding) < 0.5)
-            ) {
+            if (!measured) {
+                this.rowGeometry = undefined;
                 return;
             }
+            if (RowWindow.fits(assumed, measured, !!settled)) {
+                this.rowGeometry = settled ?? measured;
+                this.measureLines(list, range, measured.columns);
+                return;
+            }
+            this.rowGeometry = measured;
             this.rowWindow.reset();
         }
     }
 
-    /** How the rows in the document lie, from the first two lines of them. */
+    /**
+     * Keeps the pitch of each line in the document, from the top of one line to the next. The
+     * line next to a spacer is left out: where a table shares the border between two rows, it
+     * can be half a pixel off. A line is measured once it is between two others.
+     */
+    private measureLines(list: Entry[], range: RowRange, columns: number): void {
+        const rows = this.rows.shown();
+        const tops: number[] = [];
+        for (let index = 0; index < rows.length; index += columns) {
+            tops.push(rows[index].getBoundingClientRect().top);
+        }
+        const skip = range.before ? 1 : 0;
+        const pitches = tops.slice(skip + 1).map((top, index) => top - tops[skip + index]);
+        this.rowWindow.measured(list, columns, range.from / columns + skip, pitches);
+    }
+
+    /** Forgets how the rows lie, after a change of view or width. */
+    private forgetRowGeometry(): void {
+        this.rowGeometry = undefined;
+        this.rowWindow.forget();
+    }
+
+    /** How the rows in the document lie: items per line, and the mean pitch of their lines. */
     private measureRows(): RowGeometry | undefined {
         const rows = this.rows.shown();
         if (rows.length < 2 || !rows[0].isConnected) {
@@ -919,16 +950,19 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (columns >= rows.length) {
             return undefined;
         }
-        // From the second line to the third where there is one: the first line after a spacer
-        // can be half a pixel shorter, where a table shares the border between two rows.
-        const line = rows.length > 2 * columns ? 1 : 0;
+        // From the second line where there is a third: the first line after a spacer can be half
+        // a pixel shorter, where a table shares the border between two rows. The pitch is the
+        // mean over the lines from there to the last, which differ where tiles do.
+        const lines = Math.ceil(rows.length / columns);
+        const line = lines > 2 ? 1 : 0;
         const from = rows[line * columns].getBoundingClientRect();
-        const pitch = rows[(line + 1) * columns].getBoundingClientRect().top - from.top;
+        const next = rows[(line + 1) * columns].getBoundingClientRect();
+        const pitch = (rows[(lines - 1) * columns].getBoundingClientRect().top - from.top) / (lines - 1 - line);
         if (pitch <= 0) {
             return undefined;
         }
         const padding = parseFloat(getComputedStyle(this.tableBody).paddingTop) || 0;
-        return { columns, pitch, gap: Math.max(0, pitch - from.height), padding };
+        return { columns, pitch, gap: Math.max(0, next.top - from.top - from.height), padding };
     }
 
     /** A first guess for a list not yet measured: one row per line, each a row high. */
@@ -983,13 +1017,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (!entry || this.rows.element(entry.name)?.isConnected || !geometry || !RowWindow.windowed(list.length)) {
             return;
         }
-        const body = this.tableBody.getBoundingClientRect().top - this.items.getBoundingClientRect().top;
-        const top =
-            this.items.scrollTop + body + geometry.padding + Math.floor(index / geometry.columns) * geometry.pitch;
+        const body =
+            this.items.scrollTop + this.tableBody.getBoundingClientRect().top - this.items.getBoundingClientRect().top;
+        const line = Math.floor(index / geometry.columns);
+        const top = body + this.rowWindow.offset(list, line, geometry);
         if (top < this.items.scrollTop) {
             this.items.scrollTop = top;
         } else {
-            this.items.scrollTop = top + geometry.pitch - this.items.clientHeight;
+            this.items.scrollTop = body + this.rowWindow.offset(list, line + 1, geometry) - this.items.clientHeight;
         }
         this.updateWindow();
     }

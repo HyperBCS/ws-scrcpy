@@ -1689,6 +1689,63 @@ test('a folder of 5,000 items: sorted once per change, rows added at most every 
     assert.ok(client.rows.built < built + 200, 'and built only rows that came into view');
 });
 
+test('a long list whose lines differ in height: what is in view stays in place while it scrolls', async (t) => {
+    // About one row in three is taller, in no regular order, as tiles are where some names take
+    // two lines and folders have no size.
+    const rowHeight = FakeElement.prototype.rowHeight;
+    const tall = (name) => (Number(/\d+/.exec(name)[0]) * 7919) % 13 < 4;
+    t.mock.method(FakeElement.prototype, 'rowHeight', function () {
+        return this.dataset?.name !== undefined && tall(this.dataset.name) ? 49 : rowHeight.call(this);
+    });
+    const { client, phone, wrapper, frames } = openFiles(t, '/sdcard/Download', streamPhone);
+    const pump = setInterval(() => frames.splice(0).forEach((run) => run()), 16);
+    t.after(() => clearInterval(pump));
+    const items = wrapper.querySelector('.fx-items');
+    const tbody = wrapper.querySelector('tbody');
+    items.clientHeight = 660;
+    items.scrollTop = 0;
+    tbody.layout = () => ({ left: 0, top: -items.scrollTop, right: 0, bottom: 0, width: 0, height: 0 });
+    for (let round = 0; round < 5 && !phone.lists.length; round++) {
+        phone.serve();
+        await later();
+    }
+    const [list] = phone.lists;
+    for (let index = 0; index < 1000; index++) list.reply(record('DENT', `IMG_${index}.jpg`, 0o100644, 2048));
+    list.end(0);
+    await later();
+    phone.serve();
+    await later();
+    const length = () => tbody.children.reduce((total, row) => total + row.rowHeight(), 0);
+    const inView = () =>
+        tbody.children.filter((row) => {
+            const box = row.getBoundingClientRect();
+            return !row.classes.has('fx-spacer') && box.bottom > 0 && box.top < items.clientHeight;
+        });
+    const moved = [];
+    // The owner scrolls down to the end and back up, about eight lines at a time. A row in view
+    // when the scroll lands is where it was once the rows near the view have changed.
+    const scrollTo = (top) => {
+        items.scrollTop = Math.max(0, Math.min(top, length() - items.clientHeight));
+        const [anchor] = inView();
+        const before = anchor.getBoundingClientRect().top;
+        items.dispatch('scroll');
+        // The frame the scroll asked for.
+        frames.splice(0).forEach((run) => run());
+        const row = client.rows.element(anchor.dataset.name);
+        const after = row.isConnected ? row.getBoundingClientRect().top : NaN;
+        if (!(Math.abs(after - before) < 1)) moved.push(`${anchor.dataset.name} ${before} to ${after}`);
+        assert.ok(inView().length >= 13, `the view is full of rows at ${items.scrollTop}`);
+    };
+    while (items.scrollTop < length() - items.clientHeight) scrollTo(items.scrollTop + 300);
+    while (items.scrollTop > 0) scrollTo(items.scrollTop - 300);
+    assert.deepEqual(moved, [], 'nothing in view moved');
+    // Every line has been in the document, so the spacers stand for the rows as tall as they
+    // are. The last line was never followed by another and keeps the mean.
+    const rows = Array.from({ length: 1000 }, (_, index) => (tall(`IMG_${index}`) ? 49 : 33));
+    const total = rows.reduce((sum, height) => sum + height, 0);
+    assert.ok(Math.abs(length() - total) <= 16, `the list is ${length()} px long, its rows ${total} px`);
+});
+
 // ------------------------------------------------------------------ what goes over the wire
 //
 // A fixed script of actions, and every frame the explorer sends for it: the payload that opens
