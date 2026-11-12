@@ -17,7 +17,7 @@ import { IconName, ICONS, iconSvg } from '../ui/icons';
 import { InlineStatus } from '../ui/InlineStatus';
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu';
 import { SegmentedControl } from '../ui/SegmentedControl';
-import { Sheet } from '../ui/Sheet';
+import { Sheet, useSheetDock } from '../ui/Sheet';
 import {
     SheetGroup,
     SheetMessageRow,
@@ -577,6 +577,48 @@ const SHEET_PHONE = 'Pixel 9';
 const SHEET_ROWS = Array.from({ length: 40 }, (_, index) => `Row ${index + 1}`);
 
 /**
+ * A sheet with `dock`, as Actions, Settings and Type text are: from 1024px a panel at the right
+ * edge of the place `useSheetDock` names, here a frame that stands for a phone's screen and
+ * keeps room for the panel; below 1024px the bottom sheet or the centred dialog.
+ */
+function DockedSheets() {
+    const [shown, setShown] = useState<'modal' | 'modeless'>();
+    const frame = useRef<HTMLDivElement>(null);
+    useSheetDock(frame);
+    const close = () => setShown(undefined);
+    return (
+        <>
+            <Demo name="docked">
+                <div ref={frame} class="kit-demo-frame kit-demo-dock">
+                    <p class="kit-demo-dock-stage">The screen of a phone</p>
+                </div>
+                <Button onClick={() => setShown('modal')}>Docked sheet</Button>
+                <Button onClick={() => setShown('modeless')}>Docked sheet that leaves the page in use</Button>
+            </Demo>
+            <Sheet open={shown === 'modal'} onClose={close} dock title="Beside the screen" subtitle={SHEET_PHONE}>
+                <SheetGroup title="Rows">
+                    {SHEET_ROWS.slice(0, 12).map((row) => (
+                        <SheetRow key={row} title={row} />
+                    ))}
+                </SheetGroup>
+            </Sheet>
+            <Sheet
+                open={shown === 'modeless'}
+                onClose={close}
+                dock
+                modal={false}
+                title="Beside the screen, page in use"
+                subtitle={SHEET_PHONE}
+            >
+                <div class="kit-demo-fields">
+                    <TextField label="Text for the phone" autocomplete="off" />
+                </div>
+            </Sheet>
+        </>
+    );
+}
+
+/**
  * The sheet and the menu, each example behind a button. `scripts/e2e-kit-sheet.js` runs here.
  * The sheets are rendered after the buttons, so a list of buttons holds only the buttons.
  */
@@ -796,6 +838,8 @@ function SheetsAndMenu() {
 
                 {/* Outside every sheet, where a page keeps its toast. */}
                 <Toast message={message} identity={message} duration={0} onDismiss={() => setMessage('')} />
+
+                <DockedSheets />
             </Section>
 
             <Section title="Menu">

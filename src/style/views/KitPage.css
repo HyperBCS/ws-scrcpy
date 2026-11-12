@@ -110,6 +110,26 @@
     border: 1px dashed var(--border-strong);
     border-radius: var(--radius-md);
 }
+/* Stands for the stage of a phone's screen, which a docked sheet stands beside from 1024px
+   (`ui/Sheet.tsx`, `useSheetDock`). It keeps room for the panel at its right edge. */
+.kit-demo-dock {
+    display: flex;
+    box-sizing: border-box;
+    height: 320px;
+}
+.kit-demo-dock-stage {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+}
+.kit-demo-dock[data-sheet-docked] > .kit-demo-dock-stage {
+    margin-right: var(--kit-sheet-dock-width);
+}
 /* The body of a sheet: groups on the page surface. */
 .kit-demo-sheet {
     min-width: 0;
