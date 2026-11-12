@@ -340,6 +340,8 @@
     .notifications-view .notifications-page-inbox {
         max-width: 1024px;
     }
+}
+@media (pointer: fine) {
     .notification-history-item {
         padding-right: calc(var(--control-height) * 3 + var(--space-24));
     }

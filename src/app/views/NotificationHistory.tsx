@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import type { NotificationSource } from '../../common/Notification';
+import type { NotificationSource, NotificationStatus } from '../../common/Notification';
 import {
     notificationRequest as api,
     closeReadNotifications,
@@ -168,8 +168,6 @@ export function NotificationHistory({
     const scope = source?.id || '';
     const currentSource = useRef(scope);
     currentSource.current = scope;
-    const latestSources = useRef(sources);
-    latestSources.current = sources;
     // The notification a push banner opened. The address names it only until it is found.
     const [highlighted, setHighlighted] = useState('');
     const [highlightOn, setHighlightOn] = useState(false);
@@ -224,14 +222,14 @@ export function NotificationHistory({
     const [menu, setMenu] = useState<'filters' | 'bulk' | null>(null);
     const [menuKey, setMenuKey] = useState('');
     const menuAnchor = useRef<HTMLElement>(null);
-    const [mouseMenu, setMouseMenu] = useState(() => matchMedia('(min-width: 1024px) and (pointer: fine)').matches);
+    const [mouseMenu, setMouseMenu] = useState(() => matchMedia('(pointer: fine)').matches);
     const [cardSheet, setCardSheet] = useState(false);
     const cardSheetRef = useRef(false);
     const [openStacks, setOpenStacks] = useState(new Set<string>());
     const [expandedNotifications, setExpandedNotifications] = useState(new Set<string>());
     const focusAfterAction = useRef('');
     useEffect(() => {
-        const media = matchMedia('(min-width: 1024px) and (pointer: fine)');
+        const media = matchMedia('(pointer: fine)');
         const change = () => {
             setMouseMenu(media.matches);
             setMenuKey('');
@@ -562,14 +560,19 @@ export function NotificationHistory({
         });
     };
     const moveToInbox = (item: HistoryItem) => {
+        const nextFocus = planFocus(item.key);
+        const actionScope = scope;
         setMenuKey('');
         setUndo(null);
         attempt(async () => {
             await api(`history/${encodeURIComponent(item.key)}/restore`, 'POST', { read: true });
+            if (currentSource.current === actionScope) focusAfterAction.current = nextFocus;
             await refresh();
         });
     };
     const phoneAction = (item: HistoryItem) => {
+        const nextFocus = planFocus(item.key);
+        const actionScope = scope;
         const label = item.negativeActionLabel;
         const name = sources.find((s) => s.id === item.source)?.name || 'the iPhone';
         setMenuKey('');
@@ -590,7 +593,11 @@ export function NotificationHistory({
                     setAccepted((keys) => [...keys, item.key]);
                     // The phone accepted the request; it does not report that the notification is gone.
                     setPhoneResult(`${label} sent to ${name}.`);
+                    if (currentSource.current === actionScope) focusAfterAction.current = nextFocus;
                     await refresh();
+                    requestAnimationFrame(() => {
+                        if (!topSheet.peek()) restoreCardFocus();
+                    });
                 },
                 isDismissActionLabel(label) ? go : undefined,
             );
@@ -699,22 +706,34 @@ export function NotificationHistory({
             }
         });
     };
+    // Sources are saved as whole records. Read again before each save, including Undo,
+    // so another browser's changes since our last poll are kept.
+    const freshSource = async (id: string) => {
+        const current = await api<Pick<NotificationStatus, 'sources'>>('status');
+        if (!alive.current) throw Error('The inbox is closed.');
+        const phone = current.sources.find((s) => s.id === id);
+        if (!phone) throw Error('This iPhone is no longer linked.');
+        return phone;
+    };
     const muteApp = (item: HistoryItem) => {
         if (!item.app || busy) return;
         const actionScope = scope;
+        const nextFocus = planFocus(item.key);
         setMenuKey('');
         attempt(async () => {
-            const phone = latestSources.current.find((s) => s.id === item.source);
-            if (!phone) throw Error('This iPhone is no longer linked.');
+            const phone = await freshSource(item.source);
             const wasMuted = isAppMuted(phone, item.app!);
             await setAppMuted(phone, item.app!, item.appName || item.app!, true);
+            if (currentSource.current === actionScope) focusAfterAction.current = nextFocus;
             await refresh();
+            requestAnimationFrame(() => {
+                if (!topSheet.peek()) restoreCardFocus();
+            });
             offerUndo({
                 source: actionScope,
                 label: `${item.appName || item.app} muted`,
                 revert: async () => {
-                    const current = latestSources.current.find((s) => s.id === item.source);
-                    if (!current) throw Error('This iPhone is no longer linked.');
+                    const current = await freshSource(item.source);
                     await setAppMuted(current, item.app!, item.appName || item.app!, wasMuted);
                 },
             });

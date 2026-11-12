@@ -76,6 +76,16 @@ export function NotificationCard({
     const lastPointer = useRef('');
     const [expanded, setExpanded] = useState(false);
     const [overflow, setOverflow] = useState(false);
+    const expansion = useRef({ expanded, onExpand });
+    expansion.current = { expanded, onExpand };
+    useLayoutEffect(
+        () => () => {
+            // A collapsed stack or search can hide an expanded card. Its read record no
+            // longer needs to stay in Unread once that preview leaves the list.
+            if (expansion.current.expanded) expansion.current.onExpand?.(false);
+        },
+        [],
+    );
     const expand = () => {
         onExpand?.(!expanded);
         setExpanded(!expanded);

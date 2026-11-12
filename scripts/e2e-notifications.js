@@ -155,6 +155,8 @@ async function capture(fixture, name) {
 async function fixture(browser, options = {}) {
     const context = await browser.newContext({
         viewport: { width: options.width || 390, height: options.height || 844 },
+        // Phone-width fixtures use touch unless a test explicitly asks for a narrow mouse window.
+        hasTouch: !options.mouse && (options.width || 390) < 1024,
         ...(options.ios ? {
             isMobile: true, hasTouch: true,
             userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
