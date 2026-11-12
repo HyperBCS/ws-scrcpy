@@ -57,13 +57,16 @@ function copyWithTextarea(text: string): boolean {
     }
 }
 
+/** A read from the phone found nothing on its clipboard. */
+export const PHONE_CLIPBOARD_EMPTY_NOTE = 'The phone clipboard is empty.';
+
 /**
- * "Copy here" in both Actions sheets: copies the text read from the phone into this browser's
+ * "Copy here" in the Actions sheet: copies the text read from the phone into this browser's
  * clipboard and returns the line to show under the clipboard group.
  */
 export async function copyPhoneClipboardHere(received: string | undefined): Promise<string> {
     if (!received) {
-        return received === undefined ? 'Read the phone clipboard first.' : 'The phone clipboard is empty.';
+        return received === undefined ? 'Read the phone clipboard first.' : PHONE_CLIPBOARD_EMPTY_NOTE;
     }
     return (await copyTextToClipboard(received))
         ? 'Copied to this browser.'

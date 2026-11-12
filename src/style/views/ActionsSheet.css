@@ -1,8 +1,8 @@
 @layer tokens, base, components, views;
 
 @layer views {
-/* Both Actions sheets (views/ActionsSheet.tsx, views/ApplActionsSheet.tsx) are built from the
-   kit's groups, rows and disclosure. These rules only place those parts in the sheet. */
+/* The Actions sheet (views/actions/PhoneActionsSheet.tsx) is built from the kit's groups and
+   rows. These rules only place those parts in the sheet. */
 .actions-sheet {
     min-width: 0;
 }
@@ -15,11 +15,5 @@
 /* A text area takes the width of its row; the button that sends it goes under it. */
 .actions-sheet .kit-row-stack > .kit-row-control > .kit-field-group {
     flex-basis: 100%;
-}
-
-/* A prompt and an outcome inside the disclosure keep clear of its edge, as its rows do. */
-.actions-sheet .kit-disclosure .kit-confirm,
-.actions-sheet .kit-disclosure .kit-status {
-    margin: var(--space-8) var(--space-16) var(--space-12);
 }
 }

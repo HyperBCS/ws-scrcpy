@@ -16,7 +16,7 @@ global.location = new URL('http://localhost:8000/');
 
 const status = require('../src/app/state/phoneStatus');
 const copy = require('../src/app/copy');
-const { capabilities } = require('../src/app/state/capabilities');
+const { actionCapabilities, capabilities } = require('../src/app/state/capabilities');
 const { activeCoreDeviceStream, activeStream } = require('../src/app/state/stream');
 const devices = require('../src/app/state/devices');
 const { ICONS } = require('../src/app/ui/icons');
@@ -384,20 +384,31 @@ test('the capabilities table says what each kind of phone can do today', () => {
     const tools = read('src/app/views/ToolView.tsx');
     assert.match(tools, /view: 'files'/);
     assert.match(tools, /view: 'shell'/);
-    assert.match(android.actions, /title="Phone panels"/);
-    assert.doesNotMatch(ios.actions, /Phone panels/);
+    // The one Actions sheet shows its rows by this table; each platform's wrapper sends.
+    assert.match(read('src/app/views/actions/PhoneActionsSheet.tsx'), /capabilities\(adapter\.platform\)/);
+    // Refresh picture, Restart video and Reconnect: only the iPhone stream client has them.
+    assert.deepEqual([actionCapabilities('android'), actionCapabilities('ios')], [{ pictureRecovery: false }, { pictureRecovery: true }]);
+    assert.equal(actionCapabilities(phone), actionCapabilities('ios'));
+    for (const call of ['requestKeyframe', 'restartStream', 'restartSession']) {
+        assert.match(ios.actions, new RegExp(`client\\.${call}\\(\\)`));
+        assert.doesNotMatch(android.actions, new RegExp(call));
+    }
+    assert.match(android.actions, /TYPE_EXPAND_NOTIFICATION_PANEL/);
+    assert.doesNotMatch(ios.actions, /panel/i);
     assert.match(ios.actions, /client\.rotate\(/);
     assert.doesNotMatch(android.actions + android.toolbox, /[Rr]otate/);
-    for (const platform of [android, ios]) assert.match(platform.actions, /onReadClipboard/);
-    assert.match(android.actions, /createSetClipboardCommand\(clipboardDraft, true\)/, 'Android pastes into the focused field');
-    assert.match(ios.actions, /client\.setClipboard\(clipboardDraft\)/, 'an iPhone only sets its clipboard');
+    assert.match(android.actions, /createGetClipboardCommand\(/);
+    assert.match(ios.actions, /client\.requestClipboard\(\)/);
+    assert.match(android.actions, /createSetClipboardCommand\(text, true\)/, 'Android pastes into the focused field');
+    assert.match(ios.actions, /client\.setClipboard\(text\)/, 'an iPhone only sets its clipboard');
     assert.match(android.unlock, /type="password"/);
     assert.doesNotMatch(ios.unlock, /<input/, 'the iPhone uses the passcode stored on the server');
     assert.match(ios.unlock, /runUnlockNow\(/);
     assert.match(android.toolbox, /title: 'Power'/);
     assert.match(ios.toolbox, /title: 'Lock', name: 'lock', icon: 'power'/);
-    assert.match(ios.actions, /title="Reboot"/);
-    assert.match(ios.actions, /title="Shut down"/);
+    assert.match(ios.actions, /ControlCenterCommand\.REBOOT_DEVICE/);
+    assert.match(ios.actions, /ControlCenterCommand\.SHUTDOWN_DEVICE/);
+    assert.doesNotMatch(android.actions, /REBOOT|SHUTDOWN/);
     // One Settings sheet (step 5b): the Stream section and the scheduled unlock are chosen by these two values.
     assert.match(ios.settings, /title="Schedule"/);
     assert.doesNotMatch(android.settings, /Scheduled unlock|unlockSchedule/);

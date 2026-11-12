@@ -1,5 +1,6 @@
 /**
- * The most clipboard text either client sends, in UTF-8 bytes. This is scrcpy's own limit: its
+ * The most clipboard text either client sends, in UTF-8 bytes, and the one limit of the Actions
+ * sheet's clipboard group (`views/actions/ClipboardGroup.tsx`). This is scrcpy's own limit: its
  * 256 KiB control message less the 14-byte header. It also keeps the iPhone's JSON message, with
  * every character escaped, far below the 4 MiB frame limit the server enforces on WebSockets.
  */
