@@ -2,7 +2,8 @@ const { settleMotion } = require('./ui-motion');
 // BASE=http://127.0.0.1:8000 node scripts/e2e-ios-typing.js
 // The iOS "Type text" sheet against fixture sockets: every HID report is captured in the
 // browser, nothing reaches a phone. Covers the phone layout, live typing order, editing keys,
-// smart punctuation, paste, IME commits, focus retention and dismissal. The viewport case
+// smart punctuation, paste, IME commits, focus retention, presses on the picture while typing
+// and dismissal. The viewport case
 // simulates keyboard shrink/pan; physical iOS/PWA keyboard behavior needs a device check.
 const assert = require('node:assert/strict');
 const { chromium, webkit } = require('playwright');
@@ -23,11 +24,26 @@ function channelJson(id, data) {
     return frame;
 }
 
-async function start(browser, { mobile = true, mockViewport = false, udid = UDID, locked = false } = {}) {
+async function start(browser, { mobile = true, mockViewport = false, udid = UDID, locked = false, picture = false } = {}) {
     const context = await browser.newContext({
         viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 700 },
         isMobile: mobile,
         hasTouch: mobile,
+    });
+    // A picture of the phone, so that a press on it is a touch on the phone: the fixture socket
+    // announces a codec and sends key frames, and this decoder turns each into a 428x926 frame.
+    if (picture) await context.addInitScript(() => {
+        window.VideoDecoder = class {
+            static async isConfigSupported() { return { supported: true }; }
+            constructor({ output }) { this.output = output; this.state = 'unconfigured'; }
+            configure() { this.state = 'configured'; }
+            decode(chunk) {
+                const canvas = new window.OffscreenCanvas(428, 926);
+                canvas.getContext('2d').fillRect(0, 0, 428, 926);
+                this.output(new window.VideoFrame(canvas, { timestamp: chunk.timestamp }));
+            }
+            close() { this.state = 'closed'; }
+        };
     });
     if (mockViewport) await context.addInitScript(() => {
         const state = { height: null, width: null, offsetTop: 0, offsetLeft: 0 };
@@ -47,15 +63,30 @@ async function start(browser, { mobile = true, mockViewport = false, udid = UDID
     const page = await context.newPage();
     const errors = [];
     const sent = [];
+    // Screen sessions the page opened: one per visit.
+    let sessions = 0;
     page.on('pageerror', (error) => errors.push(error.message));
     await page.route('**/api/notifications/**', route => route.fulfill({ status: 200, json: { sources: [], unread: 0, unreadBySource: {} } }));
     await page.routeWebSocket('**', (socket) => {
         const target = new URL(socket.url());
         if (target.searchParams.get('action') === 'proxy-coredevice') {
+            sessions++;
             socket.onMessage((data) => {
                 if (typeof data === 'string') sent.push(JSON.parse(data));
             });
             setTimeout(() => socket.send(JSON.stringify({ type: 'status', state: 'ready' })), 50);
+            if (picture) {
+                let open = true;
+                socket.onClose(() => { open = false; });
+                setTimeout(() => socket.send(JSON.stringify({ type: 'codec', codec: 'hev1.1.6.L150.B0', description: Buffer.from([1]).toString('base64') })), 80);
+                // A key frame now and then: the first may come before the decoder is ready.
+                const frame = () => {
+                    if (!open || page.isClosed()) return;
+                    socket.send(Buffer.from([0, 0, 0, 0, 1, 0x26]));
+                    setTimeout(frame, 250).unref();
+                };
+                setTimeout(frame, 150);
+            }
             return;
         }
         socket.onMessage((data) => {
@@ -79,7 +110,7 @@ async function start(browser, { mobile = true, mockViewport = false, udid = UDID
         for (let i = 0; i < 100 && keys().length < count; i++) await page.waitForTimeout(20);
         return keys();
     };
-    return { context, page, errors, sent, keys, waitForKeys };
+    return { context, page, errors, sent, keys, waitForKeys, streams: () => sessions };
 }
 
 // Type text is a kit sheet: the open dialog that holds the typing field.
@@ -113,15 +144,17 @@ async function mobileFlow(browser) {
         'kit-field live-text-input',
         'the field is focused so the phone keyboard opens',
     );
-    // One sheet, on the kit's dialog, with one header. Nothing of the older bar is left.
+    // One sheet, on the kit's dialog, with one header. It is not modal and has no backdrop, so
+    // the picture stays in use. Nothing of the older bar is left.
     assert.deepEqual(
         await typingSheet(page).evaluate((dialog) => ({
             modal: dialog.matches('dialog:modal'),
+            backdrop: dialog.querySelectorAll('.kit-sheet-backdrop').length,
             headers: dialog.querySelectorAll('.kit-sheet-header').length,
             title: document.getElementById(dialog.getAttribute('aria-labelledby'))?.textContent,
             older: document.querySelectorAll('.live-text-overlay, .live-text-bar, .live-text-done').length,
         })),
-        { modal: true, headers: 1, title: 'Type text', older: 0 },
+        { modal: false, backdrop: 0, headers: 1, title: 'Type text', older: 0 },
     );
     assert.match(await page.locator('#live-text-hint').textContent(), /on the phone/);
 
@@ -246,6 +279,128 @@ async function desktopFlow(browser) {
     assert.deepEqual(test.errors, []);
     await test.context.close();
     console.log('desktop: ok');
+}
+
+// U-stream-5. Type text is not modal: a press on the picture is a touch on the iPhone, Type text
+// stays open with its field focused and typing goes on, so the next field can be chosen without
+// closing it. A press or a wheel in the sheet is not a touch, and nothing dims the picture.
+async function pictureFlow(browser) {
+    for (const mobile of [true, false]) {
+        const test = await start(browser, { mobile, picture: true });
+        const { page } = test;
+        const label = mobile ? 'phone' : 'desktop';
+        const touches = () => test.sent.filter((message) => message.type === 'touch' || message.type === 'touch-frame').length;
+        const where = () => page.evaluate(() => ({ hash: location.hash, index: history.state?.nav?.index, overlay: history.state?.nav?.overlay || 0 }));
+        const pressAt = async (x, y) => {
+            if (mobile) await page.touchscreen.tap(x, y);
+            else await page.mouse.click(x, y);
+        };
+        try {
+            // The first frame gives the picture its size, so a press on it can be placed.
+            await page.waitForFunction(() => document.querySelector('.stream-mount .touch-layer')?.width === 428);
+            const home = await where();
+            await openOverlay(page, mobile);
+            const sheet = typingSheet(page);
+            assert.deepEqual(
+                await sheet.evaluate((dialog) => ({
+                    modal: dialog.matches(':modal'),
+                    backdrop: dialog.querySelectorAll('.kit-sheet-backdrop').length,
+                    // The page takes focus: a modal dialog would make it inert. Focus goes back to the field.
+                    inert: (() => {
+                        const field = document.activeElement;
+                        const outside = document.querySelector('.kit-bar button');
+                        outside.focus();
+                        const inert = document.activeElement !== outside;
+                        field.focus({ preventScroll: true });
+                        return inert;
+                    })(),
+                    through: getComputedStyle(dialog).pointerEvents,
+                })),
+                { modal: false, backdrop: 0, inert: false, through: 'none' },
+                `${label}: Type text is not modal, has no backdrop and leaves the page in use`,
+            );
+            const picture = await page.locator('.stream-mount .touch-layer').boundingBox();
+            const panel = await sheet.locator('.kit-sheet-panel').boundingBox();
+            const point = { x: picture.x + picture.width / 2, y: picture.y + picture.height / 2 };
+            assert(point.y < panel.y, `${label}: the test presses the picture, not the sheet`);
+            assert.equal(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.className, point), 'touch-layer', `${label}: nothing covers or dims the picture`);
+            await captureTyping(page, `picture-${label}`);
+
+            for (let count = 0; count < 2; count++) {
+                const before = touches();
+                await pressAt(point.x, point.y);
+                for (let tries = 0; tries < 50 && touches() === before; tries++) await page.waitForTimeout(20);
+                assert(touches() > before, `${label}: press ${count + 1} on the picture is a touch on the iPhone`);
+            }
+            await page.waitForTimeout(150);
+            assert.equal(await sheet.count(), 1, `${label}: Type text stays open after a press on the picture`);
+            assert.equal(await sheet.evaluate((dialog) => dialog.hasAttribute('data-exiting')), false);
+            assert.deepEqual(await where(), { ...home, index: home.index + 1, overlay: 1 }, `${label}: the press does not step through history`);
+            assert.equal(await page.evaluate(() => document.activeElement?.className), 'kit-field live-text-input', `${label}: the field keeps focus, so the keyboard stays up`);
+
+            // Typing goes on, and a key goes to the field once: the window's key capture leaves it.
+            await page.keyboard.type('a');
+            await test.waitForKeys(2);
+            await page.waitForTimeout(200);
+            assert.deepEqual(test.keys(), press(0x04), `${label}: one key press reaches the iPhone for one key`);
+
+            // A press and a wheel inside the sheet are not touches on the iPhone.
+            const before = touches();
+            const title = await sheet.locator('.kit-sheet-title').boundingBox();
+            await pressAt(title.x + 10, title.y + title.height / 2);
+            await page.mouse.move(panel.x + panel.width / 2, panel.y + panel.height / 2);
+            await page.mouse.wheel(0, 120);
+            await page.waitForTimeout(150);
+            assert.equal(touches(), before, `${label}: nothing pressed in the sheet reaches the iPhone`);
+            assert.equal(await sheet.count(), 1);
+
+            // Back closes it and leaves the page; so do Escape and the close control.
+            await page.goBack();
+            await sheet.waitFor({ state: 'hidden' });
+            assert.deepEqual(await where(), home, `${label}: Back closes Type text and stays on the page`);
+            assert.equal(await page.locator('.stream-view').count(), 1);
+            await openOverlay(page, mobile);
+            await page.keyboard.press('Escape');
+            await sheet.waitFor({ state: 'hidden' });
+            await openOverlay(page, mobile);
+            await closeTyping(page).click();
+            await sheet.waitFor({ state: 'hidden' });
+            assert.deepEqual(await where(), home);
+
+            // From the Actions sheet: Type text takes its place, and the field has focus in the
+            // same press, not after Actions has played its exit. iPhone Safari raises its
+            // keyboard only for a focus in the press.
+            if (mobile) {
+                await page.locator('.floating-toolbar-fab').tap();
+                await settleMotion(page);
+            }
+            await page.locator('.control-buttons-list [title="Actions"]').click();
+            const actions = page.getByRole('dialog', { name: 'Actions', exact: true });
+            await actions.waitFor();
+            await settleMotion(page);
+            const open = actions.locator('.kit-row', { hasText: 'Type text' }).getByRole('button', { name: 'Open', exact: true });
+            const afterPress = await open.evaluate((button) => new Promise((resolve) => {
+                button.click();
+                setTimeout(() => resolve({
+                    focus: document.activeElement?.className,
+                    modal: document.querySelectorAll('dialog:modal').length,
+                }), 0);
+            }));
+            assert.deepEqual(afterPress, { focus: 'kit-field live-text-input', modal: 0 }, `${label}: the field has focus in the press that opened Type text from Actions`);
+            await settleMotion(page);
+            await page.waitForTimeout(300);
+            assert.equal(await page.evaluate(() => document.activeElement?.className), 'kit-field live-text-input', `${label}: the field keeps focus after Actions has gone`);
+            await page.keyboard.press('Escape');
+            await sheet.waitFor({ state: 'hidden' });
+            await page.waitForTimeout(200);
+            assert.equal(await page.locator('dialog.kit-sheet[open]').count(), 0, `${label}: no sheet is left open`);
+            assert.equal(test.streams(), 1, `${label}: one screen session for the whole visit`);
+            assert.deepEqual(test.errors, []);
+            console.log(`PASS iOS ${label}: a press on the picture with Type text open is a touch, Type text stays open and typing goes on; from Actions the field has focus in the press`);
+        } finally {
+            await test.context.close();
+        }
+    }
 }
 
 async function keyboardLifecycleFlow(browser) {
@@ -530,7 +685,7 @@ async function clipboardLimitFlow(browser) {
 (async () => {
     const browser = await ({ chromium, webkit }[browserName] || chromium).launch({ headless: true });
     try {
-        const scenarios = [mobileFlow, desktopFlow, keyboardViewportFlow, keyboardLifecycleFlow, unlockFlow, clipboardLimitFlow];
+        const scenarios = [mobileFlow, desktopFlow, pictureFlow, keyboardViewportFlow, keyboardLifecycleFlow, unlockFlow, clipboardLimitFlow];
         const selected = process.env.SCENARIO ? scenarios.filter(run => run.name === process.env.SCENARIO) : scenarios;
         assert.ok(selected.length, 'SCENARIO names a known typing fixture');
         for (const run of selected) await run(browser);

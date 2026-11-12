@@ -59,7 +59,9 @@ function typingViewport() {
 /**
  * Type text: a sheet with one field. What is typed, pasted or committed by an IME goes to the
  * phone at once and the field stays empty. It is the one sheet that takes focus in a field when
- * it opens, so the on-screen keyboard comes up with it.
+ * it opens, so the on-screen keyboard comes up with it, and the one that is not modal: the
+ * picture and the page stay in use, so the owner can tap the next field on the phone and go on
+ * typing. It closes by its close control, Escape and Back.
  */
 export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     const inputRef = useRef<HTMLInputElement>(null);
@@ -129,7 +131,17 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
         viewport?.addEventListener('scroll', schedule);
         window.addEventListener('resize', schedule);
         input?.focus({ preventScroll: true });
+        // A press on the picture goes to the phone. The Android screen takes focus when it is
+        // pressed; give it straight back to the field, in the same press, so the keyboard stays
+        // up and typing goes on. The iPhone screen does not take focus.
+        const keepFocus = (event: FocusEvent) => {
+            if (event.target instanceof Element && event.target.matches('.touch-layer')) {
+                input?.focus({ preventScroll: true });
+            }
+        };
+        stream?.addEventListener('focusin', keepFocus);
         return () => {
+            stream?.removeEventListener('focusin', keepFocus);
             cancelAnimationFrame(frame);
             observer.disconnect();
             viewport?.removeEventListener('resize', schedule);
@@ -259,7 +271,7 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     };
 
     return (
-        <Sheet open={open} onClose={close} title="Type text">
+        <Sheet open={open} onClose={close} title="Type text" modal={false}>
             <div class="live-text" ref={contentRef} onKeyDown={onKeyDown} onKeyUp={(event) => event.stopPropagation()}>
                 <p id="live-text-hint" class="live-text-hint">
                     {target.hint}

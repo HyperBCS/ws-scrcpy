@@ -64,6 +64,14 @@
         clip-path: inset(50%);
         white-space: nowrap;
     }
+    /* The field is then first in the body, which clips what is outside it: room above the field
+       for its focus ring, taken from the header so that the sheet keeps its height. */
+    .kit-sheet:has(.live-text) .kit-sheet-header {
+        padding-bottom: var(--space-4);
+    }
+    .kit-sheet:has(.live-text) .kit-sheet-body {
+        padding-top: var(--space-4);
+    }
 }
 
 /* A phone on its side leaves about 220px above its keyboard: the field and the keys share one
@@ -75,7 +83,7 @@
         padding-bottom: 0;
     }
     .kit-sheet:has(.live-text) .kit-sheet-body {
-        padding-bottom: var(--space-8);
+        padding-bottom: var(--space-4);
     }
     .live-text {
         display: grid;

@@ -1,7 +1,7 @@
 /* eslint-disable */
 // node scripts/test-browser.js sheet-chrome      (E2E_OUT=/tmp/ws-scrcpy-sheet-chrome for screenshots)
 // Sheets, stream chrome and shared UI: moving between sheets, Escape with a confirm prompt open,
-// Type text as a sheet, Copy here over plain HTTP, the error boundary,
+// Type text beside the picture, Copy here over plain HTTP, the error boundary,
 // the Listen control, message placement, spacing, contrast and labels. Every socket is a fixture;
 // nothing reaches a phone.
 const assert = require('node:assert/strict');
@@ -266,11 +266,13 @@ async function escapeCancelsPrompt(browser) {
     console.log('PASS Escape cancels a confirm prompt first and closes the sheet on the second press');
 }
 
-// U-system-6, and the Type text title from U-system-12. Type text was a bar that left the picture
-// in use (U-stream-5). It is now a sheet like the others: what is behind it takes no press.
-async function typeTextIsASheet(browser) {
-    for (const mobile of [true, false]) {
-        const test = await android(browser, { mobile });
+// U-stream-5, U-system-6, and the Type text title from U-system-12. Type text is the kit sheet
+// shown without being modal: a press on the picture reaches the phone and Type text stays open
+// with its field focused, so the owner can tap the next field on the phone and go on typing.
+async function typeTextKeepsPicture(browser) {
+    for (const [mobile, dark] of [[true, false], [false, false], [true, true], [false, true]]) {
+        const test = await android(browser, { mobile, dark });
+        const label = `${mobile ? 'phone' : 'desktop'} ${dark ? 'dark' : 'light'}`;
         try {
             const { page } = test;
             const typing = sheet(page, 'Type text');
@@ -279,52 +281,100 @@ async function typeTextIsASheet(browser) {
                 await typing.waitFor();
                 await settleMotion(page);
             };
+            const press = (x, y) => (mobile ? page.touchscreen.tap(x, y) : page.mouse.click(x, y));
+            const ofType = (...types) => test.packets.filter((packet) => types.includes(packet[0])).length;
+            const stillOpen = () => typing.evaluate((dialog) => dialog.open && !dialog.hasAttribute('data-exiting'));
+            const focusInField = () => page.evaluate(() => document.activeElement?.className);
             await open();
             assert.equal(await typing.locator('.kit-sheet-title').textContent(), 'Type text', 'the sheet has the name of the button that opens it');
             assert.deepEqual(
-                await typing.evaluate((dialog) => ({ modal: dialog.matches('dialog.kit-sheet:modal'), headers: dialog.querySelectorAll('.kit-sheet-header').length })),
-                { modal: true, headers: 1 },
-                'Type text is the kit sheet, with one header',
+                await typing.evaluate((dialog) => ({
+                    modal: dialog.matches(':modal'),
+                    headers: dialog.querySelectorAll('.kit-sheet-header').length,
+                    backdrop: dialog.querySelectorAll('.kit-sheet-backdrop').length,
+                    // The page takes focus: a modal dialog would make it inert. Focus goes back to the field.
+                    inert: (() => {
+                        const field = document.activeElement;
+                        const outside = document.querySelector('.kit-bar button');
+                        outside.focus();
+                        const inert = document.activeElement !== outside;
+                        field.focus({ preventScroll: true });
+                        return inert;
+                    })(),
+                })),
+                { modal: false, headers: 1, backdrop: 0, inert: false },
+                `${label}: Type text is the kit sheet with one header, not modal and with no backdrop`,
             );
             assert.equal(await page.locator('.live-text-overlay, .live-text-bar, .live-text-done').count(), 0, 'nothing of the older bar is left');
-            assert.equal(await page.evaluate(() => document.activeElement?.className), 'kit-field live-text-input', 'the text field has focus, so the keyboard comes up');
-            const textPackets = () => test.packets.filter((packet) => packet[0] === 1).length;
-            const typedBefore = textPackets();
-            await page.keyboard.type('a');
-            for (let tries = 0; tries < 50 && textPackets() === typedBefore; tries++) await pause(20);
-            assert.equal(textPackets(), typedBefore + 1, 'what is typed goes to the phone');
-            await shot(page, `type-text-open-${mobile ? 'phone' : 'desktop'}-light`);
-            // A press on the picture beside the sheet closes the sheet, as on every sheet, and
-            // is not a touch on the phone.
+            assert.equal(await focusInField(), 'kit-field live-text-input', `${label}: the text field has focus, so the keyboard comes up`);
             const picture = await page.locator('.touch-layer').boundingBox();
             const panel = await typing.locator('.kit-sheet-panel').boundingBox();
             // The picture is fitted above the sheet at every width, so what is typed can be seen.
-            assert(picture.height > 100 && picture.y + picture.height <= panel.y + 1, `the picture is above the sheet (${picture.y + picture.height} <= ${panel.y})`);
-            const point = { x: picture.x + picture.width / 2, y: mobile ? picture.y + picture.height / 3 : picture.y + picture.height * 0.9 };
-            assert(point.y < panel.y || point.y > panel.y + panel.height, 'the test presses the picture, not the sheet');
+            assert(picture.height > 100 && picture.y + picture.height <= panel.y + 1, `${label}: the picture is above the sheet (${picture.y + picture.height} <= ${panel.y})`);
+            const point = { x: picture.x + picture.width / 2, y: picture.y + picture.height / 2 };
+            assert(point.y < panel.y, 'the test presses the picture, not the sheet');
+            assert.equal(
+                await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.className, point),
+                'touch-layer',
+                `${label}: nothing covers or dims the picture`,
+            );
+
+            // Two presses on the picture: each reaches the phone, Type text stays open and its
+            // field keeps focus.
             const before = test.touches();
-            if (mobile) await page.touchscreen.tap(point.x, point.y);
-            else await page.mouse.click(point.x, point.y);
-            await typing.waitFor({ state: 'hidden' });
-            await pause(80);
-            assert.equal(test.touches(), before, 'a press beside the sheet does not reach the phone');
-            await open();
+            for (let count = 0; count < 2; count++) {
+                await press(point.x, point.y);
+                await pause(80);
+            }
+            assert.equal(await stillOpen(), true, `${label}: a press on the picture leaves Type text open`);
+            assert(test.touches() >= before + 4, `${label}: each press reaches the phone as touch down and up`);
+            assert.equal(await focusInField(), 'kit-field live-text-input', `${label}: the field keeps focus, so the keyboard stays up`);
+            const typedBefore = ofType(1);
+            const keysBefore = ofType(0, 12, 13, 14);
+            await page.keyboard.type('a');
+            for (let tries = 0; tries < 50 && ofType(1) === typedBefore; tries++) await pause(20);
+            await pause(100);
+            assert.equal(ofType(1), typedBefore + 1, `${label}: typing goes on after the press, once`);
+            assert.equal(ofType(0, 12, 13, 14), keysBefore, `${label}: the key is not sent as a key event too`);
+            await shot(page, `type-text-open-${mobile ? 'phone' : 'desktop'}-${dark ? 'dark' : 'light'}`);
+
+            // A press and a wheel inside the sheet do not reach the phone; a wheel on the
+            // picture does.
+            const touches = test.touches();
+            const scrolls = ofType(3);
+            const title = await typing.locator('.kit-sheet-title').boundingBox();
+            await press(title.x + 10, title.y + title.height / 2);
+            await page.mouse.move(panel.x + panel.width / 2, panel.y + panel.height / 2);
+            await page.mouse.wheel(0, 120);
+            await pause(150);
+            assert.equal(test.touches(), touches, `${label}: a press in the sheet does not reach the phone`);
+            assert.equal(ofType(3), scrolls, `${label}: a wheel in the sheet does not reach the phone`);
+            if (!mobile) {
+                await page.mouse.move(point.x, point.y);
+                await page.mouse.wheel(0, 120);
+                for (let tries = 0; tries < 50 && ofType(3) === scrolls; tries++) await pause(20);
+                assert(ofType(3) > scrolls, `${label}: positive control: a wheel on the picture reaches the phone`);
+            }
+            assert.equal(await stillOpen(), true);
+
+            // It closes by Escape, the close control and Back, and the page stays.
+            await typing.locator('.live-text-input').focus();
             await page.keyboard.press('Escape');
             await typing.waitFor({ state: 'hidden' });
             await open();
             await page.getByRole('button', { name: 'Close Type text', exact: true }).click();
             await typing.waitFor({ state: 'hidden' });
-            // With the sheet gone the picture takes presses again.
-            if (mobile) await page.touchscreen.tap(point.x, point.y);
-            else await page.mouse.click(point.x, point.y);
-            await pause(80);
-            assert(test.touches() >= before + 2, 'positive control: the same press reaches the phone once the sheet is closed');
+            await open();
+            await page.goBack();
+            await typing.waitFor({ state: 'hidden' });
+            assert.equal(await page.locator('.stream-view .touch-layer').count(), 1, `${label}: Back closes Type text and leaves the page`);
             assert.deepEqual(test.errors, []);
         } finally {
             await test.context.close();
         }
     }
-    // The iPhone stream: the same sheet.
+    // The iPhone stream: nothing of the sheet covers the picture, and a click on it leaves Type
+    // text open. scripts/e2e-ios-typing.js sends a picture and checks the touch.
     const phone = await ios(browser);
     try {
         const { page } = phone;
@@ -333,16 +383,20 @@ async function typeTextIsASheet(browser) {
         await typing.waitFor();
         await settleMotion(page);
         const mount = await page.locator('.stream-mount').boundingBox();
-        const point = { x: mount.x + mount.width / 2, y: mount.y + mount.height * 0.9 };
+        const point = { x: mount.x + mount.width / 2, y: mount.y + mount.height / 4 };
+        assert.equal(
+            await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('dialog'), point),
+            false,
+            'nothing of the sheet covers the iPhone picture',
+        );
         await page.mouse.click(point.x, point.y);
-        await typing.waitFor({ state: 'hidden' });
         await pause(100);
-        assert.equal(phone.sent.filter((message) => message.type === 'touch').length, 0, 'a click beside the sheet does not reach the iPhone');
+        assert.equal(await typing.evaluate((dialog) => dialog.open && !dialog.hasAttribute('data-exiting')), true, 'a click on the iPhone picture leaves Type text open');
         assert.deepEqual(phone.errors, []);
     } finally {
         await phone.context.close();
     }
-    console.log('PASS Type text is a sheet: typing reaches the phone, a press beside it closes it and sends nothing, Escape and Close close it');
+    console.log('PASS Type text is not modal: a press on the picture reaches the phone, Type text stays open with its field focused, presses in it stay in it, Escape, Close and Back close it');
 }
 
 // C-client-ui-8
@@ -762,7 +816,7 @@ async function main() {
     const browser = await chromium.launch({ headless: true });
     try {
         const scenarios = [
-            sheetToSheetFocus, escapeCancelsPrompt, typeTextIsASheet, copyHereOverHttp, errorBoundary, listenControl,
+            sheetToSheetFocus, escapeCancelsPrompt, typeTextKeepsPicture, copyHereOverHttp, errorBoundary, listenControl,
             desktopDialogTop, statusInItsGroup, applyBarAndReadability, namesAndLabels, statusContrast,
         ];
         const selected = process.env.SCENARIO ? scenarios.filter((run) => run.name === process.env.SCENARIO) : scenarios;

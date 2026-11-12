@@ -17,12 +17,16 @@ import { bindSheetDrag } from './sheetDrag';
  */
 export const SHEET_DIALOG = '(min-width: 600px)';
 
-// The sheets on screen, oldest first, including one that is still animating out.
+// The modal sheets on screen, oldest first, including one that is still animating out.
 const shown: HTMLDialogElement[] = [];
 
+// What takes a modal sheet that is animating out off the screen at once, by its dialog.
+const endExit = new WeakMap<HTMLDialogElement, () => void>();
+
 /**
- * The sheet on top. A modal dialog covers the page and makes it inert, so what has to show
- * and be pressed while a sheet is open is rendered inside this element (see `AboveSheet`).
+ * The modal sheet on top. A modal dialog covers the page and makes it inert, so what has to
+ * show and be pressed while a sheet is open is rendered inside this element (see `AboveSheet`).
+ * A sheet that is not modal is never this one.
  */
 export const topSheet = signal<HTMLDialogElement | null>(null);
 
@@ -38,13 +42,19 @@ interface SheetProps {
     children: ComponentChildren;
     /** The sheet's actions, kept in view under the scrolling body. */
     footer?: ComponentChildren;
+    /**
+     * False for a sheet that leaves the page in use (Type text): the dialog is shown with
+     * `show()`, so there is no backdrop, the page is not inert and a press beside the sheet goes
+     * to the page. It closes by its close control, Escape and Back only, and is not dragged.
+     */
+    modal?: boolean;
 }
 
 /**
- * The one sheet, on the native modal `<dialog>`: a bottom sheet below 600px and a centred
- * dialog 560px wide from there. The dialog element covers the window and holds the backdrop
- * and the panel. The panel is what moves, so the backdrop can be pressed in every browser and a
- * toast inside the dialog stays where it is.
+ * The one sheet, on the native `<dialog>`: a bottom sheet below 600px and a centred dialog
+ * 560px wide from there. The dialog element covers the window and holds the backdrop and the
+ * panel. The panel is what moves, so the backdrop can be pressed in every browser and a toast
+ * inside the dialog stays where it is. A modal sheet is the default; see `modal`.
  *
  * The children stay mounted while the sheet is closed, as they did in `BottomSheet`.
  */
@@ -57,6 +67,7 @@ export function Sheet({
     subtitle,
     children,
     footer,
+    modal = true,
 }: SheetProps) {
     const rootRef = useRef<HTMLDialogElement>(null);
     const headerRef = useRef<HTMLElement>(null);
@@ -69,6 +80,9 @@ export function Sheet({
     dismissibleRef.current = dismissible;
     const openRef = useRef(open);
     openRef.current = open;
+    // True when this modal sheet was taken off the screen before its exit had played (see
+    // `endExit`). Its dialog is closed, and it is shown again if it opens before the exit ends.
+    const exitEnded = useRef(false);
 
     /** The close button, the backdrop and a drag. */
     const dismiss = () => {
@@ -97,12 +111,18 @@ export function Sheet({
         const root = rootRef.current;
         const panel = panelRef.current;
         const header = headerRef.current;
-        if (!open || !root || !panel || !header) {
+        // Opened again before the exit that was ended had finished: shown again.
+        if (open && root && exitEnded.current) {
+            exitEnded.current = false;
+            root.showModal();
+            root.focus({ preventScroll: true });
+        }
+        if (!open || !root || !panel || !header || !modal) {
             return;
         }
         root.style.removeProperty('--sheet-backdrop-opacity');
         return bindSheetDrag(header, panel, root, () => dismissibleRef.current, dismiss, SHEET_DIALOG);
-    }, [open]);
+    }, [open, modal]);
 
     useLayoutEffect(() => {
         const root = rootRef.current;
@@ -115,19 +135,40 @@ export function Sheet({
         // Keep the phone list where it is while the sheet is open.
         const list = document.getElementById('devices');
         const listScrollTop = list?.scrollTop ?? 0;
-        document.body.classList.add('sheet-open');
+        if (modal) {
+            document.body.classList.add('sheet-open');
+        } else {
+            // It takes the place of a modal sheet (Actions, then Type text), which is still
+            // animating out. Until that one has gone nothing outside it takes focus, this sheet
+            // included, and the field would miss the press that raises the phone keyboard. It
+            // goes at once.
+            shown.filter((other) => other.hasAttribute('data-exiting')).forEach((other) => endExit.get(other)?.());
+        }
+        exitEnded.current = false;
         const show = () => {
             if (!root.open) {
-                root.showModal();
+                if (modal) {
+                    root.showModal();
+                } else {
+                    root.show();
+                }
             }
-            // showModal focuses the first control. The dialog itself takes focus instead, so
-            // that opening a sheet with a field does not raise the phone keyboard.
+            // Showing a dialog focuses its first control. The dialog itself takes focus instead,
+            // so that opening a sheet with a field does not raise the phone keyboard.
             root.focus({ preventScroll: true });
         };
         show();
-        shown.push(root);
-        topSheet.value = root;
-        // A modal dialog is in the top layer but still inside `document.body`, where the
+        // A sheet that is not modal does not cover the page, so what floats over the page (a
+        // toast) stays where it is.
+        if (modal) {
+            shown.push(root);
+            topSheet.value = root;
+            endExit.set(root, () => {
+                exitEnded.current = true;
+                root.close();
+            });
+        }
+        // A dialog, in the top layer or not, is still inside `document.body`, where the
         // listeners that drive the phone are.
         const allowRemote = stopRemoteInteraction(root);
         const preventBackdropScroll = (event: Event) => event.preventDefault();
@@ -168,8 +209,12 @@ export function Sheet({
         };
         // The browser may close the dialog without asking: a second close request with no
         // press between is not cancellable. `open` decides, so the dialog is shown again, and
-        // a sheet that was closing plays its exit.
-        const onNativeClose = () => show();
+        // a sheet that was closing plays its exit, unless its exit was ended.
+        const onNativeClose = () => {
+            if (!exitEnded.current) {
+                show();
+            }
+        };
         root.addEventListener('keydown', onKeyDown);
         root.addEventListener('cancel', onCancel);
         root.addEventListener('close', onNativeClose);
@@ -194,10 +239,14 @@ export function Sheet({
             viewport?.removeEventListener('resize', updateViewport);
             viewport?.removeEventListener('scroll', updateViewport);
             window.removeEventListener('resize', updateViewport);
-            shown.splice(shown.indexOf(root), 1);
-            topSheet.value = shown[shown.length - 1] ?? null;
-            if (!shown.length) {
-                document.body.classList.remove('sheet-open');
+            exitEnded.current = false;
+            if (modal) {
+                endExit.delete(root);
+                shown.splice(shown.indexOf(root), 1);
+                topSheet.value = shown[shown.length - 1] ?? null;
+                if (!shown.length) {
+                    document.body.classList.remove('sheet-open');
+                }
             }
             if (list?.isConnected) {
                 list.scrollTop = listScrollTop;
@@ -207,12 +256,12 @@ export function Sheet({
             }
             returnDialogFocus(root, document.querySelector<HTMLElement>('.floating-toolbar-fab'));
         };
-    }, [present]);
+    }, [present, modal]);
 
     return (
         <dialog
             ref={rootRef}
-            class="kit-sheet"
+            class={modal ? 'kit-sheet' : 'kit-sheet kit-sheet-modeless'}
             // Written out although a dialog has the role already: the keyboard capture of the
             // stream leaves keys alone when they are pressed inside `[role="dialog"]`.
             role="dialog"
@@ -222,7 +271,7 @@ export function Sheet({
             data-exiting={(present && !open) || undefined}
             data-dismissible={dismissible}
         >
-            <div class="kit-sheet-backdrop" onClick={dismiss} />
+            {modal && <div class="kit-sheet-backdrop" onClick={dismiss} />}
             <div ref={panelRef} class="kit-sheet-panel">
                 <header ref={headerRef} class="kit-sheet-header">
                     <div class="kit-sheet-handle" aria-hidden="true" />
