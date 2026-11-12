@@ -28,7 +28,7 @@ const field = () => { adb('shell uiautomator dump /sdcard/u.xml'); const x = adb
     const p = await c.newPage();
     await p.goto('http://127.0.0.1:8000/', { waitUntil: 'networkidle' });
     await p.waitForTimeout(2500);
-    await p.locator('.device', { has: p.locator(`text=${SERIAL}`) }).locator('a.desc-block.stream').first().click();
+    await p.locator(`.device[data-device-key$=":${SERIAL}"]`).locator('a.desc-block.stream').first().click();
     await p.waitForTimeout(11000);
     await openFab(p);
     const pos = await p.evaluate(() => {

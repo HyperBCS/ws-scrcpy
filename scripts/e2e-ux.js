@@ -34,7 +34,7 @@ async function main() {
         page.on('pageerror', (error) => errors.push(error.message));
         await page.goto(BASE);
         await page.locator('.device').first().waitFor();
-        const card = SERIAL ? page.locator('.device').filter({ hasText: SERIAL }) : page.locator('.device').first();
+        const card = SERIAL ? page.locator(`.device[data-device-key$=":${SERIAL}"]`) : page.locator('.device').first();
         await noOverflow(page, 'phone list');
         await screenshot(page, 'phone-devices');
         await card.getByRole('button', { name: /^Settings for / }).click();

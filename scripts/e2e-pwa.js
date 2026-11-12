@@ -83,7 +83,7 @@ async function main() {
         const cdp = await context.newCDPSession(page);
         await page.goto(BASE);
         const original = SERIAL
-            ? page.locator('.device').filter({ hasText: SERIAL }).first()
+            ? page.locator(`.device[data-device-key$=":${SERIAL}"]`).first()
             : page.locator('.device').first();
         await original.waitFor();
         await original.evaluate((card) => {

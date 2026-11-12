@@ -872,7 +872,6 @@ async function uploads(browser, layout, name, scheme) {
     assert.equal(files.has(ROOT + '/leave.bin'), false);
     // The device list is not guarded: the next navigation goes straight through.
     const filesLink = card.getByRole('link', { name: 'Files', exact: true });
-    if (!(await filesLink.isVisible())) await card.locator('summary').click();
     await filesLink.click();
     await ready(page);
     await page.getByRole('button', { name: 'Phones', exact: true }).click();
@@ -880,7 +879,6 @@ async function uploads(browser, layout, name, scheme) {
 
     // Another tab of the same phone is not leaving it, so nothing is asked, and the upload goes
     // on behind that tab.
-    if (!(await filesLink.isVisible())) await card.locator('summary').click();
     await filesLink.click();
     await ready(page);
     await page.locator('.file-explorer input[type=file]').setInputFiles({
