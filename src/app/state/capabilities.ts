@@ -106,3 +106,23 @@ const ACTION_TABLE: Record<Platform, ActionCapabilities> = {
 export function actionCapabilities(target: DeviceEntry | Platform): ActionCapabilities {
     return ACTION_TABLE[typeof target === 'string' ? target : target.params.type];
 }
+
+// p5-controls: the keys of the phone that the controls of its screen press
+// (controls/definition.ts), beside `power` and `typeText` above.
+
+/** A key or button of the phone that the controls press. `volume` is both volume keys. */
+export type PhoneKey = 'back' | 'home' | 'overview' | 'volume' | 'mute' | 'siri';
+
+const PHONE_KEYS: Record<Platform, readonly PhoneKey[]> = {
+    // controls/androidControls.ts: KEYCODE_BACK, KEYCODE_HOME, KEYCODE_APP_SWITCH, the volume
+    // keys and KEYCODE_VOLUME_MUTE.
+    android: ['back', 'home', 'overview', 'volume', 'mute'],
+    // controls/iphoneControls.ts. No Back and no Overview: iOS has no Back key, and no way to open
+    // the app switcher from here works on a Face ID phone (docs/HANDOFF.md).
+    ios: ['home', 'volume', 'mute', 'siri'],
+};
+
+/** The keys of a phone, or of a kind of phone, that its controls press. */
+export function phoneKeys(target: DeviceEntry | Platform): readonly PhoneKey[] {
+    return PHONE_KEYS[typeof target === 'string' ? target : target.params.type];
+}

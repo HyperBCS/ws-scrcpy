@@ -1,6 +1,7 @@
 import { BaseClient } from '../../client/BaseClient';
 import { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
-import { GoogToolBox } from '../toolbox/GoogToolBox';
+import { createAndroidControls } from '../../controls/androidControls';
+import type { PhoneControls } from '../../controls/definition';
 import VideoSettings from '../../VideoSettings';
 import { ControlMessage } from '../../controlMessage/ControlMessage';
 import { CommandControlMessage } from '../../controlMessage/CommandControlMessage';
@@ -43,8 +44,7 @@ export class StreamClientScrcpy
     private static readonly VIDEO_RESET_WINDOW_MS = 5 * 60 * 1000;
     private videoResets: number[] = [];
 
-    private controlButtons?: HTMLElement;
-    private toolBox?: GoogToolBox;
+    private controls?: PhoneControls;
     private uhidKeyboard?: UhidKeyboard;
     private keyboardAttached = false;
     private deviceName = '';
@@ -223,8 +223,8 @@ export class StreamClientScrcpy
         this.clientId = -1;
         // A replacement scrcpy process has no virtual keyboard, even if capture remains on.
         this.uhidKeyboard?.reset();
-        // Nor can a held toolbar button be released any more: the server lifts it on the device.
-        this.toolBox?.forgetHeldButtons();
+        // Nor can a held control be released any more: the server lifts it on the device.
+        this.controls?.forgetHeldButtons();
         this.player?.pause();
     };
 
@@ -278,8 +278,8 @@ export class StreamClientScrcpy
         this.touchHandler?.release();
         this.touchHandler = undefined;
         this.detachKeyboard();
-        this.toolBox?.release();
-        this.toolBox = undefined;
+        this.controls?.release();
+        this.controls = undefined;
         this.audioSession?.stop();
         if (this.deviceView) {
             const parent = this.deviceView.parentElement;
@@ -330,16 +330,13 @@ export class StreamClientScrcpy
         // and this session share the same `AudioPlayer`/gain node.
         this.audioSession = createAudioSession(this.streamReceiver);
 
-        const googToolBox = GoogToolBox.createToolBox(udid, player, this, {
-            captureKeyboard: this.params.captureKeyboard,
-            audioSession: this.audioSession,
-        });
-        // Built but deliberately NOT appended to the device view: `views/FloatingToolbar.tsx`
-        // reparents it into a draggable floating panel. The docked bar ate a fixed slice of a
-        // phone screen and, in portrait, wrapped to a second row that ran under the home
-        // indicator -- half of it was clipped and untappable.
-        this.toolBox = googToolBox;
-        this.controlButtons = googToolBox.getHolderElement();
+        // The actions of the controls. `views/FloatingToolbar.tsx` draws them (`controls/`).
+        this.controls = createAndroidControls(udid, player, this, this.audioSession);
+        // Keyboard capture is on by default (see `parseParameters`); `?captureKeyboard=0` opts
+        // out. The toggle that changes it while streaming is in `SettingsSheet`.
+        if (this.params.captureKeyboard !== false) {
+            this.setHandleKeyboardEvents(true);
+        }
 
         const video = document.createElement('div');
         video.className = 'video';
@@ -509,9 +506,9 @@ export class StreamClientScrcpy
         if (isLocalKeyboardTarget(event.target)) this.releaseVirtualKeyboard();
     };
 
-    /** The control buttons, for `FloatingToolbar` to adopt (see `startStream`). */
-    public getControlButtonsElement(): HTMLElement | undefined {
-        return this.controlButtons;
+    /** The actions of the controls, for `FloatingToolbar` (see `startStream`). */
+    public getControls(): PhoneControls | undefined {
+        return this.controls;
     }
 
     public onKeyEvent(event: KeyCodeControlMessage): void {

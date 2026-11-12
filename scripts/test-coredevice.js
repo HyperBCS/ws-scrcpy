@@ -2627,15 +2627,11 @@ function streamLayoutFixture(t, platform, legacy = false) {
         pause() {},
         stop() {},
     };
-    const controls = { clientWidth: 280, clientHeight: 460 };
-    const toolbox = { getHolderElement: () => controls, release() {} };
     const params = { action: 'stream', udid: `layout-${platform}`, player: 'fixture', captureKeyboard: false };
     const mount = legacy ? undefined : createElement();
     const { StreamClientCoreDevice } = require('../src/app/applDevice/client/StreamClientCoreDevice');
     const { CoreDeviceReceiver } = require('../src/app/applDevice/client/CoreDeviceReceiver');
-    const { ApplToolBox } = require('../src/app/applDevice/toolbox/ApplToolBox');
     t.mock.method(CoreDeviceReceiver.prototype, 'openNewConnection', () => undefined);
-    t.mock.method(ApplToolBox, 'createToolBox', () => toolbox);
     client = StreamClientCoreDevice.start(params, mount);
     client.player = player;
     client.applyBounds();

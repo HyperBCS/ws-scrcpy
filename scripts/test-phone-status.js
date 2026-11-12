@@ -379,8 +379,8 @@ test('the capabilities table says what each kind of phone can do today', () => {
     assert.deepEqual([devices.supportsDeviceTools(pixel), devices.supportsDeviceTools(phone)], [true, false]);
 
     // Each value against the code that does it.
-    const android = { actions: read('src/app/views/ActionsSheet.tsx'), settings: read('src/app/views/settings/StreamSection.tsx'), toolbox: read('src/app/googDevice/toolbox/GoogToolBox.ts'), unlock: read('src/app/views/UnlockSheet.tsx') };
-    const ios = { actions: read('src/app/views/ApplActionsSheet.tsx'), settings: read('src/app/views/settings/ScheduledUnlock.tsx'), toolbox: read('src/app/applDevice/toolbox/ApplToolBox.ts'), unlock: read('src/app/views/ApplUnlockSheet.tsx') };
+    const android = { actions: read('src/app/views/ActionsSheet.tsx'), settings: read('src/app/views/settings/StreamSection.tsx'), toolbox: read('src/app/controls/androidControls.ts'), unlock: read('src/app/views/UnlockSheet.tsx') };
+    const ios = { actions: read('src/app/views/ApplActionsSheet.tsx'), settings: read('src/app/views/settings/ScheduledUnlock.tsx'), toolbox: read('src/app/controls/iphoneControls.ts'), unlock: read('src/app/views/ApplUnlockSheet.tsx') };
     const tools = read('src/app/views/ToolView.tsx');
     assert.match(tools, /view: 'files'/);
     assert.match(tools, /view: 'shell'/);
@@ -404,8 +404,8 @@ test('the capabilities table says what each kind of phone can do today', () => {
     assert.match(android.unlock, /type="password"/);
     assert.doesNotMatch(ios.unlock, /<input/, 'the iPhone uses the passcode stored on the server');
     assert.match(ios.unlock + read('src/app/state/unlockDevice.ts'), /iphoneUnlock\(udid\)[\s\S]*runUnlockNow\(tracker, udid, \{ keepUnlocked: true \}\)/);
-    assert.match(android.toolbox, /title: 'Power'/);
-    assert.match(ios.toolbox, /title: 'Lock', name: 'lock', icon: 'power'/);
+    assert.match(android.toolbox, /lock: key\(client, KeyEvent\.KEYCODE_POWER\)/);
+    assert.match(ios.toolbox, /lock: button\(client, 'lock'\)/);
     assert.match(ios.actions, /ControlCenterCommand\.REBOOT_DEVICE/);
     assert.match(ios.actions, /ControlCenterCommand\.SHUTDOWN_DEVICE/);
     assert.doesNotMatch(android.actions, /REBOOT|SHUTDOWN/);
@@ -416,7 +416,7 @@ test('the capabilities table says what each kind of phone can do today', () => {
     assert.doesNotMatch(ios.settings, /Quality presets/);
     assert.match(read('src/app/views/settings/sections.ts'), /can\.streamQuality/);
     assert.match(read('src/app/views/settings/UnlockSection.tsx'), /capabilities\(platform\)\.scheduledUnlock/);
-    for (const platform of [android, ios]) assert.match(platform.toolbox, /new ToolBoxButton\('Type text'/);
+    for (const platform of [android, ios]) assert.match(platform.toolbox, /typeText: run\(\(\) => openSheet\('liveText'\)\)/);
 });
 
 test('no older status word and no status literal is left outside copy.ts', () => {

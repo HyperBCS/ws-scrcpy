@@ -255,8 +255,8 @@ async function checkChrome(page, label, current, viewport, { entered = false } =
 
 /** The icon of the one set each control of the screen shows, by the control's title. */
 const CONTROL_ICONS = {
-    Back: 'navBack', Home: 'home', Overview: 'square', 'Volume down': 'volDown', 'Mute device': 'volMute', 'Volume up': 'volUp',
-    Power: 'power', Lock: 'power', Siri: 'mic', Listen: 'headphones', 'Take screenshot': 'camera', Actions: 'bolt', Settings: 'sliders', 'Type text': 'text',
+    Back: 'navBack', Home: 'home', Overview: 'square', 'Volume down': 'volDown', 'Mute phone': 'volMute', 'Volume up': 'volUp',
+    Lock: 'power', Siri: 'mic', Listen: 'headphones', 'Take screenshot': 'camera', Actions: 'bolt', Settings: 'sliders', 'Type text': 'text',
 };
 
 /**
@@ -335,8 +335,8 @@ async function checkControls(page, label, viewport, titles) {
 /** The controls of both kinds of phone, in a page of their own: opening the panel adds a history entry. */
 async function screenControls(browser, viewport) {
     for (const [udid, titles] of [
-        [PIXEL, ['Back', 'Home', 'Overview', 'Volume down', 'Mute device', 'Volume up', 'Power', 'Listen', 'Take screenshot', 'Actions', 'Settings', 'Type text']],
-        [IPHONE, ['Home', 'Lock', 'Volume down', 'Mute device', 'Volume up', 'Siri', 'Listen', 'Take screenshot', 'Actions', 'Settings', 'Type text']],
+        [PIXEL, ['Back', 'Home', 'Overview', 'Volume down', 'Mute phone', 'Volume up', 'Lock', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings']],
+        [IPHONE, ['Home', 'Volume down', 'Mute phone', 'Volume up', 'Lock', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings', 'Siri']],
     ]) {
         const test = await start(browser, { viewport, hash: `action=device&udid=${udid}&view=screen` });
         try {
