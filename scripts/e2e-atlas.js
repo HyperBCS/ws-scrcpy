@@ -455,10 +455,23 @@ async function notificationStates(test) {
     await page.goto(`${BASE}#!action=notifications&source=${IPHONE}`);
     await page.locator('article.notification-history-item').first().waitFor();
     await shoot(test, 'notifications-inbox');
-    await page.goto(`${BASE}#!action=notifications`);
-    await page.locator('article.notification-history-item').first().waitFor();
-    await shoot(test, 'notifications-all');
+    // This shot needs two linked sources; the other atlas states keep their original fixture.
+    SOURCES.push({ id: IPHONE_2, name: 'Spare iPhone', address: 'AA:BB:CC:DD:EE:02', apps: [], preview: true });
+    NOTIFICATIONS.splice(1, 0, { ...NOTIFICATIONS[0], key: 'spare-read', source: IPHONE_2, title: 'Spare phone update', read: true });
+    try {
+        await page.goto(`${BASE}#!action=notifications`);
+        await page.reload();
+        const second = page.locator('[data-notification-key="spare-read"]');
+        await second.waitFor();
+        assert.equal(await page.locator('.kit-bar-status').textContent(), 'All iPhones');
+        assert.equal(await second.locator('.notification-source-name-on-card').textContent(), 'Spare iPhone');
+        await shoot(test, 'notifications-all');
+    } finally {
+        SOURCES.pop();
+        NOTIFICATIONS.splice(1, 1);
+    }
     await page.goto(`${BASE}#!action=notifications&source=${IPHONE}`);
+    await page.reload();
     await page.locator('article.notification-history-item').first().waitFor();
 
     // The bar of Notifications: Search opens the search row with its Filters button.
