@@ -3046,6 +3046,10 @@ transition durations. The style differences outside Type text are the same as p4
 comparison, and the motion differences match it exactly. The Type text states also lose
 `body.sheet-open`, and every stream state has one element fewer (the Type text backdrop, which
 is not rendered). The atlas still checks every state for an older class name and finds none.
+In one of three runs of the head, one more picture (the list, desktop, dark) differed at the
+rounded edges in the lower part of the first card; taken again it matched the base exactly. Two
+runs of one build do not always match: take a single state that differs again before reading it
+as a change.
 
 **Left for phase 5.**
 - Kit decisions: a toast drawn above a bottom sheet covers the sheet's last action
