@@ -336,6 +336,19 @@ async function main() {
                 return canvas?.width === 1800 && canvas?.height === 720;
             });
             await page.getByText('Connected', { exact: true }).waitFor();
+            // With a mouse, the rail beside the picture takes a second column for the shorter
+            // picture a frame later (`controls/ControlRail.tsx`), and the picture moves again.
+            // Its box is read once it has stayed the same for three frames.
+            await page.evaluate(async () => {
+                const box = () => JSON.stringify(document.querySelector('.video .touch-layer')?.getBoundingClientRect());
+                let last = box();
+                for (let frame = 0, still = 0; frame < 60 && still < 3; frame++) {
+                    await new Promise((resolve) => requestAnimationFrame(resolve));
+                    const now = box();
+                    still = now === last ? still + 1 : 0;
+                    last = now;
+                }
+            });
             const rotated = await layer.boundingBox();
             assert(rotated.width > rotated.height, label + ': the touch layer follows the rotation');
             const centre = [rotated.x + rotated.width / 2, rotated.y + rotated.height / 2];
