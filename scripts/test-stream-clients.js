@@ -1191,6 +1191,7 @@ test('iPhone: a key event that lands on a local control releases the keys held o
     t.mock.method(CoreDeviceReceiver.prototype, 'openNewConnection', () => undefined);
     const sent = [];
     t.mock.method(CoreDeviceReceiver.prototype, 'send', (message) => sent.push(message));
+    t.mock.method(CoreDeviceReceiver.prototype, 'isReady', () => true);
     const client = StreamClientCoreDevice.start({ action: 'stream-coredevice', udid: 'iphone-keys' }, element());
     t.after(() => {
         openSheet = null;
@@ -1526,4 +1527,121 @@ test('stream settings resolve the device through the stream socket when two host
     assert.equal(findDeviceForSettings({ udid: 'pixel-serial' }), other);
     assert.equal(findDeviceForSettings({ udid: 'pixel-serial' }, { ...streamOf(other), ws: 'not a url' }), other);
     assert.equal(findDeviceForSettings({ udid: 'unknown-serial' }), undefined);
+});
+
+// ---------------------------------------------------------------- one keyboard target
+
+function captureFixture(t, { enabled = true, paste = () => {} } = {}) {
+    const { KeyboardCapture, keyboardCapture } = require('../src/app/state/keyboardCapture');
+    const sent = [];
+    let ready = true, releases = 0;
+    const capture = new KeyboardCapture({
+        container: element(), enabled, connected: () => ready,
+        key: event => sent.push([event.type, event.code]),
+        release: () => releases++, controls: () => undefined, paste, requestClipboard() {},
+    });
+    t.after(() => { openSheet = null; capture.stop(); });
+    const key = (type, code, extra = {}) => capture.onKey({
+        type, code, target: element(), key: code.startsWith('Key') ? code.slice(3) : code,
+        ctrlKey: false, altKey: false, shiftKey: false, metaKey: false,
+        preventDefault() {}, stopImmediatePropagation() {}, ...extra,
+    });
+    const chord = code => {
+        key('keydown', 'ControlLeft', { ctrlKey: true });
+        key('keydown', 'AltLeft', { ctrlKey: true, altKey: true });
+        key('keydown', code, { ctrlKey: true, altKey: true });
+        key('keyup', code, { ctrlKey: true, altKey: true });
+        key('keyup', 'AltLeft', { ctrlKey: true });
+        key('keyup', 'ControlLeft');
+    };
+    return { capture, state: keyboardCapture, sent, key, chord, ready: value => { ready = value; }, releases: () => releases };
+}
+
+test('the keyboard release chord sends no key or modifier, and its letter works after recapture', t => {
+    const f = captureFixture(t);
+    f.chord('KeyK');
+    assert.equal(f.state.value.enabled, false);
+    assert.deepEqual(f.sent, []);
+    f.chord('KeyK');
+    assert.equal(f.state.value.enabled, true);
+    f.key('keydown', 'KeyK'); f.key('keyup', 'KeyK');
+    assert.deepEqual(f.sent, [['keydown', 'KeyK'], ['keyup', 'KeyK']], 'shortcut keyup does not swallow the next ordinary K');
+});
+
+test('ordinary modifier shortcuts retain their down/up order while native paste sends none', t => {
+    const f = captureFixture(t);
+    f.key('keydown', 'ControlLeft', { ctrlKey: true });
+    assert.deepEqual(f.sent, [], 'a modifier waits until the next key identifies the chord');
+    f.key('keydown', 'KeyA', { ctrlKey: true });
+    f.key('keyup', 'KeyA', { ctrlKey: true });
+    f.key('keyup', 'ControlLeft');
+    assert.deepEqual(f.sent, [['keydown', 'ControlLeft'], ['keydown', 'KeyA'], ['keyup', 'KeyA'], ['keyup', 'ControlLeft']]);
+    f.sent.length = 0;
+    f.key('keydown', 'MetaLeft', { metaKey: true });
+    f.key('keydown', 'KeyV', { metaKey: true });
+    f.key('keyup', 'KeyV', { metaKey: true });
+    f.key('keyup', 'MetaLeft');
+    assert.deepEqual(f.sent, [], 'Cmd+V waits for the browser paste event');
+});
+
+test('offline key presses and local sheets leave no modifier for a later phone connection', t => {
+    const f = captureFixture(t);
+    f.ready(false);
+    f.key('keydown', 'ControlLeft', { ctrlKey: true });
+    f.key('keydown', 'KeyA', { ctrlKey: true });
+    f.ready(true);
+    f.key('keyup', 'KeyA', { ctrlKey: true }); f.key('keyup', 'ControlLeft');
+    assert.deepEqual(f.sent, []);
+    f.key('keydown', 'ShiftLeft');
+    openSheet = element();
+    f.key('keydown', 'KeyB');
+    assert.equal(f.state.value.phone, false);
+    assert.deepEqual(f.sent, [['keydown', 'ShiftLeft']]);
+    assert.ok(f.releases() > 0, 'a local sheet releases keys immediately');
+});
+
+test('a paste cancelled before its asynchronous send never reaches the replacement target', async t => {
+    const pasted = [];
+    const f = captureFixture(t, { paste: text => pasted.push(text) });
+    const paste = text => f.capture.onPaste({
+        target: element(), clipboardData: { getData: () => text }, preventDefault() {}, stopImmediatePropagation() {},
+    });
+    paste('first');
+    f.capture.invalidate();
+    await Promise.resolve(); await Promise.resolve();
+    assert.deepEqual(pasted, []);
+    await new Promise(resolve => setImmediate(resolve));
+    paste('second');
+    await Promise.resolve(); await Promise.resolve();
+    assert.deepEqual(pasted, ['second']);
+});
+
+test('iPhone direct paste waits for the matching clipboard confirmation before Cmd+V', async t => {
+    const { client, sent } = iphoneClient(t, 'paste-ack');
+    const pasted = client.pasteText('browser text', () => true);
+    assert.deepEqual(sent, [{ type: 'clipboard', op: 'set', text: 'browser text', id: 1 }]);
+    client.emit('result', { id: 99, ok: true });
+    await Promise.resolve();
+    assert.equal(sent.length, 1, 'another command reply cannot paste');
+    client.emit('result', { id: 1, ok: true });
+    await pasted;
+    assert.deepEqual(sent.slice(1), [
+        { type: 'key', usages: [0xe3] }, { type: 'key', usages: [0xe3, 0x19] },
+        { type: 'key', usages: [0xe3] }, { type: 'key', usages: [] },
+    ]);
+});
+
+test('iPhone clipboard failure, disconnect and a changed target never send the paste chord', async t => {
+    const { client, sent } = iphoneClient(t, 'paste-cancel');
+    let pasted = client.pasteText('refused', () => true);
+    client.emit('result', { id: 1, ok: false, error: 'Clipboard refused' });
+    await assert.rejects(pasted, /Clipboard refused/);
+    pasted = client.pasteText('changed target', () => false);
+    client.emit('result', { id: 2, ok: true });
+    await pasted;
+    pasted = client.pasteText('disconnected', () => true);
+    client.onDisconnected();
+    await assert.rejects(pasted, /disconnected/);
+    client.emit('result', { id: 3, ok: true });
+    assert.deepEqual(sent.filter(message => message.type === 'key'), []);
 });

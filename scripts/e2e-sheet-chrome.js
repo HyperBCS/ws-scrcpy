@@ -220,7 +220,7 @@ async function sheetToSheetFocus(browser) {
         assert.deepEqual(phone.keys().map((message) => message.usages), [[0x04], []], 'typed keys go to the text field, not to a toolbar button');
         await page.keyboard.press('Escape');
         await sheet(page, 'Type text').waitFor({ state: 'hidden' });
-        assert.equal(await activeTitle(page), 'Actions', 'closing Type text returns focus to the toolbar button');
+        assert.equal(await activeTitle(page), 'stream-mount', 'closing Type text returns active keyboard capture to the screen mount before a picture arrives');
         assert.deepEqual(phone.errors, []);
     } finally {
         await phone.context.close();
