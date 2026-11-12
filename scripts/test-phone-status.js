@@ -262,6 +262,14 @@ test('every word of the model comes from copy.ts', () => {
     assert.equal(copy.SCREEN.asleepSentence, 'Screen is asleep');
     assert.equal(copy.LOCK.locked, 'Locked');
     assert.equal(copy.LOCK.notice, 'Phone locked');
+    // The swipe text only where the phone reports no passcode lock. A lock it does not report may
+    // still ask for the passcode.
+    assert.deepEqual([true, false, 'unknown', undefined].map(status.lockNotice), ['Phone locked', 'Swipe up to unlock', 'Phone locked', 'Phone locked']);
+    assert.match(read('src/app/views/LockScreenNotice.tsx'), /\{lockNotice\(locked\)\}/, 'the notice takes its text from the model');
+    // Every stream service text says stream service and phone.
+    const serviceTexts = Object.values(copy.STREAM_SERVICE).flatMap((value) => (typeof value === 'object' ? Object.values(value) : [value]));
+    assert.ok(serviceTexts.includes(copy.STREAM_SERVICE.stoppedMessage));
+    assert.deepEqual(serviceTexts.filter((text) => /device|streaming/i.test(text)), []);
     // The model's source says no word of its own: every string in it is a name, not a phrase.
     const source = read('src/app/state/phoneStatus.ts').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '').replace(/^import[\s\S]*?from '[^']*';$/gm, '');
     const literals = [...source.matchAll(/'([^'\n]*)'|`([^`]*)`/g)].map((match) => match[1] ?? match[2]);
@@ -312,6 +320,14 @@ test('the header and the card over the picture print the same connection value',
         assert.match(source, /const connection = screenConnection\(\{/, `${file} derives its connection once`);
         assert.match(source, /<AppBarStatus tone=\{connection\.tone\}>\{connection\.label\}<\/AppBarStatus>/, `${file}: the header prints it`);
         assert.match(source, /<SleepOverlay[^>]*connection=\{connection\}/, `${file}: the card over the picture prints it`);
+    }
+    // The screen fact comes from the model on the card and on the screen alike. No view reads the
+    // screen's descriptor fields to decide that a phone is asleep.
+    for (const file of ['src/app/views/StreamView.tsx', 'src/app/views/CoreDeviceStreamView.tsx', 'src/app/views/DeviceCard.tsx', 'src/app/views/DeviceSwitcherSheet.tsx', 'src/app/views/SleepOverlay.tsx']) {
+        assert.doesNotMatch(read(file), /\['screen\.power'\]|\['device\.awake'\]/, `${file} reads the screen from the model`);
+    }
+    for (const file of ['src/app/views/StreamView.tsx', 'src/app/views/CoreDeviceStreamView.tsx']) {
+        assert.match(read(file), /const screenOff = [^;]*getDeviceStatusInfo\(entry\)\.screen === 'asleep'/, `${file}: the sleep card follows the screen fact`);
     }
     const overlay = read('src/app/views/SleepOverlay.tsx');
     assert.match(overlay, /\{connection\.label\}/);

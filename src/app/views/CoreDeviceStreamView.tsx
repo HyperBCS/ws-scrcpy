@@ -16,7 +16,7 @@ import {
     streamNotice,
 } from '../state/stream';
 import { findDeviceByUdid, isDeviceAvailable, phoneName } from '../state/devices';
-import { screenConnection } from '../state/phoneStatus';
+import { getDeviceStatusInfo, screenConnection } from '../state/phoneStatus';
 import { SCREEN_CONNECTION } from '../copy';
 import { NotificationsLink } from '../ui/NotificationsLink';
 import { goUp } from '../state/router';
@@ -129,9 +129,10 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
         }
     }, [connected, active?.client]);
     // Read by `DeviceStateMonitor` on the server (backlight + accessibility walk); 'unknown'
-    // where that is disabled, which must never show as asleep or locked.
+    // where that is disabled, which must never show as asleep or locked. The lock stays raw for
+    // the unlock flow; the screen comes from the status model, as on the card.
     const locked = descriptor?.['device.locked'] ?? 'unknown';
-    const screenOff = descriptor?.['screen.power'] === 'off';
+    const screenOff = !!entry && !!descriptor && getDeviceStatusInfo(entry).screen === 'asleep';
     // One card on the stage for every state without a picture: the reason, and what can be done.
     // A browser without a decoder cannot be retried into having one, so it gets no Retry.
     const trying = !!failure && session.state === 'starting';

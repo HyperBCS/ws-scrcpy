@@ -129,6 +129,30 @@ async function phonePage(browser, layout, kind) {
         assert.equal(await statusLine(page).getAttribute('data-tone'), 'success');
         assert.equal(await page.locator('h1.kit-bar-name').textContent(), name);
 
+        // The card over the picture follows the screen fact of the list, on both platforms.
+        const sleepCard = page.locator('.sleep-overlay-card');
+        test.trackers[kind]([listed(kind === 'android' ? { 'screen.power': 'off', 'device.awake': false } : { 'screen.power': 'off' })]);
+        await sleepCard.getByText('Screen is asleep', { exact: true }).waitFor();
+        test.trackers[kind]([listed()]);
+        await page.locator('.sleep-overlay').waitFor({ state: 'hidden' });
+
+        // The lock notice. Its swipe text is only for a phone that reports no passcode lock.
+        const notice = page.locator('.lock-screen-notice .kit-banner-text');
+        const lockStates = kind === 'android'
+            ? [
+                [{ 'device.locked': true, 'keyguard.showing': true }, 'Phone locked'],
+                [{ 'device.locked': 'unknown', 'keyguard.showing': true }, 'Phone locked'],
+                [{ 'device.locked': false, 'keyguard.showing': true }, 'Swipe up to unlock'],
+            ]
+            : [[{ 'device.locked': true }, 'Phone locked']];
+        for (const [extra, text] of lockStates) {
+            test.trackers[kind]([listed(extra)]);
+            await page.waitForFunction((wanted) => document.querySelector('.lock-screen-notice .kit-banner-text')?.textContent === wanted, text);
+            assert.equal(await notice.textContent(), text, `${label}: ${JSON.stringify(extra)}`);
+        }
+        test.trackers[kind]([listed()]);
+        await page.locator('.lock-screen-notice').waitFor({ state: 'detached' });
+
         // The stream drops: a page that was connected says Reconnecting, in both places.
         test.hold = true;
         test.streams.at(-1).close({ code: 4000, reason: 'Fixture drop' });

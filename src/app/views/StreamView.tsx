@@ -17,7 +17,8 @@ import {
 } from '../state/stream';
 import { findDeviceForStream } from '../state/streamDevice';
 import { isDeviceAvailable, phoneName } from '../state/devices';
-import { screenConnection } from '../state/phoneStatus';
+import { getDeviceStatusInfo, screenConnection } from '../state/phoneStatus';
+import { STREAM_SERVICE } from '../copy';
 import { NotificationsLink } from '../ui/NotificationsLink';
 import { goUp } from '../state/router';
 import { LIST_PAGE_NAME } from '../state/routes';
@@ -100,9 +101,8 @@ export function StreamView({ params, tabs }: StreamViewProps) {
     const descriptor = entry?.params.type === 'android' ? (entry.descriptor as GoogDeviceDescriptor) : undefined;
     const locked = descriptor?.['device.locked'] ?? 'unknown';
     const keyguardShowing = descriptor?.['keyguard.showing'] ?? 'unknown';
-    // Only on positive evidence: `screen.power` is 'unknown' on devices whose dumpsys does not
-    // report it, and an unknown screen must never be treated as a sleeping one.
-    const screenOff = descriptor ? descriptor['screen.power'] === 'off' || descriptor['device.awake'] === false : false;
+    // From the status model, as on the card: only on positive evidence, never for an unknown screen.
+    const screenOff = !!entry && !!descriptor && getDeviceStatusInfo(entry).screen === 'asleep';
     // The same name as on the card and in the switcher; the serial until the device list arrives.
     const name = phoneName(params.udid, entry);
     const connection = screenConnection({
@@ -176,8 +176,8 @@ export function StreamView({ params, tabs }: StreamViewProps) {
             )}
             {stopped && !error && (
                 <div class="stream-start-error stream-service-stopped" role="alert">
-                    <h2>Stream service stopped</h2>
-                    <p>The stream service on this device was stopped. Start it to see the screen again.</p>
+                    <h2>{STREAM_SERVICE.stoppedTitle}</h2>
+                    <p>{STREAM_SERVICE.stoppedMessage}</p>
                     <div class="stream-start-error-actions">
                         <Button variant="primary" onClick={() => setAttempt(attempt + 1)}>
                             Start again

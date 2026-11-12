@@ -122,4 +122,7 @@ export const STREAM_SERVICE = {
         description: 'Approve USB debugging on the phone to check its stream service.',
     },
     unknown: { label: 'Unknown', description: 'The stream service status is not available yet.' },
+    /** The card on the screen of an Android phone whose stream service the owner stopped. */
+    stoppedTitle: 'Stream service stopped',
+    stoppedMessage: 'The stream service on this phone was stopped. Start it to see the screen again.',
 } as const;
