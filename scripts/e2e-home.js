@@ -7,8 +7,9 @@
 // the phones that can be opened, then the rest, greyed), scroll and focus restore, and the refusal
 // of tool links that name an iPhone. The list is also measured against the kit: the type scale,
 // kit buttons at their heights, the kit bar with one h1, status as a chip with words, and the
-// unread count as a badge. Loading before the first list and the stale cards while the list
-// reconnects (U-home-8). No phone, adb or pymobiledevice3 is involved.
+// unread count as a badge. Loading before the first list, the stale cards while the list
+// reconnects, and the even grid on a desktop (U-home-8, U-home-9). No phone, adb or
+// pymobiledevice3 is involved.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -815,6 +816,58 @@ async function reconnectingList(browser, { width, height, mobile, colorScheme })
     }
 }
 
+/**
+ * U-home-9: on a desktop the cards are an even grid. One width for every card, rows whose cards
+ * share their top, their height and the line of their actions, and at most three columns in the
+ * 1200px of the list. The widths are measured, not read from the stylesheet.
+ */
+async function evenGrid(browser) {
+    for (const [width, height, columns] of [[1024, 768, 2], [1280, 800, 3], [1440, 900, 3], [1920, 1080, 3], [390, 844, 1]]) {
+        for (const colorScheme of width === 1280 ? ['light', 'dark'] : ['light']) {
+            const label = `${width}-${colorScheme}`;
+            const mobile = width < 600;
+            const test = await start(browser, { width, height, mobile, colorScheme });
+            const { page } = test;
+            try {
+                await card(page, 'ios:HOME-IPHONE-START').waitFor();
+                await settleMotion(page);
+                const boxes = await page.locator('article.device').evaluateAll((items) => items.map((item) => {
+                    const box = item.getBoundingClientRect();
+                    const actions = item.querySelector('.device-primary-actions').getBoundingClientRect();
+                    return { left: box.left, top: box.top, width: box.width, height: box.height, actionsBottom: box.bottom - actions.bottom };
+                }));
+                const round = (value) => Math.round(value * 2) / 2;
+                const widths = new Set(boxes.map((box) => round(box.width)));
+                assert.equal(widths.size, 1, `${label}: every card has one width (${[...widths]})`);
+                const lefts = [...new Set(boxes.map((box) => round(box.left)))].sort((a, b) => a - b);
+                assert.equal(lefts.length, columns, `${label}: ${columns} columns (${lefts})`);
+                const rows = new Map();
+                for (const box of boxes) rows.set(round(box.top), [...(rows.get(round(box.top)) || []), box]);
+                for (const [top, row] of rows) {
+                    assert.equal(new Set(row.map((box) => round(box.height))).size, 1, `${label}: the cards of the row at ${top} are one height`);
+                    assert.ok(row.every((box) => Math.abs(box.actionsBottom - row[0].actionsBottom) < 1), `${label}: the actions of the row at ${top} line up`);
+                }
+                // The rows fill from the left, so every row but the last is full.
+                const sizes = [...rows.values()].map((row) => row.length);
+                assert.ok(sizes.slice(0, -1).every((size) => size === columns), `${label}: full rows (${sizes})`);
+                const cardWidth = boxes[0].width;
+                if (columns > 1) assert.ok(cardWidth >= 340 && cardWidth <= 692, `${label}: a card is between 340 and 692px wide (${cardWidth})`);
+                if (columns === 3) assert.ok(cardWidth <= 392.5, `${label}: three columns in 1200px make the widest card (${cardWidth})`);
+                if (width >= 1280) {
+                    const span = lefts[lefts.length - 1] + cardWidth - lefts[0];
+                    assert.ok(Math.abs(span - 1200) < 1 && Math.abs(lefts[0] - (width - 1200) / 2) < 1, `${label}: the grid is the 1200px of the list, centred`);
+                }
+                assert.equal(await noOverflow(page), true);
+                await page.screenshot({ path: path.join(OUT, `grid-${label}.png`) });
+                assert.deepEqual(test.errors, []);
+            } finally {
+                await test.context.close();
+            }
+        }
+    }
+    console.log('PASS the cards are an even grid at 1024, 1280, 1440 and 1920, and one column at 390');
+}
+
 async function narrowRow(browser) {
     const test = await start(browser, { width: 320, height: 568, mobile: true });
     const { page } = test;
@@ -827,6 +880,18 @@ async function narrowRow(browser) {
         assert.ok(open.width >= (await row.evaluate((el) => el.clientWidth)) / 2 - 1, 'Open screen takes at least half the row at 320px');
         assert.equal(await row.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false);
         assert.equal(await noOverflow(page), true, 'no horizontal page scroll at 320px');
+        // Nothing overflows its card, and no words overflow their button, name or chip. (The
+        // unread badge sits over the corner of its button on purpose.)
+        const spills = await page.locator('article.device').evaluateAll((items) => items.flatMap((item) => {
+            const edge = item.getBoundingClientRect().right;
+            const name = (el) => `${item.dataset.deviceKey}: ${el.textContent.trim() || el.getAttribute('aria-label')}`;
+            return [
+                ...(item.scrollWidth > item.clientWidth + 1 ? [`${item.dataset.deviceKey}: the card`] : []),
+                ...[...item.querySelectorAll('a, button')].filter((el) => el.getBoundingClientRect().right > edge + 0.5).map(name),
+                ...[...item.querySelectorAll('.kit-button, .phone-row-name, .phone-row-platform, .kit-chip')].filter((el) => el.scrollWidth > el.clientWidth + 1).map(name),
+            ];
+        }));
+        assert.deepEqual(spills, [], 'nothing overflows at 320px');
         const header = page.locator(HEADER);
         const heading = await header.getByRole('heading', { name: 'Phones', exact: true }).boundingBox();
         const inbox = await header.locator('.notifications-link').boundingBox();
@@ -1182,6 +1247,7 @@ async function main() {
             await firstList(browser, size);
             await reconnectingList(browser, size);
         }
+        await evenGrid(browser);
         await startFromSettings(browser);
         await wakeOnePerSleep(browser);
         await narrowRow(browser);
