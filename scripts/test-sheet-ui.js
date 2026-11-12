@@ -166,7 +166,7 @@ test('Copy here inside a sheet copies from inside its dialog, where focus can go
     }
 });
 
-test('no key goes to the phone while a sheet of either kind is open', () => {
+test('no key goes to the phone while a sheet is open', () => {
     const selectors = [];
     const query = document.querySelector;
     const Element = global.Element;
@@ -182,9 +182,8 @@ test('no key goes to the phone while a sheet of either kind is open', () => {
         assert.equal(isLocalKeyboardTarget(picture), false, 'with no sheet open the key is the phone\'s');
         open = 'dialog.kit-sheet[open]';
         assert.equal(isLocalKeyboardTarget(picture), true, 'the kit sheet, a native dialog, keeps the key');
-        open = '.bottom-sheet-root.open';
-        assert.equal(isLocalKeyboardTarget(picture), true, 'the older sheet keeps the key until it is removed');
-        assert.ok(selectors.length >= 3);
+        assert.equal(selectors.some((selector) => selector.includes('bottom-sheet')), false, 'the older sheet is not named');
+        assert.ok(selectors.length >= 2);
     } finally {
         document.querySelector = query;
         global.Element = Element;

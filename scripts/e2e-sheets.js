@@ -12,8 +12,8 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function settle(page) {
     await page
-        // Both sheet containers: the switcher suite shares this helper.
-        .locator('.kit-sheet-panel, .bottom-sheet')
+        // The switcher suite shares this helper.
+        .locator('.kit-sheet-panel')
         .evaluateAll((panels) =>
             Promise.all(panels.flatMap((panel) => panel.getAnimations().map((animation) => animation.finished))),
         );
