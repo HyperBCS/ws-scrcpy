@@ -30,18 +30,21 @@ export class AdbShell {
     /** adbkit's legacy shell resolves to a raw Duplex after OKAY; stdout and stderr are combined. */
     public open(command: string, signal?: AbortSignal): Promise<Duplex> {
         const lifetime = this.lifetime.signal;
+        const operation = AdbExtended.operation(this.client);
         return new Promise((resolve, reject) => {
             let socket: Duplex | undefined;
             let cancelled = false;
-            const cleanup = () => {
+            const cleanup = (error?: Error) => {
                 lifetime.removeEventListener('abort', abort);
                 signal?.removeEventListener('abort', abort);
+                operation.close(error);
             };
             const abort = () => {
                 cancelled = true;
-                cleanup();
+                const reason = signal?.reason ?? lifetime.reason ?? new Error('The phone connection ended.');
+                cleanup(reason instanceof Error ? reason : undefined);
                 socket?.destroy();
-                reject(signal?.reason ?? lifetime.reason ?? new Error('The phone connection ended.'));
+                reject(reason);
             };
             lifetime.addEventListener('abort', abort, { once: true });
             signal?.addEventListener('abort', abort, { once: true });
@@ -52,7 +55,7 @@ export class AdbShell {
             Promise.resolve()
                 .then(() => {
                     if (cancelled) throw signal?.reason ?? lifetime.reason;
-                    return this.client.shell(this.serial, command);
+                    return operation.client.shell(this.serial, command);
                 })
                 .then(
                     (stream) => {
@@ -63,12 +66,12 @@ export class AdbShell {
                             stream.destroy();
                             return;
                         }
-                        stream.once('close', cleanup);
-                        stream.once('end', cleanup);
+                        stream.once('close', () => cleanup());
+                        stream.once('end', () => cleanup());
                         resolve(stream);
                     },
                     (error: Error) => {
-                        cleanup();
+                        cleanup(error);
                         reject(error);
                     },
                 );
@@ -129,7 +132,34 @@ export class AdbShell {
         };
     }
 
-    public push(contents: string, path: string) {
-        return this.client.push(this.serial, contents, path);
+    public async push(contents: string, path: string, signal?: AbortSignal) {
+        const lifetime = this.lifetime.signal;
+        const controller = new AbortController();
+        const abort = () => controller.abort(signal?.reason ?? lifetime.reason ?? Error('The phone connection ended.'));
+        lifetime.addEventListener('abort', abort, { once: true });
+        signal?.addEventListener('abort', abort, { once: true });
+        if (this.released || lifetime.aborted || signal?.aborted) abort();
+        const operation = AdbExtended.operation(this.client, controller.signal);
+        const cleanup = () => {
+            lifetime.removeEventListener('abort', abort);
+            signal?.removeEventListener('abort', abort);
+            operation.close();
+        };
+        try {
+            controller.signal.throwIfAborted();
+            const transfer = await operation.client.push(this.serial, contents, path);
+            transfer.on('error', () => undefined);
+            if (controller.signal.aborted) {
+                transfer.cancel();
+                controller.signal.throwIfAborted();
+            }
+            transfer.once('end', cleanup);
+            transfer.once('error', cleanup);
+            return transfer;
+        } catch (error) {
+            operation.close(error as Error);
+            cleanup();
+            throw error;
+        }
     }
 }

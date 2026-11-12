@@ -1,7 +1,7 @@
 import * as portfinder from 'portfinder';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
-import { AdbExtended } from './adb';
+import { AdbExtended, HostAdbClient } from './adb';
 import { Forward } from '@dead50f7/adbkit/lib/Forward';
 import Entry from '@dead50f7/adbkit/lib/adb/sync/entry';
 import Stats from '@dead50f7/adbkit/lib/adb/sync/stats';
@@ -36,6 +36,7 @@ interface OwnedForward {
 }
 
 export class AdbUtils {
+    private static readonly FORWARD_CLEANUP_TIMEOUT_MS = 6500;
     private static ownedForwards = new Map<string, OwnedForward>();
     private static forwardQueue: Promise<void> = Promise.resolve();
 
@@ -155,10 +156,49 @@ export class AdbUtils {
         return pending;
     }
 
+    private static async adbOperation<T>(
+        client: HostAdbClient,
+        signal: AbortSignal | undefined,
+        run: (scoped: HostAdbClient) => PromiseLike<T>,
+    ): Promise<T> {
+        const operation = AdbExtended.operation(client, signal);
+        try {
+            return await run(operation.client);
+        } finally {
+            operation.close();
+        }
+    }
+
+    /** A stopped launch still gets one bounded cleanup attempt with a fresh signal. */
+    private static async cleanupOperation<T>(
+        client: HostAdbClient,
+        run: (scoped: HostAdbClient) => PromiseLike<T>,
+        signal?: AbortSignal,
+    ): Promise<T> {
+        const controller = new AbortController();
+        const abort = () => controller.abort(signal?.reason);
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
+        const timer = setTimeout(
+            () => controller.abort(Error('Removing the phone connection forward timed out.')),
+            AdbUtils.FORWARD_CLEANUP_TIMEOUT_MS,
+        );
+        try {
+            return await AdbUtils.adbOperation(client, controller.signal, run);
+        } finally {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', abort);
+        }
+    }
+
+    private static removeForward(client: HostAdbClient, serial: string, local: string): Promise<void> {
+        return AdbUtils.cleanupOperation(client, (scoped) => scoped.killForward(serial, local));
+    }
+
     private static async forwardNow(serial: string, remote: string, signal?: AbortSignal): Promise<ForwardLease> {
         signal?.throwIfAborted();
         const client = AdbExtended.createClient();
-        const forwards = await client.listForwards(serial);
+        const forwards = await AdbUtils.adbOperation(client, signal, (scoped) => scoped.listForwards(serial));
         signal?.throwIfAborted();
         const forward = forwards.find((item: Forward) => {
             return item.remote === remote && item.local.startsWith('tcp:') && item.serial === serial;
@@ -193,13 +233,19 @@ export class AdbUtils {
                 // Another server on the same adb may take the port between the check and here.
                 // adb then refuses, where the plain form would move that forward to this device.
                 signal?.throwIfAborted();
-                await client.forwardNoRebind(serial, `tcp:${port}`, remote);
+                await AdbUtils.adbOperation(client, signal, (scoped) =>
+                    scoped.forwardNoRebind(serial, `tcp:${port}`, remote),
+                );
                 if (signal?.aborted) {
-                    await client.killForward(serial, `tcp:${port}`);
+                    await AdbUtils.removeForward(client, serial, `tcp:${port}`);
                     signal.throwIfAborted();
                 }
                 const key = JSON.stringify([serial, `tcp:${port}`, remote]);
-                const owned: OwnedForward = { users: 1, remove: () => client.killForward(serial, `tcp:${port}`) };
+                const owned: OwnedForward = {
+                    users: 1,
+                    // Cleanup has its own scope: the launch signal may already be aborted.
+                    remove: () => AdbUtils.removeForward(client, serial, `tcp:${port}`),
+                };
                 AdbUtils.ownedForwards.set(key, owned);
                 return AdbUtils.forwardLease(key, owned, port);
             } catch (error) {
@@ -223,8 +269,10 @@ export class AdbUtils {
                 const removal = AdbUtils.forwardQueue.then(async () => {
                     if (AdbUtils.ownedForwards.get(key) !== owned) return;
                     if (--owned.users > 0) return;
-                    AdbUtils.ownedForwards.delete(key);
                     await owned.remove();
+                    // Retain confirmed ownership if removal could not be confirmed. A later
+                    // acquisition may reuse it; an old lease still cannot remove its successor.
+                    AdbUtils.ownedForwards.delete(key);
                 });
                 AdbUtils.forwardQueue = removal.then(
                     () => undefined,
@@ -236,15 +284,15 @@ export class AdbUtils {
     }
 
     /** Remove legacy filesystem forwards left by an earlier server version. */
-    public static async removeFileSocketForwards(serial: string): Promise<void> {
+    public static async removeFileSocketForwards(serial: string, signal?: AbortSignal): Promise<void> {
         const client = AdbExtended.createClient();
-        const forwards = await client.listForwards(serial);
+        const forwards = await AdbUtils.cleanupOperation(client, (scoped) => scoped.listForwards(serial), signal);
 
         // Over the adb protocol, not the adb CLI: a spawned client starts an adb server of its own
         // when none answers, and replaces a server of another version.
         const removals = forwards
             .filter((forward) => forward.serial === serial && forward.local.includes('localfilesystem:'))
-            .map((forward) => client.killForward(serial, forward.local));
+            .map((forward) => AdbUtils.removeForward(client, serial, forward.local));
 
         await Promise.all(removals);
     }

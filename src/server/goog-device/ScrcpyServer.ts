@@ -20,7 +20,7 @@ export interface ScrcpyTarget {
     isConnected(): boolean;
     getPidOf(name: string, strict?: boolean, signal?: AbortSignal): Promise<number[] | undefined>;
     runShellCommandAdbKit(command: string, timeoutMs?: number, signal?: AbortSignal): Promise<string>;
-    push(contents: string, path: string): Promise<PushTransfer>;
+    push(contents: string, path: string, signal?: AbortSignal): Promise<PushTransfer>;
     getLaunchStreamConfig(): StreamConfigData;
     launchServer(command: string, audio: boolean): Promise<void>;
 }
@@ -51,7 +51,7 @@ export class ScrcpyServer {
         const src = path.join(FILE_DIR, FILE_NAME);
         const dst = TEMP_PATH + FILE_NAME; // don't use path.join(): will not work on win host
         signal?.throwIfAborted();
-        const transfer = await device.push(src, dst);
+        const transfer = await device.push(src, dst, signal);
         if (signal?.aborted) {
             transfer.on('error', () => undefined);
             transfer.cancel?.();

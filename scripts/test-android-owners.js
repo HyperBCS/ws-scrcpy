@@ -1,7 +1,7 @@
 // Direct Android shell, poller and session races. Every transport is a fixture.
 const assert = require('node:assert/strict');
 const { test, after } = require('node:test');
-const { EventEmitter, getEventListeners } = require('node:events');
+const { EventEmitter, getEventListeners, once } = require('node:events');
 const { PassThrough } = require('node:stream');
 const net = require('node:net');
 const cp = require('node:child_process');
@@ -784,4 +784,406 @@ test('public Device cooperates through shell, jar, forward and Broadcast for vie
     device.release(); await flush();
     assert.deepEqual(closes, [4012], 'disconnect and shutdown do not send owner Stop');
     assert.ok(f.launches.every((launch) => launch.shell.destroyed));
+});
+
+// Real installed adbkit and TCP sockets. The fake ADB peer deliberately stays half-open.
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function waitFor(condition, message) {
+    for (let attempt = 0; attempt < 100; attempt++) {
+        if (condition()) return;
+        await pause(5);
+    }
+    assert.ok(condition(), message);
+}
+async function adbPeer(t, answer) {
+    const peers = [], frames = [];
+    const server = net.createServer({ allowHalfOpen: true }, (socket) => {
+        peers.push(socket);
+        socket.on('error', () => {});
+        socket.on('end', () => { socket.sawFin = true; });
+        let buffer = Buffer.alloc(0);
+        socket.on('data', (chunk) => {
+            buffer = Buffer.concat([buffer, chunk]);
+            for (;;) {
+                if (socket.syncData) { socket.syncData(buffer); buffer = Buffer.alloc(0); return; }
+                if (buffer.length < 4) return;
+                const size = Number.parseInt(buffer.subarray(0, 4).toString(), 16);
+                assert.ok(Number.isInteger(size), 'ADB request uses its four-hex-digit length');
+                if (buffer.length < size + 4) return;
+                const frame = buffer.subarray(4, size + 4).toString();
+                buffer = buffer.subarray(size + 4);
+                frames.push({ frame, socket });
+                answer(frame, socket);
+            }
+        });
+    });
+    server.listen(0, '127.0.0.1'); await once(server, 'listening');
+    const port = server.address().port;
+    const clients = () => process._getActiveHandles().filter((handle) => handle instanceof net.Socket && handle.remotePort === port);
+    t.after(async () => {
+        clients().forEach((socket) => socket.destroy());
+        peers.forEach((socket) => socket.destroy());
+        await new Promise((resolve) => server.close(resolve));
+        await flush();
+    });
+    const client = originalClient({ host: '127.0.0.1', port });
+    t.mock.method(AdbExtended, 'createClient', () => client);
+    t.mock.method(cp, 'spawn', () => assert.fail('No daemon/CLI child'));
+    t.mock.method(cp, 'execFile', () => assert.fail('No daemon/CLI child'));
+    const closed = async (owned) => {
+        assert.ok(owned.length > 0, 'the real client opened a TCP socket');
+        assert.ok(owned.every((socket) => socket.destroyed), 'cancellation destroys each actual client TCP socket');
+        await waitFor(() => clients().length === 0, 'no matching client socket handle remains');
+        await waitFor(() => peers.every((socket) => socket.sawFin || socket.destroyed), 'the fake peer observes FIN or close');
+    };
+    return { client, server, port, peers, frames, clients, closed };
+}
+
+for (const phase of ['transport', 'shell']) for (const action of ['release', 'timeout']) {
+    test(`real adbkit stalled ${phase} closes actual TCP on ${action}`, { timeout: 3000 }, async (t) => {
+        const f = await adbPeer(t, (frame, socket) => {
+            if (phase === 'shell' && frame.startsWith('host:transport:')) socket.write('OKAY');
+        });
+        const shell = new AdbShell('handshake-phone', f.client);
+        t.after(() => shell.release());
+        const pending = (action === 'timeout' ? shell.read('fixture', 100) : shell.open('fixture')).catch((error) => error);
+        await waitFor(() => f.frames.some(({ frame }) => phase === 'shell' ? frame === 'shell:fixture' : frame.startsWith('host:transport:')), 'the stalled handshake is reached');
+        const owned = f.clients();
+        if (action === 'release') shell.release(); else await pause(130);
+        await f.closed(owned);
+        assert.match((await pending).message, action === 'timeout' ? /timed out/ : /connection ended/);
+        assert.ok(f.peers.some((socket) => socket.sawFin && !socket.destroyed), 'client destruction does not wait for a half-open peer to close');
+    });
+}
+
+for (const phase of ['list', 'forward-first', 'forward-second']) {
+    test(`real adbkit stalled ${phase} closes actual TCP on launch abort`, { timeout: 3000 }, async (t) => {
+        const f = await adbPeer(t, (frame, socket) => {
+            if (frame.endsWith(':list-forward') && phase !== 'list') socket.end('OKAY0000');
+            else if (frame.includes(':forward:norebind:') && phase === 'forward-second') socket.write('OKAY');
+        });
+        t.mock.method(require('portfinder'), 'getPortPromise', async () => 19201);
+        const controller = new AbortController();
+        const pending = AdbUtils.acquireForward('handshake-phone', 'localabstract:handshake-fixture', controller.signal).catch((error) => error);
+        await waitFor(() => f.frames.some(({ frame }) => phase === 'list' ? frame.endsWith(':list-forward') : frame.includes(':forward:norebind:')), 'the forward handshake is reached');
+        const owned = f.clients(); controller.abort(Error('Cancel forward fixture'));
+        await f.closed(owned);
+        assert.match((await pending).message, /Cancel forward fixture/);
+        assert.ok(!f.frames.some(({ frame }) => frame.includes('killforward')), 'unconfirmed forward ownership is not guessed');
+    });
+}
+
+for (const phase of ['transport', 'sync']) {
+    test(`real adbkit stalled push ${phase} closes actual TCP on launch abort`, { timeout: 3000 }, async (t) => {
+        const f = await adbPeer(t, (frame, socket) => {
+            if (phase === 'sync' && frame.startsWith('host:transport:')) socket.write('OKAY');
+        });
+        const controller = new AbortController(), shell = new AdbShell('handshake-phone', f.client);
+        t.after(() => shell.release());
+        const pending = shell.push(path.join(temporary, 'not-opened-before-sync'), '/data/local/tmp/fixture', controller.signal).catch((error) => error);
+        await waitFor(() => f.frames.some(({ frame }) => phase === 'sync' ? frame === 'sync:' : frame.startsWith('host:transport:')), 'the upload handshake is reached');
+        const owned = f.clients(); controller.abort(Error('Cancel upload fixture'));
+        await f.closed(owned);
+        assert.match((await pending).message, /Cancel upload fixture/);
+    });
+}
+
+test('real adbkit pre-abort and abort during TCP connect leave no client handle or child', { timeout: 3000 }, async (t) => {
+    const f = await adbPeer(t, () => {}), controller = new AbortController();
+    controller.abort(Error('Pre-aborted fixture'));
+    const shell = new AdbShell('handshake-phone', f.client);
+    t.after(() => shell.release());
+    await assert.rejects(shell.open('fixture', controller.signal), /Pre-aborted/);
+    await assert.rejects(shell.push('not-opened', '/fixture', controller.signal), /Pre-aborted/);
+    await assert.rejects(AdbUtils.acquireForward('handshake-phone', 'localabstract:fixture', controller.signal), /Pre-aborted/);
+    await flush(); assert.equal(f.peers.length, 0);
+    const during = new AbortController(), before = new Set(process._getActiveHandles());
+    const operation = AdbExtended.operation(f.client, during.signal);
+    const connecting = operation.client.shell('handshake-phone', 'fixture').catch((error) => error);
+    const created = process._getActiveHandles().filter((handle) => handle instanceof net.Socket && !before.has(handle));
+    assert.equal(created.length, 1);
+    during.abort(Error('Cancelled TCP connect'));
+    assert.ok(created.every((socket) => socket.destroyed));
+    assert.match((await connecting).message, /Cancelled TCP connect/);
+    await waitFor(() => created.every((socket) => !process._getActiveHandles().includes(socket)), 'connecting socket leaves the handle list');
+    operation.close();
+});
+
+test('real adbkit concurrent shell scopes and late errors cannot cancel their sibling', { timeout: 3000 }, async (t) => {
+    const f = await adbPeer(t, (frame, socket) => { if (frame.startsWith('host:transport:')) socket.write('OKAY'); });
+    const originalConnection = f.client.connection, shell = new AdbShell('handshake-phone', f.client);
+    t.after(() => shell.release());
+    const one = new AbortController(), two = new AbortController();
+    const first = shell.open('one', one.signal).catch((error) => error), second = shell.open('two', two.signal);
+    await waitFor(() => f.frames.filter(({ frame }) => frame.startsWith('shell:')).length === 2, 'both shell scopes reach their own handshake');
+    const peerOne = f.frames.find(({ frame }) => frame === 'shell:one').socket;
+    const peerTwo = f.frames.find(({ frame }) => frame === 'shell:two').socket;
+    const socketOne = f.clients().find((socket) => socket.localPort === peerOne.remotePort);
+    const socketTwo = f.clients().find((socket) => socket.localPort === peerTwo.remotePort);
+    one.abort(Error('Cancel one scope'));
+    assert.equal(socketOne.destroyed, true);
+    assert.equal(socketTwo.destroyed, false);
+    assert.match((await first).message, /Cancel one scope/);
+    assert.doesNotThrow(() => socketOne.emit('error', Error('Late cancelled connection error')));
+    peerTwo.write('OKAY');
+    assert.equal(await second, socketTwo, 'the un-aborted shell receives its original raw socket');
+    assert.equal(f.client.connection, originalConnection, 'the shared client is unchanged');
+    two.abort(Error('End second scope'));
+    await f.closed([socketOne, socketTwo]);
+});
+
+test('real adbkit refused operation never invokes adbkit daemon startup', { timeout: 3000 }, async (t) => {
+    const server = net.createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+    const port = server.address().port; await new Promise((resolve) => server.close(resolve));
+    let children = 0;
+    t.mock.method(cp, 'execFile', () => { children++; assert.fail('No daemon startup child'); });
+    t.mock.method(cp, 'spawn', () => { children++; assert.fail('No CLI child'); });
+    const shell = new AdbShell('handshake-phone', originalClient({ host: '127.0.0.1', port }));
+    await assert.rejects(shell.read('fixture', 1000), new RegExp(`adb server at 127.0.0.1:${port} is not running`));
+    shell.release(); assert.equal(children, 0);
+});
+
+for (const commit of [false, true]) test(`unconfirmed real forward ${commit ? 'lost ACK' : 'norebind collision'} never removes an uncertain binding`, { timeout: 3000 }, async (t) => {
+    const rows = [], removals = [];
+    const f = await adbPeer(t, (frame, socket) => {
+        if (frame.endsWith(':list-forward')) socket.end('OKAY0000');
+        else if (frame.includes(':forward:norebind:')) {
+            rows.push({ serial: commit ? 'handshake-phone' : 'another-phone', local: 'tcp:19202', remote: commit ? 'localabstract:owned-fixture' : 'localabstract:external' });
+            socket.write('OKAY'); // final success/failure status is lost
+        } else if (frame.includes('killforward')) { removals.push(frame); socket.end('OKAY'); }
+    });
+    t.mock.method(require('portfinder'), 'getPortPromise', async () => 19202);
+    const controller = new AbortController();
+    const pending = AdbUtils.acquireForward('handshake-phone', 'localabstract:owned-fixture', controller.signal).catch((error) => error);
+    await waitFor(() => rows.length === 1, 'the fake daemon has committed or collided before losing the reply');
+    const owned = f.clients(); controller.abort(Error('Lost forward reply'));
+    await f.closed(owned); assert.match((await pending).message, /Lost forward reply/);
+    assert.deepEqual(removals, []);
+    assert.equal(rows.length, 1, 'an unconfirmed mapping remains: the protocol cannot establish its owner');
+});
+
+test('confirmed real forward cleanup stays usable after launch abort and preserves external forwards', { timeout: 3000 }, async (t) => {
+    const rows = [{ serial: 'external-phone', local: 'tcp:19203', remote: 'localabstract:external' }], removals = [];
+    const f = await adbPeer(t, (frame, socket) => {
+        if (frame.endsWith(':list-forward')) {
+            const value = rows.map((row) => `${row.serial} ${row.local} ${row.remote}\n`).join('');
+            socket.end('OKAY' + Buffer.byteLength(value).toString(16).padStart(4, '0') + value);
+        } else if (frame.includes(':forward:norebind:')) {
+            rows.push({ serial: 'handshake-phone', local: 'tcp:19204', remote: 'localabstract:owned-fixture' });
+            socket.end('OKAYOKAY');
+        } else if (frame.endsWith(':killforward:tcp:19204')) {
+            removals.push(frame); rows.splice(rows.findIndex((row) => row.local === 'tcp:19204'), 1); socket.end('OKAYOKAY');
+        } else assert.fail(`Unexpected forward frame ${frame}`);
+    });
+    t.mock.method(require('portfinder'), 'getPortPromise', async ({ port }) => port === 19204 ? 19204 : 19203);
+    const controller = new AbortController();
+    const lease = await AdbUtils.acquireForward('handshake-phone', 'localabstract:owned-fixture', controller.signal);
+    assert.equal(lease.port, 19204);
+    controller.abort(Error('Launch ended'));
+    await lease.release(); await lease.release();
+    assert.equal(removals.length, 1);
+    assert.deepEqual(rows, [{ serial: 'external-phone', local: 'tcp:19203', remote: 'localabstract:external' }]);
+    await waitFor(() => f.clients().length === 0, 'finite command scopes release their sockets');
+});
+
+test('confirmed real forward cleanup has its own budget and retains ownership after a lost removal reply', { timeout: 3000 }, async (t) => {
+    const rows = [], removals = [];
+    let acknowledge = false;
+    const f = await adbPeer(t, (frame, socket) => {
+        if (frame.endsWith(':list-forward')) {
+            const value = rows.map((row) => `${row.serial} ${row.local} ${row.remote}\n`).join('');
+            socket.end('OKAY' + Buffer.byteLength(value).toString(16).padStart(4, '0') + value);
+        } else if (frame.includes(':forward:norebind:')) {
+            rows.push({ serial: 'cleanup-phone', local: 'tcp:19205', remote: 'localabstract:cleanup-fixture' });
+            socket.end('OKAYOKAY');
+        } else if (frame.endsWith(':killforward:tcp:19205')) {
+            removals.push(frame);
+            if (acknowledge) { rows.length = 0; socket.end('OKAYOKAY'); } else socket.write('OKAY');
+        } else assert.fail(`Unexpected cleanup frame ${frame}`);
+    });
+    t.mock.method(require('portfinder'), 'getPortPromise', async () => 19205);
+    const before = AdbUtils.FORWARD_CLEANUP_TIMEOUT_MS;
+    AdbUtils.FORWARD_CLEANUP_TIMEOUT_MS = 40;
+    t.after(() => { AdbUtils.FORWARD_CLEANUP_TIMEOUT_MS = before; });
+    const controller = new AbortController();
+    const lease = await AdbUtils.acquireForward('cleanup-phone', 'localabstract:cleanup-fixture', controller.signal);
+    controller.abort(Error('Launch already ended'));
+    const release = lease.release().catch((error) => error);
+    await waitFor(() => removals.length === 1, 'cleanup uses a fresh connection despite the dead launch signal');
+    const owned = f.clients(); await pause(50); await f.closed(owned);
+    assert.match((await release).message, /forward timed out/);
+    assert.equal(rows.length, 1, 'mapping removal was not confirmed');
+    const successor = await AdbUtils.acquireForward('cleanup-phone', 'localabstract:cleanup-fixture');
+    await lease.release(); assert.equal(removals.length, 1, 'old cleanup does not affect the successor');
+    acknowledge = true; await successor.release();
+    assert.equal(removals.length, 2, 'a later explicit owner can release the retained confirmed identity');
+    assert.equal(rows.length, 0);
+});
+
+test('legacy real forward cleanup times out its own stalled removal socket', { timeout: 3000 }, async (t) => {
+    const local = 'localfilesystem:/tmp/cleanup-fixture', removals = [];
+    const f = await adbPeer(t, (frame, socket) => {
+        if (frame.endsWith(':list-forward')) {
+            const value = `cleanup-phone ${local} localabstract:legacy\n`;
+            socket.end('OKAY' + Buffer.byteLength(value).toString(16).padStart(4, '0') + value);
+        } else if (frame.endsWith(':killforward:' + local)) { removals.push(frame); socket.write('OKAY'); }
+        else assert.fail(`Unexpected legacy cleanup frame ${frame}`);
+    });
+    const before = AdbUtils.FORWARD_CLEANUP_TIMEOUT_MS;
+    AdbUtils.FORWARD_CLEANUP_TIMEOUT_MS = 40;
+    t.after(() => { AdbUtils.FORWARD_CLEANUP_TIMEOUT_MS = before; });
+    const pending = AdbUtils.removeFileSocketForwards('cleanup-phone').catch((error) => error);
+    await waitFor(() => removals.length === 1, 'legacy removal reaches the stalled second status');
+    const owned = f.clients(); await pause(50); await f.closed(owned);
+    assert.match((await pending).message, /forward timed out/);
+    assert.equal(removals.length, 1, 'cleanup has no retry loop');
+});
+
+test('legacy real forward cleanup also bounds its read-only listing phase', { timeout: 3000 }, async (t) => {
+    const f = await adbPeer(t, () => {});
+    const before = AdbUtils.FORWARD_CLEANUP_TIMEOUT_MS;
+    AdbUtils.FORWARD_CLEANUP_TIMEOUT_MS = 40;
+    t.after(() => { AdbUtils.FORWARD_CLEANUP_TIMEOUT_MS = before; });
+    const pending = AdbUtils.removeFileSocketForwards('cleanup-phone').catch((error) => error);
+    await waitFor(() => f.frames.length === 1, 'legacy cleanup reaches its listing');
+    const owned = f.clients(); await pause(50); await f.closed(owned);
+    assert.match((await pending).message, /forward timed out/);
+    assert.equal(f.frames.length, 1, 'failed listing sends no removal');
+});
+
+function syncUploadPeer(frame, socket, result, acknowledge) {
+    if (frame.startsWith('host:transport:')) { socket.write('OKAY'); return; }
+    assert.equal(frame, 'sync:');
+    socket.write('OKAY');
+    let buffer = Buffer.alloc(0);
+    socket.syncData = (chunk) => {
+        buffer = Buffer.concat([buffer, chunk]);
+        while (buffer.length >= 8) {
+            const kind = buffer.subarray(0, 4).toString(), size = buffer.readUInt32LE(4);
+            if (kind === 'DONE') {
+                buffer = buffer.subarray(8); result.done = true;
+                if (acknowledge) socket.end(Buffer.concat([Buffer.from('OKAY'), Buffer.alloc(4)]));
+                continue;
+            }
+            if (buffer.length < size + 8) return;
+            const payload = buffer.subarray(8, size + 8); buffer = buffer.subarray(size + 8);
+            if (kind === 'SEND') result.path = payload.toString();
+            else { assert.equal(kind, 'DATA'); result.bytes += payload.length; }
+        }
+    };
+}
+
+test('real adbkit post-OKAY upload cancellation closes its TCP socket and file reader', { timeout: 3000 }, async (t) => {
+    const result = { bytes: 0 }, f = await adbPeer(t, (frame, socket) => syncUploadPeer(frame, socket, result, false));
+    const file = path.join(temporary, 'large-owned-upload'); fs.writeFileSync(file, ''); fs.truncateSync(file, 8 * 1024 * 1024);
+    const source = fs.createReadStream(file, { highWaterMark: 1024 }), controller = new AbortController();
+    const operation = AdbExtended.operation(f.client, controller.signal);
+    t.after(() => { operation.close(); source.destroy(); });
+    const transfer = await operation.client.push('handshake-phone', source, '/data/local/tmp/fixture');
+    const errors = []; let cancelled = 0, ended = 0;
+    transfer.on('error', (error) => errors.push(error));
+    transfer.on('cancel', () => cancelled++);
+    transfer.on('end', () => ended++);
+    await waitFor(() => result.bytes > 0, 'real sync DATA has started');
+    assert.equal(source.readableEnded, false, 'the file reader is still active when cancelled');
+    const before = { dataBytes: result.bytes, readerEnded: source.readableEnded };
+    const owned = f.clients();
+    assert.equal(transfer.cancel(), true, 'the public cancel API keeps its boolean result');
+    controller.abort(Error('Cancel active upload'));
+    assert.equal(transfer.cancel(), true, 'a repeated owner cancellation is harmless');
+    await f.closed(owned);
+    await waitFor(() => source.destroyed && source.closed, 'the active file reader closes after cancellation');
+    await waitFor(() => ended === 1, 'adbkit settles the cancelled transfer once');
+    assert.equal(cancelled, 1); assert.deepEqual(errors, []);
+    process.stdout.write(JSON.stringify({ proof: 'active-stream', ...before, readerDestroyed: source.destroyed, readerClosed: source.closed, clientHandles: f.clients().length, cancelEvents: cancelled, endEvents: ended, errors: errors.length }) + '\n');
+});
+
+function descriptorsFor(file) {
+    const result = [];
+    for (const fd of fs.readdirSync('/proc/self/fd')) {
+        try {
+            if (fs.readlinkSync(`/proc/self/fd/${fd}`) !== file) continue;
+            const info = fs.readFileSync(`/proc/self/fdinfo/${fd}`, 'utf8');
+            result.push({ fd, position: Number(info.match(/^pos:\s*(\d+)/m)[1]) });
+        } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    return result;
+}
+
+for (const action of ['abort', 'release']) test(`real AdbShell filepath upload closes its internally opened reader on ${action}`, { timeout: 3000, skip: process.platform !== 'linux' && 'File descriptor inspection uses Linux procfs' }, async (t) => {
+    const result = { bytes: 0 }, f = await adbPeer(t, (frame, socket) => syncUploadPeer(frame, socket, result, false));
+    const file = path.join(temporary, `internal-upload-${action}`), size = 64 * 1024 * 1024;
+    fs.writeFileSync(file, ''); fs.truncateSync(file, size);
+    const shell = new AdbShell('handshake-phone', f.client), controller = new AbortController();
+    t.after(() => shell.release());
+    const transfer = await shell.push(file, '/data/local/tmp/fixture', controller.signal);
+    const errors = []; let cancelled = 0, ended = 0;
+    transfer.on('error', (error) => errors.push(error));
+    transfer.on('cancel', () => cancelled++); transfer.on('end', () => ended++);
+    await waitFor(() => result.bytes > 0 && descriptorsFor(file).some(({ position }) => position < size), 'the production filepath reader is open and has not reached EOF');
+    const descriptors = descriptorsFor(file), owned = f.clients();
+    assert.ok(descriptors.length === 1 && descriptors[0].position < size, 'the actual internal file reader is still active');
+    assert.ok(result.bytes > 0 && result.bytes < size);
+    if (action === 'release') shell.release(); else controller.abort(Error('Cancel internal upload'));
+    await f.closed(owned);
+    await waitFor(() => descriptorsFor(file).length === 0, 'the internal file descriptor closes');
+    await waitFor(() => ended === 1, 'the cancelled transfer settles once');
+    assert.equal(cancelled, 1); assert.deepEqual(errors, []);
+    process.stdout.write(JSON.stringify({ proof: 'active-filepath', action, size, descriptorPositionsBefore: descriptors.map(({ position }) => position), dataBytes: result.bytes, descriptorsAfter: descriptorsFor(file).length, clientHandles: f.clients().length, cancelEvents: cancelled, endEvents: ended, errors: errors.length }) + '\n');
+});
+
+test('real filepath upload preserves a file-open error and closes its sync socket', { timeout: 3000 }, async (t) => {
+    const f = await adbPeer(t, (frame, socket) => syncUploadPeer(frame, socket, { bytes: 0 }, false));
+    const shell = new AdbShell('handshake-phone', f.client); t.after(() => shell.release());
+    const transfer = await shell.push(path.join(temporary, 'missing-upload'), '/data/local/tmp/fixture');
+    const [error] = await once(transfer, 'error');
+    assert.equal(error.code, 'ENOENT');
+    await waitFor(() => f.clients().length === 0, 'failed upload closes its owned sync socket');
+});
+
+test('real scrcpy upload abort cancels the internal filepath transfer once and never launches', { timeout: 3000, skip: process.platform !== 'linux' && 'File descriptor inspection uses Linux procfs' }, async (t) => {
+    const result = { bytes: 0 }, f = await adbPeer(t, (frame, socket) => syncUploadPeer(frame, socket, result, false));
+    const file = path.join(temporary, 'scrcpy-internal-upload'), size = 64 * 1024 * 1024;
+    fs.writeFileSync(file, ''); fs.truncateSync(file, size);
+    const shell = new AdbShell('handshake-phone', f.client), controller = new AbortController();
+    t.after(() => shell.release());
+    let cancelled = 0, onceCancelled = 0, ended = 0, launched = 0;
+    const order = [];
+    const target = {
+        udid: 'handshake-phone', TAG: '[handshake-scrcpy]', isConnected: () => true,
+        push: async (_contents, destination, signal) => {
+            const transfer = await shell.push(file, destination, signal);
+            transfer.on('cancel', () => { cancelled++; order.push('on'); });
+            transfer.once('cancel', () => { onceCancelled++; order.push('once'); });
+            transfer.on('end', () => ended++);
+            return transfer;
+        },
+        getLaunchStreamConfig: () => ({ audio: false }),
+        launchServer: async () => { launched++; },
+    };
+    const running = ScrcpyServer.run(target, controller.signal).catch((error) => error);
+    await waitFor(() => result.bytes > 0 && descriptorsFor(file).some(({ position }) => position < size), 'scrcpy upload is active before EOF');
+    const descriptorPositionsBefore = descriptorsFor(file).map(({ position }) => position);
+    const owned = f.clients(); controller.abort(Error('Cancel scrcpy upload'));
+    await f.closed(owned);
+    assert.ok((await running) instanceof Error);
+    await waitFor(() => descriptorsFor(file).length === 0 && ended === 1, 'scrcpy upload releases the descriptor and settles once');
+    assert.equal(cancelled, 1); assert.equal(onceCancelled, 1); assert.equal(launched, 0);
+    assert.deepEqual(order, ['on', 'once'], 'other cancel listeners keep their registration order');
+    process.stdout.write(JSON.stringify({ proof: 'scrcpy-filepath', size, descriptorPositionsBefore, dataBytes: result.bytes, descriptorsAfter: descriptorsFor(file).length, clientHandles: f.clients().length, cancelEvents: cancelled, onceCancelEvents: onceCancelled, endEvents: ended, lateLaunches: launched, order }) + '\n');
+});
+
+test('real adbkit post-OKAY upload and no-signal shell preserve sync framing and combined output', { timeout: 3000 }, async (t) => {
+    const result = { bytes: 0 }, f = await adbPeer(t, (frame, socket) => {
+        if (frame.startsWith('shell:')) socket.end('OKAYfixture stdout\nfixture stderr\n__rc=7\n');
+        else syncUploadPeer(frame, socket, result, true);
+    });
+    const file = path.join(temporary, 'completed-owned-upload'); fs.writeFileSync(file, 'fixture jar');
+    const shell = new AdbShell('handshake-phone', f.client); t.after(() => shell.release());
+    const transfer = await shell.push(file, '/data/local/tmp/fixture');
+    await once(transfer, 'end');
+    assert.equal(result.bytes, 11); assert.equal(result.done, true);
+    assert.match(result.path, /^\/data\/local\/tmp\/fixture,\d+$/);
+    assert.deepEqual(await shell.exec('fixture'), { code: 7, output: 'fixture stdout\nfixture stderr' });
+    await waitFor(() => f.clients().length === 0, 'successful shell/sync scopes release their sockets');
 });

@@ -64,7 +64,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
             isConnected: () => this.isConnected(),
             getPidOf: (name, strict, signal) => this.getPidOf(name, strict, signal),
             runShellCommandAdbKit: (command, timeout, signal) => this.runShellCommandAdbKit(command, timeout, signal),
-            push: (contents, path) => this.push(contents, path),
+            push: (contents, path, signal) => this.push(contents, path, signal),
             getLaunchStreamConfig: () => this.getLaunchStreamConfig(),
             launchServer: (command, audio) => this.launchServer(command, audio),
             openShell: (command, signal) => this.shell.open(command, signal),
@@ -109,8 +109,8 @@ export class Device extends TypedEmitter<DeviceEvents> {
     public runShellCommandAdbKit(command: string, timeoutMs?: number, signal?: AbortSignal): Promise<string> {
         return this.shell.read(command, timeoutMs, signal);
     }
-    public push(contents: string, path: string) {
-        return this.shell.push(contents, path);
+    public push(contents: string, path: string, signal?: AbortSignal) {
+        return this.shell.push(contents, path, signal);
     }
     public getProperties(): Promise<Record<string, string> | undefined> {
         return this.poller.getProperties();

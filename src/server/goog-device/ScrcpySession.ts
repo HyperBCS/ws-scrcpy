@@ -146,7 +146,7 @@ export class ScrcpySession {
             const output = await this.target.killProcess(realPid);
             if (!this.valid(generation)) return;
             if (output) console.log(this.target.TAG, `kill server: "${output}"`);
-            await AdbUtils.removeFileSocketForwards(this.target.udid).catch((error: Error) => {
+            await AdbUtils.removeFileSocketForwards(this.target.udid, this.lifetime.signal).catch((error: Error) => {
                 console.error(this.target.TAG, `Failed to remove file socket forwards: ${error.message}`);
             });
             if (this.valid(generation)) this.target.setServerPid(-1);
