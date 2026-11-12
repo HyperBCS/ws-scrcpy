@@ -109,9 +109,10 @@ export function patchWith(
 }
 
 /**
- * One opening of Stream settings for one phone. `load` asks for the encoders and the current
- * settings; `apply` sends a patch. Each waits for the reply with its own request id and gives up
- * after its time limit. `dispose` ends both: a reply that arrives later changes nothing.
+ * One opening of the Settings sheet for one Android phone. `load` asks for the encoders and the
+ * current settings; `change` and `apply` send values. Each waits for the reply with its own
+ * request id and gives up after its time limit. `dispose` ends both: a reply that arrives later
+ * changes nothing.
  */
 export class StreamConfigSession {
     public state = initialStreamConfigState();
@@ -258,6 +259,23 @@ export class StreamConfigSession {
         return true;
     }
 
+    /**
+     * What to show once the session ends with a change still out, because the phone went
+     * offline or the sheet closed: the change is given up as if it had timed out, and a value
+     * sent by `change` leaves the patch. Undefined when nothing was out. Read it before `dispose`.
+     */
+    public givenUp(): StreamConfigState | undefined {
+        if (!this.pendingPatch || this.disposed) {
+            return undefined;
+        }
+        return {
+            ...this.state,
+            applying: false,
+            applyError: APPLY_TIMED_OUT,
+            ...(this.dropOnFailure ? { patch: {} } : {}),
+        };
+    }
+
     public dispose(): void {
         this.disposed = true;
         clearTimeout(this.loadTimer);
@@ -303,13 +321,17 @@ export function useStreamConfig(
         setState(current.state);
         current.load();
         return () => {
+            // An apply that was still out is given up: nothing is waiting for it any more, and a
+            // sheet that stays shut on an apply would not close again. It says so, and a control
+            // goes back to what the phone ran before.
+            const left = current.givenUp();
             current.dispose();
             if (session.current === current) {
                 session.current = undefined;
             }
-            // An apply that was still out is given up: nothing is waiting for it any more, and a
-            // sheet that stays shut on an apply would not close again.
-            setState((state) => (state.applying ? { ...state, applying: false } : state));
+            if (left) {
+                setState(left);
+            }
         };
     }, [opening, tracker, attempt]);
 

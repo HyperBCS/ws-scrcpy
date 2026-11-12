@@ -262,3 +262,23 @@ test('a change the phone refuses, or does not confirm in time, leaves what the p
     waiting.load();
     assert.equal(waiting.change({ bitrate: 1000000 }), false, 'nothing is sent without a tracker');
 });
+
+test('a session that ends with a change still out gives it up as if it had timed out', () => {
+    const { session } = loaded();
+    assert.equal(session.givenUp(), undefined, 'nothing out, nothing to say');
+    session.change({ maxSize: 720 });
+    const left = session.givenUp();
+    session.dispose();
+    assert.equal(left.applying, false, 'the sheet can close again');
+    assert.equal(left.applyError, APPLY_TIMED_OUT);
+    assert.deepEqual(left.patch, {}, 'the control shows what the phone ran before');
+    assert.deepEqual(left.baseline, PHONE);
+    assert.equal(session.givenUp(), undefined, 'asked once the session has ended, there is nothing out');
+
+    // A patch sent with apply is kept, as it is when the apply times out.
+    const staged = loaded().session;
+    staged.setFields({ bitrate: 1000000 });
+    staged.apply();
+    assert.deepEqual(staged.givenUp().patch, { bitrate: 1000000 });
+    staged.dispose();
+});

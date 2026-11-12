@@ -455,6 +455,48 @@ async function viewersFlow(browser) {
     console.log('PASS Settings asks before a restart that reconnects other screens, and focus returns to the control');
 }
 
+/** A phone that goes offline while a change is applied: the sheet can close and says the change was not confirmed. */
+async function offlineFlow(browser) {
+    const one = [phone(UDID, 'Pixel ready')];
+    let sendDeviceList;
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    // The phone never answers the change.
+    const commands = await fixture(page, { deviceList: one, onApply: () => {}, onTrackerReady: (tracker) => (sendDeviceList = tracker.sendDeviceList) });
+    try {
+        await page.goto(BASE);
+        await page.getByRole('button', { name: 'Settings for Fixture Pixel ready', exact: true }).click();
+        const dialog = settingsSheet(page);
+        await dialog.waitFor();
+        await settleMotion(page);
+        const loaded = dialog.locator('[data-setting="quality"] .kit-row-desc', { hasText: '3.5 Mbps' });
+        await loaded.waitFor();
+        const saver = dialog.getByRole('radio', { name: 'Data saver', exact: true });
+        await saver.click();
+        const quality = statusOf(dialog, 'settings-quality');
+        await quality.filter({ hasText: 'Restarting stream…' }).waitFor();
+        const close = page.getByRole('button', { name: 'Close Settings', exact: true });
+        assert.equal(await close.isDisabled(), true);
+        sendDeviceList([{ ...one[0], state: 'offline', pid: -1 }]);
+        await quality.filter({ hasText: 'The phone has not confirmed the change.' }).waitFor();
+        assert.equal(await close.isDisabled(), false, 'the sheet can close again');
+        assert.equal(await saver.isChecked(), false, 'the preset shows what the phone ran before');
+        assert.equal(await saver.isDisabled(), true);
+        // Back again: the sheet loads what the phone runs now, and the old outcome goes.
+        sendDeviceList(one);
+        await loaded.waitFor();
+        assert.equal(await quality.count(), 0);
+        assert.equal(commands.filter((command) => command.type === 'list_encoders').length, 2);
+        assert.equal(applies(commands).length, 1);
+        assert.deepEqual(errors, []);
+    } finally {
+        await context.close();
+    }
+    console.log('PASS Settings: a change out when the phone goes offline is given up and said so');
+}
+
 const phone = (udid, model, extra = {}) => ({
     udid,
     state: 'device',
@@ -601,7 +643,7 @@ async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
     try {
-        const flows = [layoutFlow, applyFlow, viewersFlow, listFlow];
+        const flows = [layoutFlow, applyFlow, viewersFlow, listFlow, offlineFlow];
         const selected = process.env.SCENARIO ? flows.filter((run) => run.name === process.env.SCENARIO) : flows;
         assert.ok(selected.length, 'SCENARIO names a known flow');
         for (const run of selected) await run(browser);
