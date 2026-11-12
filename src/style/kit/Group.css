@@ -100,12 +100,18 @@
     flex: 1 1 auto;
     min-width: 0;
 }
-/* A select at the end of a row gives way to the text on a narrow phone. */
+/* A select at the end of a row is as wide as its longest option, and the text beside it gives
+   way. Only an option wider than most of the row is cut short. */
 .kit-row-control-select {
-    flex: 0 1 180px;
+    flex: 0 0 auto;
+    max-width: 60%;
 }
 .kit-row-control-select > .kit-select {
     flex: 1 1 auto;
+}
+.kit-row-control-select > .kit-select > .kit-field {
+    width: auto;
+    max-width: 100%;
 }
 /* A value that is only shown, such as the system version. */
 .kit-row-value {

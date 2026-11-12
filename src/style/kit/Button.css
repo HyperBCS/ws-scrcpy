@@ -29,6 +29,14 @@
         border-color var(--motion-fast) ease,
         transform var(--motion-fast) var(--ease-out);
 }
+/* A long press on a touch screen selects nothing and brings up no callout, on a link too. */
+@media (hover: none) and (pointer: coarse) {
+    .kit-button {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+    }
+}
 .kit-button-primary {
     border-color: var(--accent);
     background: var(--accent);

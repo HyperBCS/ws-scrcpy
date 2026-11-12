@@ -5,6 +5,8 @@
 // scripts/e2e-kit.js measures the same controls in a browser.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
+const fs = require('node:fs');
+const path = require('node:path');
 
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
 require.extensions['.css'] = () => {};
@@ -147,4 +149,41 @@ test('the sheet parts have the kit class names and no other look', () => {
     assert.deepEqual(classes(SheetMessageRow({ tone: 'info', children: 'An older list is still active.' })).slice(0, 2), ['kit-row kit-row-stack', 'kit-banner kit-banner-info']);
     // The actions that end a sheet are in the footer of Sheet; the sheet parts have no footer of their own.
     assert.equal(SheetControls.SheetFooter, undefined);
+});
+
+/** The declarations of the rules of a stylesheet whose selector is exactly `selector`, inside `media` if given. */
+function rule(file, selector, media) {
+    let css = fs.readFileSync(path.join(__dirname, '../src/style', file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    if (media) {
+        const at = css.indexOf(`@media ${media}`);
+        assert.notEqual(at, -1, `${file} has @media ${media}`);
+        css = css.slice(at);
+    }
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = new RegExp(`(?:^|[{}])\\s*${escaped}\\s*\\{([^}]*)\\}`).exec(css);
+    assert.ok(match, `${file} has a rule for ${selector}`);
+    return match[1];
+}
+
+test('a long press on a kit button, a link among them, selects nothing on a touch screen', () => {
+    for (const [file, selector] of [['kit/Button.css', '.kit-button'], ['kit/IconButton.css', '.kit-icon-button']]) {
+        const declarations = rule(file, selector, '(hover: none) and (pointer: coarse)');
+        assert.match(declarations, /(^|\s)user-select: none;/, `${selector} sets user-select`);
+        assert.match(declarations, /-webkit-touch-callout: none;/, `${selector} brings up no callout`);
+    }
+});
+
+test('a select at the end of a row keeps the width of its options', () => {
+    const control = rule('kit/Group.css', '.kit-row-control-select');
+    assert.match(control, /flex: 0 0 auto;/, 'the control does not shrink');
+    assert.match(rule('kit/Group.css', '.kit-row-control-select > .kit-select > .kit-field'), /width: auto;/, 'the select is as wide as its options');
+});
+
+test('the unread count of Notifications is the kit badge, on its own in the bar', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../src/app/views/NotificationHistory.tsx'), 'utf8');
+    const badge = /export function UnreadBadge[\s\S]*?\n}\n/.exec(source)?.[0] || '';
+    assert.match(badge, /class="kit-badge kit-badge-inline notification-unread-count"/);
+    assert.match(badge, /badgeText\(count\)/, 'the words of the count are the kit badge\'s');
+    assert.match(rule('kit/Badge.css', '.kit-badge-inline'), /position: static;/);
+    assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '../src/style/app.css'), 'utf8'), /notification-unread-count/, 'app.css has no badge of its own');
 });

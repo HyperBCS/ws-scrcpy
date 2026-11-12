@@ -44,8 +44,7 @@ a {
     label,
     .floating-toolbar,
     .device-avatar,
-    .device-status,
-    a.desc-block.stream {
+    .device-status {
         -webkit-user-select: none;
         user-select: none;
         -webkit-touch-callout: none;

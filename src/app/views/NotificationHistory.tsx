@@ -17,6 +17,7 @@ import { Button } from '../ui/Button';
 import { SelectField, TextField } from '../ui/Field';
 import { IconButton } from '../ui/IconButton';
 import { InlineStatus } from '../ui/InlineStatus';
+import { badgeText } from '../ui/Badge';
 import { Chip, ChipTone } from '../ui/Chip';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { topSheet } from '../ui/Sheet';
@@ -30,10 +31,12 @@ import '../../style/views/NotificationsInbox.css';
 export type { NotificationHistoryItem as HistoryItem } from '../../common/Notification';
 import type { NotificationHistoryItem as HistoryItem } from '../../common/Notification';
 
+/** The unread count in the bar of Notifications: the kit's badge on its own, not on a button. */
 export function UnreadBadge({ count }: { count: number }) {
-    return count > 0 ? (
-        <span class="notification-unread-count" aria-label={`${count} unread notifications`}>
-            {count > 99 ? '99+' : count}
+    const text = badgeText(count);
+    return text ? (
+        <span class="kit-badge kit-badge-inline notification-unread-count" aria-label={`${count} unread notifications`}>
+            {text}
         </span>
     ) : null;
 }
