@@ -619,7 +619,7 @@ async function unlockFlow(browser) {
         const openUnlock = async () => {
             await page.locator('.lock-screen-notice').getByRole('button', { name: 'Unlock', exact: true }).click();
             await settleMotion(page);
-            return page.getByRole('dialog', { name: 'Unlock device', exact: true });
+            return page.getByRole('dialog', { name: 'Unlock phone', exact: true });
         };
         try {
             if (mobile) { await page.locator('.floating-toolbar-fab').click(); await settleMotion(page); }

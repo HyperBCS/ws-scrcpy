@@ -126,3 +126,9 @@ export const STREAM_SERVICE = {
     stoppedTitle: 'Stream service stopped',
     stoppedMessage: 'The stream service on this phone was stopped. Start it to see the screen again.',
 } as const;
+
+// p5-unlock
+/** The lock notice while it sends the passcode saved for the phone. */
+export const UNLOCK = {
+    unlocking: 'Unlocking…',
+} as const;

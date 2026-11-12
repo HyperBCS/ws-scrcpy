@@ -265,7 +265,7 @@ test('every word of the model comes from copy.ts', () => {
     // The swipe text only where the phone reports no passcode lock. A lock it does not report may
     // still ask for the passcode.
     assert.deepEqual([true, false, 'unknown', undefined].map(status.lockNotice), ['Phone locked', 'Swipe up to unlock', 'Phone locked', 'Phone locked']);
-    assert.match(read('src/app/views/LockScreenNotice.tsx'), /\{lockNotice\(locked\)\}/, 'the notice takes its text from the model');
+    assert.match(read('src/app/views/LockScreenNotice.tsx'), /: lockNotice\(locked\)\}/, 'the notice takes its text from the model, or says Unlocking…');
     // Every stream service text says stream service and phone.
     const serviceTexts = Object.values(copy.STREAM_SERVICE).flatMap((value) => (typeof value === 'object' ? Object.values(value) : [value]));
     assert.ok(serviceTexts.includes(copy.STREAM_SERVICE.stoppedMessage));
@@ -393,7 +393,7 @@ test('the capabilities table says what each kind of phone can do today', () => {
     assert.match(ios.actions, /client\.setClipboard\(clipboardDraft\)/, 'an iPhone only sets its clipboard');
     assert.match(android.unlock, /type="password"/);
     assert.doesNotMatch(ios.unlock, /<input/, 'the iPhone uses the passcode stored on the server');
-    assert.match(ios.unlock, /runUnlockNow\(/);
+    assert.match(ios.unlock + read('src/app/state/unlockDevice.ts'), /iphoneUnlock\(udid\)[\s\S]*runUnlockNow\(tracker, udid, \{ keepUnlocked: true \}\)/);
     assert.match(android.toolbox, /title: 'Power'/);
     assert.match(ios.toolbox, /title: 'Lock', name: 'lock', icon: 'power'/);
     assert.match(ios.actions, /title="Reboot"/);
