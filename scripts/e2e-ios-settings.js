@@ -692,6 +692,12 @@ async function streamSheetsFlow(browser) {
             await settingsDialog.waitFor();
             await settingsDialog.locator('[data-section="unlock"]').getByRole('heading', { name: 'Schedule', exact: true }).waitFor();
             await page.screenshot({ path: path.join(OUT, `stream-settings-${width}.png`) });
+            // This screen would start a stopped session again at once, a counted start: Stop is
+            // used from the list. Restart services is still offered.
+            const stopRow = settingsDialog.locator('[data-service="stream-service"]');
+            assert.equal(await stopRow.getByRole('button', { name: 'Stop stream service', exact: true }).isDisabled(), true, `${label}: no Stop from the open screen`);
+            assert.equal(await stopRow.locator('.kit-row-desc').textContent(), 'Running. This screen would start it again at once, so stop it from the list.');
+            assert.equal(await settingsDialog.locator('[data-service="restart-services"]').getByRole('button').isDisabled(), false);
             await page.getByRole('button', { name: 'Close Settings' }).click();
             await settingsDialog.waitFor({ state: 'hidden' });
 
@@ -858,6 +864,18 @@ async function sectionsFlow(browser) {
             await about.locator('.settings-section-title').scrollIntoViewIfNeeded();
             await page.screenshot({ path: path.join(OUT, `sections-about-${width}-${colorScheme}.png`) });
             assert.equal(await page.getByText(/\b(the|this) device\b/i).count(), 0, `${label}: the sheet says phone`);
+
+            // From the list a running session can be stopped, after its question.
+            test.sendDevice(iphone(stored, { session: 'ready' }));
+            await about.locator('[data-service="stream-service"] .kit-row-desc', { hasText: 'Running. Stopping it ends the screen stream for every viewer.' }).waitFor();
+            await service('stream-service').click();
+            const stop = about.getByRole('alertdialog', { name: 'Stop the stream service on iPhone fixture?', exact: true });
+            await stop.waitFor();
+            assert.equal(ofType(commands, 'kill_server').length, 0, 'asked first');
+            await stop.locator('.kit-confirm-actions .kit-button:not([aria-disabled])').first().waitFor();
+            await stop.getByRole('button', { name: 'Stop stream service', exact: true }).click();
+            await stop.waitFor({ state: 'detached' });
+            assert.deepEqual(ofType(commands, 'kill_server').map((command) => command.data), [{ udid: UDID, pid: 1 }]);
 
             // Not trusted: the sheet still opens from the list, with what is known of the phone.
             await page.getByRole('button', { name: 'Close Settings', exact: true }).click();

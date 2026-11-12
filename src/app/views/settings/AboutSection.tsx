@@ -94,7 +94,12 @@ function androidServices(entry: DeviceEntry, name: string, connected: boolean): 
     ];
 }
 
-function iosServices(entry: DeviceEntry, name: string, connected: boolean): ServiceRow[] {
+/**
+ * `screenOpen`: this browser shows the iPhone's screen. That screen connects again as soon as the
+ * session stops, which starts a new session and counts as a start, so Stop is off there and is
+ * used from the list. Restart services stays: a new session is what it is for.
+ */
+function iosServices(entry: DeviceEntry, name: string, connected: boolean, screenOpen: boolean): ServiceRow[] {
     const descriptor = entry.descriptor as ApplDeviceDescriptor;
     const udid = descriptor.udid;
     const session = descriptor.session ?? 'stopped';
@@ -107,16 +112,18 @@ function iosServices(entry: DeviceEntry, name: string, connected: boolean): Serv
             title: STREAM_SERVICE.name,
             description: sentence(
                 sessionFact(session),
-                canStop
-                    ? 'Stopping it ends the screen stream for every viewer.'
-                    : connected
-                      ? 'It starts when the screen is opened.'
-                      : '',
+                canStop && screenOpen
+                    ? 'This screen would start it again at once, so stop it from the list.'
+                    : canStop
+                      ? 'Stopping it ends the screen stream for every viewer.'
+                      : connected
+                        ? 'It starts when the screen is opened.'
+                        : '',
             ),
             label: 'Stop',
             ariaLabel: 'Stop stream service',
             variant: 'danger',
-            disabled: !canStop,
+            disabled: !canStop || screenOpen,
             confirm: {
                 question: `Stop the stream service on ${name}?`,
                 consequence: 'The screen stream ends for every viewer. Open the screen to start it again.',
@@ -258,7 +265,7 @@ export function AboutSection({ platform, udid, entry, name, opening, screenOpen,
         ? []
         : platform === 'android'
           ? androidServices(entry, name, connected)
-          : iosServices(entry, name, connected);
+          : iosServices(entry, name, connected, screenOpen);
     return (
         <SettingsSection name="about">
             <SettingsGroup title="Phone" class="settings-facts">
