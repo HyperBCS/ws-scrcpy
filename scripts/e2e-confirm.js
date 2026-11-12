@@ -93,7 +93,7 @@ async function start(browser, { mobile = true, dark = false, device = iphone(), 
 }
 
 const prompt = (scope, name) => scope.getByRole('alertdialog', { name, exact: true });
-// The buttons of a prompt, in the kit look (the sheets) and in the older one (the cards).
+// The buttons of a prompt, in a sheet or on a card.
 const PROMPT_BUTTONS = '.kit-confirm-actions .kit-button';
 const READY_PROMPT_BUTTON = '.kit-confirm-go:not([aria-disabled])';
 const READY_DANGER_BUTTON = '.kit-confirm-danger .kit-confirm-go:not([aria-disabled])';

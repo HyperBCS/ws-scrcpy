@@ -117,8 +117,8 @@ async function start(browser, viewport) {
 }
 
 const card = (page, key) => page.locator(`article.device[data-device-key="${key}"]`);
-// Either sheet container: the kit's dialog, and the older one until its last user has moved.
-// A kit sheet that is closing is still shown for its exit; it is not counted as open.
+// The open sheet: every sheet is the kit's dialog. A sheet that is closing is still shown for its
+// exit; it is not counted as open.
 const sheet = (page) => page.locator('dialog.kit-sheet[open]:not([data-exiting])');
 const titled = (page, title) => page.locator('.kit-sheet-title', { hasText: title });
 /** A sheet on the kit's dialog, by its title. */
