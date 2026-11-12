@@ -5,7 +5,14 @@
 //   - what each control sends or opens, found by its icon, not its name;
 //   - a key of the phone is disabled while there is no connection, and only the keys;
 //   - holding Lock sends one down and one up, and a key held when the panel closes or the
-//     window loses focus is let go once.
+//     window loses focus is let go once;
+//   - the controls button on a touch screen (390x844 and 844x390): named Phone controls with
+//     aria-expanded, translucent when idle and opaque on a touch, while open and with focus, on
+//     the nearer edge after a drag that opens nothing and sends no touch, kept after a reload, a
+//     rotation and a resize, never over the header, the tabs or the banner slot, inside the
+//     safe-area insets, without motion when motion is reduced, and 3:1 against a white and a
+//     black picture when idle, light and dark.
+// CONTROLS_ONLY=button runs only the checks of the controls button.
 // CONTROLS_ONLY=sends runs only the check of what each control sends. It finds the controls by
 // their icons, so it also runs on a build from before the slot map; that is how the sends were
 // compared with the base of step 5b (5cab921).
@@ -119,10 +126,10 @@ function frame(type, id, data) {
  * With `held` set, a new stream socket is not answered, so the stream stays disconnected until
  * `answer()`.
  */
-async function start(browser, platform, { viewport = DESKTOP, colorScheme = 'light' } = {}) {
+async function start(browser, platform, { viewport = DESKTOP, colorScheme = 'light', reducedMotion = 'no-preference', deviceScaleFactor = 1 } = {}) {
     const context = await browser.newContext({
         viewport: { width: viewport.width, height: viewport.height }, isMobile: viewport.mobile, hasTouch: viewport.mobile,
-        colorScheme, serviceWorkers: 'block', acceptDownloads: true,
+        colorScheme, reducedMotion, deviceScaleFactor, serviceWorkers: 'block', acceptDownloads: true,
     });
     const page = await context.newPage();
     const test = { context, page, mobile: viewport.mobile, errors: [], packets: [], messages: [], streams: 0, held: false, socket: undefined, downloads: 0 };
@@ -157,7 +164,10 @@ async function start(browser, platform, { viewport = DESKTOP, colorScheme = 'lig
             const code = packet.subarray(5, 9).toString();
             const send = (message) => socket.send(frame(32, id, JSON.stringify(message)));
             if (code === 'HSTS') send({ id: -1, type: 'hosts', data: { local: [{ type: 'android' }, { type: 'ios' }] } });
-            if (code === 'GTRC') send({ id: -1, type: 'devicelist', data: { id: 'android', name: 'Fixture host', list: [ANDROID] } });
+            if (code === 'GTRC') {
+                send({ id: -1, type: 'devicelist', data: { id: 'android', name: 'Fixture host', list: [ANDROID] } });
+                test.updateAndroid = (fields) => send({ id: -1, type: 'device', data: { id: 'android', name: 'Fixture host', device: { ...ANDROID, ...fields } } });
+            }
             if (code === 'ATRC') send({ id: -1, type: 'devicelist', data: { id: 'ios', name: 'Fixture host', list: [IOS] } });
         });
     });
@@ -348,20 +358,339 @@ async function holds(browser, platform, viewport) {
     console.log(`PASS ${label}: a hold is one down and one up, let go once`);
 }
 
+const LANDSCAPE = { name: 'landscape', width: 844, height: 390, mobile: true };
+// The button turns translucent this long after the last touch (`controls/ControlPanel.tsx`).
+const IDLE_MS = 3000;
+// The button keeps this far from the top and the bottom of the stage.
+const EDGE_MARGIN = 12;
+const NO_INSETS = { left: 0, top: 0, right: 0, bottom: 0 };
+
+/** The controls button: its box and look, and the boxes it has to keep clear of. */
+async function buttonState(page) {
+    return page.evaluate(() => {
+        const box = (element) => {
+            if (!element) return null;
+            const { left, top, right, bottom, width, height } = element.getBoundingClientRect();
+            return { left, top, right, bottom, width, height };
+        };
+        const fab = document.querySelector('.floating-toolbar-fab');
+        return {
+            fab: box(fab), stage: box(document.querySelector('.stream-stage')), bar: box(document.querySelector('.kit-bar')),
+            tabs: box(document.querySelector('.kit-tabs')), banners: box(document.querySelector('.stream-banners')),
+            picture: box(document.querySelector('.touch-layer')), width: innerWidth, height: innerHeight,
+            side: fab.closest('.floating-toolbar').dataset.side, idle: fab.hasAttribute('data-idle'),
+            opacity: Number(getComputedStyle(fab).opacity),
+            idleOpacity: Number(getComputedStyle(document.documentElement).getPropertyValue('--idle-opacity')),
+            moving: fab.getAnimations().filter((animation) => animation.playState === 'running').length,
+        };
+    });
+}
+
+/** Where the button may be: under the header, the tabs and the banners, on screen, inside the safe area. */
+function buttonArea(state, insets = NO_INSETS) {
+    return {
+        left: insets.left,
+        right: state.width - insets.right,
+        top: Math.max(state.stage.top, state.bar.bottom, state.tabs?.bottom ?? 0, state.banners.bottom, insets.top) + EDGE_MARGIN,
+        bottom: Math.min(state.stage.bottom, state.height - insets.bottom) - EDGE_MARGIN,
+    };
+}
+
+/** The button is in its area and against the edge of `side`; returns its height as a fraction of the area. */
+function onEdge(label, state, side, insets = NO_INSETS) {
+    const area = buttonArea(state, insets);
+    const { fab } = state;
+    assert.equal(state.side, side, `${label}: on the ${side} side`);
+    if (side === 'left') assert.ok(Math.abs(fab.left - area.left) < 0.5, `${label}: against the left edge (${fab.left}, edge ${area.left})`);
+    else assert.ok(Math.abs(fab.right - area.right) < 0.5, `${label}: against the right edge (${fab.right}, edge ${area.right})`);
+    assert.ok(fab.top >= area.top - 0.5, `${label}: under the header, the tabs and the banners (${fab.top}, area from ${area.top})`);
+    assert.ok(fab.bottom <= area.bottom + 0.5, `${label}: above the bottom of the stage (${fab.bottom}, area to ${area.bottom})`);
+    return (fab.top - area.top) / (area.bottom - area.top - fab.height);
+}
+
+const centre = (box) => ({ x: box.left + box.width / 2, y: box.top + box.height / 2 });
+/** Touch messages the page sent to the phone. */
+const touches = (test, platform) => (platform === 'android' ? test.packets.filter((packet) => packet[0] === 2).length : test.messages.filter((message) => /^touch/.test(message.type)).length);
+
+/** Waits until the page has taken the end of a drag of the button. */
+const dropped = (page) => page.waitForFunction(() => !document.querySelector('.floating-toolbar.dragging'));
+
+/** A finger on the touch screen, through the browser's own input, so pointer and touch events both fire. */
+async function finger(page) {
+    const cdp = await page.context().newCDPSession(page);
+    const at = ({ x, y }) => [{ x: Math.round(x), y: Math.round(y) }];
+    return {
+        down: (point) => cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: at(point) }),
+        move: (point) => cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: at(point) }),
+        up: () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }),
+        async drag(from, to, during) {
+            await this.down(from);
+            for (let step = 1; step <= 10; step++) await this.move({ x: from.x + ((to.x - from.x) * step) / 10, y: from.y + ((to.y - from.y) * step) / 10 });
+            if (during) await during();
+            await this.up();
+        },
+        detach: () => cdp.detach(),
+    };
+}
+
+/**
+ * The controls button on a touch screen (U-stream-9): named Phone controls with aria-expanded;
+ * translucent before a touch and 3 s after one, opaque on a touch, while its panel is open and
+ * with the keyboard's focus; a tap opens the panel and a drag does not, nor sends a touch to the
+ * phone; let go, it slides to the nearer edge; it never sits over the header, the tabs or the
+ * banner slot, keeps its place after a reload, a rotation and a resize, and keeps inside the
+ * safe-area insets.
+ */
+async function touchButton(browser, platform, viewport) {
+    const label = `${viewport.name} ${platform}`;
+    const test = await start(browser, platform, { viewport });
+    const { page } = test;
+    const fab = page.locator('.floating-toolbar-fab');
+    const touch = await finger(page);
+    try {
+        assert.equal(await page.getByRole('button', { name: 'Phone controls', exact: true }).count(), 1, `${label}: the button is named Phone controls`);
+        assert.equal(await fab.getAttribute('aria-expanded'), 'false', `${label}: and says its panel is closed`);
+
+        // Before the first touch: translucent, on the right edge of the stage.
+        let state = await buttonState(page);
+        assert.ok(state.idleOpacity >= 0.4 && state.idleOpacity <= 0.5, `${label}: the idle opacity is about 45% (${state.idleOpacity})`);
+        assert.equal(state.idle, true, `${label}: idle before a touch`);
+        assert.equal(state.opacity, state.idleOpacity, `${label}: translucent when idle`);
+        onEdge(label, state, 'right');
+        // Where the picture leaves a band beside it wide enough for the button, it is in that band.
+        if (state.picture && state.width - state.picture.right >= state.fab.width) {
+            assert.ok(state.fab.left >= state.picture.right - 0.5, `${label}: in the band beside the picture`);
+        }
+
+        // A touch makes it opaque; the tap opens the panel, which keeps it opaque.
+        await touch.down(centre(state.fab));
+        await settleMotion(page);
+        assert.equal((await buttonState(page)).opacity, 1, `${label}: opaque while touched`);
+        await touch.up();
+        await page.locator('.floating-toolbar.open').waitFor();
+        assert.equal(await fab.getAttribute('aria-expanded'), 'true', `${label}: a tap opens the panel`);
+        await pause(IDLE_MS + 500);
+        assert.equal((await buttonState(page)).opacity, 1, `${label}: opaque while the panel is open`);
+        // Escape closes the panel and gives the button the keyboard's focus.
+        const closed = Date.now();
+        await page.keyboard.press('Escape');
+        await page.locator('.floating-toolbar.open').waitFor({ state: 'detached' });
+        assert.equal(await fab.getAttribute('aria-expanded'), 'false', `${label}: and says it is closed`);
+        assert.equal((await buttonState(page)).idle, false, `${label}: not idle right after the panel closes`);
+        await page.waitForFunction(() => document.querySelector('.floating-toolbar-fab').hasAttribute('data-idle'), null, { timeout: IDLE_MS + 2000 });
+        const after = Date.now() - closed;
+        assert.ok(after >= IDLE_MS - 100, `${label}: idle 3 s after the last touch (${after} ms)`);
+        await settleMotion(page);
+        assert.equal(await fab.evaluate((button) => button.matches(':focus-visible')), true, `${label}: the button has the keyboard's focus`);
+        assert.equal((await buttonState(page)).opacity, 1, `${label}: opaque while it has the keyboard's focus`);
+        await fab.evaluate((button) => button.blur());
+        await settleMotion(page);
+        assert.equal((await buttonState(page)).opacity, state.idleOpacity, `${label}: translucent again without it`);
+
+        // Dragged up over the header and let go on the left half: it stays under the header,
+        // opens nothing, sends no touch, and slides to the left edge at the top of the stage.
+        test.packets.length = 0;
+        test.messages.length = 0;
+        let during;
+        await touch.drag(centre(state.fab), { x: viewport.width * 0.3, y: 10 }, async () => (during = await buttonState(page)));
+        assert.ok(during.fab.top >= buttonArea(during).top - 0.5, `${label}: dragged over the header, the button stays under it (${during.fab.top})`);
+        assert.equal(during.opacity, 1, `${label}: opaque while dragged`);
+        await dropped(page);
+        state = await buttonState(page);
+        assert.equal(state.moving, 1, `${label}: let go, it slides to the edge`);
+        await settleMotion(page);
+        state = await buttonState(page);
+        assert.ok(Math.abs(onEdge(label, state, 'left')) < 0.01, `${label}: at the top of the stage`);
+        assert.equal(await fab.getAttribute('aria-expanded'), 'false', `${label}: a drag does not open the panel`);
+        assert.equal(await page.locator('.floating-toolbar-panel').isVisible(), false, `${label}: no panel after a drag`);
+        assert.equal(touches(test, platform), 0, `${label}: a drag of the button sends no touch to the phone`);
+
+        // A banner takes height from the stage: the button moves down with it.
+        if (platform === 'android') {
+            test.updateAndroid({ 'keyguard.showing': true, 'keyguard.occluded': false, 'device.locked': true });
+            await page.locator('.lock-screen-notice').waitFor();
+            await settleMotion(page);
+            state = await buttonState(page);
+            assert.ok(state.banners.height > 0, `${label}: the lock notice is in the banner slot`);
+            assert.ok(Math.abs(onEdge(`${label} with a banner`, state, 'left')) < 0.01, `${label}: under the banner`);
+            test.updateAndroid({ 'keyguard.showing': false, 'device.locked': false });
+            await page.locator('.lock-screen-notice').waitFor({ state: 'hidden' });
+            await settleMotion(page);
+            onEdge(`${label} without the banner`, await buttonState(page), 'left');
+        }
+
+        // Let go low on the right half: the right edge, at the height it was let go.
+        state = await buttonState(page);
+        const target ={ x: viewport.width * 0.7, y: state.stage.top + state.stage.height * 0.7 };
+        await touch.drag(centre(state.fab), target);
+        await settleMotion(page);
+        state = await buttonState(page);
+        const fraction = onEdge(label, state, 'right');
+        assert.ok(Math.abs(state.fab.top - (target.y - state.fab.height / 2)) < 1, `${label}: at the height it was let go`);
+        assert.equal(touches(test, platform), 0, `${label}: no touch reached the phone`);
+
+        // Kept after a reload, and after a rotation and a resize, at the same height of the stage.
+        await page.reload();
+        await connected(page);
+        await settleMotion(page);
+        const reloaded = await buttonState(page);
+        assert.deepEqual([reloaded.fab.left, reloaded.fab.top], [state.fab.left, state.fab.top], `${label}: the place is kept after a reload`);
+        for (const size of [{ width: viewport.height, height: viewport.width }, { width: 360, height: 640 }, { width: viewport.width, height: viewport.height }]) {
+            await page.setViewportSize(size);
+            await page.waitForFunction(({ width, height }) => innerWidth === width && innerHeight === height, size);
+            await settleMotion(page);
+            const resized = await buttonState(page);
+            const kept = onEdge(`${label} at ${size.width}x${size.height}`, resized, 'right');
+            assert.ok(Math.abs(kept - fraction) < 0.01, `${label} at ${size.width}x${size.height}: at the same height of the stage (${kept}, was ${fraction})`);
+        }
+
+        // Inside the safe-area insets. The probe takes env(safe-area-inset-*), which is 0 here.
+        const insets = { left: 32, top: 0, right: 24, bottom: 20 };
+        await page.addStyleTag({ content: `.floating-toolbar-safearea { padding: ${insets.top}px ${insets.right}px ${insets.bottom}px ${insets.left}px !important; }` });
+        await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+        await settleMotion(page);
+        state = await buttonState(page);
+        onEdge(`${label} with insets`, state, 'right', insets);
+        await touch.drag(centre(state.fab), { x: 4, y: viewport.height - 2 });
+        await settleMotion(page);
+        state = await buttonState(page);
+        assert.ok(Math.abs(onEdge(`${label} with insets`, state, 'left', insets) - 1) < 0.01, `${label}: at the bottom, above the inset`);
+        assert.deepEqual(test.errors, []);
+    } finally {
+        await touch.detach().catch(() => undefined);
+        await test.context.close();
+    }
+    console.log(`PASS ${label}: the controls button is translucent when idle, snaps to an edge, keeps its place and stays clear of the header`);
+}
+
+/** With motion reduced, the button let go is at its edge at once. */
+async function snapWithoutMotion(browser) {
+    const test = await start(browser, 'android', { viewport: PHONE, reducedMotion: 'reduce' });
+    const { page } = test;
+    const touch = await finger(page);
+    try {
+        const state = await buttonState(page);
+        await touch.drag(centre(state.fab), { x: 60, y: state.fab.top + 30 });
+        await dropped(page);
+        assert.equal((await buttonState(page)).moving, 0, 'reduced motion: the button does not slide');
+        // With motion reduced every property changes over 0.01ms (app.css), which takes effect
+        // on the next frame. From then on the button is at its edge, and nothing runs.
+        const frames = await page.evaluate(async () => {
+            const fab = document.querySelector('.floating-toolbar-fab');
+            const seen = [];
+            for (let frame = 0; frame < 6; frame++) {
+                await new Promise((resolve) => requestAnimationFrame(resolve));
+                seen.push({ left: fab.getBoundingClientRect().left, running: document.getAnimations().filter((animation) => animation.playState === 'running' && fab.closest('.floating-toolbar').contains(animation.effect?.target)).length });
+            }
+            return seen;
+        });
+        assert.deepEqual(frames.slice(1), frames.slice(1).map(() => ({ left: 0, running: 0 })), `reduced motion: at the edge from the next frame (${JSON.stringify(frames)})`);
+        const after = await buttonState(page);
+        onEdge('reduced motion', after, 'left');
+        assert.deepEqual(test.errors, []);
+    } finally {
+        await touch.detach().catch(() => undefined);
+        await test.context.close();
+    }
+    console.log('PASS reduced motion: the controls button goes to its edge without moving through the picture');
+}
+
+/** WCAG contrast of two sRGB colours. */
+function contrast(first, second) {
+    const luminance = (rgb) => {
+        const [r, g, b] = rgb.map((value) => {
+            const unit = value / 255;
+            return unit <= 0.04045 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const [light, dark] = [luminance(first), luminance(second)].sort((a, b) => b - a);
+    return (light + 0.05) / (dark + 0.05);
+}
+
+/**
+ * The idle button over a white and over a black picture, in both themes: its fill or its icon
+ * keeps 3:1 against the picture. Measured on the pixels drawn at the pixel ratio of a phone, 3,
+ * where the icon's dots cover whole pixels.
+ */
+async function idleContrast(browser) {
+    const ratio = 3;
+    for (const viewport of [PHONE, LANDSCAPE]) {
+        for (const colorScheme of ['light', 'dark']) {
+            const test = await start(browser, 'android', { viewport, colorScheme, deviceScaleFactor: ratio });
+            const { page } = test;
+            try {
+                for (const [name, picture] of [['white', [255, 255, 255]], ['black', [0, 0, 0]]]) {
+                    const label = `${viewport.name}-${colorScheme} over ${name}`;
+                    // The stage behind the button painted in one colour, in place of the picture.
+                    await page.addStyleTag({ content: `.stream-stage .video { background-color: rgb(${picture.join(',')}) !important; } .stream-stage .video-layer { visibility: hidden; }` });
+                    await settleMotion(page);
+                    const state = await buttonState(page);
+                    assert.equal(state.opacity, state.idleOpacity, `${label}: the button is idle`);
+                    const beside = 80;
+                    const clip = { x: state.fab.left - beside, y: state.fab.top, width: state.fab.width + beside, height: state.fab.height };
+                    const png = await page.screenshot({ clip, scale: 'device', animations: 'disabled' });
+                    const pixels = await page.evaluate(async (base64) => {
+                        const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+                        const bitmap = await window.createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+                        const canvas = Object.assign(document.createElement('canvas'), { width: bitmap.width, height: bitmap.height });
+                        canvas.getContext('2d').drawImage(bitmap, 0, 0);
+                        return { width: bitmap.width, data: Array.from(canvas.getContext('2d').getImageData(0, 0, bitmap.width, bitmap.height).data) };
+                    }, png.toString('base64'));
+                    // A point in CSS pixels from the top left of the clip.
+                    const at = (x, y) => {
+                        const index = (Math.round(y * ratio) * pixels.width + Math.round(x * ratio)) * 4;
+                        return pixels.data.slice(index, index + 3);
+                    };
+                    const middle = state.fab.height / 2;
+                    assert.deepEqual(at(4, middle), picture, `${label}: the picture beside the button`);
+                    const fill = at(beside + 5, middle);
+                    // The icon: the pixel of the 24px icon box that differs most from the fill.
+                    let icon = fill;
+                    for (let y = middle - 12; y < middle + 12; y += 1 / ratio) {
+                        for (let x = beside + state.fab.width / 2 - 12; x < beside + state.fab.width / 2 + 12; x += 1 / ratio) {
+                            if (contrast(at(x, y), fill) > contrast(icon, fill)) icon = at(x, y);
+                        }
+                    }
+                    const best = Math.max(contrast(fill, picture), contrast(icon, picture));
+                    assert.ok(best >= 3, `${label}: the idle button keeps 3:1 against the picture (fill ${contrast(fill, picture).toFixed(2)}, icon ${contrast(icon, picture).toFixed(2)})`);
+                    console.log(`  ${label}: fill ${contrast(fill, picture).toFixed(2)}:1, icon ${contrast(icon, picture).toFixed(2)}:1`);
+                    await shot(page, `android-button-${viewport.name}-${colorScheme}-${name}`);
+                }
+                assert.deepEqual(test.errors, []);
+            } finally {
+                await test.context.close();
+            }
+        }
+    }
+    console.log('PASS the idle controls button keeps 3:1 against a white and a black picture, light and dark');
+}
+
 async function main() {
     const browser = await chromium.launch({ headless: true });
     try {
         await Promise.all([
-            (async () => {
-                await sends(browser, 'android');
-                await sends(browser, 'ios');
-            })(),
-            ONLY === 'sends'
+            ONLY && ONLY !== 'button'
+                ? undefined
+                : (async () => {
+                      for (const platform of ['android', 'ios']) {
+                          for (const viewport of [PHONE, LANDSCAPE]) await touchButton(browser, platform, viewport);
+                      }
+                      await snapWithoutMotion(browser);
+                      await idleContrast(browser);
+                  })(),
+            ONLY && ONLY !== 'sends'
+                ? undefined
+                : (async () => {
+                      await sends(browser, 'android');
+                      await sends(browser, 'ios');
+                  })(),
+            ONLY
                 ? undefined
                 : (async () => {
                       await slotMap(browser);
                   })(),
-            ONLY === 'sends'
+            ONLY
                 ? undefined
                 : (async () => {
                       for (const platform of ['android', 'ios']) {

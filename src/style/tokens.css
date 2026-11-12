@@ -45,6 +45,10 @@
     --focus-ring: 2px solid var(--accent);
     --focus-ring-offset: 2px;
     --disabled-opacity: 0.5;
+    /* The controls button over the picture while it is idle. At this value the kit's icon button
+       keeps 3:1 against a white and a black picture in both themes, with its fill or its icon;
+       at 0.45 it falls under 3:1 over white. */
+    --idle-opacity: 0.5;
 
     /* Type: six sizes, with 12px the floor and only for captions, and 15px the size of body
        text. Inputs are 16px so that iOS does not zoom the page on focus. The root is 16px and
