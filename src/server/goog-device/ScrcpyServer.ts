@@ -1,7 +1,7 @@
 import '../../../vendor/Genymobile/scrcpy/scrcpy-server.jar';
 import '../../../vendor/Genymobile/scrcpy/LICENSE';
 
-import { Device } from './Device';
+import { StreamConfigData } from './StreamConfig';
 import {
     buildScrcpyArgs,
     ScrcpyServerConfig,
@@ -13,6 +13,17 @@ import path from 'path';
 import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
 import { ScrcpyInstance } from './ScrcpyInstance';
 import { once } from 'events';
+
+export interface ScrcpyTarget {
+    udid: string;
+    TAG: string;
+    isConnected(): boolean;
+    getPidOf(name: string, strict?: boolean, signal?: AbortSignal): Promise<number[] | undefined>;
+    runShellCommandAdbKit(command: string, timeoutMs?: number, signal?: AbortSignal): Promise<string>;
+    push(contents: string, path: string): Promise<PushTransfer>;
+    getLaunchStreamConfig(): StreamConfigData;
+    launchServer(command: string, audio: boolean): Promise<void>;
+}
 
 const TEMP_PATH = '/data/local/tmp/';
 const FILE_DIR = path.join(__dirname, 'vendor/Genymobile/scrcpy');
@@ -36,13 +47,28 @@ export class ScrcpyServer {
     // change - see the report for what that means for testing.
     private static readonly ENCODER_LINE_RE = /--video-codec=(\S+)\s+--video-encoder=(?:'([^']*)'|"([^"]*)"|(\S+))/;
 
-    private static async copyServer(device: Device): Promise<PushTransfer> {
+    private static async copyServer(device: ScrcpyTarget, signal?: AbortSignal): Promise<PushTransfer> {
         const src = path.join(FILE_DIR, FILE_NAME);
         const dst = TEMP_PATH + FILE_NAME; // don't use path.join(): will not work on win host
+        signal?.throwIfAborted();
         const transfer = await device.push(src, dst);
+        if (signal?.aborted) {
+            transfer.on('error', () => undefined);
+            transfer.cancel?.();
+            signal.throwIfAborted();
+        }
         // adbkit resolves push() when the transfer starts. Launching before `end` races the
         // jar upload, producing ClassNotFoundException on slower USB/Wi-Fi connections.
-        await once(transfer, 'end');
+        const abort = () => {
+            transfer.on('error', () => undefined);
+            transfer.cancel?.();
+        };
+        signal?.addEventListener('abort', abort, { once: true });
+        try {
+            await once(transfer, 'end', { signal });
+        } finally {
+            signal?.removeEventListener('abort', abort);
+        }
         return transfer;
     }
 
@@ -54,18 +80,22 @@ export class ScrcpyServer {
      * @param strict bound each adb read and report a failed one, where the default treats it as
      *     "nothing found". Status polling uses it so a failed read is not shown as "stopped".
      */
-    public static async getServerPid(device: Device, strict = false): Promise<number[] | undefined> {
+    public static async getServerPid(
+        device: ScrcpyTarget,
+        strict = false,
+        signal?: AbortSignal,
+    ): Promise<number[] | undefined> {
         if (!device.isConnected()) {
             return;
         }
-        const list = await device.getPidOf(SERVER_PROCESS_NAME, strict);
+        const list = await device.getPidOf(SERVER_PROCESS_NAME, strict, signal);
         if (!Array.isArray(list) || !list.length) {
             return;
         }
         const serverPid: number[] = [];
         const promises = list.map((pid) => {
             return device
-                .runShellCommandAdbKit(`cat /proc/${pid}/cmdline`, strict ? 6500 : undefined)
+                .runShellCommandAdbKit(`cat /proc/${pid}/cmdline`, strict ? 6500 : undefined, signal)
                 .then((output) => {
                     if (ScrcpyServer.isOwnServer(output.split('\0'))) {
                         serverPid.push(pid);
@@ -108,11 +138,13 @@ export class ScrcpyServer {
      * and rejects if the launch fails, the process exits first, or it takes too long
      * (`Device.launchServer`).
      */
-    public static async run(device: Device): Promise<void> {
+    public static async run(device: ScrcpyTarget, signal?: AbortSignal): Promise<void> {
         if (!device.isConnected()) {
             return;
         }
-        await this.copyServer(device);
+        await this.copyServer(device, signal);
+        signal?.throwIfAborted();
+        if (!device.isConnected()) return;
 
         // Built per-udid, per-call: config may have just changed via Device.updateStreamConfig(),
         // and this is the only place that launches the mirroring server, so there is no separate
@@ -127,15 +159,17 @@ export class ScrcpyServer {
      * encoders and exits immediately rather than starting the mirroring loop, so it is safe to
      * run this alongside an already-running mirror server for the same device.
      */
-    public static async listEncoders(device: Device): Promise<EncoderInfo[]> {
+    public static async listEncoders(device: ScrcpyTarget, signal?: AbortSignal): Promise<EncoderInfo[]> {
         if (!device.isConnected()) {
             return [];
         }
-        await this.copyServer(device);
+        await this.copyServer(device, signal);
+        signal?.throwIfAborted();
+        if (!device.isConnected()) return [];
         const command = `${CLASSPATH_PREFIX} / ${SERVER_PACKAGE} ${SERVER_VERSION} list_encoders=true`;
         let output: string;
         try {
-            output = await device.runShellCommandAdbKit(command);
+            output = await device.runShellCommandAdbKit(command, undefined, signal);
         } catch (e: any) {
             console.error(device.TAG, `Failed to list encoders: ${e.message}`);
             return [];

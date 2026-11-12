@@ -10,20 +10,21 @@ import { FileStats } from '../../types/FileStats';
 import Protocol from '@dead50f7/adbkit/lib/adb/protocol';
 import { Multiplexer } from '../../packages/multiplexer/Multiplexer';
 import { ReadStream } from 'fs';
-import { Duplex } from 'stream';
 import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
+import { AdbShell, ShellResult } from './AdbShell';
+
+export type { ShellResult } from './AdbShell';
+
 import { sendFileDownload } from './filePush/FileDownload';
 
-export type ShellResult = {
-    code: number;
-    output: string;
-};
+export interface ForwardLease {
+    port: number;
+    /** Removes only a forward created by this acquisition. Reused forwards belong to their owner. */
+    release(): Promise<void>;
+}
 
 // Copying or deleting a large folder takes far longer than a diagnostic shell read.
 const FILE_OPERATION_TIMEOUT = 120000;
-// adb frames a request with four hex digits of length, so anything past 65,535 bytes is cut
-// short without an error. The limit leaves room for the service prefix and the status marker.
-const MAX_SHELL_COMMAND_BYTES = 65000;
 // One `rm` command stays well under that limit; a larger selection is deleted in batches.
 const MAX_REMOVE_COMMAND_BYTES = 32 * 1024;
 // How many ports to try when adb reports that one is already forwarded or bound.
@@ -136,7 +137,11 @@ export class AdbUtils {
      * the same free port, and adb would point it at whichever asked last.
      */
     public static forward(serial: string, remote: string): Promise<number> {
-        const pending = AdbUtils.forwardQueue.then(() => AdbUtils.forwardNow(serial, remote));
+        return AdbUtils.acquireForward(serial, remote).then((lease) => lease.port);
+    }
+
+    public static acquireForward(serial: string, remote: string, signal?: AbortSignal): Promise<ForwardLease> {
+        const pending = AdbUtils.forwardQueue.then(() => AdbUtils.forwardNow(serial, remote, signal));
         AdbUtils.forwardQueue = pending.then(
             () => undefined,
             () => undefined,
@@ -144,15 +149,17 @@ export class AdbUtils {
         return pending;
     }
 
-    private static async forwardNow(serial: string, remote: string): Promise<number> {
+    private static async forwardNow(serial: string, remote: string, signal?: AbortSignal): Promise<ForwardLease> {
+        signal?.throwIfAborted();
         const client = AdbExtended.createClient();
         const forwards = await client.listForwards(serial);
+        signal?.throwIfAborted();
         const forward = forwards.find((item: Forward) => {
             return item.remote === remote && item.local.startsWith('tcp:') && item.serial === serial;
         });
         if (forward) {
             const { local } = forward;
-            return parseInt(local.split('tcp:')[1], 10);
+            return { port: parseInt(local.split('tcp:')[1], 10), release: async () => undefined };
         }
         // adb lists the forwards of every device here. A port another phone holds is not free,
         // even where this process cannot see adb's listener (adb on another host).
@@ -172,8 +179,27 @@ export class AdbUtils {
             try {
                 // Another server on the same adb may take the port between the check and here.
                 // adb then refuses, where the plain form would move that forward to this device.
+                signal?.throwIfAborted();
                 await client.forwardNoRebind(serial, `tcp:${port}`, remote);
-                return port;
+                if (signal?.aborted) {
+                    await client.killForward(serial, `tcp:${port}`);
+                    signal.throwIfAborted();
+                }
+                let released = false;
+                return {
+                    port,
+                    release: () => {
+                        if (released) return Promise.resolve();
+                        released = true;
+                        // Queue removal too: a replacement must not reuse a port whose removal is pending.
+                        const removal = AdbUtils.forwardQueue.then(() => client.killForward(serial, `tcp:${port}`));
+                        AdbUtils.forwardQueue = removal.then(
+                            () => undefined,
+                            () => undefined,
+                        );
+                        return removal;
+                    },
+                };
             } catch (error) {
                 failure = error as Error;
                 if (!/rebind|bind|in use/i.test(failure.message)) {
@@ -199,54 +225,11 @@ export class AdbUtils {
     }
     /**
      * Runs one shell command and returns its combined output plus the shell exit status.
-     * `Device.runShellCommandAdbKit` exists for diagnostics; file operations need the exit
+     * Diagnostics use the same reader; file operations also need the exit
      * code, because `mkdir`/`mv`/`rm` report failures on stderr and adb still exits 0.
      */
     public static async shellExec(serial: string, command: string, timeoutMs = 15000): Promise<ShellResult> {
-        if (Buffer.byteLength(command) > MAX_SHELL_COMMAND_BYTES) {
-            throw Error('This command is too long to send to the device.');
-        }
-        const client = AdbExtended.createClient();
-        let stream: Duplex | undefined;
-        let expired = false;
-        let timer: NodeJS.Timeout | undefined;
-        const reading = client
-            .shell(serial, `${command} 2>&1; echo "__rc=$?"`)
-            .then((socket) => {
-                stream = socket;
-                if (expired) {
-                    socket.destroy();
-                    throw Error('The device did not answer in time.');
-                }
-                return AdbExtended.util.readAll(socket);
-            })
-            .then((buffer: Buffer) => {
-                const output = buffer.toString();
-                const match = output.match(/__rc=(\d+)\s*$/);
-                // No marker means the shell died before finishing: treat that as a failure
-                // rather than reporting success with truncated output.
-                const code = match ? parseInt(match[1], 10) : -1;
-                return { code, output: (match ? output.slice(0, match.index) : output).trim() };
-            });
-        if (!timeoutMs) {
-            return reading;
-        }
-        try {
-            return await Promise.race([
-                reading,
-                new Promise<ShellResult>((_resolve, reject) => {
-                    timer = setTimeout(() => {
-                        expired = true;
-                        stream?.destroy();
-                        reject(Error('The device did not answer in time.'));
-                    }, timeoutMs);
-                }),
-            ]);
-        } finally {
-            if (timer) {
-                clearTimeout(timer);
-            }
-        }
+        return new AdbShell(serial).exec(command, timeoutMs);
     }
 
     /** Single-quote one shell argument. File names legitimately contain spaces, quotes and `$`. */
