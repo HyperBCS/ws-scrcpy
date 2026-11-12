@@ -64,7 +64,7 @@ body.sheet-open #devices {
     align-items: start;
 }
 
-/* A card: the phone, its state, what is wrong with it, and the ways in. */
+/* A card: the phone's row with its one status, at most one line under it, and the ways in. */
 #devices .device {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -77,49 +77,41 @@ body.sheet-open #devices {
     background: var(--surface-raised);
     color: var(--text);
 }
-.device-header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-12);
-}
-.device-heading {
-    flex: 1;
-    min-width: 0;
-}
-.device-name {
+/* The head is the phone's row (`ui/PhoneRow.tsx`), with the name at the card's size. */
+#devices .device .phone-row-name {
     font-size: var(--font-size-17);
-    font-weight: var(--font-weight-semibold);
     line-height: 1.3;
-    overflow-wrap: anywhere;
 }
-.device-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0 var(--space-8);
+#devices .not-active .phone-row-icon {
+    background: var(--surface-sunken);
+    color: var(--text-muted);
+}
+/* A scheduled unlock. The schedule is kept on the server, so the line stays while the phone is
+   away; one that cannot run is in the danger colour. */
+.device-schedule {
     color: var(--text-muted);
     font-size: var(--font-size-13);
+    overflow-wrap: anywhere;
 }
-.device-battery {
-    white-space: nowrap;
-}
-/* A scheduled unlock that cannot run, on a phone that is not connected. */
-.device-meta .device-unlock-schedule.problem {
+.device-schedule .device-unlock-schedule.problem {
     display: inline-flex;
     align-items: center;
     gap: var(--space-4);
     color: var(--danger-text);
     font-weight: var(--font-weight-semibold);
 }
-#devices .not-active .device-avatar {
-    background: var(--surface-sunken);
+/* A note under the head: muted words, and the action for them at the end. */
+.device-note {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
     color: var(--text-muted);
+    font-size: var(--font-size-13);
 }
-
-/* The asleep banner with the result of Wake under it. */
-.device-asleep-banner {
-    display: grid;
-    gap: var(--space-8);
+.device-note-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 /* A status line sits in the card's own spacing. */
 #devices .device .kit-status {
@@ -129,113 +121,15 @@ body.sheet-open #devices {
     margin: 0;
 }
 
-#devices .services {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-8);
-}
-/* Open screen takes the row. Notifications and Settings are icon buttons beside it, so the row
-   is the same on Android and iPhone cards and never wraps. */
+/* Open screen takes the row. Files, Shell, Notifications and Settings are icon buttons beside
+   it, so the row never wraps. */
 #devices .device-primary-actions {
-    flex-wrap: nowrap;
+    display: flex;
+    gap: var(--space-8);
 }
 #devices .device-primary-actions .stream {
     flex: 1 1 0;
     min-width: 0;
-}
-/* The words in place of Open screen can be longer than a narrow card. They wrap. */
-#devices .stream.unavailable {
-    height: auto;
-    min-height: var(--control-height);
-    white-space: normal;
-}
-#devices .device-tool-actions > * {
-    flex: 1 1 0;
-    min-width: 0;
-}
-#devices .device-secondary-actions > * {
-    flex: 1 1 130px;
-}
-
-/* What the disclosure holds: facts about the phone, then the recovery actions. */
-.device-details-content {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-12);
-    padding: 0 var(--space-16) var(--space-16);
-}
-.device-serial {
-    margin: 0;
-    color: var(--text-muted);
-    font-family: var(--font-stack-mono);
-    font-size: var(--font-size-13);
-    overflow-wrap: anywhere;
-}
-.device-interface {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: var(--space-4) var(--space-12);
-    color: var(--text-muted);
-    font-size: var(--font-size-13);
-}
-.device-connection-value {
-    color: var(--text);
-}
-#devices .device-debug-facts {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: var(--space-4) var(--space-12);
-    margin: 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-13);
-}
-/* The iPhone Actions sheet draws the same list of facts (views/ActionsSheet.css). A long value
-   wraps in both. */
-.device-debug-facts dd {
-    min-width: 0;
-    overflow-wrap: anywhere;
-}
-.device-debug-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-8);
-}
-
-/* Recovery actions: each row says what the action ends before it is pressed. */
-.device-trouble {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-8);
-    padding-top: var(--space-12);
-    border-top: 1px solid var(--border);
-}
-.device-trouble-heading {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-13);
-    font-weight: var(--font-weight-semibold);
-}
-.device-trouble-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-12);
-}
-.device-trouble-text {
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    min-width: 0;
-}
-.device-trouble-title {
-    font-weight: var(--font-weight-semibold);
-}
-.device-trouble-desc {
-    color: var(--text-muted);
-    font-size: var(--font-size-13);
-}
-.device-trouble-row > .kit-button {
-    min-width: 88px;
 }
 
 /* No phone is listed. */
@@ -287,7 +181,7 @@ body.sheet-open #devices {
         padding-right: max(var(--space-8), env(safe-area-inset-right, 0px));
         padding-left: max(var(--space-8), env(safe-area-inset-left, 0px));
     }
-    .device-avatar {
+    #devices .phone-row-icon {
         display: none;
     }
 }

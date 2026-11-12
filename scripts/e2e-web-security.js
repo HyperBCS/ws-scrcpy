@@ -121,21 +121,15 @@ async function androidCard(browser) {
         assert.equal(link.get('udid'), ANDROID);
         assert.equal(link.get('hostname'), null, 'a local link names no host');
 
-        await card.locator('summary').click();
-        const details = card.locator('.device-details-content');
-        await details.getByText('Automatic · via server', { exact: true }).waitFor();
+        // The card offers no connection choice and no address of the phone. Every link on it
+        // names the phone only, never a socket.
         assert.equal(await card.locator('select').count(), 0, `${label}: no Connection select`);
         assert.equal(await card.getByRole('button', { name: 'Refresh connection' }).count(), 0, `${label}: no Refresh connection`);
         assert.doesNotMatch(await card.textContent(), new RegExp(`wlan0|${PHONE_ADDRESS.replaceAll('.', '\\.')}`), `${label}: the phone's own address is not offered`);
-        for (const alternative of await details.locator('a.stream.alternative').all()) {
-            const params = new URLSearchParams(new URL(await alternative.getAttribute('href')).hash.slice(2));
-            assert.equal(params.get('ws'), null, `${label}: ${await alternative.textContent()} names no socket`);
+        for (const link of await card.locator('a[href]').all()) {
+            const params = new URLSearchParams(new URL(await link.getAttribute('href')).hash.slice(2));
+            assert.equal(params.get('ws'), null, `${label}: ${await link.getAttribute('aria-label') || await link.textContent()} names no socket`);
         }
-        // The row sits where the iPhone card has the same one, and nothing overflows the card.
-        const row = details.locator('.device-interface');
-        const rowBox = await row.boundingBox();
-        const cardBox = await card.boundingBox();
-        assert(rowBox.x >= cardBox.x && rowBox.x + rowBox.width <= cardBox.x + cardBox.width + 1, `${label}: the Connection row fits the card`);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${label}: no sideways scroll`);
         await card.scrollIntoViewIfNeeded();
         await page.screenshot({ path: path.join(OUT, `android-card-${label}.png`) });

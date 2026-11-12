@@ -113,7 +113,10 @@ async function bothSay(page, label, text, state, tone) {
     );
 }
 
-/** The card of an iPhone whose session runs: its status, and the session as a second chip. */
+/**
+ * The card of a phone whose session runs: its status in the one chip, and the session as the
+ * In use mark on the platform line, the same on an iPhone and on an Android phone.
+ */
 async function listCard(browser, layout) {
     const label = `list ${layout.width}-${layout.colorScheme}`;
     const test = await start(browser, layout);
@@ -122,15 +125,17 @@ async function listCard(browser, layout) {
         await page.goto(BASE);
         const card = page.locator(`article.device[data-device-key="ios:${IPHONE}"]`);
         await card.waitFor();
-        const chips = await card.locator('.device-header .kit-chip').evaluateAll((list) => list.map((chip) => [chip.textContent, chip.className]));
-        assert.deepEqual(chips, [['Session running', 'kit-chip device-session'], ['Ready', 'kit-chip kit-chip-success device-status']], `${label}: the status and a second chip`);
         const pixel = page.locator(`article.device[data-device-key="android:${PIXEL}"]`);
-        assert.equal(await pixel.locator('.device-session').count(), 0, `${label}: the Android card keeps its stream service line`);
-        await pixel.locator('.stream-service-status[data-stream-service="running"]').waitFor();
+        for (const [platform, item] of [['iPhone', card], ['Android', pixel]]) {
+            const chips = await item.locator('.kit-chip').evaluateAll((list) => list.map((chip) => [chip.textContent, chip.className]));
+            assert.deepEqual(chips, [['Ready', 'kit-chip kit-chip-success phone-row-chip device-status']], `${label} ${platform}: one chip, the status`);
+            assert.equal(await item.locator('.phone-row-meta .phone-row-in-use').textContent(), 'In use', `${label} ${platform}: the session mark`);
+        }
+        assert.equal(await pixel.locator('.stream-service-status, [data-line="stream-service"]').count(), 0, `${label}: no stream service line while it runs`);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `${label}: no sideways scroll`);
         fs.writeFileSync(path.join(OUT, `iphone-card-${layout.width}-${layout.colorScheme}.png`), await card.screenshot());
         assert.deepEqual(test.errors, []);
-        console.log('PASS', label, 'an iPhone with a running session is Ready, with Session running beside it');
+        console.log('PASS', label, 'a phone with a running session is Ready, with In use on its platform line');
     } finally {
         await test.context.close();
     }

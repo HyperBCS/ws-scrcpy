@@ -49,7 +49,7 @@ const android = (udid, model, extra = {}) => ({
     'screen.power': 'on', 'device.awake': true, 'battery.level': 80, 'battery.charging': false, ...extra,
 });
 // The first Android phone shows its lock screen, so its page offers the Unlock sheet. The third
-// has its screen off, so its card shows the asleep banner.
+// has its screen off, so its card shows Wake beside its status.
 const ANDROIDS = [
     android(PIXEL, 'Pixel 9', { 'keyguard.showing': true, 'keyguard.occluded': false, 'device.locked': true }),
     android(PIXEL_2, 'Pixel 8', { 'battery.level': 35, 'battery.charging': true }),
@@ -311,24 +311,15 @@ async function shoot(test, name) {
     test.shots++;
 }
 
-/** The list, with a card's details open and with each phone's settings sheet. */
+/** The list, and each phone's settings sheet opened from it. A card has no disclosure. */
 async function listStates(test) {
     const { page } = test;
     await page.goto(BASE);
     await card(page, `android:${PIXEL}`).waitFor();
     await card(page, `ios:${IPHONE}`).waitFor();
     await card(page, `ios:${IPHONE_2}`).locator('.device-problem .device-unlock-schedule.problem').waitFor();
-    await card(page, `android:${PIXEL_3}`).locator('.device-asleep-banner .kit-button').waitFor();
+    await card(page, `android:${PIXEL_3}`).locator('.phone-row-status .kit-button').waitFor();
     await shoot(test, 'list');
-
-    await press(test, card(page, `android:${PIXEL_2}`).locator('.device-details > summary'));
-    await press(test, card(page, `ios:${IPHONE}`).locator('.device-details > summary'));
-    await card(page, `ios:${IPHONE}`).locator('.device-trouble-heading').waitFor();
-    await shoot(test, 'list-details');
-
-    // A question on a card before an action that ends the stream.
-    await press(test, card(page, `android:${PIXEL_2}`).getByRole('button', { name: 'Stop stream service', exact: true }));
-    await shootPrompt(test, card(page, `android:${PIXEL_2}`), 'list-confirm');
 
     await press(test, card(page, `android:${PIXEL_2}`).locator('button.stream-settings-button'));
     await sheetTitled(page, /^Settings$/).waitFor();

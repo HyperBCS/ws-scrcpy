@@ -142,3 +142,13 @@ export const UNAVAILABLE_HINT = {
     unauthorized: 'Unlock this phone and approve the USB debugging or trust prompt to connect.',
     offline: 'Check the phone connection and keep it connected to the server.',
 } as const;
+
+// p5-list-rows
+/** The row of a phone on the list and in the switcher (`ui/PhoneRow.tsx`). */
+export const ROW = {
+    /**
+     * The mark after the platform line while the phone's screen session runs or this browser
+     * shows it. It sits beside the status and never takes its place.
+     */
+    inUse: 'In use',
+} as const;

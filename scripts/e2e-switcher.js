@@ -105,11 +105,38 @@ async function main() {
             await root.waitFor();
             await settle(page);
             const list = root.locator('.device-switcher-list');
-            const search = page.getByRole('searchbox', { name: 'Find a device to switch to' });
+            const search = page.getByRole('searchbox', { name: 'Find a phone to switch to' });
+            assert.equal(await search.getAttribute('placeholder'), 'Find a phone…');
             await page.waitForFunction(() => document.querySelectorAll('.device-switcher-list button').length === 28);
             await checkGeometry(page);
             assert.equal(await root.getAttribute('role'), 'dialog', `${label}: the sheet is a dialog`);
-            assert.equal(await root.evaluate((el) => document.getElementById(el.getAttribute('aria-labelledby')).textContent), 'Switch device', `${label}: the dialog is named by its title`);
+            assert.equal(await root.evaluate((el) => document.getElementById(el.getAttribute('aria-labelledby')).textContent), 'Switch phone', `${label}: the dialog is named by its title`);
+            // Each row is the phone's row of the list: name, platform line and one chip; no serial
+            // and no tracker name. The phone on screen comes first with Viewing in place of its
+            // status and cannot be chosen; the phones that cannot be opened come last.
+            const rows = await list.locator('button').evaluateAll((buttons) => buttons.map((button) => ({
+                name: button.querySelector('.phone-row-name')?.textContent,
+                platform: button.querySelector('.phone-row-platform')?.textContent,
+                chips: [...button.querySelectorAll('.kit-chip')].map((chip) => chip.textContent),
+                disabled: button.disabled,
+                current: button.getAttribute('aria-current'),
+                text: button.textContent,
+            })));
+            assert.deepEqual(rows[0], { name: 'Fixture Device 00', platform: 'Android 16', chips: ['Viewing'], disabled: true, current: 'true', text: rows[0].text }, `${label}: the phone on screen is first`);
+            assert.ok(rows.every((row) => row.chips.length === 1), `${label}: one chip per row`);
+            assert.ok(rows.every((row) => !/long_serial_|switch-fixture|Settings test host/.test(row.text)), `${label}: no serial and no tracker name in a row`);
+            assert.deepEqual(rows.slice(-4).map((row) => [row.name, row.chips[0], row.disabled]), [24, 25, 26, 27].map((index) => [`Fixture Device ${index}`, 'Offline', true]), `${label}: the offline phones last`);
+            assert.ok(rows.slice(1, -4).every((row) => !row.disabled && row.chips[0] === 'Ready'), `${label}: the phones that can be opened between`);
+            const offline = list.locator('button').last();
+            assert.equal(await offline.locator('.phone-row-text').evaluate((el) => getComputedStyle(el).opacity), '0.5', `${label}: a row that cannot be opened is greyed`);
+            assert.equal(await offline.locator('.kit-chip').evaluate((el) => getComputedStyle(el).opacity), '1', `${label}: its status stays readable`);
+            if (!touch) {
+                await offline.hover({ force: true });
+                await page.waitForTimeout(250);
+                assert.equal(await offline.evaluate((el) => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)', `${label}: no hover on a row that cannot be opened`);
+                await list.evaluate((el) => { el.scrollTop = 0; });
+                await page.mouse.move(0, 0);
+            }
             // The search field is the kit's field, one 44px row: it once took a 220px flex-basis as its height.
             const field = await root.locator('.device-switcher-search').boundingBox();
             const firstRow = await list.locator('button').first().boundingBox();
@@ -118,7 +145,7 @@ async function main() {
             assert.equal(await search.evaluate((el) => el.matches('input.kit-field') && getComputedStyle(el).fontSize), '16px', `${label}: the search field is the kit field, at 16px`);
             assert.equal(await root.locator('.device-switcher-search svg.kit-icon').count(), 1, 'the search icon is the kit icon, not a text glyph');
             assert.ok(firstRow.height >= 56, `${label}: a row is at least 56px tall (${firstRow.height})`);
-            const sizes = await root.evaluate((el) => [...new Set([...el.querySelectorAll('.kit-sheet-title, .device-switcher-item strong, .device-switcher-item small, .device-switcher-status, .kit-chip')].map((node) => getComputedStyle(node).fontSize))].sort());
+            const sizes = await root.evaluate((el) => [...new Set([...el.querySelectorAll('.kit-sheet-title, .phone-row-name, .phone-row-meta, .kit-chip')].map((node) => getComputedStyle(node).fontSize))].sort());
             assert.deepEqual(sizes.filter((size) => !['12px', '13px', '15px', '20px'].includes(size)), [], `${label}: the switcher's text is on the type scale`);
             assert.equal(await list.locator('button[aria-current="true"] .kit-chip').textContent(), 'Viewing', `${label}: the phone on screen is marked with a chip`);
             assert.doesNotMatch(await list.textContent(), /[→←]/, `${label}: no arrow glyph in a row`);
@@ -199,7 +226,7 @@ async function main() {
             assert.equal(await list.locator('button').count(), 1, 'search filters without scrolling page');
             assert.equal(await list.evaluate((el) => el.scrollTop), 0, 'search resets list to its first result');
             await search.fill('no matching device');
-            await page.getByText('No devices match your search.', { exact: true }).waitFor();
+            await page.getByText('No phones match your search.', { exact: true }).waitFor();
             await search.fill('');
             await page.waitForFunction(() => document.querySelectorAll('.device-switcher-list button').length === 28);
             await checkGeometry(page);
@@ -208,7 +235,7 @@ async function main() {
                 beforeTouches,
                 'search/list gestures send no remote touch messages',
             );
-            await page.getByRole('button', { name: 'Close Switch device', exact: true }).click();
+            await page.getByRole('button', { name: 'Close Switch phone', exact: true }).click();
             await root.waitFor({ state: 'hidden' });
             assert(await trigger.evaluate((el) => document.activeElement === el), 'close restores focus to Switch');
             await trigger.click();
@@ -270,7 +297,7 @@ async function main() {
                 await root.waitFor();
                 await settle(page);
                 await searchFocused();
-                const highlighted = () => list.locator('button.highlighted strong').allTextContents();
+                const highlighted = () => list.locator('button.highlighted .phone-row-name').allTextContents();
                 assert.deepEqual(await highlighted(), [], 'nothing is highlighted before an arrow key');
                 await page.keyboard.press('ArrowDown');
                 assert.deepEqual(await highlighted(), ['Fixture Device 00']);
@@ -313,7 +340,7 @@ async function main() {
             console.log(
                 'PASS',
                 label,
-                'native list scroll, final row, kit search field, filtering, keyboard, Back, Close/drag and remote isolation',
+                'phone rows (current first, offline last and greyed), native list scroll, final row, kit search field, filtering, keyboard, Back, Close/drag and remote isolation',
             );
         }
     } finally {

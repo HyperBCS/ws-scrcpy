@@ -442,8 +442,7 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                 <DeviceSwitcherSheet
                     currentDeviceKey={entry?.key}
                     filter={supportsDeviceTools}
-                    title={`Switch device · ${tool?.title || 'Tools'}`}
-                    openLabel={tool?.title}
+                    title={`Switch phone · ${tool?.title || 'Tools'}`}
                     onSelectDevice={switchPhone}
                 />
             )}

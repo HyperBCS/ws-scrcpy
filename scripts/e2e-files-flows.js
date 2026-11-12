@@ -57,7 +57,7 @@ async function open(page, name) {
 async function history(browser, layout) {
     const { page, finish } = await start(browser, layout);
     const card = page.locator('.device').filter({ hasText: 'Files test phone' });
-    await card.locator('summary').click();
+    await card.waitFor();
     const entries = () => page.evaluate(() => history.length);
     const listEntries = await entries();
     await card.getByRole('link', { name: 'Files', exact: true }).click();
@@ -126,7 +126,6 @@ async function history(browser, layout) {
 async function overlays(browser, layout) {
     const { page, finish, traffic } = await start(browser, layout);
     const card = page.locator('.device').filter({ hasText: 'Files test phone' });
-    await card.locator('summary').click();
     await card.getByRole('link', { name: 'Files', exact: true }).click();
     await ready(page);
     // Two folder steps, so that the folder shown has another one behind it: tmp, archive, tmp.
@@ -764,7 +763,6 @@ async function until(page, check, what) {
 async function uploads(browser, layout, name, scheme) {
     const { page, finish, traffic, files } = await start(browser, layout, undefined, scheme);
     const card = page.locator('.device').filter({ hasText: 'Files test phone' });
-    await card.locator('summary').click();
     await card.getByRole('link', { name: 'Files', exact: true }).click();
     await ready(page);
     await row(page, 'notes.txt').waitFor();
@@ -874,7 +872,6 @@ async function uploads(browser, layout, name, scheme) {
     assert.equal(files.has(ROOT + '/leave.bin'), false);
     // The device list is not guarded: the next navigation goes straight through.
     const filesLink = card.getByRole('link', { name: 'Files', exact: true });
-    if (!(await filesLink.isVisible())) await card.locator('summary').click();
     await filesLink.click();
     await ready(page);
     await page.getByRole('button', { name: 'Phones', exact: true }).click();
@@ -882,7 +879,6 @@ async function uploads(browser, layout, name, scheme) {
 
     // Another tab of the same phone is not leaving it, so nothing is asked, and the upload goes
     // on behind that tab.
-    if (!(await filesLink.isVisible())) await card.locator('summary').click();
     await filesLink.click();
     await ready(page);
     await page.locator('.file-explorer input[type=file]').setInputFiles({

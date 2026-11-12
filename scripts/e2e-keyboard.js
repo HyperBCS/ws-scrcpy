@@ -33,7 +33,7 @@ const fieldText = () => {
     await p.waitForTimeout(2500);
     // Pick the card for OUR device: with more than one attached, `.first()` may open a device
     // whose scrcpy server is not running and no video surface ever mounts.
-    const card = p.locator('.device', { has: p.locator(`text=${SERIAL}`) });
+    const card = p.locator(`.device[data-device-key$=":${SERIAL}"]`);
     await card.locator('a.desc-block.stream').first().click();
     await p.waitForTimeout(11000);
     // Focus the video surface, then type as a user would.

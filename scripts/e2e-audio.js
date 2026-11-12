@@ -174,7 +174,7 @@ async function main() {
         );
         page.on('pageerror', (error) => errors.push(error.message));
         await page.goto(BASE);
-        const card = page.locator('.device').filter({ hasText: SERIAL });
+        const card = page.locator(`.device[data-device-key$=":${SERIAL}"]`);
         await card.locator('a.desc-block.stream').first().click();
         await connected(page);
         await deviceButton('tone');

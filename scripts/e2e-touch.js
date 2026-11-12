@@ -68,7 +68,7 @@ async function main() {
     // check, measured rather than eyeballed.
     const targets = await page.evaluate(() => {
         const out = [];
-        document.querySelectorAll('#devices .desc-block, #devices .device-asleep-banner .kit-button').forEach((el) => {
+        document.querySelectorAll('#devices .desc-block, #devices .device-wake').forEach((el) => {
             const r = el.getBoundingClientRect();
             out.push({ text: (el.innerText || '').trim().slice(0, 28), w: Math.round(r.width), h: Math.round(r.height) });
         });
@@ -81,7 +81,7 @@ async function main() {
     // Target a specific device: with several attached, `.first()` may land on one that is
     // asleep or has no server running, and the failure looks like a product bug.
     const SERIAL = process.env.SERIAL;
-    const scope = SERIAL ? page.locator('.device', { has: page.locator(`text=${SERIAL}`) }) : page;
+    const scope = SERIAL ? page.locator(`.device[data-device-key$=":${SERIAL}"]`) : page;
     const streamLink = scope.locator('a.desc-block.stream').first();
     if ((await streamLink.count()) === 0) {
         console.log('[2] NO STREAM LINK — is a device connected and the scrcpy server running?');

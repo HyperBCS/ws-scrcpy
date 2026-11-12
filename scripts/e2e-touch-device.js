@@ -64,7 +64,7 @@ async function main() {
     await page.goto(BASE, { waitUntil: 'networkidle' });
     await page.waitForTimeout(2500);
     await page
-        .locator('.device', { has: page.locator(`text=${SERIAL}`) })
+        .locator(`.device[data-device-key$=":${SERIAL}"]`)
         .locator('a.desc-block.stream')
         .first()
         .click();

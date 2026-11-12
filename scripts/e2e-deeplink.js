@@ -28,7 +28,7 @@ const SERIAL = process.env.SERIAL || 'WC7HFMPJGY7PUCGQ';
     // 1. Navigate from the list, capture the resulting deep link.
     await p.goto('http://127.0.0.1:8000/', { waitUntil: 'networkidle' });
     await p.waitForTimeout(2500);
-    await p.locator('.device', { has: p.locator(`text=${SERIAL}`) }).locator('a.desc-block.stream').first().click();
+    await p.locator(`.device[data-device-key$=":${SERIAL}"]`).locator('a.desc-block.stream').first().click();
     await p.waitForTimeout(9000);
     const url = p.url();
     console.log('deep link:', url.slice(0, 90) + '…');

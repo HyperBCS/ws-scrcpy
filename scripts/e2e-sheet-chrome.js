@@ -80,7 +80,7 @@ async function android(browser, { mobile = false, dark = false, stream = true, v
         await page.waitForFunction(() => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'));
         await page.locator('.touch-layer').waitFor({ state: 'visible' });
     } else {
-        await page.locator('.device').filter({ hasText: UDID }).waitFor();
+        await page.locator(`.device[data-device-key$=":${UDID}"]`).waitFor();
     }
     const touches = () => packets.filter((packet) => packet.length === 32 && packet[0] === 2).length;
     return { context, page, errors, packets, commands, touches, mobile, controls: () => controls };
@@ -245,7 +245,7 @@ async function modalSheetsHoldPresses(browser) {
             const sheets = [
                 ['Actions', () => toolbar(test, 'Actions')],
                 ['Settings', () => toolbar(test, 'Settings')],
-                ['Switch device', () => page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }).click()],
+                ['Switch phone', () => page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }).click()],
             ];
             for (const [name, open] of sheets) {
                 await open();
@@ -520,7 +520,7 @@ async function errorBoundary(browser) {
         await failed.getByRole('button', { name: 'Reload', exact: true }).waitFor();
         await shot(page, 'screen-failed-desktop-light');
         await failed.getByRole('button', { name: 'Phones', exact: true }).click();
-        await page.locator('.device').filter({ hasText: UDID }).waitFor();
+        await page.locator(`.device[data-device-key$=":${UDID}"]`).waitFor();
         assert.equal(await failed.count(), 0, 'the device list is back');
     } finally {
         await test.context.close();
@@ -737,7 +737,7 @@ async function applyBarAndReadability(browser) {
     const card = await android(browser, { mobile: true, stream: false });
     try {
         const { page } = card;
-        await page.locator('.device').filter({ hasText: UDID }).getByRole('button', { name: /^Settings for / }).click();
+        await page.locator(`.device[data-device-key$=":${UDID}"]`).getByRole('button', { name: /^Settings for / }).click();
         const settings = sheet(page, 'Settings');
         await settings.waitFor();
         await page.waitForFunction(() => !document.querySelector('dialog.kit-sheet[open]')?.textContent.includes('Loading settings…'));
@@ -847,11 +847,11 @@ async function statusContrast(browser) {
         const test = await android(browser, { mobile: true, dark, stream: false });
         try {
             const { page } = test;
-            const chip = page.locator('.device').filter({ hasText: UDID }).locator('.device-status');
+            const chip = page.locator(`.device[data-device-key$=":${UDID}"]`).locator('.device-status');
             await chip.waitFor();
             const ratio = await contrastOf(chip);
             assert(ratio >= 4.5, `${dark ? 'dark' : 'light'}: status chip text contrast ${ratio.toFixed(2)}`);
-            await page.locator('.device').filter({ hasText: UDID }).getByRole('button', { name: /^Settings for / }).click();
+            await page.locator(`.device[data-device-key$=":${UDID}"]`).getByRole('button', { name: /^Settings for / }).click();
             const settings = sheet(page, 'Settings');
             await settings.waitFor();
             await page.waitForFunction(() => !document.querySelector('dialog.kit-sheet[open]')?.textContent.includes('Loading settings…'));

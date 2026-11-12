@@ -54,11 +54,11 @@
 .device-switcher-list:empty {
     display: none;
 }
-/* A row draws the line above itself, and the card cuts the line of its first row off. */
+/* A row draws the line above itself, and the card cuts the line of its first row off. What it
+   shows is the phone's row (`ui/PhoneRow.tsx`), the head of its card on the list. */
 .device-switcher-item {
     display: flex;
     align-items: center;
-    gap: var(--space-12);
     box-sizing: border-box;
     width: 100%;
     min-width: 0;
@@ -75,6 +75,9 @@
     cursor: pointer;
     transition: background-color var(--motion-fast) ease;
 }
+.device-switcher-row {
+    flex: 1 1 auto;
+}
 .device-switcher-item:disabled {
     cursor: default;
 }
@@ -82,9 +85,10 @@
 .device-switcher-item.current {
     background: var(--accent-soft);
 }
-/* A phone that cannot be opened: its chip says why and stays at full strength. */
-.device-switcher-item:disabled:not(.current) > .device-icon,
-.device-switcher-item:disabled:not(.current) > .device-switcher-copy {
+/* A phone that cannot be opened is greyed. Its status chip says why and stays at full strength. */
+.device-switcher-item:disabled:not(.current) .phone-row-icon,
+.device-switcher-item:disabled:not(.current) .phone-row-text,
+.device-switcher-item:disabled:not(.current) .phone-row-unread {
     opacity: var(--disabled-opacity);
 }
 @media (hover: hover) {
@@ -103,30 +107,5 @@
 .device-switcher-item:focus-visible {
     outline: var(--focus-ring);
     outline-offset: calc(var(--focus-ring-offset) * -1);
-}
-.device-switcher-copy {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    min-width: 0;
-}
-.device-switcher-copy strong {
-    font-weight: var(--font-weight-semibold);
-    overflow-wrap: anywhere;
-}
-.device-switcher-copy small {
-    color: var(--text-muted);
-    font-size: var(--font-size-13);
-    overflow-wrap: anywhere;
-}
-/* What the row opens, or why it cannot. */
-.device-switcher-status {
-    display: inline-flex;
-    align-items: center;
-    flex: none;
-    gap: var(--space-4);
-    color: var(--accent-text);
-    font-size: var(--font-size-13);
-    font-weight: var(--font-weight-semibold);
 }
 }

@@ -68,7 +68,7 @@ async function main() {
             await page.waitForTimeout(1000);
         };
         await page.goto(BASE);
-        await page.locator('.device').filter({ hasText: SERIAL }).locator('a.desc-block.stream').first().click();
+        await page.locator(`.device[data-device-key$=":${SERIAL}"]`).locator('a.desc-block.stream').first().click();
         await waitHandshake(1);
         await focusField(page);
         await page.keyboard.type('before', { delay: 70 });

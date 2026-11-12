@@ -122,7 +122,7 @@ async function main() {
         if (SERIAL) {
             const list = await context.newPage();
             await list.goto(BASE);
-            const stream = list.locator('.device').filter({ hasText: SERIAL }).locator('a.desc-block.stream').first();
+            const stream = list.locator(`.device[data-device-key$=":${SERIAL}"]`).locator('a.desc-block.stream').first();
             await stream.waitFor();
             const href = await stream.getAttribute('href');
             assert(href, 'the selected device has a stream link');

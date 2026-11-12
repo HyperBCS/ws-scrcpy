@@ -1,0 +1,62 @@
+@layer tokens, base, components, views;
+
+@layer components {
+/* One phone in one line (`ui/PhoneRow.tsx`): the head of a card on the list and a row of the
+   switcher. The tile, the name over the platform line, the unread count, then the status. The
+   card and the switcher set the size of the name. */
+.phone-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    min-width: 0;
+}
+.phone-row-text {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+.phone-row-name {
+    font-weight: var(--font-weight-semibold);
+    overflow-wrap: anywhere;
+}
+.phone-row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--space-8);
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
+}
+.phone-row-platform {
+    overflow-wrap: anywhere;
+}
+/* A screen session runs: a dot and two words after the platform line. */
+.phone-row-in-use {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-4);
+    white-space: nowrap;
+}
+.phone-row-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--success-text);
+}
+.phone-row-unread {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    gap: var(--space-4);
+    color: var(--text-muted);
+}
+.phone-row-status {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    gap: var(--space-8);
+}
+}
