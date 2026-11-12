@@ -3182,3 +3182,172 @@ short sessions wedges the phone's display service.
    and the scheduled unlock status is as before. The next scheduled unlock run finishes.
 7. Optional: stop the container with an iPhone page open and no screen session. It exits within
    a few seconds.
+
+### Redesign step 5a: one status model and one place for the status words (2026-11-12, tested without a phone)
+
+Package p5-status (findings U-home-6, U-system-7, U-stream-11), merged into `redesign` from
+`review/p5-status`. The screens keep their structure; they read their words, tones and names from
+the new modules. The rebuilds come in step 5b. Not deployed: step 5a goes live with step 5b.
+
+**The status model.** `src/app/state/phoneStatus.ts`. One adapter per platform (`googFacts`,
+`applFacts`, chosen by `phoneFacts`) turns a list entry into facts:
+- `trusted`: the phone is not `unauthorized`.
+- `connected`: Android `device`, iPhone `Connected`.
+- `session`: `starting`, `running`, `failed`, `stopped` or `unknown`. On Android it is the stream
+  service: a pid above 0 is running, the optimistic Start flag is starting, pid -1 is stopped,
+  anything else unknown. On an iPhone it is the server session (`ready` is running, `error` is
+  failed).
+- `problems`: only iPhones report them (a failed session at level error; Developer Mode off and a
+  scheduled unlock that cannot run at level attention), and only while connected.
+- `screen` (`on`, `asleep`, `unknown`) and `lock` (`locked`, `unlocked`, `unknown`), only on
+  positive evidence. Android reads `screen.power` and `device.awake`, the iPhone `screen.power`;
+  both read `device.locked`.
+- `viewed`: this browser shows the phone (`activeStream` for Android, `activeCoreDeviceStream`
+  for an iPhone; before, the iPhone check read the Android signal).
+
+`derivePhoneStatus(facts)` applies one precedence to both platforms (`PHONE_STATUS_ORDER`):
+Unauthorized, Offline, Error, Starting, Needs attention, Asleep, Locked, Ready. Streaming is no
+longer a status. A running session or `viewed` sets `sessionRunning`, a second mark that never
+takes the place of Asleep, Locked or Ready. The result also carries the screen and lock facts of a
+reachable phone ('unknown' for any other); the cards and both screen views decide the asleep
+banner and the sleep card from `getDeviceStatusInfo(entry).screen`. Only the unlock flow still
+reads the lock and keyguard fields raw (`LockScreenNotice`, `UnlockSheet`, `ApplUnlockSheet`,
+`state/unlockDevice.ts`). The optimistic Start flag (`markStarting`, `clearStarting`,
+`isDeviceStarting`), `listSummary` and `needsAttention` moved into the module and give the same
+results.
+`state/deviceStatus.ts` and `state/streamService.ts` only re-export from it.
+
+The connection of a page has its own function: `connectionStatus(state)` returns label, tone and
+icon for Connecting, Connected, Reconnecting, Offline, Failed and Stopped (warning, success,
+warning, neutral, error, neutral). `screenConnection` is the one value of a screen page;
+`StreamView` and `CoreDeviceStreamView` derive it once and pass it to the header and to
+`SleepOverlay`, which keeps no connection state of its own. Each view remembers the stream client
+that has been connected (`connectedClient`): the same client reconnects, a new one (another phone,
+Start again) connects. After an iPhone failure, Trying again counts as connecting; Reconnecting is
+only for a drop without a failure. `toolConnection` gives the chip of Files and Shell. The tone
+is on the header line and the tool chip as `data-tone`; nothing shows it yet.
+
+**Where the words live.** `src/app/copy.ts`, grouped as CONNECTION, SCREEN_CONNECTION, STATUS,
+SCREEN, LOCK, SESSION, LIST_SUMMARY, PROBLEM, FACT and STREAM_SERVICE. It holds status words only
+and is not a translation layer. `scripts/test-phone-status.js` fails if 'Screen is off', 'Screen
+is asleep.', 'Device locked', 'Lock screen active', 'streaming service', 'Connecting to device…',
+'Connecting…', 'Reconnecting…' or `'Streaming'` appears in any other file under `src/app`, and if
+`phoneStatus.ts` holds a phrase of its own.
+
+**Names.** `state/devices.ts` keeps the last name each serial had in the list, for the life of
+the page. `phoneName(udid, entry)` gives the listed name, else that last name, else the serial.
+The Android, iPhone and tool headers and the tab title use it, so an unplugged phone keeps its
+name. The memory is keyed by serial only.
+
+**Capabilities.** `src/app/state/capabilities.ts` is one table per platform, as data, with the
+code place of each value in a comment: files, shell, panels, rotate, clipboard read, clipboard
+paste, unlock kind (`passcode-field` on Android, `server-passcode` on an iPhone), power actions,
+scheduled unlock, stream quality and Type text. `capabilities(entry or platform)` returns it. So
+far only `supportsDeviceTools` in `state/devices.ts` reads it.
+
+**What the owner sees change.**
+- Phones list, iPhone card: Streaming is gone. An iPhone with a running session shows its real
+  status (Ready, Asleep, Locked, Needs attention) and a second grey chip, Session running, in the
+  line under its name. In the atlas the Spare iPhone, whose scheduled unlock cannot run, now says
+  Needs attention. The same chip shows on a switcher row that cannot be opened (a connected iPhone
+  with Developer Mode off and a running session). Android cards are unchanged apart from below.
+- An Android phone being started ranks Starting above Asleep and Locked.
+- The iPhone card shows the Screen is asleep banner whenever the screen is asleep, also while a
+  session runs or starts.
+- Screen is asleep, without a period, on the card banners; the card over the picture said Screen
+  is off and now says Screen is asleep.
+- The lock notice says Phone locked (was Device locked). Swipe up to unlock (was Lock screen
+  active) shows only when an Android phone reports itself not locked while its lock screen shows;
+  a lock the phone does not report gets Phone locked.
+- iPhone card Details: Session Running, Starting, Failed or Stopped (was ready, starting, error,
+  stopped); Paired Yes or No; Developer Mode On, Off or Unknown.
+- Stream service tooltips say stream service and phone (were streaming service and device). The
+  stopped card on the Android screen says "The stream service on this phone was stopped."
+- Screen header: a stream that was connected and dropped says Reconnecting… (was Connecting…).
+  When the list reports the phone as not connected, unauthorized included, and there is no
+  picture, it says Offline. The card over the picture prints the header's word: Connecting… on a
+  first connection (was Connecting to device…), Reconnecting… after a drop, Offline, Stopped with
+  the stream service stopped, and on an iPhone's first start Starting the phone stream…. Its hint
+  after 12 seconds says phone (was device).
+- Files and Shell chip: Opening… becomes Connecting…; Unavailable and Disconnected become Unable
+  to connect, or Offline when the list reports the phone as not connected; Ended becomes Stopped.
+  A tool whose code could not be downloaded now says Unable to connect. The Files status line
+  starts with Connecting… (was Connecting to device…).
+- An unplugged phone keeps its name in the screen and tool headers and in the tab title (was its
+  serial).
+
+**Proof.** `npm run check` passes (615 node tests with `scripts/test-phone-status.js`, lint 0
+errors and 38 warnings as before). All default browser suites pass, with the new `phone-status`
+suite (`scripts/e2e-phone-status.js`): Reconnecting in the header and the overlay on both
+platforms, Offline in the neutral tone, the last name in the header and the title, the sleep card
+from the screen fact, and the lock notice texts. The atlas of the base (e2fd657, built from an
+export) and of the merged head differ in 66 files, each one a status word or the second chip:
+- The lock notice word in 22 pictures: android-screen, android-switcher, android-type-text and
+  android-unlock (4 each), android-actions and android-settings on the desktop, android-controls
+  on the phone (2 each).
+- The sleep card sentence in android-asleep: 4 pictures and 4 style files (the card is wider).
+- The list states, 36 files: two more elements (the Session running chips of the two atlas
+  iPhones, which makes the Bench iPhone's line under its name wrap), Streaming replaced by Ready
+  and Needs attention, the Pixel 7 banner without its period, and in list-details the fact values
+  Running, Yes and On. These are list, list-details and list-confirm (8 each) and
+  list-android-settings and list-iphone-settings (4 style files and the 2 desktop pictures each;
+  the sheets themselves are unchanged, and on a phone the sheet covers the list). In
+  list-confirm on a phone only the anti-aliasing of two text lines differs, because the taller
+  card above moves the scrolled prompt.
+
+**The stream path did not change.** In `StreamView.tsx`, `CoreDeviceStreamView.tsx`,
+`ToolView.tsx` and `SleepOverlay.tsx` only the lines that choose a word, a tone or a name differ.
+The mount effects and their dependencies are as before. The new `connectedClient` state is set in
+an effect of its own. `ToolView` lost its `loaded` state, which only chose the word Opening…. No
+route, router, service worker or server file changed.
+
+**Left for step 5b.**
+- p5-screen-shell: colour the header line and the tool chip by `data-tone` (`ui/AppBar.tsx:79`,
+  `style/kit/AppBar.css:107`, `views/ToolView.tsx:363`). The disconnected card of `SleepOverlay`
+  keeps its spinner for Offline and Stopped (`views/SleepOverlay.tsx:94`), and with the stream
+  service stopped it shows under the stopped card (`views/StreamView.tsx:177`); one state card
+  should replace both. Not done here by decision: the Android header's third line,
+  `StreamServiceStatus` (`views/StreamView.tsx:127`, `views/ToolView.tsx:352`), and the look of the
+  disabled Switch (`views/StreamView.tsx:133`, `views/CoreDeviceStreamView.tsx:181`).
+  `PhoneNotListed` titles the page with the serial (`views/DevicePage.tsx:96`); `phoneName`
+  would show a name the page saw earlier. The header says Offline for an unauthorized phone;
+  decide whether the state card says Unauthorized, as the list does.
+- p5-list-rows: show the stream service line only when it is not running
+  (`views/DeviceCard.tsx:269` and `:493`); an iPhone card shows both Session running and Stream
+  service: Running. Decide the final form of the session mark (`views/DeviceCard.tsx:480`,
+  `views/DeviceSwitcherSheet.tsx:231`). The unavailable hints and buttons still say device
+  (`views/DeviceCard.tsx:142-143`, `:282`, `:588`).
+- p5-unlock: `LockScreenNotice` takes its text from `lockNotice(locked)`
+  (`views/LockScreenNotice.tsx:28`). In the swipe case its Unlock button opens a sheet that can
+  only say to swipe. The notice does not know `keyguard.occluded`, so a not-locked phone whose
+  lock screen is covered by another screen also gets Swipe up to unlock.
+- p5-settings-sheet: the Phone group prints 'unknown' and Developer Mode 'on' or 'off' raw
+  (`views/ApplSettingsSheet.tsx:647-662`). Use `onOffFact` and `FACT.unknown`.
+- p5-actions-sheet: the iPhone Troubleshooting rows print raw values
+  (`views/ApplActionsSheet.tsx:476-494`), so the sheet says 'ready' where the card says Running.
+  Use `sessionFact`, `screenFact`, `lockFact` and `connectionStatus`.
+- p5-controls: take power, rotate and Type text from `capabilities()` in the controls definition;
+  today `views/FloatingToolbar.tsx:79` adopts the platform toolboxes
+  (`googDevice/toolbox/GoogToolBox.ts`, `applDevice/toolbox/ApplToolBox.ts`).
+- All 5b packages: move platform checks onto `capabilities()`, for example `PHONE_TABS`
+  (`views/DevicePage.tsx:44`), `VIEWS` (`state/pageTitle.ts:8`), the platform branches in
+  `DeviceCard` and the settings sheet openers.
+- Notifications page: the Bluetooth feed chip keeps its own Connected and Reconnecting, without
+  an ellipsis (`views/NotificationHistory.tsx:52-56`). It is another link than the page's
+  connection to a phone; align it if one word set is wanted.
+
+**Phone check for step 5a** (with step 5b, after the deploy). No step here adds a screen start.
+- Phones list: an iPhone with a running session says Ready (or Asleep or Locked) with Session
+  running beside it, never Streaming; its Details say Running, Yes, On. With the iPhone's screen
+  off the card says Asleep and shows the banner. Where the phone does not report its screen or
+  lock (the state probe off), the card says Ready and shows no banner.
+- Android screen: with the phone locked by PIN, the notice says Phone locked. With the screen
+  off, the card over the picture says Screen is asleep and Wake brings one wake and no second
+  stream.
+- Restart the container once with an Android screen open: header and card both say
+  Reconnecting…, then Connected, with one new stream. With an iPhone screen open the same
+  restart is one serve-web start, and the page says Reconnecting… in both places.
+- Unplug the Android phone with its screen open: the header and the tab title keep its name. The
+  header says Offline while the list lists it as offline, else Reconnecting…; the page keeps
+  trying as before and opens no extra stream.
+- Files: the chip goes Connecting…, Connected. In Shell, `exit` makes it Stopped.
