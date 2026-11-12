@@ -10,7 +10,17 @@ import Util from '../../Util';
 import { ChannelCode } from '../../../common/ChannelCode';
 import { ToolEntry } from '../../client/Tool';
 import { shellTool } from './deviceTools';
-import { applyControl, terminalSize } from './shellInput';
+import {
+    applyControl,
+    keyInput,
+    pasteInput,
+    screenText,
+    ShellKey,
+    storedTextSize,
+    storeTextSize,
+    terminalSize,
+    TEXT_SIZES,
+} from './shellInput';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 
 const TAG = '[ShellClient]';
@@ -51,7 +61,8 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         this.container = document.createElement('div');
         this.container.className = 'terminal-container';
         mount.appendChild(this.container);
-        this.term = new Terminal({ fontSize: 14, cursorBlink: true, scrollback: 3000 });
+        // The text size this browser keeps, so the first size the phone is told is the one shown.
+        this.term = new Terminal({ fontSize: storedTextSize(), cursorBlink: true, scrollback: 3000 });
         this.fitAddon = new FitAddon();
         this.term.loadAddon(this.fitAddon);
         this.term.open(this.container);
@@ -248,9 +259,50 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         }
     }
 
-    public sendInput(text: string): void {
-        this.send(text);
+    /** A key of the row under the terminal. Ctrl does not apply to it and stays as it is. */
+    public sendKey(key: ShellKey): void {
+        this.send(keyInput(key, this.term.modes.applicationCursorKeysMode));
         this.focus();
+    }
+
+    /**
+     * Text the row's Paste read from the browser clipboard, sent once as a paste: bracketed only
+     * while the program in the terminal asked for it. Ctrl does not apply to it.
+     */
+    public pasteText(text: string): void {
+        if (!text) {
+            return;
+        }
+        this.send(pasteInput(text, this.term.modes.bracketedPasteMode));
+        this.term.scrollToBottom();
+        this.focus();
+    }
+
+    /** The selected text, or with nothing selected the text the terminal shows. */
+    public textToCopy(): { text: string; selection: boolean } {
+        if (this.term.hasSelection()) {
+            return { text: this.term.getSelection(), selection: true };
+        }
+        const buffer = this.term.buffer.active;
+        const rows: { text: string; wrapped: boolean }[] = [];
+        for (let y = buffer.viewportY; y < buffer.viewportY + this.term.rows; y++) {
+            const line = buffer.getLine(y);
+            rows.push({ text: line?.translateToString() ?? '', wrapped: !!line?.isWrapped });
+        }
+        return { text: screenText(rows), selection: false };
+    }
+
+    /**
+     * Sets the text size and keeps it in this browser. The terminal is fitted again, which gives
+     * it other columns and rows, and the phone is told the new size once (`scheduleResize`).
+     */
+    public setTextSize(size: number): void {
+        if (this.destroyed || !TEXT_SIZES.includes(size) || size === this.term.options.fontSize) {
+            return;
+        }
+        this.term.options.fontSize = size;
+        storeTextSize(size);
+        this.updateTerminalSize();
     }
 
     private updateTerminalSize = (): void => {
