@@ -1,3 +1,4 @@
+import { getSettings } from '../../Settings';
 import Adb from '@dead50f7/adbkit/lib/adb';
 import Connection from '@dead50f7/adbkit/lib/adb/connection';
 import type Bluebird from 'bluebird';
@@ -48,16 +49,11 @@ export class AdbExtended extends Adb {
     static createClient(options: Options = {}): HostAdbClient {
         const opts: ClientOptions = {
             bin: options.bin || NO_ADB_BINARY,
-            host: options.host || process.env.ADB_HOST || '127.0.0.1',
+            host: options.host || getSettings().adbHost,
             port: options.port || 0,
         };
         if (!opts.port) {
-            const port = parseInt(process.env.ADB_PORT || '', 10);
-            if (!isNaN(port)) {
-                opts.port = port;
-            } else {
-                opts.port = 5037;
-            }
+            opts.port = getSettings().adbPort;
         }
         return new HostAdbClient(opts);
     }

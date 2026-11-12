@@ -56,6 +56,7 @@ require.cache[require.resolve('node-pty')] = {
 };
 
 require('ts-node').register({ transpileOnly: true });
+const { resetSettingsForTests } = require('../src/server/Settings');
 // Webpack treats these imports as assets. Node only needs the surrounding server classes.
 require.extensions['.jar'] = () => {};
 require.cache[require.resolve('../vendor/Genymobile/scrcpy/LICENSE')] = { exports: {} };
@@ -293,6 +294,7 @@ test('a shell that exits by itself still delivers its last output before closing
 
 async function mounted(directory) {
     process.env.WS_NOTIFICATION_DATA = directory;
+    resetSettingsForTests();
     const service = new NotificationService();
     const app = express();
     service.mount(app, '/');
@@ -537,6 +539,7 @@ test('once the server is stopping the iPhone session runner runs no command for 
     ];
     const previousPort = process.env.IOS_SERVE_WEB_BASE_PORT;
     process.env.IOS_SERVE_WEB_BASE_PORT = '18600';
+    resetSettingsForTests();
     let stopping = false;
     CoreDeviceRunner.setShutdownCheck(() => stopping);
     try {
@@ -566,5 +569,6 @@ test('once the server is stopping the iPhone session runner runs no command for 
         if (CoreDeviceRunner.hasInstance()) CoreDeviceRunner.getInstance().release();
         if (previousPort === undefined) delete process.env.IOS_SERVE_WEB_BASE_PORT;
         else process.env.IOS_SERVE_WEB_BASE_PORT = previousPort;
+        resetSettingsForTests();
     }
 });

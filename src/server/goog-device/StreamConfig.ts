@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { DEFAULT_SCRCPY_SERVER_CONFIG, ScrcpyServerConfig } from '../../common/Constants';
-import { EnvName } from '../EnvName';
+import { getSettings } from '../Settings';
 
 export type StreamConfigData = ScrcpyServerConfig;
 
@@ -84,23 +84,19 @@ export function validateStreamConfigPatch(value: unknown): Partial<StreamConfigD
  * config here and relaunching the server with a freshly-built argument string - see
  * Device.updateStreamConfig().
  *
- * File location mirrors Config.ts: a path from the environment is used as-is if absolute,
- * otherwise resolved against process.cwd(); with nothing set, it defaults to a file in cwd next
- * to where the process is started (Config.ts has no such default because it requires an explicit
- * path or falls back to in-memory defaults - this store always needs *some* file to persist to).
+ * An explicit path is kept. New saves otherwise go in the data directory; the former file in
+ * the working directory is read when no file exists there yet, so older settings are retained.
  */
 export class StreamConfig {
     private static instance?: StreamConfig;
     private readonly filePath: string;
+    private readonly legacyFilePath?: string;
     private store: StoreShape = Object.create(null);
 
     private constructor() {
-        const configured = process.env[EnvName.STREAM_CONFIG_PATH];
-        if (configured) {
-            this.filePath = path.isAbsolute(configured) ? configured : path.resolve(process.cwd(), configured);
-        } else {
-            this.filePath = path.resolve(process.cwd(), 'stream-config.json');
-        }
+        const settings = getSettings();
+        this.filePath = settings.streamConfigPath;
+        this.legacyFilePath = settings.legacyStreamConfigPath;
         this.load();
     }
 
@@ -113,8 +109,9 @@ export class StreamConfig {
 
     private load(): void {
         try {
-            if (fs.existsSync(this.filePath)) {
-                const raw = fs.readFileSync(this.filePath, 'utf-8');
+            const file = fs.existsSync(this.filePath) ? this.filePath : this.legacyFilePath;
+            if (file && fs.existsSync(file)) {
+                const raw = fs.readFileSync(file, 'utf-8');
                 const parsed = JSON.parse(raw);
                 if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
                     for (const [udid, config] of Object.entries(parsed)) {
@@ -133,6 +130,7 @@ export class StreamConfig {
 
     private persist(): void {
         try {
+            fs.mkdirSync(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
             fs.writeFileSync(this.filePath, JSON.stringify(this.store, null, 4));
         } catch (e: any) {
             // Best-effort: an unwritable path should not block applying the config in memory,

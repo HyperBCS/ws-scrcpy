@@ -1,3 +1,4 @@
+import { getSettings } from '../../Settings';
 import WS from 'ws';
 import { Mw, RequestParameters, SocketMessageEvent } from '../../mw/Mw';
 import { ACTION } from '../../../common/Action';
@@ -408,8 +409,7 @@ export class CoreDeviceProxy extends Mw {
 
     // Overridable so the tests do not have to sit out two real clipboard timeouts.
     private static clipboardTimeoutMs(fallback: number): number {
-        const override = Number(process.env.IOS_CLIPBOARD_TIMEOUT_MS);
-        return Number.isFinite(override) && override > 0 ? override : fallback;
+        return getSettings().iosClipboardTimeoutMs ?? fallback;
     }
 
     /** The wait for a restarted daemon, shortened with the timeouts so tests stay quick. */

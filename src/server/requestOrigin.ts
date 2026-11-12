@@ -1,3 +1,4 @@
+import { getSettings } from './Settings';
 import { IncomingMessage, ServerResponse } from 'http';
 import * as net from 'net';
 import * as os from 'os';
@@ -29,7 +30,8 @@ function parseHost(header: string | undefined): { name: string; host: string } |
 
 function publicUrl(): URL | undefined {
     try {
-        return process.env.WS_PUBLIC_URL ? new URL(process.env.WS_PUBLIC_URL) : undefined;
+        const value = getSettings().publicUrl;
+        return value ? new URL(value) : undefined;
     } catch {
         return undefined;
     }
@@ -57,7 +59,7 @@ function knownHostNames(): Set<string> {
         // box.example.ts.net. A single label is resolved on the local network only.
         add(publicName.split('.')[0]);
     }
-    (process.env[ALLOWED_HOSTS_ENV] || '').split(',').forEach(add);
+    getSettings().allowedHosts.forEach(add);
     const config = Config.getInstance();
     config.allowedHosts.forEach(add);
     config.servers.forEach((server) => {

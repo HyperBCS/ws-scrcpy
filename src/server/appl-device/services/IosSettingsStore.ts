@@ -1,3 +1,4 @@
+import { getSettings, takeIosSettingsKey } from '../../Settings';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -46,10 +47,9 @@ let envKey: string | undefined;
  * starts, and again on each read in case the variable was set later.
  */
 function takeEnvKey(): string | undefined {
-    const value = process.env[IOS_SETTINGS_KEY_ENV];
+    const value = takeIosSettingsKey();
     if (value !== undefined) {
         envKey = value;
-        delete process.env[IOS_SETTINGS_KEY_ENV];
     }
     return envKey;
 }
@@ -567,7 +567,7 @@ export class IosSettingsStore implements UnlockSettingsStore {
 
     /** `WS_IOS_SETTINGS_KEY_FILE`, else `ios-settings.key` in the data directory. */
     private keyFile(): string {
-        const elsewhere = process.env[IOS_SETTINGS_KEY_FILE_ENV];
+        const elsewhere = getSettings().iosSettingsKeyFile;
         return elsewhere ? path.resolve(elsewhere) : path.join(this.directory, IOS_SETTINGS_KEY_FILE);
     }
 
@@ -609,7 +609,7 @@ export class IosSettingsStore implements UnlockSettingsStore {
         }
         const file = this.keyFile();
         const key = crypto.randomBytes(KEY_BYTES);
-        if (!process.env[IOS_SETTINGS_KEY_FILE_ENV]) {
+        if (!getSettings().iosSettingsKeyFile) {
             this.ensureDirectory();
             this.writePrivate(file, key);
             return key;

@@ -1,3 +1,4 @@
+import { getSettings } from '../../Settings';
 import {
     isPasscodeLockout,
     UNLOCK_BY_HAND_ACTION,
@@ -94,7 +95,7 @@ export interface UnlockDriverDeps {
  * following the `IOS_CLIPBOARD_TIMEOUT_MS` pattern.
  */
 export function pause(name: string, defaultMs: number): Promise<void> {
-    const ms = process.env.IOS_UNLOCK_FAST === '1' ? FAST_PAUSE_MS : defaultMs;
+    const ms = getSettings().iosUnlockFast ? FAST_PAUSE_MS : defaultMs;
     PyMobileDevice.log(`unlock pause ${name} ${ms} ms`);
     return new Promise((resolve) => setTimeout(resolve, ms));
 }

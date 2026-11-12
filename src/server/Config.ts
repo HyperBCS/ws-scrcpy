@@ -1,14 +1,9 @@
-import * as process from 'process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Configuration, HostItem, HostsItem, ServerItem } from '../types/Configuration';
-import { EnvName } from './EnvName';
-import YAML from 'yaml';
+import { getSettings, readConfiguration, settingsReport, validateConfiguration } from './Settings';
 
 const DEFAULT_PORT = 8000;
-
-const YAML_RE = /^.+\.(yaml|yml)$/i;
-const JSON_RE = /^.+\.(json|js)$/i;
 
 export class Config {
     private static instance?: Config;
@@ -39,14 +34,15 @@ export class Config {
         defaultConfig.runApplTracker = true;
         defaultConfig.announceApplTracker = true;
         /// #endif
+        validateConfiguration(userConfig);
         const merged = Object.assign({}, defaultConfig, userConfig);
         merged.server = merged.server.map((item) => this.parseServerItem(item));
         return merged;
     }
     private static parseServerItem(config: Partial<ServerItem> = {}): ServerItem {
-        const secure = config.secure || false;
-        const port = config.port || (secure ? 443 : 80);
-        const options = config.options;
+        const secure = config.secure ?? false;
+        const port = config.port ?? (secure ? 443 : 80);
+        const options = config.options ? { ...config.options } : undefined;
         const redirectToSecure = config.redirectToSecure || false;
         if (secure && !options) {
             throw Error('Must provide "options" for secure server configuration');
@@ -78,21 +74,11 @@ export class Config {
     }
     public static getInstance(): Config {
         if (!this.instance) {
-            const configPath = process.env[EnvName.CONFIG_PATH];
-            let userConfig: Configuration;
-            if (!configPath) {
-                userConfig = {};
-            } else {
-                if (configPath.match(YAML_RE)) {
-                    userConfig = YAML.parse(this.readFile(configPath));
-                } else if (configPath.match(JSON_RE)) {
-                    userConfig = JSON.parse(this.readFile(configPath));
-                } else {
-                    throw Error(`Unknown file type: ${configPath}`);
-                }
-            }
+            const settings = getSettings();
+            const userConfig = readConfiguration(settings.configPath);
             const fullConfig = this.initConfig(userConfig);
             this.instance = new Config(fullConfig);
+            console.info('[Settings]', JSON.stringify(settingsReport(settings)));
         }
         return this.instance;
     }

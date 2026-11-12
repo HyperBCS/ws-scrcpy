@@ -23,6 +23,7 @@ process.env.IOS_USBMUX_LISTEN = '0';
 process.env.IOS_STATE_NOTIFICATIONS = '0';
 process.env.IOS_STATE_PROBE = '0';
 require('ts-node').register({ transpileOnly: true });
+const { resetSettingsForTests } = require('../src/server/Settings');
 // Webpack treats these imports as assets. Node only needs the surrounding server classes.
 require.extensions['.jar'] = () => {};
 require.cache[require.resolve('../vendor/Genymobile/scrcpy/LICENSE')] = { exports: {} };
@@ -1422,6 +1423,7 @@ test('usbmuxd listener: reports ready after Listen is accepted, then every attac
     const previous = { socket: process.env.IOS_USBMUXD_SOCKET, listen: process.env.IOS_USBMUX_LISTEN };
     process.env.IOS_USBMUXD_SOCKET = daemon.socketPath;
     delete process.env.IOS_USBMUX_LISTEN;
+    resetSettingsForTests();
     const listener = new UsbmuxListener();
     const events = [];
     listener.on('ready', (ready) => events.push(`ready ${ready}`));
@@ -1457,6 +1459,7 @@ test('usbmuxd listener: reports ready after Listen is accepted, then every attac
         if (previous.socket === undefined) delete process.env.IOS_USBMUXD_SOCKET;
         else process.env.IOS_USBMUXD_SOCKET = previous.socket;
         process.env.IOS_USBMUX_LISTEN = previous.listen;
+        resetSettingsForTests();
     }
 });
 
@@ -1468,9 +1471,11 @@ test('usbmuxd listener: a refused Listen or a missing socket leaves the tracker 
     const previous = { socket: process.env.IOS_USBMUXD_SOCKET, listen: process.env.IOS_USBMUX_LISTEN };
     assert.equal(UsbmuxListener.isEnabled(), false, 'IOS_USBMUX_LISTEN=0 turns it off');
     delete process.env.IOS_USBMUX_LISTEN;
+    resetSettingsForTests();
     try {
         for (const socketPath of [daemon.socketPath, path.join(temporary, 'no-usbmuxd-here')]) {
             process.env.IOS_USBMUXD_SOCKET = socketPath;
+            resetSettingsForTests();
             const listener = new UsbmuxListener();
             let changes = 0;
             listener.on('change', () => changes++);
@@ -1491,6 +1496,7 @@ test('usbmuxd listener: a refused Listen or a missing socket leaves the tracker 
         if (previous.socket === undefined) delete process.env.IOS_USBMUXD_SOCKET;
         else process.env.IOS_USBMUXD_SOCKET = previous.socket;
         process.env.IOS_USBMUX_LISTEN = previous.listen;
+        resetSettingsForTests();
     }
 });
 

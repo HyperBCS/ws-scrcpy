@@ -1,3 +1,4 @@
+import { getSettings } from '../../Settings';
 import { ChildProcess, spawn } from 'child_process';
 import * as http from 'http';
 import {
@@ -303,7 +304,7 @@ export class CoreDeviceAudioRelay {
      * stdin and must write the same PCM.
      */
     private startDecoder(): ChildProcess | undefined {
-        const override = process.env.IOS_AUDIO_DECODER;
+        const override = getSettings().iosAudioDecoder;
         const command = override || 'ffmpeg';
         const args = override
             ? []

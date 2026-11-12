@@ -21,6 +21,7 @@ process.env.IOS_STATE_PROBE = '0';
 process.env.IOS_USBMUX_LISTEN = '0';
 
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
+const { resetSettingsForTests } = require('../src/server/Settings');
 
 const {
     IosSettingsStore,
@@ -62,11 +63,13 @@ const withEnv = (env, run) => {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
     }
+    resetSettingsForTests();
     const restore = () => {
         for (const [key, value] of Object.entries(previous)) {
             if (value === undefined) delete process.env[key];
             else process.env[key] = value;
         }
+        resetSettingsForTests();
     };
     try {
         const result = run();

@@ -1,3 +1,4 @@
+import { childEnvironment } from '../../Settings';
 import WS from 'ws';
 import { Mw, RequestParameters, SocketMessageEvent } from '../../mw/Mw';
 import * as pty from 'node-pty';
@@ -74,7 +75,7 @@ export class RemoteShell extends Mw {
 
     public createTerminal({ udid, cols, rows }: XtermStartMessage): IPty {
         // The environment and working directory come from the server process, never the client.
-        const env: NodeJS.ProcessEnv = { ...process.env, COLORTERM: 'truecolor' };
+        const env: NodeJS.ProcessEnv = childEnvironment({ COLORTERM: 'truecolor' });
         const cwd = env.PWD || '/';
         const file = 'adb';
         const term = pty.spawn(file, ['-s', udid, 'shell'], {

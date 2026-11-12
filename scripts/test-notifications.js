@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const express = require('express');
 const webpush = require('web-push');
 require('ts-node').register({ transpileOnly: true });
+const { resetSettingsForTests } = require('../src/server/Settings');
 const { NotificationService, validateSubscription, shouldRelay } = require('../src/server/notifications/NotificationService');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-notifications-'));
 process.env.WS_NOTIFICATION_DATA = temporary;
@@ -30,12 +31,14 @@ const withPushEnv = async (values, run) => {
             if (value === undefined) delete process.env[key];
             else process.env[key] = value;
         }
+        resetSettingsForTests();
         await run();
     } finally {
         for (const [key, value] of Object.entries(previous)) {
             if (value === undefined) delete process.env[key];
             else process.env[key] = value;
         }
+        resetSettingsForTests();
     }
 };
 

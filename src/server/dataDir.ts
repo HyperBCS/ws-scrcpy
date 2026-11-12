@@ -1,10 +1,10 @@
-import path from 'path';
+import { getSettings } from './Settings';
 
 /**
- * The server's private data directory: `WS_NOTIFICATION_DATA`, or `./data` under the working
+ * The server's private data directory: `WS_DATA_DIR` (`WS_NOTIFICATION_DATA` remains an alias), or `./data` under the working
  * directory. Notifications, push subscriptions and the iPhone settings store all live here, so
- * one env var moves them together. Read on each call so tests can point it at a temp dir.
+ * one setting moves them together.
  */
 export function resolveDataDir(): string {
-    return path.resolve(process.env.WS_NOTIFICATION_DATA || path.join(process.cwd(), 'data'));
+    return getSettings().dataDir;
 }

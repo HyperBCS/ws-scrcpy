@@ -29,6 +29,7 @@ global.__PATHNAME__ = '/';
 // The client modules read the page address.
 global.location = new URL('https://app.example:8443/');
 
+const resetSettingsForTests = () => require('../src/server/Settings').resetSettingsForTests();
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A port that was free a moment ago. The config file needs a number before the server starts. */
@@ -540,6 +541,8 @@ test('the entrypoint hands the data volume to the node user and drops root befor
 
     const elsewhere = runEntrypoint(t, { uid: 0, args: ['true'], env: { WS_NOTIFICATION_DATA: '/srv/data' } });
     assert.deepEqual(elsewhere.calls.slice(0, 2), ['mkdir -p /srv/data', 'chown -R node:node /srv/data']);
+    const canonical = runEntrypoint(t, { uid: 0, args: ['true'], env: { WS_DATA_DIR: '/srv/new', WS_NOTIFICATION_DATA: '/srv/old' } });
+    assert.deepEqual(canonical.calls.slice(0, 2), ['mkdir -p /srv/new', 'chown -R node:node /srv/new']);
 
     // Started as another user (compose `user:`): nothing to change, and no attempt to.
     const unprivileged = runEntrypoint(t, { uid: 1000, args: ['echo', 'server', 'started'] });
@@ -583,11 +586,13 @@ function adbEnvironment(t, port) {
     process.env.PATH = `${bin}${path.delimiter}${previous.PATH}`;
     process.env.ADB_PORT = String(port);
     process.env.ADB_HOST = '127.0.0.1';
+    resetSettingsForTests();
     t.after(() => {
         for (const [key, original] of Object.entries(previous)) {
             if (original === undefined) delete process.env[key];
             else process.env[key] = original;
         }
+        resetSettingsForTests();
     });
     return { adbRuns: () => (fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim().split('\n') : []) };
 }
@@ -628,6 +633,7 @@ test('legacy forwards are removed over the adb protocol, not with the adb client
     const refusing = await fakeAdbServer(['PHONE localfilesystem:/refused localabstract:scrcpy']);
     t.after(refusing.close);
     process.env.ADB_PORT = String(refusing.port);
+    resetSettingsForTests();
     await assert.rejects(AdbUtils.removeFileSocketForwards('PHONE'), /cannot remove listener/);
     await pause(100);
     assert.deepEqual(adbRuns(), [], 'the adb client was never spawned');

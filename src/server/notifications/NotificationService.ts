@@ -1,3 +1,4 @@
+import { childEnvironment, getSettings } from '../Settings';
 import express, { Express, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -255,7 +256,7 @@ export class NotificationService implements Service {
         this.child.stdin.write(JSON.stringify(command) + '\n');
     }
     private startCollector(): void {
-        if (this.closed || process.env.WS_NOTIFICATIONS_COLLECTOR === '0') return;
+        if (this.closed || !getSettings().notificationsCollector) return;
         const candidates = [
             path.resolve(process.cwd(), 'python/notifications/collector.py'),
             path.resolve(process.cwd(), '../python/notifications/collector.py'),
@@ -265,7 +266,7 @@ export class NotificationService implements Service {
             this.collectorFault('Bluetooth collector is not installed');
             return;
         }
-        const child = spawn(process.env.WS_BLUETOOTH_PYTHON || '/usr/bin/python3', [script], { stdio: 'pipe' });
+        const child = spawn(getSettings().bluetoothPython, [script], { stdio: 'pipe', env: childEnvironment() });
         this.child = child;
         const started = Date.now();
         this.collectorStarted = started;
@@ -633,7 +634,7 @@ export class NotificationService implements Service {
                 storedBySource,
                 ...this.counts(),
                 retentionDays: 30,
-                publicUrl: process.env.WS_PUBLIC_URL || '',
+                publicUrl: getSettings().publicUrl || '',
             });
         });
         // The stored notifications, for one iPhone when `source` is given. `since` is the

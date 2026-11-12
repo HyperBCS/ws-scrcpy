@@ -1,3 +1,4 @@
+import { getSettings } from '../Settings';
 import webpush, { PushSubscription } from 'web-push';
 
 /**
@@ -157,7 +158,7 @@ export class PushDelivery {
                     if (this.closed || this.queues.get(id) !== queue) break;
                     const target = this.resolve(id, job.key, job.testPayload);
                     if (!target) break;
-                    const subject = process.env.WS_PUSH_SUBJECT || process.env.WS_PUBLIC_URL;
+                    const subject = getSettings().pushSubject;
                     if (!subject) {
                         this.delivery(id).failed++;
                         this.senderError = 'Set WS_PUBLIC_URL or WS_PUSH_SUBJECT to configure the push sender.';
