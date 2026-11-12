@@ -298,6 +298,8 @@ function SoundSection({
     // handshake report actual support instead of permanently greying out newer Android phones.
     const audioCapable = !audioUnavailableReason;
     const muted = !!audioSession && (audioSession.isMuted() || audioStatus?.state === 'blocked');
+    const showRetry =
+        (audioStatus?.state === 'error' || audioStatus?.state === 'disabled') && baseline.audio && !hasChanges;
     return (
         <>
             <SheetGroup kit title="Sound" class="settings-audio">
@@ -342,16 +344,16 @@ function SoundSection({
                             kit
                             title="Listen in this browser"
                             description={<span role="status">{audioStatus.message}</span>}
-                            layout="pair"
+                            // One button sits beside the text, as in the Actions sheet; two go
+                            // under it on a phone.
+                            layout={showRetry ? 'pair' : undefined}
                             attributes={{ 'data-audio-state': audioStatus.state }}
                         >
-                            {(audioStatus.state === 'error' || audioStatus.state === 'disabled') &&
-                                baseline.audio &&
-                                !hasChanges && (
-                                    <Button size="compact" disabled={locked} onClick={onRetry}>
-                                        Retry audio &amp; restart
-                                    </Button>
-                                )}
+                            {showRetry && (
+                                <Button size="compact" disabled={locked} onClick={onRetry}>
+                                    Retry audio &amp; restart
+                                </Button>
+                            )}
                             <Button
                                 size="compact"
                                 variant={muted ? 'primary' : 'secondary'}
