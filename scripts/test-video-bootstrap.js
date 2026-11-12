@@ -256,3 +256,55 @@ test('a viewer that goes away with a key down has it released on the device', as
     first.emit('close');
     assert.equal(writes.length, 7, 'a second close releases nothing twice');
 });
+
+test('a viewer that goes away with a finger down has it lifted on the device', async (t) => {
+    const { broadcast } = fixture(t);
+    const control = broadcast.getControlSocket();
+    Object.defineProperty(control, 'readyState', { value: 'open' });
+    const writes = [];
+    t.mock.method(control, 'write', (data) => {
+        writes.push(Buffer.from(data));
+        return true;
+    });
+    // scrcpy INJECT_TOUCH_EVENT: type 2, action, pointer id, x, y, width, height, pressure, buttons.
+    const touch = (action, pointer, x, y) => {
+        const message = Buffer.alloc(32);
+        message[0] = 2;
+        message[1] = action;
+        message.writeUInt32BE(pointer, 6);
+        message.writeUInt32BE(x, 10);
+        message.writeUInt32BE(y, 14);
+        message.writeUInt16BE(720, 18);
+        message.writeUInt16BE(1280, 20);
+        message.writeUInt16BE(action === UP ? 0 : 0xffff, 22);
+        message.writeUInt32BE(1, 24);
+        message.writeUInt32BE(1, 28);
+        return message;
+    };
+    const [DOWN, UP, MOVE] = [0, 1, 2];
+    const lifted = (message) => {
+        const up = Buffer.from(message);
+        up[1] = UP;
+        up.writeUInt16BE(0, 22);
+        return up;
+    };
+    const first = await viewer(t);
+    const second = await viewer(t);
+    const send = (socket, data) => socket.emit('message', { data, type: 'message' });
+
+    // A tap leaves nothing down; a drag and a pinch's second finger are down when it goes.
+    send(first, touch(DOWN, 0, 10, 10));
+    send(first, touch(UP, 0, 10, 10));
+    send(first, touch(DOWN, 0, 30, 30));
+    send(first, touch(MOVE, 0, 40, 40));
+    send(first, touch(DOWN, 1, 50, 50));
+    send(second, touch(DOWN, 0, 60, 60));
+    assert.equal(writes.length, 6, 'everything is passed on unchanged');
+
+    first.close();
+    assert.deepEqual(writes.slice(6), [lifted(touch(MOVE, 0, 40, 40)), lifted(touch(DOWN, 1, 50, 50))], 'each finger it held lifts where it was, once');
+    second.close();
+    assert.deepEqual(writes.slice(8), [lifted(touch(DOWN, 0, 60, 60))]);
+    first.emit('close');
+    assert.equal(writes.length, 9, 'a second close lifts nothing twice');
+});

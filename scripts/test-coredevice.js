@@ -1559,7 +1559,7 @@ test('stream frames split correctly on any chunk boundary', () => {
 });
 
 test('browser side: client points map onto the video, including letterbox bands and off-canvas drags', () => {
-    const { clientPointToVideo } = require('../src/app/applDevice/touchMath');
+    const { clientPointToVideo } = require('../src/app/input/pointMapper');
     const video = { width: 1296, height: 2816 };
     // Canvas exactly the video's aspect: 324x704 at (10, 20).
     const box = { left: 10, top: 20, width: 324, height: 704 };

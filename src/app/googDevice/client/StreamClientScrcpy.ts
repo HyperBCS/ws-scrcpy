@@ -225,6 +225,8 @@ export class StreamClientScrcpy
         this.uhidKeyboard?.reset();
         // Nor can a held control be released any more: the server lifts it on the device.
         this.controls?.forgetHeldButtons();
+        // The same for a touch or a drag: an up sent now would be replayed on the next connection.
+        this.touchHandler?.forgetActiveTouch();
         this.player?.pause();
     };
 

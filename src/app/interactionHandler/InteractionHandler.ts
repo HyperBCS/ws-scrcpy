@@ -8,21 +8,13 @@ import TouchPointPNG from '../../public/images/multitouch/touch_point.png';
 import CenterPointPNG from '../../public/images/multitouch/center_point.png';
 import Util from '../Util';
 import { BasePlayer } from '../player/BasePlayer';
-import { ClientBox, clientPointToVideo } from '../applDevice/touchMath';
+import { clientPointToVideo, elementBox, isInside, lastPixel, mirrorPoint, pictureCentre } from '../input/pointMapper';
 
 interface Touch {
     action: number;
     position: Position;
     buttons: number;
     invalid: boolean;
-}
-
-interface TouchOnClient {
-    client: {
-        width: number;
-        height: number;
-    };
-    touch: Touch;
 }
 
 interface CommonTouchAndMouse {
@@ -89,10 +81,37 @@ export abstract class InteractionHandler {
         this.ctx = this.tag.getContext('2d');
         InteractionHandler.loadImages();
         InteractionHandler.bindGlobalListeners(this);
+        // The end of a press does not come when the window loses focus or the page is hidden.
+        window.addEventListener('blur', this.onFocusLost);
+        window.addEventListener('pagehide', this.onFocusLost);
+        document.addEventListener('visibilitychange', this.onVisibilityChange);
     }
 
     protected abstract onInteraction(event: MouseEvent | TouchEvent): void;
     protected abstract onKey(event: KeyboardEvent): void;
+
+    /**
+     * Lets go of every touch and mouse button that is down on the phone, and tells the phone.
+     * The one release of both platforms: it runs on blur, on a hidden page and on unmount
+     * (`release`). Pointer up and pointer cancel end a touch in the handlers themselves.
+     */
+    public abstract releaseActiveTouch(): void;
+
+    /**
+     * Forgets every touch that is down without sending anything: after a disconnect a message
+     * cannot reach the phone, and the server lifts what this viewer held.
+     */
+    public abstract forgetActiveTouch(): void;
+
+    private onFocusLost = (): void => {
+        this.releaseActiveTouch();
+    };
+
+    private onVisibilityChange = (): void => {
+        if (document.visibilityState === 'hidden') {
+            this.releaseActiveTouch();
+        }
+    };
 
     protected static bindGlobalListeners(interactionHandler: InteractionHandler): void {
         interactionHandler.touchEventsNames.forEach((eventName) => {
@@ -203,12 +222,6 @@ export abstract class InteractionHandler {
         return pointerId;
     }
 
-    /** The touch layer's place on the page. The layer is sized to the picture. */
-    private touchBox(): ClientBox {
-        const rect = this.tag.getBoundingClientRect();
-        return { left: rect.left, top: rect.top, width: this.tag.clientWidth, height: this.tag.clientHeight };
-    }
-
     /**
      * A touch that starts on the bands beside the picture has the stream area as its target,
      * not the touch layer. It still belongs to the remote screen: an edge swipe begins there.
@@ -218,41 +231,27 @@ export abstract class InteractionHandler {
     }
 
     protected isInsidePicture(clientX: number, clientY: number): boolean {
-        const box = this.touchBox();
-        return (
-            clientX >= box.left &&
-            clientX <= box.left + box.width &&
-            clientY >= box.top &&
-            clientY <= box.top + box.height
-        );
+        return isInside(elementBox(this.tag), clientX, clientY);
     }
 
     /**
-     * Maps a page point to video pixels. A point beside the picture is clamped onto its nearest
-     * edge, so a finger that slides off the picture keeps its gesture and ends it at the edge.
+     * Maps a page point to an Android touch through the shared point mapper. A point beside the
+     * picture is clamped onto its nearest edge, so a finger that slides off the picture keeps its
+     * gesture and ends it at the edge.
      */
-    protected buildTouchOnClient(event: CommonTouchAndMouse, screenInfo: ScreenInfo): TouchOnClient | null {
+    protected buildTouchOnClient(event: CommonTouchAndMouse, screenInfo: ScreenInfo): Touch | null {
         const action = InteractionHandler.mapTypeToAction(event.type);
-        const { width, height } = screenInfo.videoSize;
-        const box = this.touchBox();
-        const point = clientPointToVideo(event.clientX, event.clientY, box, screenInfo.videoSize);
+        const { videoSize } = screenInfo;
+        const point = clientPointToVideo(event.clientX, event.clientY, elementBox(this.tag), videoSize);
         if (!point) {
             return null;
         }
-        // The last pixel is width - 1; scrcpy ignores a point outside the screen.
-        const x = Math.min(point.x, width - 1);
-        const y = Math.min(point.y, height - 1);
+        const { x, y } = lastPixel(point, videoSize);
         return {
-            client: {
-                width: box.width,
-                height: box.height,
-            },
-            touch: {
-                invalid: false,
-                action,
-                position: new Position(new Point(x, y), new Size(width, height)),
-                buttons: event.buttons,
-            },
+            invalid: false,
+            action,
+            position: new Position(new Point(x, y), new Size(videoSize.width, videoSize.height)),
+            buttons: event.buttons,
         };
     }
 
@@ -317,54 +316,57 @@ export abstract class InteractionHandler {
         ctrlKey: boolean,
         shiftKey: boolean,
     ): Touch[] | null {
-        const touchOnClient = this.buildTouchOnClient(e, screenInfo);
-        if (!touchOnClient) {
+        const touch = this.buildTouchOnClient(e, screenInfo);
+        if (!touch) {
             return null;
         }
-        const { client, touch } = touchOnClient;
         const result: Touch[] = [touch];
         if (!ctrlKey) {
-            this.multiTouchActive = false;
-            this.multiTouchCenter = undefined;
-            this.multiTouchShift = false;
-            this.clearCanvas();
+            this.resetPinch();
             return result;
         }
         const { position, action, buttons } = touch;
         const { point, screenSize } = position;
-        const { width, height } = screenSize;
-        const { x, y } = point;
-        if (!this.multiTouchActive) {
+        if (!this.multiTouchActive || !this.multiTouchCenter) {
             if (shiftKey) {
                 this.multiTouchCenter = point;
                 this.multiTouchShift = true;
             } else {
-                this.multiTouchCenter = new Point(client.width / 2, client.height / 2);
+                // In video pixels, like the point. It was in page pixels, which put the second
+                // finger off the screen whenever the picture was scaled to fit.
+                const centre = pictureCentre(screenSize);
+                this.multiTouchCenter = new Point(centre.x, centre.y);
             }
         }
         this.multiTouchActive = true;
-        let opposite: Point | undefined;
-        let invalid = false;
-        if (this.multiTouchShift && this.multiTouchCenter) {
-            const oppoX = 2 * this.multiTouchCenter.x - x;
-            const oppoY = 2 * this.multiTouchCenter.y - y;
-            opposite = new Point(oppoX, oppoY);
-            if (!(oppoX <= width && oppoX >= 0 && oppoY <= height && oppoY >= 0)) {
-                invalid = true;
-            }
-        } else {
-            opposite = new Point(client.width - x, client.height - y);
-            invalid = touch.invalid;
-        }
-        if (opposite) {
-            result.push({
-                invalid,
-                action,
-                buttons,
-                position: new Position(opposite, screenSize),
-            });
-        }
+        // Off the picture only when Shift put the centre elsewhere; that finger then stays put.
+        const opposite = mirrorPoint(point, this.multiTouchCenter, screenSize);
+        const partner = opposite ? lastPixel(opposite, screenSize) : point;
+        result.push({
+            invalid: !opposite,
+            action,
+            buttons,
+            position: new Position(new Point(partner.x, partner.y), screenSize),
+        });
         return result;
+    }
+
+    /** Ends the pinch preview and forgets its centre. */
+    protected resetPinch(): void {
+        this.multiTouchActive = false;
+        this.multiTouchCenter = undefined;
+        this.multiTouchShift = false;
+        this.clearCanvas();
+    }
+
+    /** Draws the centre of a pinch and its fingers on the touch layer, in video pixels. */
+    protected drawPinch(centre: Point, points: Point[]): void {
+        this.clearCanvas();
+        this.drawCenter(centre);
+        points.forEach((point) => {
+            this.drawPoint(point, InteractionHandler.touchPointRadius, InteractionHandler.touchPointImage);
+            this.drawLine(centre, point);
+        });
     }
 
     protected drawCircle(ctx: CanvasRenderingContext2D, point: Point, radius: number): void {
@@ -404,13 +406,6 @@ export abstract class InteractionHandler {
         this.updateDirty(topLeft, bottomRight);
     }
 
-    public drawPointer(point: Point): void {
-        this.drawPoint(point, InteractionHandler.touchPointRadius, InteractionHandler.touchPointImage);
-        if (this.multiTouchCenter) {
-            this.drawLine(this.multiTouchCenter, point);
-        }
-    }
-
     public drawCenter(point: Point): void {
         this.drawPoint(point, InteractionHandler.centerPointRadius, InteractionHandler.centerPointImage);
     }
@@ -432,7 +427,8 @@ export abstract class InteractionHandler {
     }
 
     public clearCanvas(): void {
-        const { clientWidth, clientHeight } = this.tag;
+        // The layer's bitmap is the size of the video, which is what the points are in.
+        const { width, height } = this.tag;
         const ctx = this.ctx;
         if (ctx && this.dirtyPlace.length) {
             const topLeft = this.dirtyPlace[0];
@@ -440,8 +436,8 @@ export abstract class InteractionHandler {
             this.dirtyPlace.length = 0;
             const x = Math.max(topLeft.x, 0);
             const y = Math.max(topLeft.y, 0);
-            const w = Math.min(clientWidth, bottomRight.x - x);
-            const h = Math.min(clientHeight, bottomRight.y - y);
+            const w = Math.min(width, bottomRight.x - x);
+            const h = Math.min(height, bottomRight.y - y);
             ctx.clearRect(x, y, w, h);
             ctx.strokeStyle = InteractionHandler.STROKE_STYLE;
         }
@@ -474,7 +470,7 @@ export abstract class InteractionHandler {
                     console.error(logPrefix, `Failed to format touch`, touch);
                     continue;
                 }
-                const { action, buttons, position } = event.touch;
+                const { action, buttons, position } = event;
                 let pressure = 1;
                 if (action === MotionEvent.ACTION_UP) {
                     pressure = 0;
@@ -522,13 +518,15 @@ export abstract class InteractionHandler {
         return messages;
     }
 
+    /** A mouse event as touches. With `pinch`, a second finger mirrors the pointer. */
     public buildTouchEvent(
         e: MiniMouseEvent,
         screenInfo: ScreenInfo,
         storage: Map<number, TouchControlMessage>,
+        pinch = e.ctrlKey,
     ): TouchControlMessage[] {
         const logPrefix = `${TAG}[buildTouchEvent]`;
-        const touches = this.getTouch(e, screenInfo, e.ctrlKey, e.shiftKey);
+        const touches = this.getTouch(e, screenInfo, pinch, e.shiftKey);
         if (!touches) {
             return [];
         }
@@ -552,13 +550,8 @@ export abstract class InteractionHandler {
                 }
             }
         });
-        if (this.multiTouchActive) {
-            if (this.multiTouchCenter) {
-                this.drawCenter(this.multiTouchCenter);
-            }
-            points.forEach((point) => {
-                this.drawPointer(point);
-            });
+        if (this.multiTouchActive && this.multiTouchCenter) {
+            this.drawPinch(this.multiTouchCenter, points);
         }
         const hasActionUp = messages.find((message) => {
             return message.action === MotionEvent.ACTION_UP;
@@ -573,8 +566,18 @@ export abstract class InteractionHandler {
         return messages;
     }
 
-    public release(): void {
+    /** Forgets the touches that began beside the picture and have not reached it. */
+    protected clearEdgeStarts(): void {
         this.edgeStarts.clear();
+    }
+
+    /** The view unmounts: what is down is let go and told to the phone, then nothing is heard. */
+    public release(): void {
+        this.releaseActiveTouch();
+        this.edgeStarts.clear();
+        window.removeEventListener('blur', this.onFocusLost);
+        window.removeEventListener('pagehide', this.onFocusLost);
+        document.removeEventListener('visibilitychange', this.onVisibilityChange);
         InteractionHandler.unbindListeners(this);
     }
 }
