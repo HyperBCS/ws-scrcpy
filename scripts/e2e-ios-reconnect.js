@@ -195,7 +195,7 @@ async function noPicture(browser, { width, height, colorScheme }) {
     const hardwareDisabled = (disabled) =>
         page.waitForFunction(
             (wanted) =>
-                ['Home', 'Lock', 'Volume up', 'Volume down', 'Mute device', 'Siri'].every(
+                ['Home', 'Lock', 'Volume up', 'Volume down', 'Mute phone', 'Siri'].every(
                     (title) => document.querySelector(`button.control-button[title="${title}"]`)?.disabled === wanted,
                 ),
             disabled,

@@ -87,10 +87,12 @@
     scrollbar-width: thin;
 }
 
-/* One column without gaps: the twelve controls of an Android phone fit a window 800px high,
-   and Listen, the eighth, stays in view in one of 600px. */
+/* One column without gaps: the twelve slots of the shared rows fit a window 800px high, and
+   Listen, the eighth, stays in view in one of 600px. A slot a phone has no control for keeps
+   the height of a control (`controls/ControlRail.tsx`). */
 .floating-toolbar.desktop .control-buttons-list.floating {
     grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: minmax(56px, auto);
     gap: 0;
 }
 
@@ -103,7 +105,9 @@
     line-height: 1.25;
 }
 
-/* The controls are the kit's icon buttons with a caption. This is only their grid. */
+/* The controls are the kit's icon buttons with a caption. This is only their grid; each control
+   is placed in its slot (`controls/ControlPanel.tsx`), and a slot a phone has no control for
+   stays empty. */
 .control-buttons-list.floating {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -8,7 +8,8 @@ import { WebCodecsHevcPlayer } from '../../player/WebCodecsHevcPlayer';
 import { MseHevcPlayer } from '../../player/MseHevcPlayer';
 import { BasePlayer } from '../../player/BasePlayer';
 import { CoreDeviceInteractionHandler } from '../CoreDeviceInteractionHandler';
-import { ApplToolBox } from '../toolbox/ApplToolBox';
+import { createIphoneControls } from '../../controls/iphoneControls';
+import type { PhoneControls } from '../../controls/definition';
 import { hidUsageForCode, keyboardReportsForText } from '../hidKeyboard';
 import { isLocalKeyboardTarget } from '../../googDevice/localKeyboardTarget';
 import { getVideoBounds } from '../../ControlBarLayout';
@@ -42,7 +43,7 @@ export interface CoreDevicePlayer extends BasePlayer {
 /**
  * The iOS counterpart of `StreamClientScrcpy`: owns the DOM under its container, the HEVC
  * player, the touch/keyboard handlers and the WebSocket to `CoreDeviceProxy`. The shared stream
- * chrome (`FloatingToolbar`, sheets) only needs `getControlButtonsElement()`, `getDeviceName()`
+ * chrome (`FloatingToolbar`, sheets) only needs `getControls()`, `getDeviceName()`
  * and `stop()` from it.
  */
 export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, CoreDeviceClientEvents> {
@@ -77,7 +78,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     private player?: CoreDevicePlayer;
     private decoderKind?: DecoderKind;
     private readonly forcedDecoder?: DecoderKind;
-    private readonly toolBox: ApplToolBox;
+    private readonly controls: PhoneControls;
     private readonly audioSession?: AudioSession;
     private touchHandler?: CoreDeviceInteractionHandler;
     private keyboardAttached = false;
@@ -116,7 +117,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.audioSession = createAudioSession(this.receiver);
         // The decoder is chosen when the server announces the codec (`onCodec`): WebCodecs where
         // the browser offers it for this stream, otherwise MSE.
-        this.toolBox = ApplToolBox.createToolBox(this, { audioSession: this.audioSession });
+        this.controls = createIphoneControls(this, this.audioSession);
         this.receiver.on('connected', this.onConnected);
         this.receiver.on('disconnected', this.onDisconnected);
         this.receiver.on('status', this.onStatus);
@@ -137,8 +138,8 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
 
     // ------------------------------------------------------------------ shared-chrome surface
 
-    public getControlButtonsElement(): HTMLElement | undefined {
-        return this.toolBox.getHolderElement();
+    public getControls(): PhoneControls {
+        return this.controls;
     }
 
     public getDeviceName(): string {
@@ -409,7 +410,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.player?.pause();
         this.touchHandler?.releaseActiveTouch();
         this.releaseAllKeys();
-        this.toolBox.forgetHeldButtons();
+        this.controls.forgetHeldButtons();
     };
 
     private onStatus = (status: { state: CoreDeviceSessionState; message?: string; retrying?: boolean }): void => {
@@ -560,7 +561,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
             clearTimeout(this.resizeTimer);
             this.resizeTimer = undefined;
         }
-        this.toolBox.release();
+        this.controls.release();
         this.audioSession?.stop();
         this.receiver.off('connected', this.onConnected);
         this.receiver.off('disconnected', this.onDisconnected);

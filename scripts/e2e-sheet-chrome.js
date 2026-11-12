@@ -553,7 +553,7 @@ async function listenControl(browser) {
         assert.equal(await listen.getAttribute('aria-label'), 'Listen');
         assert.equal(await listen.locator('.kit-icon-button-caption').count(), 1, 'one caption');
         const icon = (locator) => locator.locator('svg path').first().getAttribute('d');
-        for (const key of ['Mute device', 'Volume up', 'Volume down']) {
+        for (const key of ['Mute phone', 'Volume up', 'Volume down']) {
             assert.notEqual(await icon(listen), await icon(page.locator(`.control-buttons-list [title="${key}"]`)), `Listen is not drawn like ${key}`);
         }
         await shot(page, 'toolbar-listen-desktop-light');

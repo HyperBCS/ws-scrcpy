@@ -57,7 +57,7 @@ async function main() {
                 icons: button.querySelectorAll('svg').length, path: button.querySelector('svg.kit-icon > path')?.getAttribute('d'),
             }));
             assert.deepEqual(drawn, { kit: true, name: 'Listen', pressed: 'false', icons: 1, path: ICONS.headphones }, mode + ': Sound');
-            for (const key of ['Mute device', 'Volume up']) {
+            for (const key of ['Mute phone', 'Volume up']) {
                 assert.notEqual(await page.locator(`.control-buttons-list [title="${key}"] svg > path`).getAttribute('d'), drawn.path, `${mode}: Sound is not drawn like ${key}`);
             }
             const bounds = await sound.boundingBox();
