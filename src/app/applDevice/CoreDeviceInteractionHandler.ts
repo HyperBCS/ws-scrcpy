@@ -1,5 +1,5 @@
 import { InteractionEvents, InteractionHandler } from '../interactionHandler/InteractionHandler';
-import { clientPointToVideo } from './touchMath';
+import { clientPointToVideo, elementBox } from '../input/pointMapper';
 import { BasePlayer } from '../player/BasePlayer';
 import Size from '../Size';
 import { CoreDeviceContact } from '../../common/CoreDeviceProtocol';
@@ -58,13 +58,7 @@ export class CoreDeviceInteractionHandler extends InteractionHandler {
         if (!screenInfo) {
             return undefined;
         }
-        const rect = this.tag.getBoundingClientRect();
-        const point = clientPointToVideo(
-            clientX,
-            clientY,
-            { left: rect.left, top: rect.top, width: this.tag.clientWidth, height: this.tag.clientHeight },
-            screenInfo.videoSize,
-        );
+        const point = clientPointToVideo(clientX, clientY, elementBox(this.tag), screenInfo.videoSize);
         return point ? { ...point, size: screenInfo.videoSize } : undefined;
     }
 

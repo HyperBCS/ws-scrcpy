@@ -8,7 +8,7 @@ import TouchPointPNG from '../../public/images/multitouch/touch_point.png';
 import CenterPointPNG from '../../public/images/multitouch/center_point.png';
 import Util from '../Util';
 import { BasePlayer } from '../player/BasePlayer';
-import { ClientBox, clientPointToVideo } from '../applDevice/touchMath';
+import { clientPointToVideo, elementBox, isInside, lastPixel } from '../input/pointMapper';
 
 interface Touch {
     action: number;
@@ -203,12 +203,6 @@ export abstract class InteractionHandler {
         return pointerId;
     }
 
-    /** The touch layer's place on the page. The layer is sized to the picture. */
-    private touchBox(): ClientBox {
-        const rect = this.tag.getBoundingClientRect();
-        return { left: rect.left, top: rect.top, width: this.tag.clientWidth, height: this.tag.clientHeight };
-    }
-
     /**
      * A touch that starts on the bands beside the picture has the stream area as its target,
      * not the touch layer. It still belongs to the remote screen: an edge swipe begins there.
@@ -218,30 +212,23 @@ export abstract class InteractionHandler {
     }
 
     protected isInsidePicture(clientX: number, clientY: number): boolean {
-        const box = this.touchBox();
-        return (
-            clientX >= box.left &&
-            clientX <= box.left + box.width &&
-            clientY >= box.top &&
-            clientY <= box.top + box.height
-        );
+        return isInside(elementBox(this.tag), clientX, clientY);
     }
 
     /**
-     * Maps a page point to video pixels. A point beside the picture is clamped onto its nearest
-     * edge, so a finger that slides off the picture keeps its gesture and ends it at the edge.
+     * Maps a page point to an Android touch through the shared point mapper. A point beside the
+     * picture is clamped onto its nearest edge, so a finger that slides off the picture keeps its
+     * gesture and ends it at the edge.
      */
     protected buildTouchOnClient(event: CommonTouchAndMouse, screenInfo: ScreenInfo): TouchOnClient | null {
         const action = InteractionHandler.mapTypeToAction(event.type);
         const { width, height } = screenInfo.videoSize;
-        const box = this.touchBox();
+        const box = elementBox(this.tag);
         const point = clientPointToVideo(event.clientX, event.clientY, box, screenInfo.videoSize);
         if (!point) {
             return null;
         }
-        // The last pixel is width - 1; scrcpy ignores a point outside the screen.
-        const x = Math.min(point.x, width - 1);
-        const y = Math.min(point.y, height - 1);
+        const { x, y } = lastPixel(point, screenInfo.videoSize);
         return {
             client: {
                 width: box.width,
