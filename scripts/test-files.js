@@ -454,6 +454,9 @@ class FakeElement {
     getAttribute(name) {
         return this.attributes[name] ?? null;
     }
+    removeAttribute(name) {
+        delete this.attributes[name];
+    }
     toggleAttribute(name, force = !(name in this.attributes)) {
         if (force) this.attributes[name] = '';
         else delete this.attributes[name];
@@ -464,8 +467,13 @@ class FakeElement {
     blur() {
         if (global.document.activeElement === this) global.document.activeElement = null;
     }
+    setSelectionRange() {}
     getBoundingClientRect() {
         return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    }
+    /** A download is a link that is clicked. The links clicked are kept on the document. */
+    click() {
+        (global.document.clicked ||= []).push(this.href);
     }
     showModal() {
         this.open = true;
@@ -596,7 +604,7 @@ function fakePhone(Multiplexer) {
 }
 
 /** Opens Files for the phone in a tab that came from the list, as the phone's page does. */
-function openFiles(t, folder = '/sdcard') {
+function openFiles(t, folder = '/sdcard', makePhone = fakePhone) {
     const tab = fakeTab('#!');
     const body = new FakeElement('body');
     const frames = [];
@@ -632,7 +640,7 @@ function openFiles(t, folder = '/sdcard') {
     const router = require('../src/app/state/router');
     const { deviceRoute } = require('../src/app/state/routes');
     const { FileListingClient } = require('../src/app/googDevice/client/FileListingClient');
-    const phone = fakePhone(Multiplexer);
+    const phone = makePhone(Multiplexer);
     t.mock.method(ManagerClient.prototype, 'openNewConnection', function () {
         this.ws = phone.socket;
         return phone.socket;
@@ -956,4 +964,263 @@ test('uploads: a change of view on the same phone does not ask, leaving the phon
     dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value: 'confirm' }) });
     await settle();
     assert.equal(tab.location.hash, '#!', 'Stop and leave goes where the owner asked');
+});
+
+// ------------------------------------------------------------------ what goes over the wire
+//
+// A fixed script of actions, and every frame the explorer sends for it: the payload that opens
+// each channel, what it sends on it and whether it closes it. The phone answers the way the
+// server does (a LIST ends with a close and no DONE, a STAT with its reply and a close). The
+// frames were recorded from the explorer before its requests moved into FileService and must
+// not change. FILES_WIRE_RECORD=1 writes the record again.
+
+const WIRE_RECORD = path.join(__dirname, 'fixtures', 'files-wire.json');
+
+/** A phone that answers the server's way and records every frame the explorer sends. */
+function wirePhone(Multiplexer) {
+    const DIR = 0o40755;
+    const FILE = 0o100644;
+    const GIB5 = 5 * 1024 ** 3 + 7;
+    const folders = {
+        '/sdcard': [['DCIM', DIR], ['Music', DIR], ['Movies', DIR], ['Denied', DIR], ['notes.txt', FILE, 12], ['photo.png', FILE, 2048]],
+        '/sdcard/DCIM': [['Camera', DIR], ['big.mp4', FILE, GIB5 % 2 ** 32], ['notes.txt', FILE, 12]],
+        '/sdcard/Music': [['notes.txt', FILE, 12], ['photo.png', FILE, 2048]],
+        '/sdcard/Movies': [],
+        '/sdcard/Denied': [],
+    };
+    const large = { '/sdcard/DCIM': [['big.mp4', GIB5]] };
+    const describe = (data) => {
+        const buffer = Buffer.from(data);
+        if (buffer.length <= 48) return buffer.toString('hex');
+        const digest = require('node:crypto').createHash('sha256').update(buffer).digest('hex').slice(0, 16);
+        return `${buffer.subarray(0, 24).toString('hex')}... ${buffer.length} bytes, sha256 ${digest}`;
+    };
+    const record = { channels: [], rootClosed: 0 };
+    const pending = [];
+    let nextPushId = 40;
+    const stringOf = (payload) => payload.subarray(8, 8 + payload.readUInt32LE(4)).toString();
+    const socket = Object.assign(Object.create(Multiplexer.prototype), {
+        OPEN: 1,
+        readyState: 1,
+        close: () => record.rootClosed++,
+        createChannel(payload) {
+            const listeners = { message: new Set(), close: new Set() };
+            const seen = { open: describe(payload), sent: [], closed: null };
+            record.channels.push(seen);
+            const channel = {
+                OPEN: 1,
+                CLOSED: 3,
+                readyState: 1,
+                payload: Buffer.from(payload),
+                inbox: [],
+                addEventListener: (type, listener) => listeners[type]?.add(listener),
+                removeEventListener: (type, listener) => listeners[type]?.delete(listener),
+                send(data) {
+                    if (channel.readyState !== 1) throw Error('Socket is already in CLOSING or CLOSED state.');
+                    seen.sent.push(describe(data));
+                    channel.inbox.push(Buffer.from(data));
+                },
+                reply: (data) => channel.readyState === 1 && [...listeners.message].forEach((listener) => listener({ data })),
+                end(code = 1000, reason = '') {
+                    if (channel.readyState !== 1) return;
+                    channel.readyState = 3;
+                    [...listeners.close].forEach((listener) => listener({ code, reason }));
+                },
+                close(code = 1000, reason) {
+                    if (channel.readyState !== 1) return;
+                    seen.closed = `client ${code}${reason ? ` ${reason}` : ''}`;
+                    channel.end(code, reason);
+                },
+            };
+            pending.push(channel);
+            return channel;
+        },
+    });
+    const dent = (name, mode, size = 0) => {
+        const text = Buffer.from(name);
+        const data = Buffer.alloc(20 + text.length);
+        data.write('DENT');
+        data.writeUInt32LE(mode, 4);
+        data.writeUInt32LE(size, 8);
+        data.writeUInt32LE(1700000000, 12);
+        data.writeUInt32LE(text.length, 16);
+        text.copy(data, 20);
+        return data;
+    };
+    const fail = (message) => {
+        const text = Buffer.from(message);
+        const data = Buffer.alloc(8 + text.length);
+        data.write('FAIL');
+        data.writeUInt32LE(text.length, 4);
+        text.copy(data, 8);
+        return data;
+    };
+    const pushReply = (id, code) => {
+        const data = Buffer.alloc(3);
+        data.writeInt16BE(id);
+        data.writeInt8(code, 2);
+        return data;
+    };
+    const phone = {
+        socket,
+        record,
+        /** While set, upload chunks are not acknowledged. */
+        holdAppends: false,
+        /** Answers what each channel has asked for, the way the server would. */
+        serve() {
+            for (const channel of [...pending]) {
+                if (channel.readyState !== 1) {
+                    pending.splice(pending.indexOf(channel), 1);
+                    continue;
+                }
+                const command = channel.payload.subarray(0, 4).toString();
+                if (command === 'SEND') {
+                    while (channel.inbox.length && channel.readyState === 1) {
+                        const message = CommandControlMessage.pushFileCommandFromBuffer(channel.inbox[0]);
+                        if (message.state === FilePushState.APPEND && phone.holdAppends) break;
+                        channel.inbox.shift();
+                        if (message.state === FilePushState.NEW) {
+                            channel.pushId = nextPushId++;
+                            channel.reply(pushReply(channel.pushId, 1));
+                        } else if (message.state === FilePushState.START || message.state === FilePushState.APPEND) {
+                            channel.reply(pushReply(channel.pushId, 0));
+                        } else if (message.state === FilePushState.FINISH) {
+                            channel.reply(pushReply(channel.pushId, 0));
+                            channel.end();
+                        }
+                    }
+                    continue;
+                }
+                if (channel.answered) continue;
+                channel.answered = true;
+                const target = command === 'DELE' ? '' : stringOf(channel.payload);
+                if (command === 'STAT') {
+                    const name = path.posix.basename(target);
+                    const parent = folders[path.posix.dirname(target)] || [];
+                    const item = target in folders ? ['', DIR] : parent.find(([entry]) => entry === name);
+                    const data = Buffer.alloc(16);
+                    data.write('STAT');
+                    data.writeUInt32LE(item ? item[1] : 0, 4);
+                    data.writeUInt32LE(item?.[2] || 0, 8);
+                    data.writeUInt32LE(1700000000, 12);
+                    channel.reply(data);
+                    channel.end();
+                } else if (command === 'LIST') {
+                    if (target.endsWith('/Denied')) {
+                        channel.reply(fail('Permission denied'));
+                        channel.end();
+                        continue;
+                    }
+                    (folders[target] || []).forEach(([name, mode, size]) => channel.reply(dent(name, mode, size)));
+                    channel.end(0);
+                } else if (command === 'SIZE') {
+                    (large[target] || []).forEach(([name, size]) => {
+                        const text = Buffer.from(name);
+                        const data = Buffer.alloc(16 + text.length);
+                        data.write('SIZE');
+                        data.writeUInt32LE(size % 2 ** 32, 4);
+                        data.writeUInt32LE(Math.floor(size / 2 ** 32), 8);
+                        data.writeUInt32LE(text.length, 12);
+                        text.copy(data, 16);
+                        channel.reply(data);
+                    });
+                    channel.reply(Buffer.from('DONE'));
+                    channel.end();
+                } else if (command === 'MKDR' && target.endsWith('/Locked')) {
+                    channel.reply(fail('Read-only file system'));
+                    channel.end();
+                } else {
+                    channel.reply(Buffer.from('DONE'));
+                    channel.end();
+                }
+            }
+        },
+    };
+    return phone;
+}
+
+/** Runs the fixed script and returns what the explorer sent and what it told the owner. */
+async function wireScript(t) {
+    const files = openFiles(t, '/sdcard', wirePhone);
+    const { client, phone, dialog, toasts } = files;
+    // Until nothing is left to answer: uploads read their file and wait for acknowledgements.
+    const settle = async () => {
+        for (let quiet = 0, round = 0; quiet < 3 && round < 200; round++) {
+            const before = JSON.stringify(phone.record);
+            await files.settle();
+            quiet = JSON.stringify(phone.record) === before ? quiet + 1 : 0;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await files.settle();
+    };
+    const answer = async (value, text) => {
+        await settle();
+        assert.equal(dialog.open, true, `a question is open for ${value}`);
+        if (text !== undefined) dialog.querySelector('input[name="value"]').value = text;
+        dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value }) });
+        await settle();
+    };
+    await settle();
+    client.navigate('/sdcard/DCIM');
+    await settle();
+    client.runCommand('new-folder');
+    await answer('confirm', 'Trips');
+    client.runCommand('rename', ['big.mp4']);
+    await answer('confirm', 'clip.mp4');
+    client.runCommand('delete', ['Camera', 'big.mp4']);
+    await answer('confirm');
+    client.runCommand('copy', ['notes.txt']);
+    client.navigate('/sdcard/Music');
+    await settle();
+    client.runCommand('paste');
+    await answer('replace');
+    client.runCommand('cut', ['photo.png']);
+    client.navigate('/sdcard');
+    await settle();
+    client.runCommand('paste');
+    await answer('keep');
+    client.runCommand('new-folder');
+    await answer('confirm', 'Locked');
+    // A folder step that a second one overtakes, a folder that is not there, one that refuses.
+    client.navigate('/sdcard/Movies');
+    client.navigate('/sdcard/Music');
+    await settle();
+    const failures = [];
+    client.navigate('/sdcard/Nowhere');
+    await settle();
+    failures.push(client.listingError);
+    client.navigate('/sdcard/Denied');
+    await settle();
+    failures.push(client.listingError);
+    client.navigate('/sdcard');
+    await settle();
+    client.open('notes.txt');
+    // Uploads: a new name, a replaced name, and one that is cancelled while it sends.
+    client.filePushHandler.onFilesDrop([new File([Buffer.alloc(70000, 3)], 'clip.bin')]);
+    await settle();
+    client.filePushHandler.onFilesDrop([new File([Buffer.from('replaced')], 'notes.txt')]);
+    await answer('replace');
+    phone.holdAppends = true;
+    client.filePushHandler.onFilesDrop([new File([Buffer.alloc(200000, 5)], 'cancelled.bin')]);
+    await settle();
+    client.filePushHandler.cancelAll();
+    phone.holdAppends = false;
+    await settle();
+    client.stop();
+    return {
+        init: client.getChannelInitData().toString('hex'),
+        ...phone.record,
+        downloads: global.document.clicked || [],
+        failures,
+        toasts: toasts.map(({ message, error }) => `${error ? 'error' : 'result'}: ${message}`),
+    };
+}
+
+test('the explorer sends the same frames for a fixed script of actions as before FileService', async (t) => {
+    const seen = await wireScript(t);
+    assert.ok(seen.channels.length > 30, `the script ran (${seen.channels.length} channels)`);
+    if (process.env.FILES_WIRE_RECORD) {
+        fs.writeFileSync(WIRE_RECORD, `${JSON.stringify(seen, null, 1)}\n`);
+    }
+    assert.deepEqual(seen, JSON.parse(fs.readFileSync(WIRE_RECORD, 'utf8')));
 });
