@@ -51,10 +51,10 @@
     padding: 0 var(--space-4);
 }
 
-/* A select beside its text takes a fixed share of the row. Below 600px the row puts it under
-   the text at full width. */
+/* A select beside its text takes a fixed share of the row. Below 600px, and in the panel docked
+   beside a phone's screen (`kit/Sheet.css`), the row puts it under the text at full width. */
 @media (min-width: 600px) {
-    .settings .kit-row-pair[data-setting] > .kit-row-control {
+    .kit-sheet:not(.kit-sheet-docked) .settings .kit-row-pair[data-setting] > .kit-row-control {
         flex: 0 0 240px;
     }
     .settings .kit-row-pair[data-setting] > .kit-row-control > .kit-field-group {

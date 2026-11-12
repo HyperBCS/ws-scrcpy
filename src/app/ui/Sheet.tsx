@@ -364,7 +364,7 @@ export function Sheet({
     return (
         <dialog
             ref={rootRef}
-            class={`kit-sheet${modal ? '' : ' kit-sheet-modeless'}${host ? ' kit-sheet-docked' : ''}`}
+            class={`kit-sheet${modal ? '' : ' kit-sheet-modeless'}${present && host ? ' kit-sheet-docked' : ''}`}
             // Written out although a dialog has the role already: the keyboard capture of the
             // stream leaves keys alone when they are pressed inside `[role="dialog"]`.
             role="dialog"

@@ -281,4 +281,22 @@
     touch-action: auto;
     cursor: default;
 }
+
+/* The panel is as narrow as a phone, so its rows are laid out as on a phone (`kit/Group.css`
+   below 600px): two buttons, or a select, go under their text. */
+.kit-sheet-docked .kit-row-pair {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-8);
+    padding: var(--space-12) var(--space-16);
+}
+
+.kit-sheet-docked .kit-row-pair > .kit-row-control {
+    justify-content: stretch;
+}
+
+.kit-sheet-docked .kit-row-pair > .kit-row-control > * {
+    flex: 1 1 auto;
+    min-width: 0;
+}
 }

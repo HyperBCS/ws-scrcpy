@@ -308,6 +308,18 @@ async function sidePanel(test, name, title) {
     near(g.picture.height, before.picture.height, `${where}: the picture keeps its size`);
     railAttached(g, where, { columns: before.columns, free: g.sheet.panel.left });
     assert.equal(await under(page, g.picture), 'kit-sheet-backdrop', `${where}: a press on the picture reaches the backdrop`);
+    // The panel is as narrow as a phone and its rows are laid out as on a phone: a title is never
+    // squeezed beside its control, and two buttons or a select go under their text.
+    const rows = await dialog.locator('.kit-row').evaluateAll((list) =>
+        list.filter((row) => row.getClientRects().length).map((row) => {
+            const title = row.querySelector('.kit-row-title')?.getBoundingClientRect();
+            const control = row.querySelector(':scope > .kit-row-control')?.getBoundingClientRect();
+            return { name: row.querySelector('.kit-row-title')?.textContent, pair: row.classList.contains('kit-row-pair'), title: title?.width, below: !control || !title || control.top >= title.bottom - 1 };
+        }),
+    );
+    assert.ok(rows.length > 3, `${where}: the panel has rows`);
+    assert.deepEqual(rows.filter((row) => row.name && row.title < 120).map((row) => row.name), [], `${where}: no title is squeezed`);
+    assert.deepEqual(rows.filter((row) => row.pair && !row.below).map((row) => row.name), [], `${where}: a pair row puts its control under the text`);
     await shot(test, name.toLowerCase());
 
     // Focus stays inside the panel.
