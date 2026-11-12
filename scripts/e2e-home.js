@@ -293,7 +293,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         })));
         const pixel = await boxes('android:HOME-PIXEL-0001');
         const linked = await boxes(`ios:${LINKED}`);
-        assert.deepEqual(pixel.map((box) => box.name), ['Open screen', 'Files', 'Shell', 'Settings for Google Pixel 9 Pro']);
+        assert.deepEqual(pixel.map((box) => box.name), ['Open screen', 'Files on Google Pixel 9 Pro', 'Shell on Google Pixel 9 Pro', 'Settings for Google Pixel 9 Pro']);
         assert.deepEqual(linked.map((box) => box.text), ['Open screen', '2', '']);
         assert.deepEqual((await boxes('android:HOME-OFFLINE-0004')).map((box) => box.name), ['Open screen', 'Settings for Google Pixel 7'], `${label}: no Files or Shell for an offline phone`);
         for (const row of [pixel, linked]) {
@@ -315,7 +315,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         // Files and Shell are icon links of the Android card, to the phone's tool pages.
         const pixelCard = card(page, 'android:HOME-PIXEL-0001');
         for (const [name, view] of [['Files', 'files'], ['Shell', 'shell']]) {
-            const link = pixelCard.getByRole('link', { name, exact: true });
+            const link = pixelCard.getByRole('link', { name: `${name} on Google Pixel 9 Pro`, exact: true });
             assert.equal(await link.isVisible(), true, `${name} is on the card`);
             assert.match(await link.getAttribute('href'), new RegExp(`action=device&udid=HOME-PIXEL-0001&view=${view}`));
         }
@@ -766,7 +766,7 @@ async function reconnectingList(browser, { width, height, mobile, colorScheme })
         assert.equal(await list.getByRole('link', { name: 'Open screen', exact: true }).count(), 0);
         assert.equal(await target.getByRole('button', { name: 'Open screen', exact: true }).isDisabled(), true);
         for (const name of ['Files', 'Shell']) {
-            const link = target.getByRole('link', { name, exact: true });
+            const link = target.getByRole('link', { name: `${name} on Google More 15`, exact: true });
             assert.deepEqual([await link.getAttribute('aria-disabled'), await link.getAttribute('href')], ['true', null], `${label}: ${name} is off`);
         }
         assert.equal(await card(page, 'android:HOME-TAB-0002').getByRole('button', { name: 'Wake', exact: true }).isDisabled(), true, `${label}: Wake is off`);
@@ -967,7 +967,7 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         };
         const linkOf = async (name) => ({ key: 'android:HOME-EXTRA-15', href: await target.getByRole('link', { name, exact: true }).getAttribute('href') });
         const openLink = await linkOf('Open screen');
-        const filesLink = await linkOf('Files');
+        const filesLink = await linkOf('Files on Google Extra 15');
 
         // A screen and back, by the header button and by browser Back.
         await leave(target.getByRole('link', { name: 'Open screen', exact: true }));
@@ -982,7 +982,7 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await check('browser Back', openLink);
 
         // A tool and back.
-        await leave(target.getByRole('link', { name: 'Files', exact: true }));
+        await leave(target.getByRole('link', { name: 'Files on Google Extra 15', exact: true }));
         await page.locator('.tool-view').waitFor();
         await page.waitForFunction(() => document.title === 'Google Extra 15 · Files · ws-scrcpy');
         assert.equal(await page.locator('.kit-bar-name').textContent(), 'Google Extra 15');
@@ -1052,7 +1052,7 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         await page.getByRole('button', { name: 'Phones', exact: true }).click();
 
         // Shell: the same link, a tab title with the device name, and a switcher for this tool.
-        await card(page, 'android:HOME-PIXEL-0001').getByRole('link', { name: 'Shell', exact: true }).click();
+        await card(page, 'android:HOME-PIXEL-0001').getByRole('link', { name: 'Shell on Google Pixel 9 Pro', exact: true }).click();
         await page.locator('.tool-view').waitFor();
         await page.waitForFunction(() => document.title === 'Google Pixel 9 Pro · Shell · ws-scrcpy');
         assert.equal(await headerLink.getAttribute('href'), '#!action=notifications');

@@ -345,7 +345,7 @@ export function DeviceCard({ entry }: { entry: DeviceEntry }) {
                             key={tool.view}
                             href={link.href}
                             icon={TOOL_ICON[tool.view]}
-                            label={tool.title}
+                            label={`${tool.title} on ${name}`}
                             class={`device-tool device-tool-${tool.view}`}
                             disabled={stale}
                             onClick={link.onClick}
