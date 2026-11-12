@@ -6,6 +6,7 @@ import { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import { BaseDeviceTracker } from '../client/BaseDeviceTracker';
 import { DeviceState } from '../../common/DeviceState';
 import { capabilities } from './capabilities';
+import { rememberedPhone } from './routes';
 
 export type DeviceDescriptor = GoogDeviceDescriptor | ApplDeviceDescriptor;
 
@@ -75,10 +76,17 @@ export function deviceName(entry: DeviceEntry): string {
 
 /**
  * The name to show for a serial: the listed phone's name, else the last name this page saw for
- * it, else the serial. `entry` is the listed phone the caller resolved, if there is one.
+ * it, else the name this browser kept when it last showed the phone's page (a page reloaded
+ * after a server restart, before the list is back), else the serial. `entry` is the listed phone
+ * the caller resolved, if there is one.
  */
 export function phoneName(udid: string, entry?: DeviceEntry): string {
-    return (entry && reportedName(entry)) || lastNames.get(udid) || (entry ? deviceName(entry) : udid);
+    return (
+        (entry && reportedName(entry)) ||
+        lastNames.get(udid) ||
+        rememberedPhone(udid)?.name ||
+        (entry ? deviceName(entry) : udid)
+    );
 }
 
 function rememberNames(list: Iterable<DeviceEntry>): void {

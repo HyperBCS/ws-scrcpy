@@ -868,6 +868,35 @@ async function evenGrid(browser) {
     console.log('PASS the cards are an even grid at 1024, 1280, 1440 and 1920, and one column at 390');
 }
 
+/**
+ * A phone's page reloaded after a server restart, before the list is back: the tab title and
+ * the header give the name this browser kept for the phone, not its serial.
+ */
+async function rememberedName(browser) {
+    const udid = 'HOME-PIXEL-0001';
+    const test = await start(browser, { width: 390, height: 844, mobile: true });
+    const { page } = test;
+    try {
+        await card(page, `android:${udid}`).waitFor();
+        // What a visit of the phone's page leaves in this browser (`rememberPhone`).
+        await page.evaluate((serial) => {
+            localStorage.setItem('ws-scrcpy.phones', JSON.stringify({ [serial]: { platform: 'android', name: 'Google Pixel 9 Pro' } }));
+            location.hash = `#!action=device&udid=${serial}&view=shell`;
+        }, udid);
+        test.holdLists = true;
+        await page.reload();
+        await page.waitForFunction(() => document.title === 'Google Pixel 9 Pro · Shell · ws-scrcpy');
+        await page.locator('h1.kit-bar-name').getByText('Google Pixel 9 Pro', { exact: true }).waitFor();
+        assert.equal(test.heldLists.length > 0, true, 'the list has not come');
+        assert.equal(await page.getByText(udid).count(), 0, 'the serial is not shown');
+        assert.equal(test.streams, 0);
+        assert.deepEqual(test.errors, []);
+        console.log('PASS a reloaded phone page is named by the name this browser kept, before the list is back');
+    } finally {
+        await test.context.close();
+    }
+}
+
 async function narrowRow(browser) {
     const test = await start(browser, { width: 320, height: 568, mobile: true });
     const { page } = test;
@@ -1252,6 +1281,7 @@ async function main() {
         await wakeOnePerSleep(browser);
         await narrowRow(browser);
         await notchedList(browser);
+        await rememberedName(browser);
         for (const size of [sizes[0], sizes[3]]) {
             await returnToDevices(browser, size);
             await screenHeaders(browser, size);

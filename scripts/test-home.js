@@ -116,6 +116,10 @@ test('every page takes its tab title from one function with one format', () => {
     assert.equal(deviceName(list[0]), 'Google Pixel 9 Pro');
     // Before the device list arrives the serial stands in, in the same format.
     assert.equal(pageTitle(route({ action: 'shell', udid: 'PIXEL-1' }), []), 'PIXEL-1 · Shell · ws-scrcpy');
+    // Unless this browser kept the phone's name when it last showed its page: a page reloaded
+    // after a server restart is named before the list is back.
+    require('../src/app/state/routes').rememberPhone('KEPT-1', 'ios', 'Bench iPhone');
+    assert.equal(pageTitle(route({ action: 'device', udid: 'KEPT-1', view: 'screen' }), []), 'Bench iPhone · Screen · ws-scrcpy');
     // A serial shared by an Android device and an iPhone resolves by the page's platform.
     assert.equal(
         pageTitle(route({ action: 'stream', udid: 'SAME' }), [iphone('SAME'), android('SAME')]),
