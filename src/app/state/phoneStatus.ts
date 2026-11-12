@@ -287,7 +287,7 @@ export function listSummary(total: number, available: number, attention: number)
 
 /** The value of the Session fact of an iPhone. */
 export function sessionFact(session: ApplDeviceDescriptor['session']): string {
-    return SESSION[session ?? 'stopped'] ?? FACT.unknown;
+    return SESSION.fact[session ?? 'stopped'] ?? FACT.unknown;
 }
 
 /** The value of a yes or no fact, such as Paired. */

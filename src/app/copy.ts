@@ -71,11 +71,13 @@ export const SESSION = {
     running: 'Session running',
     /** The switcher's mark on the phone this page shows. */
     viewing: 'Viewing',
-    /** The value of the Session fact. */
-    starting: 'Starting',
-    ready: 'Running',
-    error: 'Failed',
-    stopped: 'Stopped',
+    /** The value of the Session fact, by the iPhone's session state. */
+    fact: {
+        starting: 'Starting',
+        ready: 'Running',
+        error: 'Failed',
+        stopped: 'Stopped',
+    },
 } as const;
 
 /** The status line of the list: "3 available · 1 needs attention". */
