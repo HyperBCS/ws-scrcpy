@@ -1,9 +1,9 @@
 /* eslint-disable */
 // node scripts/test-browser.js sheet-chrome      (E2E_OUT=/tmp/ws-scrcpy-sheet-chrome for screenshots)
 // Sheets, stream chrome and shared UI: moving between sheets, Escape with a confirm prompt open,
-// Type text beside the picture, Copy here over plain HTTP, the error boundary,
-// the Listen control, message placement, spacing, contrast and labels. Every socket is a fixture;
-// nothing reaches a phone.
+// Type text beside the picture, the other sheets keeping presses from the picture, Copy here
+// over plain HTTP, the error boundary, the Listen control, message placement, spacing, contrast
+// and labels. Every socket is a fixture; nothing reaches a phone.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -226,6 +226,69 @@ async function sheetToSheetFocus(browser) {
         await phone.context.close();
     }
     console.log('PASS a sheet opened from another sheet keeps focus, and focus returns to the toolbar when it closes');
+}
+
+// Every sheet of the screen but Type text stays modal (U-stream-5 changed Type text only): a
+// press or a wheel beside the sheet, on the picture, does not reach the phone, and the press
+// closes the sheet. With nothing open the same press reaches the phone.
+async function modalSheetsHoldPresses(browser) {
+    for (const mobile of [true, false]) {
+        const test = await android(browser, { mobile });
+        const label = mobile ? 'phone' : 'desktop';
+        try {
+            const { page } = test;
+            const press = (x, y) => (mobile ? page.touchscreen.tap(x, y) : page.mouse.click(x, y));
+            const scrolls = () => test.packets.filter((packet) => packet[0] === 3).length;
+            const picture = await page.locator('.touch-layer').boundingBox();
+            // Near the top corner of the picture, away from the controls button.
+            const point = { x: picture.x + 16, y: picture.y + 8 };
+            const sheets = [
+                ['Actions', () => toolbar(test, 'Actions')],
+                ['Stream settings', () => toolbar(test, 'Settings')],
+                ['Switch device', () => page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }).click()],
+            ];
+            for (const [name, open] of sheets) {
+                await open();
+                const shown = sheet(page, name);
+                await shown.waitFor();
+                await settleMotion(page);
+                // On the picture where the panel leaves it in sight; a tall bottom sheet covers
+                // the whole picture on a phone, so there the press is just above the panel.
+                const panel = await shown.locator('.kit-sheet-panel').boundingBox();
+                const spot = point.y < panel.y || point.x < panel.x || point.x > panel.x + panel.width ? point : { x: point.x, y: panel.y - 6 };
+                assert(spot.y > 0, `${label} ${name}: the panel leaves room to press beside it`);
+                const facts = await shown.evaluate(
+                    (dialog, { x, y }) => ({
+                        modal: dialog.matches(':modal'),
+                        backdrop: dialog.querySelectorAll(':scope > .kit-sheet-backdrop').length,
+                        under: document.elementFromPoint(x, y)?.className,
+                    }),
+                    spot,
+                );
+                assert.deepEqual(facts, { modal: true, backdrop: 1, under: 'kit-sheet-backdrop' }, `${label} ${name}: the sheet is modal and its backdrop lies beside it`);
+                const touches = test.touches();
+                const wheels = scrolls();
+                if (!mobile) {
+                    await page.mouse.move(spot.x, spot.y);
+                    await page.mouse.wheel(0, 120);
+                }
+                await press(spot.x, spot.y);
+                await shown.waitFor({ state: 'hidden' });
+                await settleMotion(page);
+                await pause(150);
+                assert.equal(test.touches(), touches, `${label} ${name}: a press beside the sheet does not reach the phone`);
+                assert.equal(scrolls(), wheels, `${label} ${name}: a wheel beside the sheet does not reach the phone`);
+            }
+            const before = test.touches();
+            await press(point.x, point.y);
+            for (let tries = 0; tries < 50 && test.touches() < before + 2; tries++) await pause(20);
+            assert(test.touches() >= before + 2, `${label}: positive control: with no sheet open the press reaches the phone`);
+            assert.deepEqual(test.errors, []);
+        } finally {
+            await test.context.close();
+        }
+    }
+    console.log('PASS every sheet of the screen but Type text is modal: a press or a wheel beside it does not reach the phone');
 }
 
 // P1-carry-escape
@@ -816,7 +879,7 @@ async function main() {
     const browser = await chromium.launch({ headless: true });
     try {
         const scenarios = [
-            sheetToSheetFocus, escapeCancelsPrompt, typeTextKeepsPicture, copyHereOverHttp, errorBoundary, listenControl,
+            sheetToSheetFocus, escapeCancelsPrompt, typeTextKeepsPicture, modalSheetsHoldPresses, copyHereOverHttp, errorBoundary, listenControl,
             desktopDialogTop, statusInItsGroup, applyBarAndReadability, namesAndLabels, statusContrast,
         ];
         const selected = process.env.SCENARIO ? scenarios.filter((run) => run.name === process.env.SCENARIO) : scenarios;
