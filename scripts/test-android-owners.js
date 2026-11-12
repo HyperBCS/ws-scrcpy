@@ -543,3 +543,29 @@ test('info retries stop after seven retries', async (t) => {
     assert.equal(f.calls.filter((command) => command.startsWith('ip ')).length, 8);
     assert.equal(f.poller.due.info, undefined);
 });
+
+test('a late old lease cannot remove a forward the successor already reused', async (t) => {
+    const rows = [], removed = [];
+    t.mock.method(AdbExtended, 'createClient', () => ({
+        listForwards: async () => rows.slice(),
+        forwardNoRebind: async (serial, local, remote) => rows.push({ serial, local, remote }),
+        killForward: async (_serial, local) => {
+            removed.push(local);
+            rows.splice(rows.findIndex((row) => row.local === local), 1);
+        },
+    }));
+    t.mock.method(require('portfinder'), 'getPortPromise', async () => 19002);
+    const old = await AdbUtils.acquireForward('overlap-phone', 'localabstract:fixture');
+    const current = await AdbUtils.acquireForward('overlap-phone', 'localabstract:fixture');
+    assert.equal(old.port, current.port);
+    await old.release();
+    assert.deepEqual(removed, [], 'the successor still owns this forward');
+    assert.equal(rows.length, 1);
+    await current.release();
+    assert.deepEqual(removed, ['tcp:19002']);
+    const fresh = await AdbUtils.acquireForward('overlap-phone', 'localabstract:fixture');
+    await old.release(); await current.release();
+    assert.equal(rows.length, 1, 'repeated old cleanup cannot remove the fresh identity');
+    await fresh.release();
+    assert.equal(rows.length, 0);
+});

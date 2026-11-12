@@ -30,7 +30,13 @@ const MAX_REMOVE_COMMAND_BYTES = 32 * 1024;
 // How many ports to try when adb reports that one is already forwarded or bound.
 const FORWARD_ATTEMPTS = 10;
 
+interface OwnedForward {
+    users: number;
+    remove(): Promise<void>;
+}
+
 export class AdbUtils {
+    private static ownedForwards = new Map<string, OwnedForward>();
     private static forwardQueue: Promise<void> = Promise.resolve();
 
     private static async formatStatsMin(entry: Entry): Promise<FileStats> {
@@ -159,7 +165,14 @@ export class AdbUtils {
         });
         if (forward) {
             const { local } = forward;
-            return { port: parseInt(local.split('tcp:')[1], 10), release: async () => undefined };
+            const port = parseInt(local.split('tcp:')[1], 10);
+            const key = JSON.stringify([serial, local, remote]);
+            const owned = AdbUtils.ownedForwards.get(key);
+            if (owned) {
+                owned.users++;
+                return AdbUtils.forwardLease(key, owned, port);
+            }
+            return { port, release: async () => undefined };
         }
         // adb lists the forwards of every device here. A port another phone holds is not free,
         // even where this process cannot see adb's listener (adb on another host).
@@ -185,21 +198,10 @@ export class AdbUtils {
                     await client.killForward(serial, `tcp:${port}`);
                     signal.throwIfAborted();
                 }
-                let released = false;
-                return {
-                    port,
-                    release: () => {
-                        if (released) return Promise.resolve();
-                        released = true;
-                        // Queue removal too: a replacement must not reuse a port whose removal is pending.
-                        const removal = AdbUtils.forwardQueue.then(() => client.killForward(serial, `tcp:${port}`));
-                        AdbUtils.forwardQueue = removal.then(
-                            () => undefined,
-                            () => undefined,
-                        );
-                        return removal;
-                    },
-                };
+                const key = JSON.stringify([serial, `tcp:${port}`, remote]);
+                const owned: OwnedForward = { users: 1, remove: () => client.killForward(serial, `tcp:${port}`) };
+                AdbUtils.ownedForwards.set(key, owned);
+                return AdbUtils.forwardLease(key, owned, port);
             } catch (error) {
                 failure = error as Error;
                 if (!/rebind|bind|in use/i.test(failure.message)) {
@@ -208,6 +210,29 @@ export class AdbUtils {
             }
         }
         throw failure ?? Error('No free port for the device connection.');
+    }
+
+    private static forwardLease(key: string, owned: OwnedForward, port: number): ForwardLease {
+        let released = false;
+        return {
+            port,
+            release: () => {
+                if (released) return Promise.resolve();
+                released = true;
+                // Serialize removal with acquisition, and retain a forward a successor already reused.
+                const removal = AdbUtils.forwardQueue.then(async () => {
+                    if (AdbUtils.ownedForwards.get(key) !== owned) return;
+                    if (--owned.users > 0) return;
+                    AdbUtils.ownedForwards.delete(key);
+                    await owned.remove();
+                });
+                AdbUtils.forwardQueue = removal.then(
+                    () => undefined,
+                    () => undefined,
+                );
+                return removal;
+            },
+        };
     }
 
     /** Remove legacy filesystem forwards left by an earlier server version. */
