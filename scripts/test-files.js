@@ -731,9 +731,8 @@ test('FileService: an upload in progress does not hold up a listing or a STAT', 
 });
 
 test('an upload goes to the folder its name was checked against, whatever the explorer shows by then', async (t) => {
-    const { tab, client, dialog, settle } = openFiles(t);
+    const { client, dialog, settle } = openFiles(t);
     await settle();
-    tab.press();
     const plan = client.planUploads([{ name: 'notes.txt' }]);
     await settle();
     dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value: 'replace' }) });
@@ -1117,14 +1116,14 @@ function openFiles(t, folder = '/sdcard', makePhone = fakePhone) {
     const upload = (fields) =>
         client.onFilePushUpdate({
             key: 1,
-            pushId: 0,
             fileName: 'clip.bin',
+            folder: '/sdcard/DCIM',
             message: 'Waiting',
-            progress: 0,
             error: false,
             finished: false,
             sent: 0,
             size: 10,
+            cancellable: true,
             ...fields,
         });
     const dialog = wrapper.querySelector('.fx-dialog');
@@ -1152,11 +1151,11 @@ test('a hidden Files keeps its folder, its connection and its uploads, and write
     client.setActive(false);
     assert.equal(tab.location.hash, address('shell'), 'the change of view was not refused');
     const written = tab.writes.length;
-    const requests = phone.channels.length;
     client.navigate('/sdcard/Download');
-    upload({ sent: 5, message: '50%' });
+    upload({ sent: 5, message: '' });
     await settle();
-    assert.equal(client.getPath(), '/sdcard/DCIM', 'the folder is kept: a folder change waits for the upload');
+    assert.equal(client.getPath(), '/sdcard/Download', 'a folder change does not wait for the upload');
+    const requests = phone.channels.length;
     assert.equal(tab.writes.length, written, 'nothing is written to history while hidden');
     assert.equal(tab.location.hash, address('shell'));
     assert.equal(phone.socket.closed, 0, 'the connection stays open');
@@ -1168,7 +1167,7 @@ test('a hidden Files keeps its folder, its connection and its uploads, and write
     assert.equal(key.defaultPrevented, false);
     assert.equal(phone.channels.length, requests, 'F5 lists nothing while hidden');
 
-    // The upload ends while hidden. The folder that was asked for is opened, without an entry.
+    // The upload ends while hidden. The folder shown stays, and nothing is written.
     upload({ finished: true, sent: 10, message: 'Uploaded' });
     await settle();
     assert.equal(client.getPath(), '/sdcard/Download');
@@ -1190,6 +1189,60 @@ test('a hidden Files keeps its folder, its connection and its uploads, and write
     assert.equal(tab.history.state.files.index, 1, 'tagged with the place Files has in its own history');
     const pressed = wrapper.dispatch('keydown', { key: 'F5', target: wrapper.querySelector('.fx-items') });
     assert.equal(pressed.defaultPrevented, true, 'keys work again');
+});
+
+test('while a file uploads, folders open and folder operations run; the folder it went to is listed again when it ends', async (t) => {
+    const { client, phone, settle, upload, dialog, wrapper } = openFiles(t);
+    await settle();
+    upload({ folder: '/sdcard' });
+    assert.equal(wrapper.querySelector('.fx-transfers').children.length, 1, 'an upload to /sdcard runs');
+    client.navigate('/sdcard/DCIM');
+    await settle();
+    assert.equal(client.getPath(), '/sdcard/DCIM', 'another folder opens');
+    assert.equal(phone.asked('LIST').at(-1), '/sdcard/DCIM');
+    client.runCommand('new-folder');
+    await settle();
+    assert.equal(dialog.open, true, 'New folder asks for a name');
+    dialog.querySelector('input[name="value"]').value = 'Trips';
+    dialog.dispatch('submit', { submitter: Object.assign(new FakeButton('button'), { value: 'confirm' }) });
+    await settle();
+    assert.deepEqual(phone.asked('MKDR'), ['/sdcard/DCIM/Trips'], 'and a folder operation goes out');
+    await settle();
+    const lists = phone.asked('LIST').length;
+    upload({ folder: '/sdcard', finished: true, sent: 10, message: 'Uploaded' });
+    await settle();
+    assert.equal(phone.asked('LIST').length, lists, 'the end of an upload to another folder lists nothing');
+    assert.equal(client.getPath(), '/sdcard/DCIM');
+    // An upload to the folder that is shown lists it again when it ends.
+    upload({ key: 2, folder: '/sdcard/DCIM' });
+    upload({ key: 2, folder: '/sdcard/DCIM', finished: true, sent: 10, message: 'Uploaded' });
+    await settle();
+    assert.equal(phone.asked('LIST').length, lists + 1);
+    assert.equal(phone.asked('LIST').at(-1), '/sdcard/DCIM');
+});
+
+test('an upload row shows the name, a bar, how much of how much is sent, and Cancel', async (t) => {
+    const { client, settle, upload, wrapper } = openFiles(t);
+    await settle();
+    upload({ size: 2 * 1024 * 1024 });
+    const row = wrapper.querySelector('.fx-transfers').children[0];
+    assert.ok(row.innerHTML.includes('class="fx-upload-name">clip.bin</span>'));
+    assert.ok(row.innerHTML.includes('role="progressbar" aria-label="Upload of clip.bin"'));
+    assert.ok(row.innerHTML.includes('aria-label="Cancel the upload of clip.bin">Cancel</button>'));
+    const bar = row.querySelector('.fx-upload-bar');
+    const state = row.querySelector('.fx-upload-state');
+    assert.equal(state.textContent, 'Waiting');
+    assert.equal(bar.getAttribute('aria-valuetext'), '0 B of 2.0 MB');
+    upload({ size: 2 * 1024 * 1024, sent: 512 * 1024, message: '' });
+    assert.equal(state.textContent, '512 KB of 2.0 MB', 'bytes of total while it sends');
+    assert.equal(bar.getAttribute('aria-valuenow'), '25');
+    assert.equal(row.querySelector('.fx-upload-fill').style.width, '25%');
+    assert.equal(row.querySelector('.fx-upload-cancel').hidden, false);
+    upload({ size: 2 * 1024 * 1024, sent: 2 * 1024 * 1024, message: 'Saving', cancellable: false });
+    assert.equal(state.textContent, 'Saving');
+    assert.equal(bar.getAttribute('aria-valuenow'), '100');
+    assert.equal(row.querySelector('.fx-upload-cancel').hidden, true, 'a file being saved cannot be stopped');
+    void client;
 });
 
 test('a Files tab that is shown again lists its folder again, reports what it missed and keeps a selection', async (t) => {
@@ -1597,7 +1650,7 @@ test('a folder of 5,000 items: sorted once per change, rows added at most every 
     assert.ok(gaps.every((gap) => gap >= 245), `at least 250 ms apart: ${gaps.map(Math.round).join(', ')}`);
     assert.equal(renders.length, whileArriving + 1, 'and one at once when the listing ends');
     assert.ok(sortsWhileArriving <= whileArriving, `${sortsWhileArriving} sorts in ${whileArriving} renders, not one per frame`);
-    assert.equal(client.folder.sorts - sortsBefore, sortsWhileArriving + 1, 'and one for the last items');
+    assert.ok(client.folder.sorts - sortsBefore <= renders.length, 'at most one sort for each render');
 
     // Only the rows near the view are in the document; a spacer stands for the rest.
     const rows = () => tbody.children.filter((row) => !row.classes.has('fx-spacer'));

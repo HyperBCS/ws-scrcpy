@@ -786,6 +786,25 @@ async function uploads(browser, layout, name, scheme) {
     assert.equal(await rows.filter({ hasText: 'Waiting' }).count(), 4, 'the other four wait their turn');
     assert.equal(await summary.innerText(), 'Uploading 1 of 6, 0%');
     assert.equal(traffic.starts.length, 2, 'a waiting upload has not started');
+    // Each upload shows its name, a bar, how much of how much is sent, and Cancel.
+    const first = rowFor('clip-1.bin');
+    const bar = first.getByRole('progressbar', { name: 'Upload of clip-1.bin', exact: true });
+    assert.equal(await bar.getAttribute('aria-valuenow'), '0');
+    assert.equal(await bar.getAttribute('aria-valuetext'), '0 B of 1.0 MB');
+    assert.equal(await first.getByRole('button', { name: 'Cancel the upload of clip-1.bin', exact: true }).isVisible(), true);
+    // The phone takes a few chunks: the bar and the bytes move.
+    traffic.heldAppends.splice(0, 6).forEach((release) => release());
+    const moving = rows.filter({ has: page.locator('.fx-upload-state', { hasText: /^[\d.]+ KB of 1\.0 MB$/ }) }).first();
+    await moving.waitFor();
+    const state = await moving.locator('.fx-upload-state').innerText();
+    const percent = Number(await moving.getByRole('progressbar').getAttribute('aria-valuenow'));
+    assert(percent > 0 && percent < 100, `${state}: ${percent}%`);
+    assert.equal(await moving.getByRole('progressbar').getAttribute('aria-valuetext'), state);
+    const filled = await moving.locator('.fx-upload-bar').evaluate((track) => {
+        const fill = track.firstElementChild.getBoundingClientRect();
+        return fill.width / track.getBoundingClientRect().width;
+    });
+    assert(Math.abs(filled - percent / 100) < 0.02, `the bar is ${Math.round(filled * 100)}% full at ${percent}%`);
     await settleMotion(page);
     await page.screenshot({ path: path.join(OUT, `flows-uploads-${name}.png`) });
 
@@ -796,10 +815,36 @@ async function uploads(browser, layout, name, scheme) {
     await rowFor('clip-1.bin').waitFor({ state: 'detached' });
     await until(page, () => traffic.cancels.includes(ROOT + '/clip-1.bin'), 'the CANCEL');
     await until(page, () => traffic.sending.size === 2, 'the next upload to take the free place');
+    // The owner browses meanwhile: another folder opens, a folder operation runs there, and the
+    // uploads go on to the folder they started in.
+    await open(page, 'archive');
+    await crumb(page, 'archive');
+    await ready(page);
+    assert.equal(await rows.count(), 4, 'the uploads go on behind the other folder');
+    const newFolder = page.locator('.fx-commands').getByRole('button', { name: 'New folder', exact: true });
+    if (await newFolder.isVisible()) await pressAtRest(page, newFolder);
+    else {
+        await page.getByRole('button', { name: 'Actions', exact: true }).click();
+        await page.getByRole('menuitem', { name: 'New folder', exact: true }).click();
+    }
+    await page.locator('.fx-dialog input[name="value"]').fill('during-upload');
+    await page.locator('.fx-dialog[open]').getByRole('button', { name: 'Create', exact: true }).click();
+    await row(page, 'during-upload').waitFor();
+    assert.deepEqual(traffic.operations.at(-1), { cmd: 'MKDR', paths: [ROOT + '/archive/during-upload'] });
+    await ready(page);
     traffic.holdAppends = false;
     traffic.releaseAppends();
     await toastText.filter({ hasText: 'Uploaded 4 files. Cancelled 2 uploads.' }).waitFor();
     await ready(page);
+    await crumb(page, 'archive');
+    assert.equal([...files.keys()].some((file) => file.startsWith(ROOT + '/archive/clip-')), false, 'nothing went to the folder shown');
+    assert.equal(await row(page, 'clip-2.bin').count(), 0);
+    // Back to the folder the files went to, by the browser's Back: the history of the page is
+    // as it was, for the questions below.
+    await page.goBack();
+    await crumb(page, 'tmp');
+    await ready(page);
+    await row(page, 'clip-2.bin').waitFor();
     assert.equal(traffic.mostSending, 2, 'never more than two at once');
     for (const index of [2, 3, 4, 6]) assert.equal(files.get(`${ROOT}/clip-${index}.bin`)?.length, size);
     assert.equal(files.has(ROOT + '/clip-1.bin'), false, 'a cancelled upload saves nothing');

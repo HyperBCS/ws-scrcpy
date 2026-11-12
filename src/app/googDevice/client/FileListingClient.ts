@@ -73,6 +73,9 @@ type Command =
 /** An upload's row in the transfer list and what it shows. */
 type Upload = {
     row: HTMLElement;
+    bar: HTMLElement;
+    fill: HTMLElement;
+    state: HTMLElement;
     name: string;
     folder: string;
     sent: number;
@@ -252,7 +255,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /** Failures in the current batch of uploads, shown together when the last one ends. */
     private uploadErrors: string[] = [];
     private uploadsDone: string[] = [];
-    /** The batch so far, for "Uploading 3 of 40, 45%". */
+    /** The batch so far, for "Uploading 3 of 40, 45%", and the folders it sends files to. */
     private uploadBatch = FileListingClient.emptyBatch();
     private readonly transferSummary: HTMLElement;
     /** The phone whose page this explorer is on. An address that is not that phone's leaves it. */
@@ -354,7 +357,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
      */
     private rovingFromFocus = false;
     private path: string;
-    private pendingPath?: string;
+    /** The place a load in progress opens. */
+    private loadingPath?: string;
     /** Checks the open dialog's field. A message keeps the dialog open and is shown under the field. */
     private dialogCheck?: () => string;
 
@@ -1199,14 +1203,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private canModify(): boolean {
-        return (
-            !this.stopped &&
-            this.hasConnection() &&
-            !this.loading &&
-            !this.uploads.size &&
-            !this.operations &&
-            !this.resolving
-        );
+        // Uploads run beside everything else: each one goes to the folder it was started in.
+        return !this.stopped && this.hasConnection() && !this.loading && !this.operations && !this.resolving;
     }
 
     private updateControls(): void {
@@ -2751,6 +2749,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         this.loading = false;
+        this.loadingPath = undefined;
         this.wrapper.dataset.listing = listing.error ? 'error' : 'ready';
         this.report('');
         if (listing.error) {
@@ -3077,15 +3076,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         if (this.stopped || !this.hasConnection()) {
             return;
         }
-        if (this.uploads.size) {
-            this.pendingPath = destination;
-            this.toast('Wait for uploads to finish before changing folders.');
-            return;
-        }
-        this.pendingPath = undefined;
         this.closeMenu();
         this.generation++;
         this.loading = true;
+        this.loadingPath = destination;
         this.listingError = undefined;
         this.setFiltering(false);
         // A settled listing needs an observable marker: "no rows yet" and "this folder is empty"
@@ -3131,13 +3125,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         let upload = this.uploads.get(data.key);
         if (!upload) {
-            const row = document.createElement('div');
-            row.className = 'file-listing-upload-progress';
-            row.innerHTML = `<span class="fx-upload-name">${esc(data.fileName)}</span><span class="kit-status kit-status-neutral fx-upload-state"></span><button type="button" class="${BUTTON} fx-upload-cancel" data-upload-cancel="${
-                data.key
-            }" aria-label="${esc(`Cancel the upload of ${data.fileName}`)}">Cancel</button>`;
-            this.transfers.appendChild(row);
-            upload = { row, name: data.fileName, folder: data.folder, sent: 0, size: data.size };
+            upload = this.uploadRow(data);
+            this.transfers.appendChild(upload.row);
             this.uploads.set(data.key, upload);
             if (!this.uploadBatch.total) {
                 // The first upload of a batch: leaving the phone's page or the app now asks first.
@@ -3146,13 +3135,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             }
             this.uploadBatch.total++;
             this.uploadBatch.bytes += upload.size;
+            this.uploadBatch.folders.add(upload.folder);
             this.transfers.hidden = false;
         }
         upload.sent = data.sent;
-        (upload.row.querySelector('.fx-upload-state') as HTMLElement).textContent =
-            data.message || `${Math.floor((data.sent * 100) / (data.size || 1))}%`;
-        upload.row.classList.toggle('error', data.error);
-        (upload.row.querySelector('.fx-upload-cancel') as HTMLElement).hidden = !data.cancellable;
+        this.paintUpload(upload, data);
         if (data.finished) {
             upload.row.remove();
             this.uploads.delete(data.key);
@@ -3171,6 +3158,44 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.updateControls();
     }
 
+    /**
+     * One upload's row: its name, how much is sent of how much (or the step it is at), Cancel,
+     * and a bar under the name.
+     */
+    private uploadRow(data: PushUpdateParams): Upload {
+        const row = document.createElement('div');
+        row.className = 'file-listing-upload-progress';
+        row.innerHTML = `<span class="fx-upload-name">${esc(data.fileName)}</span><span class="kit-status kit-status-neutral fx-upload-state"></span><button type="button" class="${BUTTON} fx-upload-cancel" data-upload-cancel="${
+            data.key
+        }" aria-label="${esc(`Cancel the upload of ${data.fileName}`)}">Cancel</button><span class="fx-upload-bar" role="progressbar" aria-label="${esc(
+            `Upload of ${data.fileName}`,
+        )}" aria-valuemin="0" aria-valuemax="100"><span class="fx-upload-fill"></span></span>`;
+        return {
+            row,
+            bar: row.querySelector('.fx-upload-bar') as HTMLElement,
+            fill: row.querySelector('.fx-upload-fill') as HTMLElement,
+            state: row.querySelector('.fx-upload-state') as HTMLElement,
+            name: data.fileName,
+            folder: data.folder,
+            sent: 0,
+            size: data.size,
+        };
+    }
+
+    private paintUpload(upload: Upload, data: PushUpdateParams): void {
+        const bytes = `${formatSize(upload.sent)} of ${formatSize(upload.size)}`;
+        const percent = upload.size
+            ? Math.floor((upload.sent * 100) / upload.size)
+            : data.message === 'Saving'
+              ? 100
+              : 0;
+        upload.state.textContent = data.message || bytes;
+        upload.bar.setAttribute('aria-valuenow', String(percent));
+        upload.bar.setAttribute('aria-valuetext', bytes);
+        upload.fill.style.width = `${percent}%`;
+        (upload.row.querySelector('.fx-upload-cancel') as HTMLElement).hidden = !data.cancellable;
+    }
+
     /** "Uploading 3 of 40, 45%": the file the batch is on and how much of all of it is sent. */
     private renderTransferSummary(): void {
         const { total, ended, bytes, endedBytes } = this.uploadBatch;
@@ -3186,10 +3211,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private static emptyBatch() {
-        return { total: 0, ended: 0, cancelled: 0, bytes: 0, endedBytes: 0 };
+        return { total: 0, ended: 0, cancelled: 0, bytes: 0, endedBytes: 0, folders: new Set<string>() };
     }
 
-    /** When the last upload of a batch ends: one toast for all of it, then the folder again. */
+    /**
+     * When the last upload of a batch ends: one toast for all of it, then the folder again if
+     * files went to the folder that is shown. The owner may have moved to another one meanwhile.
+     */
     private endBatchIfDone(): void {
         if (this.uploads.size) {
             return;
@@ -3199,7 +3227,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         // date, and a second try must see it.
         const failures = this.uploadErrors;
         const done = this.uploadsDone;
-        const { cancelled } = this.uploadBatch;
+        const { cancelled, folders } = this.uploadBatch;
         this.uploadErrors = [];
         this.uploadsDone = [];
         this.uploadBatch = FileListingClient.emptyBatch();
@@ -3213,10 +3241,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         } else if (stopped) {
             this.toast(stopped);
         }
-        if (this.pendingPath) {
-            this.load(this.pendingPath);
-        } else {
-            this.reload();
+        // A folder that is still being opened is opened again, so its listing has the files.
+        const shown = this.loading ? this.loadingPath : this.path;
+        if (shown !== undefined && folders.has(path.resolve('/', shown))) {
+            this.load(shown);
         }
     }
 
@@ -3416,6 +3444,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             }),
         );
         this.loading = false;
+        this.loadingPath = undefined;
         this.updateControls();
         // The tool page says the connection is lost and reconnects. Until then the rows stay
         // on screen but cannot be opened.
