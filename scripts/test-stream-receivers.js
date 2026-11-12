@@ -49,11 +49,13 @@ class FakeSocket extends EventEmitter {
 
 function useFakeSockets(t) {
     FakeSocket.instances = [];
-    const previous = global.WebSocket;
-    global.WebSocket = FakeSocket;
-    t.after(() => {
-        global.WebSocket = previous;
-    });
+    if (global.WebSocket !== FakeSocket) {
+        const previous = global.WebSocket;
+        global.WebSocket = FakeSocket;
+        t.after(() => {
+            global.WebSocket = previous;
+        });
+    }
     return FakeSocket.instances;
 }
 
@@ -96,6 +98,7 @@ const pending = { status: 'pending', sampleRate: 48000, channels: 2 };
 const readyOpus = { status: 'ready', codec: 'opus', sampleRate: 48000, channels: 2 };
 const readyRaw = { status: 'ready', codec: 'raw', sampleRate: 48000, channels: 2 };
 const error = (message) => ({ status: 'error', sampleRate: 48000, channels: 2, message });
+const captureFailed = { ...readyOpus, status: 'error', message: 'The audio capture stopped.' };
 const jsonError = (() => {
     try {
         JSON.parse('{invalid');
@@ -123,6 +126,10 @@ const audioScript = [
     ['capture not ready', metadataEnvelope(pending), [['audioMetadata', pending]], { metadata: 'pending' }],
     ['config', config, [['audio', frame(true, 0, opusHead)]], { metadata: 'pending', config: 0 }],
     ['truncated', envelope(0, 1, []).subarray(0, 22), [['audioMetadata', error('Truncated audio packet.')]], { metadata: 'error' }],
+    ['ready metadata', metadataEnvelope(readyOpus), [['audioMetadata', readyOpus]], { metadata: 'ready' }],
+    ['config', config, [['audio', frame(true, 0, opusHead)]], { metadata: 'ready', config: 0 }],
+    // Broadcast keeps the codec when the capture fails; the config goes all the same.
+    ['capture failed, same codec', metadataEnvelope(captureFailed), [['audioMetadata', captureFailed]], { metadata: 'error' }],
     ['ready metadata', metadataEnvelope(readyOpus), [['audioMetadata', readyOpus]], { metadata: 'ready' }],
     ['config', config, [['audio', frame(true, 0, opusHead)]], { metadata: 'ready', config: 0 }],
     ['unknown kind', envelope(7, 0, [1]), [['audioMetadata', error('Unknown audio packet type.')]], { metadata: 'error' }],
@@ -197,6 +204,8 @@ for (const [platform, create, wrap] of [
         playScript(receiver, sockets[0], wrap);
 
         // A closed socket starts the audio state over, and a stopped receiver passes nothing on.
+        sockets[0].message(arrayBuffer(wrap(config)));
+        assert.deepEqual(stateOf(receiver), { metadata: 'ready', config: 0 });
         sockets[0].close();
         assert.deepEqual(stateOf(receiver), { metadata: undefined });
         const events = recordEvents(receiver);
@@ -205,6 +214,28 @@ for (const [platform, create, wrap] of [
         assert.deepEqual(events, []);
     });
 }
+
+test('audio framing: the player is handed a view into the message, not a copy', (t) => {
+    const sample = envelope(0, 20000, [1, 2, 3, 4]);
+    const legacy = Buffer.concat([Buffer.from('scrcpy_audio_1'), Buffer.from([0]), Buffer.from([5, 6])]);
+    for (const [create, bytes, at] of [
+        [androidReceiver, sample, 23],
+        [iphoneReceiver, Buffer.concat([Buffer.from([3]), sample]), 24],
+        [androidReceiver, legacy, 15],
+    ]) {
+        const { receiver, sockets } = create(t);
+        const frames = [];
+        receiver.on('audio', (value) => frames.push(value));
+        sockets[0].open();
+        const message = arrayBuffer(bytes);
+        sockets[0].message(message);
+        assert.equal(frames.length, 1);
+        assert.equal(frames[0].data.buffer, message);
+        assert.equal(frames[0].data.byteOffset, at);
+        assert.equal(frames[0].data.byteLength, message.byteLength - at);
+        receiver.stop();
+    }
+});
 
 test('audio framing: one reader parses the envelope for both receivers, at offset 0 and behind a type byte', () => {
     const { AudioEnvelopeReader } = require('../src/app/client/audioPacket');
@@ -351,7 +382,12 @@ test('reconnect policy, iPhone: 2^n up to 60 s, reset by the codec, stops on 401
         expectSocketAfter(t, sockets, ms, `attempt ${attempt + 1}`);
     });
 
-    // The codec means the session is up: the count starts again.
+    // Two failed starts, then the codec: the session is up, so the delay and the count of
+    // failed starts both start again.
+    fail(4009, 'The screen stream exited (3)');
+    expectSocketAfter(t, sockets, 60000, 'a failed start before the session');
+    fail(4009, 'The screen stream exited (3)');
+    expectSocketAfter(t, sockets, 60000, 'a second failed start before the session');
     sockets.at(-1).open();
     say({ type: 'codec', codec: 'hev1', description: '' });
     sockets.at(-1).close(4007);
