@@ -16,7 +16,7 @@ import {
     unlockSheetOpen,
 } from '../state/stream';
 import { findDeviceForStream } from '../state/streamDevice';
-import { deviceName, isDeviceAvailable } from '../state/devices';
+import { isDeviceAvailable, phoneName } from '../state/devices';
 import { screenConnection } from '../state/phoneStatus';
 import { NotificationsLink } from '../ui/NotificationsLink';
 import { goUp } from '../state/router';
@@ -104,7 +104,7 @@ export function StreamView({ params, tabs }: StreamViewProps) {
     // report it, and an unknown screen must never be treated as a sleeping one.
     const screenOff = descriptor ? descriptor['screen.power'] === 'off' || descriptor['device.awake'] === false : false;
     // The same name as on the card and in the switcher; the serial until the device list arrives.
-    const name = entry ? deviceName(entry) : params.udid;
+    const name = phoneName(params.udid, entry);
     const connection = screenConnection({
         startError: !!error,
         connected: streamConnected.value,

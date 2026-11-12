@@ -2,8 +2,8 @@
 // One status model for both kinds of phone (src/app/state/phoneStatus.ts) and one place for the
 // status words (src/app/copy.ts): the one precedence over every combination of facts, the same
 // status for the same facts on Android and on an iPhone, the session as a second mark, the
-// connection words of the header, the card over the picture and the tool chip, the capabilities
-// table, and no older or local status word anywhere else in src/app.
+// connection words of the header, the card over the picture and the tool chip, the last known
+// name, the capabilities table, and no older or local status word anywhere else in src/app.
 // No browser and no phone.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
@@ -317,6 +317,34 @@ test('the header and the card over the picture print the same connection value',
     assert.match(overlay, /\{connection\.label\}/);
     assert.doesNotMatch(overlay, /hasConnected/, 'the card keeps no connection state of its own');
     assert.match(read('src/app/views/ToolView.tsx'), /\{connection\.label\}/);
+});
+
+test('a phone that drops out of the list keeps its last name', () => {
+    const tracker = {};
+    const pixel = { udid: 'NAME-PIXEL', state: 'device', pid: 1, interfaces: [], 'ro.product.manufacturer': 'Google', 'ro.product.model': 'Pixel 9' };
+    assert.equal(devices.phoneName('NAME-PIXEL'), 'NAME-PIXEL', 'the serial until the list arrives');
+    devices.setTrackerDevices('android', 'Host', { type: 'android' }, tracker, [pixel]);
+    const listed = devices.findDeviceByUdid('NAME-PIXEL');
+    assert.equal(devices.phoneName('NAME-PIXEL', listed), 'Google Pixel 9');
+    // Unplugged with the page open: the tracker drops it, and the header keeps the name.
+    devices.setTrackerDevices('android', 'Host', { type: 'android' }, tracker, []);
+    assert.equal(devices.findDeviceByUdid('NAME-PIXEL'), undefined);
+    assert.equal(devices.phoneName('NAME-PIXEL'), 'Google Pixel 9');
+    // Listed again without its properties (untrusted): the last name, where the card says what it can.
+    devices.updateTrackerDevice('android', 'Host', { type: 'android' }, tracker, { udid: 'NAME-PIXEL', state: 'unauthorized', pid: -1, interfaces: [] });
+    const bare = devices.findDeviceByUdid('NAME-PIXEL');
+    assert.equal(devices.deviceName(bare), 'Android device');
+    assert.equal(devices.phoneName('NAME-PIXEL', bare), 'Google Pixel 9');
+    // An iPhone the same way.
+    devices.setTrackerDevices('ios', 'Host', { type: 'ios' }, tracker, [{ udid: 'NAME-IPHONE', state: 'Connected', name: 'Bench iPhone', model: 'iPhone 13 Pro Max', version: '27.2' }]);
+    devices.removeTrackerDevices('ios');
+    assert.equal(devices.phoneName('NAME-IPHONE'), 'Bench iPhone');
+    assert.equal(devices.phoneName('NEVER-LISTED'), 'NEVER-LISTED');
+    devices.devices.value = new Map();
+    // The headers and the tab title choose the name with it.
+    for (const file of ['src/app/views/StreamView.tsx', 'src/app/views/CoreDeviceStreamView.tsx', 'src/app/views/ToolView.tsx', 'src/app/state/pageTitle.ts']) {
+        assert.match(read(file), /phoneName\(/, `${file} names the phone with phoneName`);
+    }
 });
 
 test('the capabilities table says what each kind of phone can do today', () => {

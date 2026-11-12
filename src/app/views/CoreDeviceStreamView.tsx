@@ -15,7 +15,7 @@ import {
     streamConnected,
     streamNotice,
 } from '../state/stream';
-import { deviceName, findDeviceByUdid, isDeviceAvailable } from '../state/devices';
+import { findDeviceByUdid, isDeviceAvailable, phoneName } from '../state/devices';
 import { screenConnection } from '../state/phoneStatus';
 import { SCREEN_CONNECTION } from '../copy';
 import { NotificationsLink } from '../ui/NotificationsLink';
@@ -116,7 +116,7 @@ export function CoreDeviceStreamView({ params }: CoreDeviceStreamViewProps) {
     const entry = findDeviceByUdid(params.udid);
     const descriptor = entry?.params.type === 'ios' ? (entry.descriptor as ApplDeviceDescriptor) : undefined;
     // The same name as on the card and in the switcher; the serial until the device list arrives.
-    const name = entry && descriptor ? deviceName(entry) : params.udid;
+    const name = phoneName(params.udid, descriptor ? entry : undefined);
     useEffect(() => {
         if (descriptor?.name && active?.client) {
             active.client.setDeviceName(descriptor.name);

@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { ACTION } from '../../common/Action';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { BaseClient } from '../client/BaseClient';
-import { deviceName, DeviceEntry, isDeviceAvailable, supportsDeviceTools } from '../state/devices';
+import { DeviceEntry, isDeviceAvailable, phoneName, supportsDeviceTools } from '../state/devices';
 import { toolConnection } from '../state/phoneStatus';
 import { DEFAULT_FILES_PATH } from '../googDevice/client/deviceTools';
 import { findDeviceForTool } from '../state/toolDevice';
@@ -348,7 +348,7 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
         >
             {active && (
                 <AppBar
-                    title={entry ? deviceName(entry) : udid}
+                    title={phoneName(udid, entry)}
                     status={<StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />}
                 >
                     <NotificationsLink compact />

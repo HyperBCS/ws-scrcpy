@@ -24,16 +24,39 @@ export interface DeviceEntry {
 // The single merged, reactive device list every view reads from, across all trackers/hosts.
 export const devices = signal<Map<string, DeviceEntry>>(new Map());
 
-export function deviceName(entry: DeviceEntry): string {
+// The last name each serial had in the list, for the life of the page. A phone that drops out of
+// the list while its page is open keeps its name there.
+const lastNames = new Map<string, string>();
+
+/** The name the phone reports, if it has reported one. */
+function reportedName(entry: DeviceEntry): string {
     if (entry.params.type === 'android') {
         const descriptor = entry.descriptor as GoogDeviceDescriptor;
-        return (
-            [descriptor['ro.product.manufacturer'], descriptor['ro.product.model']].filter(Boolean).join(' ') ||
-            'Android device'
-        );
+        return [descriptor['ro.product.manufacturer'], descriptor['ro.product.model']].filter(Boolean).join(' ');
     }
     const descriptor = entry.descriptor as ApplDeviceDescriptor;
-    return descriptor.name || descriptor.model || 'iOS device';
+    return descriptor.name || descriptor.model || '';
+}
+
+export function deviceName(entry: DeviceEntry): string {
+    return reportedName(entry) || (entry.params.type === 'android' ? 'Android device' : 'iOS device');
+}
+
+/**
+ * The name to show for a serial: the listed phone's name, else the last name this page saw for
+ * it, else the serial. `entry` is the listed phone the caller resolved, if there is one.
+ */
+export function phoneName(udid: string, entry?: DeviceEntry): string {
+    return (entry && reportedName(entry)) || lastNames.get(udid) || (entry ? deviceName(entry) : udid);
+}
+
+function rememberNames(list: Iterable<DeviceEntry>): void {
+    for (const entry of list) {
+        const name = reportedName(entry);
+        if (name) {
+            lastNames.set(entry.descriptor.udid, name);
+        }
+    }
 }
 
 export function isDeviceAvailable(entry: DeviceEntry): boolean {
@@ -96,6 +119,7 @@ export function setTrackerDevices(
         const key = keyFor(trackerId, descriptor.udid);
         next.set(key, { key, trackerId, trackerName, params, descriptor: descriptor as DeviceDescriptor, tracker });
     });
+    rememberNames(next.values());
     devices.value = next;
 }
 
@@ -111,7 +135,16 @@ export function updateTrackerDevice(
 ): void {
     const key = keyFor(trackerId, descriptor.udid);
     const next = new Map(devices.value);
-    next.set(key, { key, trackerId, trackerName, params, descriptor: descriptor as DeviceDescriptor, tracker });
+    const entry: DeviceEntry = {
+        key,
+        trackerId,
+        trackerName,
+        params,
+        descriptor: descriptor as DeviceDescriptor,
+        tracker,
+    };
+    next.set(key, entry);
+    rememberNames([entry]);
     devices.value = next;
 }
 
