@@ -12,6 +12,10 @@ const UDID = 'files-fixture';
 const ROOT = '/data/local/tmp';
 const LARGE = '/data/local/large';
 const SHARED = '/sdcard/Download';
+// A folder of 5,000 photos that no other folder lists. Its listing arrives in bursts, the way a
+// large folder comes from a phone.
+const HUGE = '/mnt/huge';
+const HUGE_COUNT = 5000;
 // The name the page header shows for the fixture phone; destructive questions repeat it.
 const DEVICE = 'Fixture Files test phone';
 function frame(type, id, payload = Buffer.alloc(0)) {
@@ -69,7 +73,7 @@ async function fixture(page) {
         [ROOT + '/photo.png', Buffer.alloc(2048)],
         [ROOT + '/.hidden-cache', Buffer.from('x')],
     ]);
-    const dirs = new Set(['/', '/data', '/data/local', ROOT, ROOT + '/empty', ROOT + '/denied', ROOT + '/archive', LARGE, '/sdcard', SHARED, SHARED + '/Camera']);
+    const dirs = new Set(['/', '/data', '/data/local', ROOT, ROOT + '/empty', ROOT + '/denied', ROOT + '/archive', LARGE, '/sdcard', SHARED, SHARED + '/Camera', HUGE]);
     files.set(SHARED + '/notes.txt', Buffer.from('Shared notes\n'));
     // Shared storage ignores case in names; everything else on the device does not.
     const folded = (target) => (target.startsWith('/sdcard/') ? target.toLowerCase() : target);
@@ -235,6 +239,17 @@ async function fixture(page) {
                         if (destination === '/') {
                             send(dent('data', DIR));
                             end(0);
+                            return;
+                        }
+                        if (destination === HUGE) {
+                            const burst = HUGE_COUNT / 10;
+                            const next = (from) => {
+                                for (let index = from; index < from + burst; index++)
+                                    send(dent(`IMG_${String(index).padStart(4, '0')}.jpg`, FILE, 3_000_000 + index));
+                                if (from + burst < HUGE_COUNT) setTimeout(() => next(from + burst), 60);
+                                else end(0);
+                            };
+                            next(0);
                             return;
                         }
                         if (destination.endsWith('/denied')) {
@@ -1148,4 +1163,4 @@ if (require.main === module)
         process.exitCode = 1;
     });
 
-module.exports = { fixture, pressAtRest, DEVICE, SHARED };
+module.exports = { fixture, pressAtRest, DEVICE, SHARED, HUGE, HUGE_COUNT };

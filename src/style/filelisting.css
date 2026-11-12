@@ -556,6 +556,14 @@
     white-space: normal;
 }
 
+/* A long list has only the rows near the view in the document. One spacer stands in for the
+   lines above them and one for the lines below, so the list is as tall as all of its rows. */
+.file-explorer .fx-table tr.fx-spacer {
+    display: block;
+    grid-column: 1 / -1;
+    border: 0;
+}
+
 /* A folder that could not be listed says so where the list would be. */
 .fx-failed-box {
     display: grid;
@@ -985,7 +993,7 @@
 }
 
 @media (hover: hover) {
-    .fx-table tbody tr:not(.fx-empty-row):hover,
+    .fx-table tbody tr:not(.fx-empty-row, .fx-spacer):hover,
     .fx-crumb:hover {
         background: var(--surface-sunken);
     }
