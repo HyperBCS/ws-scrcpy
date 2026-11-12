@@ -16,7 +16,7 @@ global.location = new URL('http://localhost:8000/');
 
 const status = require('../src/app/state/phoneStatus');
 const copy = require('../src/app/copy');
-const { capabilities } = require('../src/app/state/capabilities');
+const { actionCapabilities, capabilities } = require('../src/app/state/capabilities');
 const { activeCoreDeviceStream, activeStream } = require('../src/app/state/stream');
 const devices = require('../src/app/state/devices');
 const { ICONS } = require('../src/app/ui/icons');
@@ -386,6 +386,13 @@ test('the capabilities table says what each kind of phone can do today', () => {
     assert.match(tools, /view: 'shell'/);
     // The one Actions sheet shows its rows by this table; each platform's wrapper sends.
     assert.match(read('src/app/views/actions/PhoneActionsSheet.tsx'), /capabilities\(adapter\.platform\)/);
+    // Refresh picture, Restart video and Reconnect: only the iPhone stream client has them.
+    assert.deepEqual([actionCapabilities('android'), actionCapabilities('ios')], [{ pictureRecovery: false }, { pictureRecovery: true }]);
+    assert.equal(actionCapabilities(phone), actionCapabilities('ios'));
+    for (const call of ['requestKeyframe', 'restartStream', 'restartSession']) {
+        assert.match(ios.actions, new RegExp(`client\\.${call}\\(\\)`));
+        assert.doesNotMatch(android.actions, new RegExp(call));
+    }
     assert.match(android.actions, /TYPE_EXPAND_NOTIFICATION_PANEL/);
     assert.doesNotMatch(ios.actions, /panel/i);
     assert.match(ios.actions, /client\.rotate\(/);
