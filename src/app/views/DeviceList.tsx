@@ -59,11 +59,17 @@ function cardControl(target: EventTarget | null): CardControl | undefined {
     return control && key ? { key, control: controlName(control) } : undefined;
 }
 
-/** Focuses that control again, or the first control of its card that can take focus. */
+/**
+ * Focuses that control again, or the first control of its card that can take focus. A server
+ * that restarted lists its phones under a new tracker id, so the card is found by its key, else
+ * by the serial at the end of it.
+ */
 function focusCardControl(root: HTMLElement, { key, control }: CardControl): void {
-    const card = Array.from(root.querySelectorAll<HTMLElement>('article.device')).find(
-        (item) => item.dataset.deviceKey === key,
-    );
+    const cards = Array.from(root.querySelectorAll<HTMLElement>('article.device'));
+    const serial = `:${key.slice(key.indexOf(':') + 1)}`;
+    const card =
+        cards.find((item) => item.dataset.deviceKey === key) ??
+        cards.find((item) => item.dataset.deviceKey?.endsWith(serial));
     const controls = Array.from(card?.querySelectorAll<HTMLElement>('a[href], button:not(:disabled)') ?? []);
     (controls.find((item) => controlName(item) === control) ?? controls[0])?.focus({ preventScroll: true });
 }

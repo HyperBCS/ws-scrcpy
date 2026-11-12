@@ -69,10 +69,11 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
     // `streams` counts the screen sockets the page opens; `updateAndroid` sends one phone's new
     // descriptor on the Android list, as the server does when a phone changes. With `holdLists`
     // set the lists wait until `releaseLists()`; `dropList()` closes the list's socket, as a
-    // server restart does, and the page opens a new one by itself.
+    // server restart does, and the page opens a new one by itself. `listIds` are the ids the lists
+    // carry; a restarted server sends new ones.
     const state = {
         context, page, errors: [], commands: [], channels: [], summary, streams: 0, updateAndroid: undefined,
-        holdLists: false, heldLists: [], listSocket: undefined,
+        holdLists: false, heldLists: [], listSocket: undefined, listIds: { android: 'android', ios: 'ios' },
         releaseLists() { state.holdLists = false; state.heldLists.splice(0).forEach((send) => send()); },
         dropList() { state.listSocket.close({ code: 1006, reason: 'Server restart' }); },
     };
@@ -108,10 +109,10 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
                 state.channels.push(body);
                 if (body === 'HSTS') send({ id: -1, type: 'hosts', data: { local: [{ type: 'android' }, { type: 'ios' }] } });
                 if (body === 'GTRC') {
-                    list(() => send({ id: -1, type: 'devicelist', data: { id: 'android', name: 'Fixture host', list: androids } }));
-                    state.updateAndroid = (device) => send({ id: -1, type: 'device', data: { id: 'android', name: 'Fixture host', device } });
+                    list(() => send({ id: -1, type: 'devicelist', data: { id: state.listIds.android, name: 'Fixture host', list: androids } }));
+                    state.updateAndroid = (device) => send({ id: -1, type: 'device', data: { id: state.listIds.android, name: 'Fixture host', device } });
                 }
-                if (body === 'ATRC') list(() => send({ id: -1, type: 'devicelist', data: { id: 'ios', name: 'Fixture host', list: iphones } }));
+                if (body === 'ATRC') list(() => send({ id: -1, type: 'devicelist', data: { id: state.listIds.ios, name: 'Fixture host', list: iphones } }));
             } else if (packet[0] === 32 && body.startsWith('{')) {
                 try {
                     const command = JSON.parse(body);
@@ -701,9 +702,9 @@ async function firstList(browser, { width, height, mobile, colorScheme }) {
     console.log('PASS', label, 'loading before the first list, the empty state only for an empty list');
 }
 
-/** The cards as the list shows them: key, status, stale mark and opacity of the name. */
+/** The cards as the list shows them: name, status, stale mark and opacity of the name. */
 const cardsOf = (page) => page.locator('article.device').evaluateAll((items) => items.map((item) => ({
-    key: item.dataset.deviceKey,
+    name: item.querySelector('.phone-row-name').textContent,
     chip: item.querySelector('.phone-row-status .kit-chip').textContent,
     stale: item.classList.contains('stale'),
     dim: getComputedStyle(item.querySelector('.phone-row-text')).opacity,
@@ -713,7 +714,8 @@ const cardsOf = (page) => page.locator('article.device').evaluateAll((items) => 
  * U-home-8: the list's socket drops. The cards stay, each with the status it had, dimmed under
  * one Reconnecting bar; nothing on them reaches a phone and none opens a screen, while Settings
  * still opens. The next list makes them live again, with the focus and the scroll where they
- * were. No screen socket is opened at any point.
+ * were, also when it comes from a restarted server under new ids. No screen socket is opened at
+ * any point.
  */
 async function reconnectingList(browser, { width, height, mobile, colorScheme }) {
     const label = `${width}-${colorScheme}`;
@@ -737,13 +739,13 @@ async function reconnectingList(browser, { width, height, mobile, colorScheme })
         await bar.waitFor({ state: 'detached' });
     };
     try {
-        const target = card(page, 'android:HOME-MORE-15');
+        let target = card(page, 'android:HOME-MORE-15');
         await target.waitFor();
         await settleMotion(page);
         await list.evaluate((el) => { el.scrollTop = el.scrollHeight / 2; });
         await target.scrollIntoViewIfNeeded();
         const open = target.getByRole('link', { name: 'Open screen', exact: true });
-        const focused = { key: 'android:HOME-MORE-15', href: await open.getAttribute('href') };
+        const href = await open.getAttribute('href');
         await open.focus();
         await page.waitForTimeout(100);
         const scrollTop = await list.evaluate((el) => el.scrollTop);
@@ -757,7 +759,7 @@ async function reconnectingList(browser, { width, height, mobile, colorScheme })
         assert.equal(await page.locator('.devices-reconnecting').count(), 1, `${label}: one bar`);
         assert.equal((await pill.textContent()).trim(), 'Reconnecting…', `${label}: the page's line agrees with the bar`);
         const during = await cardsOf(page);
-        assert.deepEqual(during.map((item) => [item.key, item.chip]), before.map((item) => [item.key, item.chip]), `${label}: every card stays, in its place, with the status it had`);
+        assert.deepEqual(during.map((item) => [item.name, item.chip]), before.map((item) => [item.name, item.chip]), `${label}: every card stays, in its place, with the status it had`);
         assert.ok(during.every((item) => item.stale && item.dim === '0.5'), `${label}: every card is stale and dimmed`);
         assert.ok(before.every((item) => !item.stale && item.dim === '1'));
         assert.equal(await page.getByText('Offline', { exact: true }).count(), before.filter((item) => item.chip === 'Offline').length, `${label}: no stale phone is called Offline`);
@@ -780,21 +782,23 @@ async function reconnectingList(browser, { width, height, mobile, colorScheme })
         assert.equal(await noOverflow(page), true);
         await page.screenshot({ path: path.join(OUT, `reconnecting-${label}.png`) });
 
-        // The next list: live cards, the summary back, the focus on the link it was on and the
-        // list where it was.
+        // The next list, from the server restarted under new ids: live cards, the summary back,
+        // the focus on the link it was on and the list where it was.
+        test.listIds = { android: 'android-2', ios: 'ios-2' };
         await reconnect(asked);
         assert.deepEqual(await cardsOf(page), before, `${label}: the cards are as they were`);
         assert.equal((await pill.textContent()).trim(), summary);
-        assert.deepEqual(await focusedCardControl(page), focused, `${label}: the focus is back on Open screen`);
+        target = card(page, 'android-2:HOME-MORE-15');
+        assert.deepEqual(await focusedCardControl(page), { key: 'android-2:HOME-MORE-15', href }, `${label}: the focus is back on Open screen`);
         assert.ok(Math.abs((await list.evaluate((el) => el.scrollTop)) - scrollTop) <= 1, `${label}: the list is where it was`);
 
         // Again, and this time press what a stale card offers: Open screen does nothing, and
         // Settings opens.
-        const href = await page.evaluate(() => location.href);
+        const address = await page.evaluate(() => location.href);
         const again = await drop();
         await target.getByRole('button', { name: 'Open screen', exact: true }).click({ force: true });
         await page.waitForTimeout(150);
-        assert.equal(await page.evaluate(() => location.href), href, `${label}: a stale card opens no screen`);
+        assert.equal(await page.evaluate(() => location.href), address, `${label}: a stale card opens no screen`);
         await target.getByRole('button', { name: 'Settings for Google More 15', exact: true }).click();
         const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
         await dialog.waitFor();
