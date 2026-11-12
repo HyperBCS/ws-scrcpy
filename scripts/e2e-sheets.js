@@ -286,7 +286,7 @@ async function main() {
                 await canvas.evaluate((el) => el === window.sheetTestCanvas && el.isConnected),
                 'notice dismissal preserves the actual remote canvas',
             );
-            if (touch) await page.getByRole('button', { name: 'Show controls', exact: true }).click();
+            if (touch) await page.getByRole('button', { name: 'Phone controls', exact: true }).click();
             await page.getByRole('button', { name: 'Settings', exact: true }).click();
             await page.locator('dialog.kit-sheet[open]').waitFor();
             await settle(page);
@@ -309,7 +309,7 @@ async function main() {
             // Text too long for one control message is refused in the sheet and never sent.
             const actions = page.getByRole('button', { name: 'Actions', exact: true });
             if (!(await actions.isVisible()))
-                await page.getByRole('button', { name: 'Show controls', exact: true }).click();
+                await page.getByRole('button', { name: 'Phone controls', exact: true }).click();
             await actions.click();
             await page.locator('dialog.kit-sheet[open]').waitFor();
             await settle(page);

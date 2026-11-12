@@ -218,7 +218,7 @@ async function openStream(browser, { width = 390, height = 844, mobile = true, c
     await page.goto(url.toString());
     await page.getByText('Connected', { exact: true }).waitFor();
     const open = async () => {
-        if (mobile) await page.getByRole('button', { name: 'Show controls', exact: true }).click();
+        if (mobile) await page.getByRole('button', { name: 'Phone controls', exact: true }).click();
         await page.getByRole('button', { name: 'Settings', exact: true }).click();
         const dialog = settingsSheet(page);
         await dialog.waitFor();

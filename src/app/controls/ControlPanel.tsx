@@ -3,15 +3,38 @@ import { deviceSwitcherOpen, liveTextOpen, toolsSheetOpen, unlockSheetOpen } fro
 import { settingsSheetTarget } from '../state/settingsSheet';
 import { Icon } from '../ui/Icon';
 import { iconButtonClass } from '../ui/IconButton';
+import { animate } from '../ui/motion';
 import { useOverlayHistory } from '../ui/overlayHistory';
 import { usePresence } from '../ui/Presence';
+import { readStorage, writeStorage } from '../ui/storage';
+import {
+    Box,
+    clampPoint,
+    defaultPlace,
+    parsePlace,
+    Place,
+    placeFromPosition,
+    placeOf,
+    Point,
+    pointOf,
+    Side,
+    Size,
+} from './buttonPlace';
 import { ControlButton } from './ControlButton';
 import { CONTROLS_LABEL, PhoneControls, shownControls } from './definition';
 
-const STORAGE_KEY = 'floating_toolbar_position';
+// The place the owner dragged the button to, as a side and a height (`buttonPlace.ts`).
+const PLACE_KEY = 'controls_button_place';
+// Where the button was kept before it stayed on an edge: the corner of a 56px button.
+const OLD_POSITION_KEY = 'floating_toolbar_position';
+const OLD_SIZE: Size = { width: 56, height: 56 };
+// The size in `FloatingToolbar.css`, for the first layout before the button is measured.
+const BUTTON_SIZE: Size = { width: 44, height: 56 };
 const DRAG_THRESHOLD_PX = 6;
-const FAB_SIZE = 56;
 const EDGE_MARGIN = 12;
+const PANEL_GAP = 10;
+// Without a touch for this long the button turns translucent (`--idle-opacity`).
+const IDLE_AFTER_MS = 3000;
 // After a touch ends the browser may still send mouse events and a click for it.
 const SHIELD_RELEASE_MS = 400;
 // The remote input handlers listen on document.body.
@@ -26,54 +49,83 @@ const SHIELD_EVENTS = [
     'click',
 ];
 
-interface Position {
-    x: number;
-    y: number;
-}
-
-function viewport() {
-    const visual = window.visualViewport;
+/** The safe-area insets of the screen, read from the probe in the toolbar. */
+function safeInsets(): Box {
     const probe = document.querySelector('.floating-toolbar-safearea');
     const style = probe ? getComputedStyle(probe) : undefined;
-    const inset = (side: 'Top' | 'Right' | 'Bottom' | 'Left') =>
-        Math.max(EDGE_MARGIN, parseFloat(style?.[`padding${side}`] || '0') || 0);
-    return {
-        left: (visual?.offsetLeft || 0) + inset('Left'),
-        top: (visual?.offsetTop || 0) + inset('Top'),
-        right: (visual?.offsetLeft || 0) + (visual?.width || window.innerWidth) - inset('Right'),
-        bottom: (visual?.offsetTop || 0) + (visual?.height || window.innerHeight) - inset('Bottom'),
-    };
+    const inset = (side: 'Top' | 'Right' | 'Bottom' | 'Left') => parseFloat(style?.[`padding${side}`] || '0') || 0;
+    return { left: inset('Left'), top: inset('Top'), right: inset('Right'), bottom: inset('Bottom') };
 }
 
-function clamp(pos: Position): Position {
-    const bounds = viewport();
+/** The part of the window in view, which the on-screen keyboard can shrink and pan. */
+function visibleBox(): Box {
+    const visual = window.visualViewport;
+    const left = visual?.offsetLeft || 0;
+    const top = visual?.offsetTop || 0;
     return {
-        x: Math.min(Math.max(pos.x, bounds.left), Math.max(bounds.left, bounds.right - FAB_SIZE)),
-        y: Math.min(Math.max(pos.y, bounds.top), Math.max(bounds.top, bounds.bottom - FAB_SIZE)),
+        left,
+        top,
+        right: left + (visual?.width || window.innerWidth),
+        bottom: top + (visual?.height || window.innerHeight),
     };
-}
-
-function loadPosition(): Position {
-    try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
-        const parsed = raw ? JSON.parse(raw) : undefined;
-        if (Number.isFinite(parsed?.x) && Number.isFinite(parsed?.y)) {
-            return clamp(parsed);
-        }
-    } catch {
-        // Blocked storage should never prevent access to the phone's controls.
-    }
-    return clamp({ x: window.innerWidth - FAB_SIZE - 16, y: window.innerHeight - FAB_SIZE - 32 });
 }
 
 /**
- * The controls on a touch screen: a button over the picture that the owner can drag, and the
- * panel it opens, with the controls in their slots of three columns.
+ * Where the panel may open: the part in view, inside the safe area and 12px from its edges. It
+ * may lie over the header, but not below the stage, where Type text docks its sheet.
+ */
+function panelArea(stage: Element | null): Box {
+    const view = visibleBox();
+    const inset = safeInsets();
+    const bottom = stage?.getBoundingClientRect().bottom ?? view.bottom;
+    return {
+        left: view.left + Math.max(EDGE_MARGIN, inset.left),
+        top: view.top + Math.max(EDGE_MARGIN, inset.top),
+        right: view.right - Math.max(EDGE_MARGIN, inset.right),
+        bottom: Math.min(view.bottom - Math.max(EDGE_MARGIN, inset.bottom), bottom - EDGE_MARGIN),
+    };
+}
+
+/**
+ * Where the button may sit: the stage, which starts under the header, the tabs and the banners,
+ * within the part in view and the safe area. The button touches the side edges of that area and
+ * keeps 12px from its top and bottom.
+ */
+function buttonArea(stage: Element | null): Box {
+    const view = visibleBox();
+    const inset = safeInsets();
+    const box = stage?.getBoundingClientRect() ?? view;
+    return {
+        left: Math.max(box.left, view.left + inset.left),
+        top: Math.max(box.top, view.top + inset.top) + EDGE_MARGIN,
+        right: Math.min(box.right, view.right - inset.right),
+        bottom: Math.min(box.bottom, view.bottom - inset.bottom) - EDGE_MARGIN,
+    };
+}
+
+/** The picture on the stage, once it has a size. The touch layer lies exactly over it. */
+function pictureBox(stage: Element | null): Box | undefined {
+    const box = stage?.querySelector('.touch-layer')?.getBoundingClientRect();
+    return box && box.width > 0 && box.height > 0 ? box : undefined;
+}
+
+/**
+ * The controls on a touch screen: a button on the left or the right edge of the stage, and the
+ * panel it opens, with the controls in their slots of three columns. The owner can drag the
+ * button; it goes back to the nearer edge and keeps that side and height in this browser.
+ * Without a touch for 3 s it is translucent.
  */
 export function ControlPanel({ controls }: { controls: PhoneControls }) {
-    const [pos, setPos] = useState<Position>(loadPosition);
+    const [pos, setPos] = useState<Point>(() => ({
+        x: window.innerWidth - BUTTON_SIZE.width,
+        y: window.innerHeight / 2,
+    }));
+    const [side, setSide] = useState<Side>('right');
     const [open, setOpen] = useState(false);
     const [dragging, setDragging] = useState(false);
+    // Opaque from a touch on the button until 3 s after it; translucent before the first touch.
+    const [awake, setAwake] = useState(false);
+    const [pressing, setPressing] = useState(false);
     // The press that closes the panel must not reach the phone. The shield covers the stage
     // while the panel is open and stays until that press, and the events that follow it, end.
     const [shieldHeld, setShieldHeld] = useState(false);
@@ -90,13 +142,31 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
     const fabRef = useRef<HTMLButtonElement>(null);
     const suppressClick = useRef(false);
     const openedOverSheet = useRef(false);
-    const dragState = useRef<{ dx: number; dy: number; start: Position; moved: boolean; id: number }>();
-    const sheetOpen =
-        toolsSheetOpen.value ||
-        deviceSwitcherOpen.value ||
-        liveTextOpen.value ||
-        unlockSheetOpen.value ||
-        !!settingsSheetTarget.value;
+    const dragState = useRef<{ dx: number; dy: number; start: Point; moved: boolean; id: number }>();
+    // The place the owner chose; until then the button takes the default place.
+    const chosen = useRef<Place>();
+    // Where a button that was let go is drawn from as it goes to its edge.
+    const snapFrom = useRef<Point>();
+    const modalOpen =
+        toolsSheetOpen.value || deviceSwitcherOpen.value || unlockSheetOpen.value || !!settingsSheetTarget.value;
+    const sheetOpen = modalOpen || liveTextOpen.value;
+
+    const buttonSize = (): Size => {
+        const fab = fabRef.current;
+        return fab?.offsetWidth ? { width: fab.offsetWidth, height: fab.offsetHeight } : BUTTON_SIZE;
+    };
+    const stage = () => rootRef.current?.closest('.stream-stage') ?? null;
+    const layout = () => {
+        if (dragState.current?.moved) {
+            return;
+        }
+        const area = buttonArea(stage());
+        const size = buttonSize();
+        const place = chosen.current ?? defaultPlace(area, pictureBox(stage()), size);
+        const next = pointOf(place, area, size);
+        setPos((current) => (current.x === next.x && current.y === next.y ? current : next));
+        setSide(place.side);
+    };
 
     // Another stream's controls start closed.
     useEffect(() => setOpen(false), [controls]);
@@ -124,43 +194,105 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
     }
     useOverlayHistory(open && (!sheetOpen || openedOverSheet.current), () => setOpen(false));
 
+    // The clock runs while the button is in sight and free: not while it is pressed, while its
+    // panel is open, or under a sheet that covers it.
     useEffect(() => {
-        const resize = () => setPos((p) => clamp(p));
-        resize();
-        window.addEventListener('resize', resize);
-        window.visualViewport?.addEventListener('resize', resize);
-        window.visualViewport?.addEventListener('scroll', resize);
+        if (!awake || pressing || open || modalOpen) {
+            return;
+        }
+        const timer = setTimeout(() => setAwake(false), IDLE_AFTER_MS);
+        return () => clearTimeout(timer);
+    }, [awake, pressing, open, modalOpen]);
+
+    // The button follows the stage: a banner, Type text, the on-screen keyboard, a rotation and
+    // the picture's own size move it to its place again.
+    useLayoutEffect(() => {
+        const area = buttonArea(stage());
+        chosen.current =
+            parsePlace(readStorage(PLACE_KEY)) ??
+            placeFromPosition(readStorage(OLD_POSITION_KEY), area, buttonSize(), OLD_SIZE);
+        if (chosen.current && !readStorage(PLACE_KEY)) {
+            writeStorage(PLACE_KEY, JSON.stringify(chosen.current));
+        }
+        layout();
+        const sizes = new ResizeObserver(() => layout());
+        const mount = stage()?.querySelector('.stream-mount');
+        let picture: Element | null = null;
+        const watchPicture = () => {
+            const next = mount?.querySelector('.touch-layer') ?? null;
+            if (next !== picture) {
+                if (picture) sizes.unobserve(picture);
+                picture = next;
+                if (picture) sizes.observe(picture);
+                layout();
+            }
+        };
+        const added = new MutationObserver(watchPicture);
+        const current = stage();
+        if (current) sizes.observe(current);
+        if (mount) added.observe(mount, { childList: true, subtree: true });
+        watchPicture();
+        // Type text keeps the view on the part in view (`LiveTextOverlay.tsx`). When the browser
+        // pans that part, the view moves a frame later through its style, without a change of
+        // size that the observer above would see.
+        const moved = new MutationObserver(() => layout());
+        const view = rootRef.current?.closest('.stream-view');
+        if (view) moved.observe(view, { attributes: true, attributeFilter: ['style', 'class'] });
+        window.addEventListener('resize', layout);
+        window.visualViewport?.addEventListener('resize', layout);
+        window.visualViewport?.addEventListener('scroll', layout);
         return () => {
-            window.removeEventListener('resize', resize);
-            window.visualViewport?.removeEventListener('resize', resize);
-            window.visualViewport?.removeEventListener('scroll', resize);
+            sizes.disconnect();
+            added.disconnect();
+            moved.disconnect();
+            window.removeEventListener('resize', layout);
+            window.visualViewport?.removeEventListener('resize', layout);
+            window.visualViewport?.removeEventListener('scroll', layout);
         };
     }, []);
+
+    // A button that was let go slides from there to its edge; with motion reduced it is there.
+    useLayoutEffect(() => {
+        const from = snapFrom.current;
+        snapFrom.current = undefined;
+        if (from && fabRef.current) {
+            animate(
+                fabRef.current,
+                [{ transform: `translate(${from.x - pos.x}px, ${from.y - pos.y}px)` }, { transform: 'none' }],
+                { fill: 'none' },
+            );
+        }
+    }, [pos]);
 
     useLayoutEffect(() => {
         if (!open || !panelRef.current) {
             return;
         }
-        const bounds = viewport();
+        const bounds = panelArea(stage());
+        const size = buttonSize();
         const panel = panelRef.current;
         let maxHeight = bounds.bottom - bounds.top;
         const height = Math.min(panel.scrollHeight, maxHeight);
-        const width = panel.getBoundingClientRect().width;
-        const above = pos.y - height - 10;
-        const below = pos.y + FAB_SIZE + 10;
-        let top = above >= bounds.top ? above : below + height <= bounds.bottom ? below : bounds.top;
-        let left = pos.x + FAB_SIZE - width;
-        // A short landscape viewport may have no room above or below the FAB. Open beside
-        // it where possible so the draggable button cannot cover a control in the grid.
-        if (above < bounds.top && below + height > bounds.bottom) {
-            if (pos.x - width - 10 >= bounds.left) {
-                left = pos.x - width - 10;
-            } else if (pos.x + FAB_SIZE + 10 + width <= bounds.right) {
-                left = pos.x + FAB_SIZE + 10;
+        // The layout width: the panel is still scaled down as it opens.
+        const width = panel.offsetWidth;
+        // Beside the button, on the side away from its edge and centred on it.
+        const beside = side === 'left' ? pos.x + size.width + PANEL_GAP : pos.x - PANEL_GAP - width;
+        let left = beside;
+        let top = Math.max(bounds.top, Math.min(pos.y + size.height / 2 - height / 2, bounds.bottom - height));
+        let origin = `${side === 'left' ? 0 : width}px ${pos.y + size.height / 2 - top}px`;
+        if (beside < bounds.left || beside + width > bounds.right) {
+            // A narrow screen has no room beside it: above or below, lined up with its outer edge.
+            const above = pos.y - height - PANEL_GAP;
+            const below = pos.y + size.height + PANEL_GAP;
+            left = side === 'left' ? pos.x : pos.x + size.width - width;
+            if (above >= bounds.top) {
+                top = above;
+            } else if (below + height <= bounds.bottom) {
+                top = below;
             } else {
-                // A narrow, short screen cannot fit the full grid beside the button either.
-                // Scroll the panel in the larger remaining space so no control sits under it.
-                const availableAbove = pos.y - bounds.top - 10;
+                // A narrow, short screen cannot fit the full grid there either. Scroll the
+                // panel in the larger remaining space so no control sits under the button.
+                const availableAbove = pos.y - bounds.top - PANEL_GAP;
                 const availableBelow = bounds.bottom - below;
                 if (availableBelow >= availableAbove) {
                     maxHeight = Math.max(0, availableBelow);
@@ -170,14 +302,16 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
                     top = bounds.top;
                 }
             }
+            const shown = Math.max(bounds.left, Math.min(left, bounds.right - width));
+            origin = `${pos.x + size.width / 2 - shown}px ${pos.y < top ? 0 : height}px`;
         }
         setPanelStyle({
             left: `${Math.max(bounds.left, Math.min(left, bounds.right - width))}px`,
             top: `${top}px`,
             maxHeight: `${maxHeight}px`,
-            transformOrigin: `${pos.x + FAB_SIZE / 2 - Math.max(bounds.left, Math.min(left, bounds.right - width))}px ${pos.y < top ? 0 : height}px`,
+            transformOrigin: origin,
         });
-    }, [open, pos]);
+    }, [open, pos, side]);
 
     const shieldShown = open || shieldHeld;
     useEffect(() => {
@@ -236,6 +370,8 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
             return;
         }
         suppressClick.current = false;
+        setAwake(true);
+        setPressing(true);
         (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
         dragState.current = {
             dx: event.clientX - pos.x,
@@ -260,7 +396,7 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
         setDragging(true);
         setOpen(false);
         event.preventDefault();
-        setPos(clamp(next));
+        setPos(clampPoint(next, buttonArea(stage()), buttonSize()));
     };
 
     const endDrag = (event: PointerEvent) => {
@@ -270,18 +406,26 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
         }
         dragState.current = undefined;
         setDragging(false);
+        setPressing(false);
         if (event.type === 'pointercancel') {
             suppressClick.current = true;
+            layout();
             return;
         }
         if (state.moved) {
-            const next = clamp({ x: event.clientX - state.dx, y: event.clientY - state.dy });
-            setPos(next);
-            try {
-                window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-            } catch {
-                // The position still works for this session when site storage is blocked.
+            const area = buttonArea(stage());
+            const size = buttonSize();
+            const dropped = clampPoint({ x: event.clientX - state.dx, y: event.clientY - state.dy }, area, size);
+            const place = placeOf(dropped, area, size);
+            const next = pointOf(place, area, size);
+            chosen.current = place;
+            // The place still works for this session when site storage is blocked.
+            writeStorage(PLACE_KEY, JSON.stringify(place));
+            if (dropped.x !== next.x || dropped.y !== next.y) {
+                snapFrom.current = dropped;
             }
+            setPos(next);
+            setSide(place.side);
         }
     };
 
@@ -291,6 +435,7 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
                 key="toolbar"
                 ref={rootRef}
                 class={`floating-toolbar mobile ${open ? 'open' : ''} ${dragging ? 'dragging' : ''}`}
+                data-side={side}
                 style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
             >
                 <div class="floating-toolbar-safearea" aria-hidden="true" />
@@ -325,6 +470,7 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
                     ref={fabRef}
                     type="button"
                     class={`${iconButtonClass()} floating-toolbar-fab`}
+                    data-idle={(!awake && !open) || undefined}
                     onPointerDown={onPointerDown}
                     onPointerMove={onPointerMove}
                     onPointerUp={endDrag}
@@ -334,6 +480,8 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
                             suppressClick.current = true;
                             dragState.current = undefined;
                             setDragging(false);
+                            setPressing(false);
+                            layout();
                         }
                     }}
                     onClick={(event) => {
@@ -353,7 +501,7 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
                     }}
                     aria-expanded={open}
                     aria-controls="stream-controls"
-                    aria-label={open ? 'Hide controls' : 'Show controls'}
+                    aria-label={CONTROLS_LABEL}
                     title="Drag to move, tap for controls"
                 >
                     <Icon name={open ? 'close' : 'grid'} />

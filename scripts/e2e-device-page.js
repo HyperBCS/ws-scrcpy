@@ -303,7 +303,7 @@ async function checkControls(page, label, viewport, titles) {
     const fab = page.locator('.floating-toolbar-fab');
     if (viewport.mobile) {
         assert.equal(await fab.evaluate((button) => button.matches('button.kit-icon-button')), true, `${label}: the controls button is the kit's icon button`);
-        assert.equal(await fab.getAttribute('aria-label'), 'Show controls');
+        assert.equal(await fab.getAttribute('aria-label'), 'Phone controls');
         assert.equal(await fab.locator('svg.kit-icon > path').getAttribute('d'), ICONS.grid, `${label}: the controls button shows the grid`);
         await fab.click();
         await page.locator('.floating-toolbar.open').waitFor();

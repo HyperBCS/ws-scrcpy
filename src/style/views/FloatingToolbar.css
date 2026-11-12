@@ -28,20 +28,52 @@
     -webkit-tap-highlight-color: transparent;
 }
 
-/* The controls button is the kit's icon button. Only what its place over the picture needs is
-   set here: the size `ControlPanel` clamps and drags by, a shadow, and the drag itself. */
+/* The controls button is the kit's icon button, as a tab on the left or the right edge of the
+   stage (`ControlPanel` keeps it there). Only what its place over the picture needs is set here:
+   the size `ControlPanel` places it by, the tab's shape, a shadow, the drag and the idle look. */
+.floating-toolbar.mobile {
+    width: var(--control-height);
+}
+
 .floating-toolbar-fab {
     pointer-events: auto;
-    width: 56px;
+    width: var(--control-height);
     height: 56px;
     box-shadow: var(--shadow-raised);
     cursor: grab;
     touch-action: none;
+    transition:
+        background-color var(--motion-fast) ease,
+        border-color var(--motion-fast) ease,
+        transform var(--motion-fast) var(--ease-out),
+        opacity var(--motion-fast) ease;
+}
+
+/* Square on the side of its edge. While it is dragged it is free of the edges. */
+.floating-toolbar[data-side='right'] .floating-toolbar-fab {
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+.floating-toolbar[data-side='left'] .floating-toolbar-fab {
+    border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+.floating-toolbar.dragging .floating-toolbar-fab {
+    border-radius: var(--radius-lg);
 }
 
 .floating-toolbar-fab:active,
 .floating-toolbar.dragging .floating-toolbar-fab {
     cursor: grabbing;
+}
+
+/* Translucent 3 s after the last touch, and before the first. It is opaque while it is touched,
+   while its panel is open and while it has the keyboard's focus. It fades out more slowly than
+   it comes back. */
+.floating-toolbar-fab[data-idle] {
+    opacity: var(--idle-opacity);
+    transition-duration: var(--motion-fast), var(--motion-fast), var(--motion-fast), var(--motion-settle);
+}
+.floating-toolbar-fab[data-idle]:focus-visible {
+    opacity: 1;
 }
 
 .floating-toolbar-panel {
