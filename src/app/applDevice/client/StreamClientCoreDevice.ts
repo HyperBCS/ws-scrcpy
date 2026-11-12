@@ -11,6 +11,7 @@ import { CoreDeviceInteractionHandler } from '../CoreDeviceInteractionHandler';
 import { createIphoneControls } from '../../controls/iphoneControls';
 import type { PhoneControls } from '../../controls/definition';
 import { hidUsageForCode, keyboardReportsForText } from '../hidKeyboard';
+import { KeyboardCapture } from '../../state/keyboardCapture';
 import { isLocalKeyboardTarget } from '../../googDevice/localKeyboardTarget';
 import { getVideoBounds } from '../../ControlBarLayout';
 import { deviceClipboard, deviceClipboardError, streamConnected, streamNotice } from '../../state/stream';
@@ -81,7 +82,8 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     private readonly controls: PhoneControls;
     private readonly audioSession?: AudioSession;
     private touchHandler?: CoreDeviceInteractionHandler;
-    private keyboardAttached = false;
+    private readonly keyboardCapture: KeyboardCapture;
+    private inputGeneration = 0;
     private readonly pressedUsages = new Set<number>();
     private deviceName: string;
     private sessionState: CoreDeviceSessionState = 'starting';
@@ -118,6 +120,16 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         // The decoder is chosen when the server announces the codec (`onCodec`): WebCodecs where
         // the browser offers it for this stream, otherwise MSE.
         this.controls = createIphoneControls(this, this.audioSession);
+        this.keyboardCapture = new KeyboardCapture({
+            container: this.container,
+            enabled: params.captureKeyboard !== false,
+            connected: () => this.isConnected(),
+            key: this.onKey,
+            release: () => this.releaseAllKeys(),
+            controls: () => this.controls,
+            paste: (text, current) => this.pasteText(text, current),
+            requestClipboard: () => this.requestClipboard(),
+        });
         this.receiver.on('connected', this.onConnected);
         this.receiver.on('disconnected', this.onDisconnected);
         this.receiver.on('status', this.onStatus);
@@ -180,7 +192,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
 
     /** `x`/`y` in video pixels; the wire wants the 0..65535 screen-normalised form. */
     public sendTouch(op: 'contact' | 'release' | 'tap', x: number, y: number, videoSize: Size): void {
-        if (!videoSize.width || !videoSize.height) {
+        if (this.decoderProblem || !videoSize.width || !videoSize.height) {
             return;
         }
         this.receiver.send({
@@ -195,7 +207,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         contacts: import('../../../common/CoreDeviceProtocol').CoreDeviceContact[],
         videoSize: Size,
     ): void {
-        if (!videoSize.width || !videoSize.height) return;
+        if (this.decoderProblem || !videoSize.width || !videoSize.height) return;
         this.receiver.send({
             type: 'touch-frame',
             contacts: contacts.map((c) => ({
@@ -254,9 +266,10 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
      */
     private enqueueReports(reports: number[][]): Promise<void> {
         this.beginTyping();
+        const generation = this.inputGeneration;
         const run = this.typing.then(async () => {
             for (const report of reports) {
-                if (this.stopped) {
+                if (this.stopped || generation !== this.inputGeneration) {
                     return;
                 }
                 this.sendKeyboardReport(report);
@@ -316,23 +329,39 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     }
 
     public setHandleKeyboardEvents(enabled: boolean): void {
-        if (enabled === this.keyboardAttached) {
-            return;
-        }
-        this.keyboardAttached = enabled;
-        if (enabled) {
-            window.addEventListener('keydown', this.onKey, true);
-            window.addEventListener('keyup', this.onKey, true);
-        } else {
-            window.removeEventListener('keydown', this.onKey, true);
-            window.removeEventListener('keyup', this.onKey, true);
-            this.releaseAllKeys();
-            void this.endTyping();
-        }
+        this.keyboardCapture.setEnabled(enabled);
+        if (!enabled) void this.endTyping();
     }
 
     public isHandlingKeyboardEvents(): boolean {
-        return this.keyboardAttached;
+        return this.keyboardCapture.isEnabled();
+    }
+
+    /** Set the clipboard once and paste only after the phone confirms the write. */
+    public async pasteText(text: string, current: () => boolean): Promise<void> {
+        const generation = this.inputGeneration;
+        await new Promise<void>((resolve, reject) => {
+            const id = this.nextRequestId++;
+            const done = (error?: string) => {
+                clearTimeout(timer);
+                this.off('result', onResult);
+                this.off('link', onLink);
+                if (error) reject(Error(error));
+                else resolve();
+            };
+            const onResult = (result: CoreDeviceClientEvents['result']) => {
+                if (result.id === id)
+                    done(result.ok ? undefined : result.error || 'The phone clipboard could not be changed.');
+            };
+            const onLink = ({ open }: { open: boolean }) => {
+                if (!open) done('The phone disconnected before the paste finished.');
+            };
+            const timer = setTimeout(() => done('No answer from the phone clipboard.'), 25000);
+            this.on('result', onResult);
+            this.on('link', onLink);
+            if (!this.receiver.send({ type: 'clipboard', op: 'set', text, id })) done('The phone is not connected.');
+        });
+        if (current() && generation === this.inputGeneration) await this.pressKey(0x19, [0xe3]);
     }
 
     private onKey = (event: KeyboardEvent): void => {
@@ -381,11 +410,12 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     /**
      * `streamConnected` is what enables the controls and the header's "Connected". An open socket
      * is not enough for either: the server accepts the socket before the session starts, and
-     * keeps it open for a moment after the session stopped or failed. It is true only while the
-     * session is ready and this browser can show the picture.
+     * keeps it open for a moment after the session stopped or failed. It is true while the
+     * session is ready. Decoder failure affects the picture, not phone commands or Type text.
      */
     private updateConnected(): void {
-        streamConnected.value = this.socketOpen && this.sessionState === 'ready' && !this.decoderProblem;
+        streamConnected.value = this.socketOpen && this.sessionState === 'ready';
+        this.keyboardCapture.refresh();
     }
 
     private setDecoderProblem(message: string): void {
@@ -405,6 +435,8 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
 
     private onDisconnected = (): void => {
         this.socketOpen = false;
+        this.inputGeneration++;
+        this.keyboardCapture.invalidate();
         this.updateConnected();
         this.emit('link', { open: false });
         this.player?.pause();
@@ -549,7 +581,9 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
             return;
         }
         this.stopped = true;
-        this.setHandleKeyboardEvents(false);
+        this.emit('link', { open: false });
+        this.keyboardCapture.stop();
+        this.inputGeneration++;
         this.touchHandler?.release();
         this.touchHandler = undefined;
         this.stopObservingViewport?.();

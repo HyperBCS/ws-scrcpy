@@ -1,0 +1,17 @@
+@layer tokens, base, components, views;
+
+@layer components {
+.kit-keyboard-chip {
+    display: none;
+    border-radius: var(--radius-full);
+    font-size: var(--font-size-12);
+}
+@media (pointer: fine) {
+    .kit-keyboard-chip { display: inline-flex; }
+}
+.kit-keyboard-chip[aria-pressed="true"] {
+    background: var(--info-fill);
+    color: var(--info-text);
+    border-color: var(--info-fill);
+}
+}

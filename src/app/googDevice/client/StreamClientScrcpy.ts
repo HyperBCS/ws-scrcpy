@@ -4,7 +4,7 @@ import { createAndroidControls } from '../../controls/androidControls';
 import type { PhoneControls } from '../../controls/definition';
 import VideoSettings from '../../VideoSettings';
 import { ControlMessage } from '../../controlMessage/ControlMessage';
-import { CommandControlMessage } from '../../controlMessage/CommandControlMessage';
+import { CommandControlMessage, CopyKey } from '../../controlMessage/CommandControlMessage';
 import { ClientsStats, DisplayCombinedInfo } from '../../client/StreamReceiver';
 import Util from '../../Util';
 import { KeyEventListener, KeyInputHandler } from '../KeyInputHandler';
@@ -19,10 +19,17 @@ import { DisplayInfo } from '../../DisplayInfo';
 import { ACTION } from '../../../common/Action';
 import { StreamReceiverScrcpy } from './StreamReceiverScrcpy';
 import { UhidKeyboard } from '../UhidKeyboard';
-import { deviceClipboard, streamConnected, streamNotice, streamServiceStopped } from '../../state/stream';
+import {
+    deviceClipboard,
+    deviceClipboardError,
+    streamConnected,
+    streamNotice,
+    streamServiceStopped,
+} from '../../state/stream';
 import { STREAM_SERVICE_STOPPED } from '../../../common/StreamCloseCode';
 import { AudioSession, createAudioSession } from '../../state/audio';
 import { isLocalKeyboardTarget } from '../localKeyboardTarget';
+import { KeyboardCapture } from '../../state/keyboardCapture';
 
 type StartParams = {
     udid: string;
@@ -47,6 +54,8 @@ export class StreamClientScrcpy
     private controls?: PhoneControls;
     private uhidKeyboard?: UhidKeyboard;
     private keyboardAttached = false;
+    private useUhid = true;
+    private keyboardCapture?: KeyboardCapture;
     private deviceName = '';
     private clientId = -1;
     private clientsCount = -1;
@@ -219,6 +228,7 @@ export class StreamClientScrcpy
     // which runs once, for good.
     public onDisconnected = (event?: CloseEvent): void => {
         streamConnected.value = false;
+        this.keyboardCapture?.invalidate();
         streamServiceStopped.value = event?.code === STREAM_SERVICE_STOPPED;
         this.clientId = -1;
         // A replacement scrcpy process has no virtual keyboard, even if capture remains on.
@@ -232,6 +242,7 @@ export class StreamClientScrcpy
 
     public onConnected = (): void => {
         streamConnected.value = true;
+        this.keyboardCapture?.refresh();
         streamServiceStopped.value = false;
     };
 
@@ -279,6 +290,8 @@ export class StreamClientScrcpy
         this.container.removeEventListener('drop', this.onFileDrop);
         this.touchHandler?.release();
         this.touchHandler = undefined;
+        this.keyboardCapture?.stop();
+        this.keyboardCapture = undefined;
         this.detachKeyboard();
         this.controls?.release();
         this.controls = undefined;
@@ -334,6 +347,34 @@ export class StreamClientScrcpy
 
         // The actions of the controls. `views/FloatingToolbar.tsx` draws them (`controls/`).
         this.controls = createAndroidControls(udid, player, this, this.audioSession);
+        this.keyboardCapture = new KeyboardCapture({
+            container: this.container,
+            enabled: this.params.captureKeyboard !== false,
+            connected: () => this.streamReceiver.isReady(),
+            key: (event) =>
+                this.uhidKeyboard
+                    ? event.type === 'keydown'
+                        ? this.onUhidKeyDown(event)
+                        : this.onUhidKeyUp(event)
+                    : KeyInputHandler.handler(event),
+            release: () => {
+                if (this.streamReceiver.isReady()) {
+                    this.releaseVirtualKeyboard();
+                    KeyInputHandler.releaseKeys();
+                } else {
+                    this.uhidKeyboard?.reset();
+                    KeyInputHandler.forgetKeys();
+                }
+            },
+            controls: () => this.controls,
+            onEnabledChange: (enabled) => this.setHandleKeyboardEvents(enabled, this.isUsingUhidKeyboard()),
+            paste: (text) => this.sendMessage(CommandControlMessage.createSetClipboardCommand(text, true)),
+            requestClipboard: () => {
+                deviceClipboard.value = undefined;
+                deviceClipboardError.value = '';
+                this.sendMessage(CommandControlMessage.createGetClipboardCommand(CopyKey.NONE));
+            },
+        });
         // Keyboard capture is on by default (see `parseParameters`); `?captureKeyboard=0` opts
         // out. The toggle that changes it while streaming is in `SettingsSheet`.
         if (this.params.captureKeyboard !== false) {
@@ -412,7 +453,9 @@ export class StreamClientScrcpy
      * touch/local controls unregisters it. `useUhid: false` injects Android keycodes, which is what
      * older devices (pre-Android 11, where the server cannot open /dev/uhid) need.
      */
-    public setHandleKeyboardEvents(enabled: boolean, useUhid = true): void {
+    public setHandleKeyboardEvents(enabled: boolean, useUhid = this.useUhid): void {
+        this.useUhid = useUhid;
+        this.keyboardCapture?.setEnabled(enabled);
         if (enabled === this.keyboardAttached && (!enabled || useUhid === !!this.uhidKeyboard)) {
             return;
         }
@@ -426,8 +469,6 @@ export class StreamClientScrcpy
             if (this.clientId > 0 && this.streamReceiver.isReady()) {
                 this.uhidKeyboard.setId(this.clientId);
             }
-            window.addEventListener('keydown', this.onUhidKeyDown, true);
-            window.addEventListener('keyup', this.onUhidKeyUp, true);
             window.addEventListener('blur', this.onUhidBlur);
             window.addEventListener('pagehide', this.onUhidBlur);
             document.addEventListener('visibilitychange', this.onUhidVisibilityChange);
@@ -438,11 +479,11 @@ export class StreamClientScrcpy
     }
 
     public isKeyboardCaptured(): boolean {
-        return this.keyboardAttached;
+        return this.keyboardCapture?.isEnabled() ?? this.keyboardAttached;
     }
 
     public isUsingUhidKeyboard(): boolean {
-        return !!this.uhidKeyboard;
+        return this.useUhid;
     }
 
     private detachKeyboard(): void {
