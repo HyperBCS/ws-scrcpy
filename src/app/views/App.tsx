@@ -45,7 +45,7 @@ export function App() {
     // Started here, not in `DeviceList`: opening a stream deep link directly (or just reloading
     // one) never mounts the device list, so nothing connected the tracker and the device store
     // stayed empty. Everything that looks a device up by udid then silently did nothing --
-    // the stream-settings button, the device switcher, and the sleep overlay's screen state.
+    // the Settings button, the phone switcher, and the state card's screen fact.
     useEffect(() => {
         startHostTracker();
         return startNotificationSummary();

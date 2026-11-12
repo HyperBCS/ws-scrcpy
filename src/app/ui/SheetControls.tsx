@@ -200,7 +200,7 @@ export function VolumeSlider({ session }: { session: AudioSession }) {
 }
 
 /**
- * Listen plus volume, as two rows, in the Actions sheet of both platforms. "Listen" is this
+ * Listen plus volume, as two rows, in the Sound section of Settings on both platforms. "Listen" is this
  * browser's playback; the phone's own volume keys are separate controls on the toolbar. The
  * status message doubles as the listen row's description, so "blocked" or "waiting" is read
  * next to the button that fixes it.

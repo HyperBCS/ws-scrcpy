@@ -8,8 +8,8 @@ export type PowerAction = 'power-key' | 'side-button' | 'reboot' | 'shutdown';
 
 /**
  * What a phone's page can do, as data. Each value is what the code does today; the comment names
- * the place. The views still check the platform themselves in many places. They move onto this
- * table as the screens are rebuilt.
+ * the place. The tabs, the Actions and Settings sheets, the controls and the list card choose
+ * their rows from this table, not from the platform.
  */
 export interface PhoneCapabilities {
     /** The Files tab. Also needs a build with INCLUDE_FILE_LISTING. */
@@ -38,23 +38,23 @@ const ANDROID: PhoneCapabilities = {
     // views/ToolView.tsx `deviceTools`; Files and Shell run over adb (state/devices.ts).
     files: true,
     shell: true,
-    // views/ActionsSheet.tsx, the "Phone panels" group.
+    // views/ActionsSheet.tsx `screen.panel`, in the Screen group of views/actions/ScreenGroup.tsx.
     panels: true,
     // No rotate control on Android: the picture follows the phone.
     rotate: false,
-    // views/ActionsSheet.tsx `onReadClipboard`, GET_CLIPBOARD.
+    // views/ActionsSheet.tsx `clipboard.read`, GET_CLIPBOARD.
     clipboardRead: true,
-    // views/ActionsSheet.tsx `onPaste`, SET_CLIPBOARD with paste.
+    // views/ActionsSheet.tsx `clipboard.send`, SET_CLIPBOARD with paste.
     clipboardPaste: true,
-    // views/UnlockSheet.tsx: the owner types the PIN or password into a field.
+    // state/unlockDevice.ts `androidUnlock`: the owner types the PIN or password into a field.
     unlock: 'passcode-field',
-    // googDevice/toolbox/GoogToolBox.ts, the Power key.
+    // controls/androidControls.ts Lock, the Power key; views/ActionsSheet.tsx `sideButton`.
     power: ['power-key'],
-    // The schedule is an iPhone feature (views/ApplSettingsSheet.tsx).
+    // The schedule is an iPhone feature (views/settings/ScheduledUnlock.tsx).
     scheduledUnlock: false,
-    // views/SettingsSheet.tsx, "Stream quality".
+    // views/settings/StreamSection.tsx, the quality presets and values.
     streamQuality: true,
-    // googDevice/toolbox/GoogToolBox.ts, Type text.
+    // controls/androidControls.ts, Type text.
     typeText: true,
 };
 
@@ -63,22 +63,22 @@ const IOS: PhoneCapabilities = {
     files: false,
     shell: false,
     panels: false,
-    // views/ApplActionsSheet.tsx `onRotate`.
+    // views/ApplActionsSheet.tsx `screen.rotate`.
     rotate: true,
-    // views/ApplActionsSheet.tsx `onReadClipboard`.
+    // views/ApplActionsSheet.tsx `clipboard.read`.
     clipboardRead: true,
-    // views/ApplActionsSheet.tsx `onSendClipboard` sets the phone's clipboard only.
+    // views/ApplActionsSheet.tsx `clipboard.send` sets the phone's clipboard only.
     clipboardPaste: false,
-    // views/ApplUnlockSheet.tsx: the passcode stored on the server is typed by the server.
+    // state/unlockDevice.ts `iphoneUnlock`: the passcode stored on the server is typed by the server.
     unlock: 'server-passcode',
-    // applDevice/toolbox/ApplToolBox.ts Lock (the side button); views/ApplActionsSheet.tsx
+    // controls/iphoneControls.ts Lock (the side button); views/ApplActionsSheet.tsx `sideButton`,
     // Reboot and Shut down.
     power: ['side-button', 'reboot', 'shutdown'],
-    // views/ApplSettingsSheet.tsx, "Scheduled unlock".
+    // views/settings/ScheduledUnlock.tsx, in the Unlock section of Settings.
     scheduledUnlock: true,
     // The iPhone stream has no quality settings.
     streamQuality: false,
-    // applDevice/toolbox/ApplToolBox.ts, Type text.
+    // controls/iphoneControls.ts, Type text.
     typeText: true,
 };
 

@@ -1,7 +1,7 @@
 /**
  * The one icon set. Every icon is a single path on a 24 by 24 grid, drawn as a stroke in the
  * colour of the text around it. `Icon.tsx` draws one in Preact; `iconSvg()` gives the same
- * markup as a string for code that builds HTML (Files, the toolbox).
+ * markup as a string for code that builds HTML (Files).
  */
 export const ICONS = {
     // Navigation and disclosure.

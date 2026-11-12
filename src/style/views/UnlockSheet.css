@@ -6,7 +6,7 @@
    are the kit's. */
 .lock-screen-notice {
     position: relative;
-    /* One above the header's level: the cover over a sleeping phone must not dim the notice. */
+    /* One above the header's level, so the header's edge does not paint over the band. */
     z-index: calc(var(--z-header) + 1);
     flex: 0 0 auto;
     flex-wrap: nowrap;

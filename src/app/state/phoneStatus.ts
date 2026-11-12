@@ -206,7 +206,7 @@ function googFacts(entry: DeviceEntry): PhoneFacts {
                   ? 'on'
                   : 'unknown',
         lock: lockOf(d['device.locked']),
-        // Only while `StreamView` is mounted for this serial (`state/stream.ts`). The list and a
+        // Only while the Android screen is mounted for this serial (`state/stream.ts`). The list and a
         // screen are separate pages, so a card is never viewed.
         viewed: activeStream.value?.params.udid === d.udid,
     };

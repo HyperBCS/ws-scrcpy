@@ -18,7 +18,7 @@
 }
 
 /* Covers the stage while the panel is open, so the press that closes it is not a remote tap.
-   It sits above the picture and its touch layer and below the sleep card and the toolbar. */
+   It sits above the picture and its touch layer and below the state card and the toolbar. */
 .floating-toolbar-shield {
     position: absolute;
     inset: 0;

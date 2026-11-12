@@ -106,7 +106,7 @@ export class StreamClientScrcpy
         player?: BasePlayer,
         videoSettings?: VideoSettings,
         // A view hosting this client can pass its own container to mount into (see
-        // `views/StreamView.tsx`); direct/legacy callers keep working against `document.body`.
+        // `views/screen/android.tsx`); direct/legacy callers keep working against `document.body`.
         container: HTMLElement = document.body,
     ) {
         super(params);
@@ -259,7 +259,7 @@ export class StreamClientScrcpy
     };
 
     // Tears down the DOM this client owns and stops the receiver and player. The host view calls
-    // it on unmount (see `views/StreamView.tsx`). Safe to call more than once.
+    // it on unmount (see `views/screen/android.tsx`). Safe to call more than once.
     public stop = (ev?: string | Event): void => {
         if (ev && ev instanceof Event && ev.type === 'error') {
             console.error(TAG, ev);
@@ -524,7 +524,7 @@ export class StreamClientScrcpy
     }
 
     // Exposed for `SettingsSheet`'s "Playback" group -- player choice goes through `navigate()`
-    // (it remounts the whole `StreamView`), but the quality-stats overlay is client-side-only and
+    // (it remounts the whole screen view), but the quality-stats overlay is client-side-only and
     // acts on the already-running player instance in place.
     public getPlayer(): BasePlayer | undefined {
         return this.player;
