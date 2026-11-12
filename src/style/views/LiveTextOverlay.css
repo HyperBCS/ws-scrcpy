@@ -35,15 +35,17 @@
 
 /* While typing, the picture is fitted above the sheet (views/LiveTextOverlay.tsx), so the field
    being typed into on the phone stays in sight. From 600px the dialog therefore stands a little
-   above the bottom edge, not under the top edge, and on a short window it stands on the edge. */
+   above the bottom edge, not under the top edge, and on a short window it stands on the edge.
+   From 1024px it is docked beside the picture instead, where Actions and Settings open
+   (`kit/Sheet.css`), and the picture keeps its height. */
 @media (min-width: 600px) {
-    .kit-sheet:has(.live-text) > .kit-sheet-panel {
+    .kit-sheet:not(.kit-sheet-docked):has(.live-text) > .kit-sheet-panel {
         top: auto;
         bottom: var(--space-24);
     }
 }
 @media (min-width: 600px) and (max-height: 500px) {
-    .kit-sheet:has(.live-text) > .kit-sheet-panel {
+    .kit-sheet:not(.kit-sheet-docked):has(.live-text) > .kit-sheet-panel {
         bottom: 0;
         border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     }

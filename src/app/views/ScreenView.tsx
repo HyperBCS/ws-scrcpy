@@ -1,5 +1,5 @@
 import { ComponentChildren, RefObject } from 'preact';
-import { useRef } from 'preact/hooks';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import { openSheet, streamNotice } from '../state/stream';
 import type { ConnectionStatus } from '../state/phoneStatus';
 import { NotificationsLink } from '../ui/NotificationsLink';
@@ -8,6 +8,7 @@ import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
 import { IconButton } from '../ui/IconButton';
 import { Presence } from '../ui/Presence';
+import { useSheetDock } from '../ui/Sheet';
 import { LockScreenNotice } from './LockScreenNotice';
 import { ScreenProblem, StateCard } from './screen/StateCard';
 import '../../style/kit/Banner.css';
@@ -66,14 +67,62 @@ interface ScreenViewProps<P> {
 }
 
 /**
+ * Writes where the picture is on the stage as `--stream-picture-top`, `-right`, `-width` and
+ * `-height`, so that the rail of controls stands against its edge and the state card is no wider
+ * than the picture (`StreamView.css`). The picture is the touch layer the player draws in the
+ * mount node; until the player has given it a size (a canvas without a width is 300 by 150) it
+ * is the mount node itself. This only reads the mount node: the stream client owns what is
+ * inside it. The CSS fits the picture, so it moves when the stage or the mount node changes
+ * size, or when the player sizes the layer.
+ */
+function usePictureBox(stageRef: RefObject<HTMLDivElement>, mountRef: RefObject<HTMLDivElement>) {
+    useLayoutEffect(() => {
+        const stage = stageRef.current;
+        const mount = mountRef.current;
+        if (!stage || !mount) {
+            return;
+        }
+        const place = () => {
+            const frame = stage.getBoundingClientRect();
+            const layer = mount.querySelector('.touch-layer');
+            const sized = layer?.hasAttribute('width') ? layer.getBoundingClientRect() : undefined;
+            const picture = sized && sized.width > 0 && sized.height > 0 ? sized : mount.getBoundingClientRect();
+            stage.style.setProperty('--stream-picture-top', `${picture.top - frame.top}px`);
+            stage.style.setProperty('--stream-picture-right', `${picture.right - frame.left}px`);
+            stage.style.setProperty('--stream-picture-width', `${picture.width}px`);
+            stage.style.setProperty('--stream-picture-height', `${picture.height}px`);
+        };
+        place();
+        const resize = new ResizeObserver(place);
+        resize.observe(stage);
+        resize.observe(mount);
+        const drawn = new MutationObserver(place);
+        drawn.observe(mount, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['width', 'height'],
+        });
+        return () => {
+            resize.disconnect();
+            drawn.disconnect();
+        };
+    }, []);
+}
+
+/**
  * The screen of a phone, the same for both kinds: the header, one place for banners under it,
  * the stage with the picture and its controls, and one card on the stage for each state without
  * a picture.
  */
 export function ScreenView<P extends { udid: string }>({ params, useScreen, tabs }: ScreenViewProps<P>) {
     const mountRef = useRef<HTMLDivElement>(null);
+    const stageRef = useRef<HTMLDivElement>(null);
     const screen = useScreen(params, mountRef);
     const { connection } = screen;
+    // Actions, Settings and Type text stand beside the stage from 1024px.
+    useSheetDock(stageRef);
+    usePictureBox(stageRef, mountRef);
 
     return (
         <div class="stream-view">
@@ -136,8 +185,9 @@ export function ScreenView<P extends { udid: string }>({ params, useScreen, tabs
             {/* The stream client owns everything inside the mount node (see the adapters). The
                 node is made once, keeps its place and is never moved: the card and the controls
                 are its siblings, and the sheets are outside the stage. The stage keeps its key, so
-                a banner that comes or goes cannot make Preact build it again. */}
-            <div key="stage" class="stream-stage">
+                a banner that comes or goes cannot make Preact build it again. A docked sheet and
+                the rail change only its styles. */}
+            <div key="stage" class="stream-stage" ref={stageRef}>
                 <div class="stream-mount" ref={mountRef} />
                 <aside class="stream-controls-slot" aria-label="Phone controls">
                     {screen.controls}

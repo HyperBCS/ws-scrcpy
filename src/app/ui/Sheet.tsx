@@ -1,6 +1,6 @@
 import { signal } from '@preact/signals';
-import { ComponentChildren, render } from 'preact';
-import { useId, useLayoutEffect, useRef } from 'preact/hooks';
+import { ComponentChildren, RefObject, render } from 'preact';
+import { useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import '../../style/kit/Sheet.css';
 import { cancelConfirmPrompt } from './ConfirmAction';
 import { rememberDialogFocus, returnDialogFocus, stopRemoteInteraction, trapDialogTab } from './dialogFocus';
@@ -12,13 +12,66 @@ import { bindSheetDrag } from './sheetDrag';
 
 /**
  * From this width a sheet is a centred dialog; below it, a bottom sheet, whatever the pointer.
- * `kit/Sheet.css` has the same number. The side panel of phase 6 is one more presentation: a
- * block in that stylesheet, and a query here if it should move differently.
+ * `kit/Sheet.css` has the same number.
  */
 export const SHEET_DIALOG = '(min-width: 600px)';
 
+/**
+ * From this width a sheet that may dock (`dock`) is a panel beside the place `useSheetDock`
+ * names, while that place is shown: the stage of a phone's screen.
+ */
+export const SHEET_DOCK = '(min-width: 1024px)';
+
 // The modal sheets on screen, oldest first, including one that is still animating out.
 const shown: HTMLDialogElement[] = [];
+
+// The place docked sheets stand beside, and the docked sheets on screen (one may be animating
+// out while the next comes in).
+const dockHost = signal<HTMLElement | null>(null);
+const docked = new Set<HTMLDialogElement>();
+
+function markDockHost(host: HTMLElement) {
+    host.toggleAttribute('data-sheet-docked', docked.size > 0);
+}
+
+/**
+ * Names the element that a sheet with `dock` stands beside from 1024px, for as long as it is
+ * mounted. While a docked sheet is shown the element has `data-sheet-docked`, and
+ * `--kit-sheet-dock-width` (`kit/Sheet.css`) is the width of the panel at its right edge: the
+ * element makes room for it itself, so nothing it holds lies under the panel.
+ */
+export function useSheetDock(ref: RefObject<HTMLElement>) {
+    useLayoutEffect(() => {
+        const host = ref.current;
+        if (!host) {
+            return;
+        }
+        dockHost.value = host;
+        return () => {
+            host.removeAttribute('data-sheet-docked');
+            if (dockHost.peek() === host) {
+                dockHost.value = null;
+            }
+        };
+    }, []);
+}
+
+/** Whether the window matches `query`, kept up to date. Without a query, false. */
+function useMatch(query: string | undefined) {
+    const [matches, setMatches] = useState(() => !!query && window.matchMedia(query).matches);
+    useLayoutEffect(() => {
+        if (!query) {
+            setMatches(false);
+            return;
+        }
+        const media = window.matchMedia(query);
+        const update = () => setMatches(media.matches);
+        update();
+        media.addEventListener('change', update);
+        return () => media.removeEventListener('change', update);
+    }, [query]);
+    return matches;
+}
 
 // What takes a modal sheet that is animating out off the screen at once, by its dialog.
 const endExit = new WeakMap<HTMLDialogElement, () => void>();
@@ -48,13 +101,20 @@ interface SheetProps {
      * to the page. It closes by its close control, Escape and Back only, and is not dragged.
      */
     modal?: boolean;
+    /**
+     * From 1024px, while the place `useSheetDock` names is shown (a phone's screen), the sheet is
+     * a panel at that place's right edge, as tall as it, and does not dim it. Only where it
+     * stands changes: a modal sheet stays modal, and a press beside the panel still closes it.
+     */
+    dock?: boolean;
 }
 
 /**
  * The one sheet, on the native `<dialog>`: a bottom sheet below 600px and a centred dialog
- * 560px wide from there. The dialog element covers the window and holds the backdrop and the
- * panel. The panel is what moves, so the backdrop can be pressed in every browser and a toast
- * inside the dialog stays where it is. A modal sheet is the default; see `modal`.
+ * 560px wide from there, or docked beside a phone's screen (`dock`). The dialog element covers
+ * the window and holds the backdrop and the panel. The panel is what moves, so the backdrop can
+ * be pressed in every browser and a toast inside the dialog stays where it is. A modal sheet is
+ * the default; see `modal`.
  *
  * The children stay mounted while the sheet is closed, so they keep their state.
  */
@@ -68,7 +128,11 @@ export function Sheet({
     children,
     footer,
     modal = true,
+    dock = false,
 }: SheetProps) {
+    const wide = useMatch(dock ? SHEET_DOCK : undefined);
+    // Read only by a sheet that may dock, so the others do not render again for it.
+    const host = dock && wide ? dockHost.value : null;
     const rootRef = useRef<HTMLDialogElement>(null);
     const headerRef = useRef<HTMLElement>(null);
     const { ref: panelRef, present } = usePresence<HTMLDivElement>(open, 'sheet', SHEET_DIALOG);
@@ -258,10 +322,49 @@ export function Sheet({
         };
     }, [present, modal]);
 
+    // Docked: the panel follows the place it stands beside, which keeps room for it until the
+    // panel has gone. Runs after the dialog is shown, so the dialog has its box.
+    useLayoutEffect(() => {
+        const root = rootRef.current;
+        if (!present || !root || !host) {
+            return;
+        }
+        docked.add(root);
+        markDockHost(host);
+        const place = () => {
+            const frame = root.getBoundingClientRect();
+            const box = host.getBoundingClientRect();
+            root.style.setProperty('--kit-sheet-dock-top', `${box.top - frame.top}px`);
+            root.style.setProperty('--kit-sheet-dock-right', `${frame.right - box.right}px`);
+            root.style.setProperty('--kit-sheet-dock-height', `${box.height}px`);
+        };
+        place();
+        const resize = new ResizeObserver(place);
+        resize.observe(host);
+        const viewport = window.visualViewport;
+        viewport?.addEventListener('resize', place);
+        viewport?.addEventListener('scroll', place);
+        window.addEventListener('resize', place);
+        // A place inside a page that scrolls (the kit page) moves without changing its size.
+        window.addEventListener('scroll', place, true);
+        return () => {
+            resize.disconnect();
+            viewport?.removeEventListener('resize', place);
+            viewport?.removeEventListener('scroll', place);
+            window.removeEventListener('resize', place);
+            window.removeEventListener('scroll', place, true);
+            docked.delete(root);
+            markDockHost(host);
+            for (const name of ['top', 'right', 'height']) {
+                root.style.removeProperty(`--kit-sheet-dock-${name}`);
+            }
+        };
+    }, [present, host]);
+
     return (
         <dialog
             ref={rootRef}
-            class={modal ? 'kit-sheet' : 'kit-sheet kit-sheet-modeless'}
+            class={`kit-sheet${modal ? '' : ' kit-sheet-modeless'}${present && host ? ' kit-sheet-docked' : ''}`}
             // Written out although a dialog has the role already: the keyboard capture of the
             // stream leaves keys alone when they are pressed inside `[role="dialog"]`.
             role="dialog"

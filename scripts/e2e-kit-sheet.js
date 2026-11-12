@@ -15,6 +15,10 @@
 //   a toast raised while a sheet is open shows above it and can be pressed;
 //   a sheet that is not modal (Type text) has no backdrop, leaves the page in use, keeps a
 //   toast on the page, closes by its close control, Escape and Back, and returns focus;
+//   a docked sheet (Actions, Settings and Type text beside a phone's screen) is from 1024px a
+//   panel at the right edge of the place it stands beside, as tall as it, dimming nothing, and
+//   that place keeps room for it; a modal one is still modal, one that is not modal follows
+//   the place when the page scrolls; below 1024px it is the bottom sheet or the dialog;
 //   touch, mouse and wheel events in a sheet or a menu do not reach document.body;
 //   the sheet follows the visual viewport when an on-screen keyboard resizes it;
 //   the menu opens at its button, moves with the arrow keys, closes on Escape, a press outside,
@@ -739,6 +743,144 @@ async function modeless(test) {
     console.log(`PASS ${test.label}: a sheet that is not modal has no backdrop, leaves the page in use and returns focus to its opener; it takes the place of a modal sheet at once`);
 }
 
+/**
+ * Docked, as Actions, Settings and Type text are beside a phone's screen: from 1024px a panel
+ * 380px wide at the right edge of the frame that stands for the screen, as tall as it, square
+ * and without a shadow, dimming nothing, and the frame keeps room for it. The modal one keeps
+ * its backdrop: a press beside the panel closes it and reaches nothing, Tab stays inside, and
+ * Escape and Back close it with focus back on its button. The one that is not modal leaves the
+ * page in use and follows the frame when the page scrolls. Below 1024px both are the bottom
+ * sheet (the dialog is checked by dockWidthRule).
+ */
+async function docked(test) {
+    const { page, viewport, mobile, colorScheme } = test;
+    const demo = page.locator('[data-kit-demo="docked"]');
+    const frame = demo.locator('.kit-demo-dock');
+    const stage = demo.locator('.kit-demo-dock-stage');
+    const scrolled = await page.evaluate(() => document.querySelector('.kit-page').scrollTop);
+    await frame.evaluate((node) => node.scrollIntoView({ block: 'center' }));
+    const home = await at(page);
+    const openBy = async (label, dialog) => {
+        await demo.getByRole('button', { name: label, exact: true }).focus();
+        await page.keyboard.press('Enter');
+        await dialog.waitFor();
+        await settleMotion(page);
+        await untilAt(page, home.index + 1, home.overlay + 1);
+    };
+    const facts = (dialog) => dialog.evaluate((node) => ({
+        docked: node.classList.contains('kit-sheet-docked'),
+        modal: node.matches(':modal'),
+        backdrop: node.querySelector(':scope > .kit-sheet-backdrop') ? getComputedStyle(node.querySelector(':scope > .kit-sheet-backdrop')).backgroundColor : null,
+        host: !!document.querySelector('.kit-demo-dock[data-sheet-docked]'),
+    }));
+
+    const modal = sheet(page, 'Beside the screen');
+    const panel = modal.locator(':scope > .kit-sheet-panel');
+    await openBy('Docked sheet', modal);
+    let [rect, host, text] = await Promise.all([box(panel), box(frame), box(stage)]);
+    if (mobile) {
+        const shown = await facts(modal);
+        assert.deepEqual({ docked: shown.docked, modal: shown.modal, host: shown.host }, { docked: false, modal: true, host: false }, 'below 1024px it is not docked');
+        assert.notEqual(shown.backdrop, 'rgba(0, 0, 0, 0)', 'and its backdrop dims the page');
+        assert.equal(rect.width, viewport.width, 'below 600px it is the bottom sheet');
+        near(rect.bottom, viewport.height, 'on the bottom edge');
+        await page.keyboard.press('Escape');
+        await closed(test, modal, home, 'Escape');
+    } else {
+        assert.deepEqual(await facts(modal), { docked: true, modal: true, backdrop: 'rgba(0, 0, 0, 0)', host: true }, 'docked and modal, with a backdrop that dims nothing, and the frame keeps room');
+        assert.equal(rect.width, 380, 'the panel is 380px wide');
+        near(rect.right, host.right, 'the panel is at the right edge of the frame');
+        near(rect.top, host.top, 'the panel starts with the frame');
+        near(rect.height, host.height, 'the panel is as tall as the frame');
+        assert.ok(text.right <= rect.left + 0.5, `the frame keeps room for the panel (${text.right} <= ${rect.left})`);
+        const look = await style(panel, 'backgroundColor', 'borderTopLeftRadius', 'borderBottomLeftRadius', 'borderLeftWidth', 'boxShadow');
+        assert.deepEqual(look, { backgroundColor: SURFACE[colorScheme], borderTopLeftRadius: '0px', borderBottomLeftRadius: '0px', borderLeftWidth: '1px', boxShadow: 'none' }, 'square, with a border at its side and no shadow');
+        assert.ok(await modal.locator('.kit-sheet-handle').isHidden(), 'no drag handle');
+        await shot(test, 'sheet-docked');
+        for (let step = 0; step < 4; step++) {
+            await page.keyboard.press('Tab');
+            assert.ok(await modal.evaluate((node) => node.contains(document.activeElement)), 'Tab stays in the docked sheet');
+        }
+        // A press beside the panel, on the frame, closes it and reaches nothing.
+        await listen(page);
+        await pressAt(test, text.left + 10, text.top + 10);
+        await closed(test, modal, home, 'a press beside the panel');
+        assert.deepEqual(await reached(page), [], 'the press beside the panel reaches nothing');
+        assert.equal(await focused(page), 'button.kit-button:Docked sheet', 'focus returns to the button that opened it');
+        assert.equal(await frame.evaluate((node) => node.hasAttribute('data-sheet-docked')), false, 'the frame has its width again');
+        await openBy('Docked sheet', modal);
+        await page.keyboard.press('Escape');
+        await closed(test, modal, home, 'Escape');
+        await openBy('Docked sheet', modal);
+        await page.goBack();
+        await closed(test, modal, home, 'Back');
+        assert.equal(await focused(page), 'button.kit-button:Docked sheet', 'Back returns focus too');
+    }
+
+    const free = sheet(page, 'Beside the screen, page in use');
+    const freePanel = free.locator(':scope > .kit-sheet-panel');
+    await openBy('Docked sheet that leaves the page in use', free);
+    [rect, host, text] = await Promise.all([box(freePanel), box(frame), box(stage)]);
+    assert.deepEqual(await facts(free), { docked: !mobile, modal: false, backdrop: null, host: !mobile }, 'not modal, no backdrop');
+    if (!mobile) {
+        near(rect.right, host.right, 'the panel is at the right edge of the frame');
+        near(rect.top, host.top, 'the panel starts with the frame');
+        near(rect.height, host.height, 'the panel is as tall as the frame');
+        await shot(test, 'sheet-docked-modeless');
+        // The page stays in use: a press beside the panel reaches it and the sheet stays open.
+        await listen(page);
+        await pressAt(test, text.left + 10, text.top + 10);
+        await page.waitForTimeout(150);
+        assert.ok((await reached(page)).includes('mousedown'), 'a press beside the panel reaches the page');
+        assert.equal(await openSheets(page), 1, 'and leaves the sheet open');
+        // The frame moves with the page, and the panel with it.
+        await page.evaluate(() => { document.querySelector('.kit-page').scrollTop -= 60; });
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const [moved, movedHost] = await Promise.all([box(freePanel), box(frame)]);
+        assert.ok(Math.abs(movedHost.top - host.top) > 30, 'the page scrolled');
+        near(moved.top, movedHost.top, 'the panel follows the frame');
+    } else {
+        assert.equal(rect.width, viewport.width, 'below 600px it is the bottom sheet');
+    }
+    await free.getByLabel('Text for the phone', { exact: true }).focus();
+    await page.keyboard.press('Escape');
+    await closed(test, free, home, 'Escape');
+    assert.equal(await focused(page), 'button.kit-button:Docked sheet that leaves the page in use', 'focus returns to its button');
+    await page.evaluate((top) => { document.querySelector('.kit-page').scrollTop = top; }, scrolled);
+    console.log(`PASS ${test.label}: ${mobile ? 'below 1024px a docked sheet is the bottom sheet' : 'a docked sheet stands at the right edge of its frame, dims nothing and stays modal or not'}`);
+}
+
+/** The width decides whether a sheet docks, not the pointer: from 1024px, also on a touch screen. */
+async function dockWidthRule(browser) {
+    const cases = [
+        { name: 'desktop window under the breakpoint', width: 1023, height: 800, mobile: false, docked: false },
+        { name: 'desktop window at the breakpoint', width: 1024, height: 800, mobile: false, docked: true },
+        { name: 'touch tablet on its side', width: 1180, height: 820, mobile: true, docked: true },
+    ];
+    for (const viewport of cases) {
+        const test = await start(browser, viewport);
+        try {
+            const { page } = test;
+            const demo = page.locator('[data-kit-demo="docked"]');
+            await demo.locator('.kit-demo-dock').evaluate((node) => node.scrollIntoView({ block: 'center' }));
+            await press(test, demo.getByRole('button', { name: 'Docked sheet', exact: true }));
+            const dialog = sheet(page, 'Beside the screen');
+            await dialog.waitFor();
+            await settleMotion(page);
+            const rect = await box(dialog.locator(':scope > .kit-sheet-panel'));
+            assert.equal(await dialog.evaluate((node) => node.classList.contains('kit-sheet-docked')), viewport.docked, `${viewport.name}: ${viewport.docked ? 'docked' : 'not docked'}`);
+            assert.equal(rect.width, viewport.docked ? 380 : 560, `${viewport.name}: the panel's width`);
+            if (!viewport.docked) near(rect.left + rect.width / 2, viewport.width / 2, `${viewport.name}: the centred dialog`);
+            await page.keyboard.press('Escape');
+            await dialog.waitFor({ state: 'hidden' });
+            assert.deepEqual(test.errors, []);
+        } finally {
+            await test.context.close();
+        }
+    }
+    console.log('PASS the width decides: a sheet docks from 1024px, with a mouse or on a touch screen');
+}
+
 async function keyboardResize(test) {
     const { page, viewport } = test;
     const { dialog, panel, home } = await open(test, 'Sheet with a text field', 'Text field');
@@ -1006,14 +1148,15 @@ async function run(browser, viewport, colorScheme, checks) {
 async function main() {
     const browser = await chromium.launch();
     try {
-        const behaviour = [history, confirmFirst, busyStays, focus, stack, toastAbove, modeless, eventsStop, keyboardResize, menu, compactMenu];
+        const behaviour = [history, confirmFirst, busyStays, focus, stack, toastAbove, modeless, docked, eventsStop, keyboardResize, menu, compactMenu];
         // Side by side, each in a context of its own: the suite has four minutes.
         await Promise.all([
             run(browser, PHONE, 'light', [layout, ...behaviour]),
             run(browser, DESKTOP, 'dark', [layout, ...behaviour]),
-            run(browser, PHONE, 'dark', [layout, confirmFirst, toastAbove, modeless, menu, compactMenu]),
-            run(browser, DESKTOP, 'light', [layout, confirmFirst, toastAbove, modeless, menu, compactMenu]),
+            run(browser, PHONE, 'dark', [layout, confirmFirst, toastAbove, modeless, docked, menu, compactMenu]),
+            run(browser, DESKTOP, 'light', [layout, confirmFirst, toastAbove, modeless, docked, menu, compactMenu]),
             chosen(widthRule) ? widthRule(browser) : undefined,
+            chosen(dockWidthRule) ? dockWidthRule(browser) : undefined,
         ]);
     } finally {
         await browser.close();

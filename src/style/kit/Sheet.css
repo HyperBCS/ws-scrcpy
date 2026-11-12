@@ -3,6 +3,7 @@
 @layer components {
 /* The one sheet. Markup, for code that builds it without Preact:
      dialog.kit-sheet                      opened with showModal(); with .kit-sheet-modeless, show()
+                                           .kit-sheet-docked: beside a phone's screen (below)
        .kit-sheet-backdrop                 a modal sheet only
        .kit-sheet-panel
          header.kit-sheet-header
@@ -235,5 +236,67 @@
     .kit-sheet-footer > * {
         flex: 0 0 auto;
     }
+}
+
+/* Docked (`dock` in ui/Sheet.tsx, from 1024px while a phone's screen is shown): a panel of a
+   fixed width at the right edge of the screen's stage and as tall as it, with nothing dimmed.
+   A modal sheet keeps its backdrop without a colour, so a press beside the panel still closes
+   the sheet and reaches nothing. ui/Sheet.tsx sets the --kit-sheet-dock- offsets from the
+   stage, which has `data-sheet-docked` meanwhile and keeps the panel's width free. */
+.kit-sheet-docked,
+[data-sheet-docked] {
+    --kit-sheet-dock-width: 380px;
+}
+
+.kit-sheet-docked > .kit-sheet-backdrop {
+    background: transparent;
+}
+
+.kit-sheet.kit-sheet-docked > .kit-sheet-panel {
+    top: var(--kit-sheet-dock-top, 0px);
+    right: var(--kit-sheet-dock-right, 0px);
+    bottom: auto;
+    left: auto;
+    width: var(--kit-sheet-dock-width);
+    height: var(--kit-sheet-dock-height, 100%);
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border-left: 1px solid var(--border);
+    border-radius: 0;
+    box-shadow: none;
+    transform: none;
+}
+
+/* The body takes the height, so the footer stands at the bottom edge. */
+.kit-sheet-docked .kit-sheet-body {
+    flex: 1 1 auto;
+}
+
+.kit-sheet-docked .kit-sheet-handle {
+    display: none;
+}
+
+.kit-sheet-docked .kit-sheet-header {
+    touch-action: auto;
+    cursor: default;
+}
+
+/* The panel is as narrow as a phone, so its rows are laid out as on a phone (`kit/Group.css`
+   below 600px): two buttons, or a select, go under their text. */
+.kit-sheet-docked .kit-row-pair {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-8);
+    padding: var(--space-12) var(--space-16);
+}
+
+.kit-sheet-docked .kit-row-pair > .kit-row-control {
+    justify-content: stretch;
+}
+
+.kit-sheet-docked .kit-row-pair > .kit-row-control > * {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 }

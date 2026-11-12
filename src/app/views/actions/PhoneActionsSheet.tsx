@@ -46,7 +46,7 @@ export function PhoneActionsSheet({ adapter }: { adapter: ActionsAdapter }) {
     );
 
     return (
-        <Sheet open={open} onClose={() => (toolsSheetOpen.value = false)} title={ACTIONS_TITLE} subtitle={name}>
+        <Sheet open={open} onClose={() => (toolsSheetOpen.value = false)} title={ACTIONS_TITLE} subtitle={name} dock>
             <div class="actions-sheet">
                 {!connected && <Banner>{adapter.pausedReason?.() || NOTE.paused}</Banner>}
 

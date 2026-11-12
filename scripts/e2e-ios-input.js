@@ -281,9 +281,12 @@ async function mouseHelp(test, label, mobile) {
     await actions.waitFor({ state: 'hidden' });
     if (!mobile) {
         await settleMotion(page);
+        // From 1024px Actions stands beside the picture, which is centred again once it has gone
+        // (p6-desktop-layout): the middle is measured again.
+        const shut = await page.locator('.stream-mount .touch-layer').boundingBox();
         const control = await touchesDuring(test, async () => {
             await pause(450);
-            await page.mouse.move(...middle);
+            await page.mouse.move(shut.x + shut.width / 2, shut.y + shut.height / 2);
             await page.mouse.wheel(0, 100);
         });
         assert.equal(control.filter((message) => message.op === 'release').length, 1, `${label}: positive control: with the sheet shut the wheel swipes`);
