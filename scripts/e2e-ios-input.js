@@ -5,6 +5,7 @@
 //   - a drag that leaves the picture rides its edge and lifts once where the button comes up;
 //   - right-click sends nothing and opens no browser menu;
 //   - Ctrl+drag sends two contacts mirrored through the middle, and both lift together;
+//   - while the Actions sheet is open a wheel does not reach the phone;
 //   - one screen session per visit;
 //   - the Mouse and keyboard row of the Actions sheet lists this, at 390x844 and 1280x800, light
 //     and dark.
@@ -234,6 +235,21 @@ async function mouseHelp(test, label, mobile) {
     const actions = page.getByRole('dialog', { name: 'Actions', exact: true });
     await actions.waitFor();
     await settleMotion(page);
+    const picture = await page.locator('.stream-mount .touch-layer').boundingBox();
+    const middle = [picture.x + picture.width / 2, picture.y + picture.height / 2];
+    if (!mobile) {
+        // The sheet is modal: a wheel over the picture, or beside the panel, does not reach the
+        // phone. Each wheel comes after the 400 ms between swipes, so the limit is not the reason.
+        const panel = await actions.locator('.kit-sheet-panel').boundingBox();
+        const wheeled = await touchesDuring(test, async () => {
+            for (const spot of [middle, [panel.x / 2, panel.y + panel.height / 2]]) {
+                await pause(450);
+                await page.mouse.move(...spot);
+                await page.mouse.wheel(0, 100);
+            }
+        });
+        assert.deepEqual(wheeled, [], `${label}: a wheel under the open sheet does not reach the phone`);
+    }
     const help = actions.locator('.kit-row[data-mouse-help]');
     assert.equal(await help.locator('.kit-row-title').textContent(), 'Mouse and keyboard');
     assert.equal(
@@ -263,6 +279,15 @@ async function mouseHelp(test, label, mobile) {
     assert.equal(await help.locator('.kit-row-desc').textContent(), 'What the mouse does on this phone.');
     await page.keyboard.press('Escape');
     await actions.waitFor({ state: 'hidden' });
+    if (!mobile) {
+        await settleMotion(page);
+        const control = await touchesDuring(test, async () => {
+            await pause(450);
+            await page.mouse.move(...middle);
+            await page.mouse.wheel(0, 100);
+        });
+        assert.equal(control.filter((message) => message.op === 'release').length, 1, `${label}: positive control: with the sheet shut the wheel swipes`);
+    }
 }
 
 (async () => {
@@ -284,7 +309,7 @@ async function mouseHelp(test, label, mobile) {
             } finally {
                 await test.context.close();
             }
-            console.log(`PASS ${label}: ${mobile ? '' : 'wheel swipe, drag off the picture, right-click, Ctrl+drag pinch, '}mouse help`);
+            console.log(`PASS ${label}: ${mobile ? '' : 'wheel swipe, drag off the picture, right-click, Ctrl+drag pinch, no wheel under a sheet, '}mouse help`);
         }
     } finally {
         await browser.close();
