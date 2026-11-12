@@ -7,6 +7,7 @@ import { DeviceTracker as ApplDeviceTracker } from '../applDevice/client/DeviceT
 import { ParamsBase } from '../../types/ParamsBase';
 import { HostItem } from '../../types/Configuration';
 import { ChannelCode } from '../../common/ChannelCode';
+import { setListed } from '../state/devices';
 
 const TAG = '[HostTracker]';
 
@@ -103,6 +104,9 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
                         tracker.destroy();
                     }
                 });
+                // A server that tracks no phones sends no list. The Phones list is then empty,
+                // not loading.
+                setListed(this, !this.trackers.size);
                 break;
             }
             default:
@@ -136,6 +140,7 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
             this.reconnectTimer = undefined;
         }
         super.destroy();
+        setListed(this, false);
         this.trackers.forEach((tracker) => {
             tracker.destroy();
         });

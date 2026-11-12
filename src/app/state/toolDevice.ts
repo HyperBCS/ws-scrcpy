@@ -15,11 +15,15 @@ function target(params: ParamsBase): string {
     return url.toString();
 }
 
-/** Device serials can repeat across hosts; tool telemetry must belong to the tool's server. */
+/**
+ * Device serials can repeat across hosts; tool telemetry must belong to the tool's server. A stale
+ * entry (its list is reconnecting) is not the phone's telemetry.
+ */
 export function findDeviceForTool(params: ParamsBase & { udid: string }): DeviceEntry | undefined {
     const endpoint = target(params);
     const matches = Array.from(devices.value.values()).filter(
         (entry) =>
+            !entry.stale &&
             entry.params.type === 'android' &&
             entry.descriptor.udid === params.udid &&
             target(entry.params) === endpoint,

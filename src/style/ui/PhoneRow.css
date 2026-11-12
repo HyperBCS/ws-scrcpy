@@ -59,4 +59,9 @@
     flex: none;
     gap: var(--space-8);
 }
+/* A phone whose list is reconnecting: what it last reported, dimmed. A control after the status
+   is turned off and dims itself. */
+.phone-row-stale :is(.phone-row-icon, .phone-row-text, .phone-row-unread, .phone-row-chip) {
+    opacity: var(--disabled-opacity);
+}
 }

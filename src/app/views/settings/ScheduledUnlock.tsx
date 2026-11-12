@@ -197,7 +197,8 @@ export function ScheduledUnlock({ udid, entry, opening, name }: ScheduledUnlockP
             confirmRemove.disarm();
         }
     }, [removable]);
-    const connected = descriptor?.state === DeviceState.CONNECTED;
+    // Not while the list is reconnecting (a stale entry): Run now could not reach the server.
+    const connected = !entry?.stale && descriptor?.state === DeviceState.CONNECTED;
     const locked = pending !== undefined || !tracker;
     const browserZone = localTimeZone();
     // Every time in the sheet is shown in the schedule's zone, which the Time row names.
