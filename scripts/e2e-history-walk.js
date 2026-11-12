@@ -307,7 +307,8 @@ async function walk(browser, viewport) {
         await page.getByRole('searchbox', { name: 'Search notifications', exact: true }).fill('Coffee');
         const actions = page.getByRole('button', { name: 'Actions for Coffee at four?', exact: true });
         await press(test, actions);
-        const cardSheet = page.getByRole('dialog');
+        // p6-inbox: mouse card actions use the Menu; touch actions keep the Sheet.
+        const cardSheet = page.getByRole(test.mobile ? 'dialog' : 'menu');
         await cardSheet.waitFor();
         await hashIs(page, `${inbox}&q=Coffee`);
         await quiet(page, 300);
@@ -327,7 +328,7 @@ async function walk(browser, viewport) {
         await press(test, actions);
         await cardSheet.waitFor();
         await settleMotion(page);
-        await press(test, cardSheet.getByRole('link', { name: 'Open iPhone screen', exact: true }));
+        await press(test, cardSheet.getByRole(test.mobile ? 'link' : 'menuitem', { name: 'Open iPhone screen', exact: true }));
         await page.locator('.stream-view').waitFor();
         await hashIs(page, screenOf(IPHONE));
         await untilAt(page, list.index + 3, 0);
