@@ -398,6 +398,21 @@ async function keyRow(page, state, name) {
     await page.evaluate(()=>{ delete navigator.clipboard.readText; });
     await toast.getByRole('button',{name:'Dismiss message',exact:true}).click();
     await toast.waitFor({state:'detached'});
+    // On the plain http address the browser has no clipboard read at all, and the toast says why.
+    await clipboard('ls');
+    const secure = await page.evaluateHandle(()=>{
+        const own = Object.getOwnPropertyDescriptor(window,'isSecureContext');
+        Object.defineProperty(window,'isSecureContext',{value:false,configurable:true});
+        return own;
+    });
+    await key('Paste').click();
+    await toast.getByText("Paste needs this app's secure (HTTPS) address.",{exact:true}).waitFor();
+    await quietly();
+    assert.equal(state.input.length,before,'nothing is sent on an http address');
+    await secure.evaluate(own=>{ delete window.isSecureContext; if (own) Object.defineProperty(window,'isSecureContext',own); });
+    assert.equal(await page.evaluate(()=>window.isSecureContext),true);
+    await toast.getByRole('button',{name:'Dismiss message',exact:true}).click();
+    await toast.waitFor({state:'detached'});
 
     // Copy with nothing selected copies the text on screen, and the selection when there is one.
     await clipboard('');

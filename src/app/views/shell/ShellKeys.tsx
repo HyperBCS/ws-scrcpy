@@ -70,6 +70,12 @@ export function ShellKeys({ connected, control, onControl, terminal }: ShellKeys
 
     // The clipboard is read only here, on a press.
     const paste = async () => {
+        // Browsers offer the clipboard read only to a secure page, and the app is often opened
+        // on its plain http address.
+        if (!window.isSecureContext) {
+            say("Paste needs this app's secure (HTTPS) address.", true);
+            return;
+        }
         let text: string;
         try {
             text = await navigator.clipboard.readText();
