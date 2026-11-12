@@ -280,8 +280,8 @@ test('the installed app has one name and the colours of the page', () => {
     assert.match(html, new RegExp(`<title>${APP_NAME}</title>`));
     assert.match(read('src/public/sw.js'), new RegExp(`message\\.title \\|\\| '${APP_NAME}'`));
 
-    // The page and stream header are painted with --main-bg-color; the browser bar matches it.
-    const [light, dark] = [...tokens.matchAll(/--main-bg-color:\s*(#[0-9a-f]{6});/gi)].map((match) => match[1]);
+    // The page is painted with --surface; the browser bar matches it.
+    const [light, dark] = [...tokens.matchAll(/--surface:\s*(#[0-9a-f]{6});/gi)].map((match) => match[1]);
     assert.ok(light && dark, 'tokens.css defines the page colour for both themes');
     const theme = (scheme) =>
         html.match(new RegExp(`name="theme-color" content="(#[0-9a-f]{6})" media="\\(prefers-color-scheme: ${scheme}\\)"`, 'i'))?.[1];

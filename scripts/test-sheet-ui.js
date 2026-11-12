@@ -212,7 +212,6 @@ function contrast(a, b) {
     const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
     return (high + 0.05) / (low + 0.05);
 }
-const mix = (top, under, share) => top.map((value, index) => Math.round(value * share + under[index] * (1 - share)));
 
 function themes() {
     const css = fs.readFileSync(path.join(__dirname, '../src/style/tokens.css'), 'utf8');
@@ -221,37 +220,66 @@ function themes() {
     const light = read(css.slice(0, split));
     return { light, dark: { ...light, ...read(css.slice(split)) } };
 }
-const STATUSES = ['streaming', 'ready', 'asleep', 'starting', 'offline', 'unauthorized'];
-const SURFACES = ['--device-list-default-color', '--main-bg-color', '--header-bg-color', '--device-list-stripe-color'];
+// The role tokens of tokens.css. The older upstream names are gone, and no alias is left.
+const STATUSES = ['success', 'warning', 'info', 'neutral'];
+const SURFACES = ['--surface', '--surface-raised', '--surface-sunken'];
 
-test('status text colours reach 4.5:1 on every surface and on their own tint, in both themes', () => {
+test('status and muted text reach 4.5:1 on every surface and on their own fill, in both themes', () => {
     for (const [theme, tokens] of Object.entries(themes())) {
-        for (const status of STATUSES) {
-            const text = parseColor(tokens[`--status-${status}-text`]);
-            const fill = parseColor(tokens[`--status-${status}-fill`]);
-            assert.equal(tokens[`--status-${status}-color`], `var(--status-${status}-text)`, 'the older name carries the text colour');
-            for (const name of SURFACES) {
-                const surface = parseColor(tokens[name]);
-                for (const [where, background] of [['surface', surface], ['12% tint', mix(fill, surface, 0.12)], ['own 12% tint', mix(text, surface, 0.12)]]) {
-                    const ratio = contrast(text, background);
-                    assert(ratio >= 4.5, `${theme} ${status} text on ${name} ${where}: ${ratio.toFixed(2)}`);
-                }
+        for (const name of SURFACES) {
+            const surface = parseColor(tokens[name]);
+            for (const role of ['--text', '--text-muted', '--accent-text', '--danger-text', ...STATUSES.map((status) => `--${status}-text`)]) {
+                const ratio = contrast(parseColor(tokens[role]), surface);
+                assert(ratio >= 4.5, `${theme} ${role} on ${name}: ${ratio.toFixed(2)}`);
             }
+        }
+        // A tinted fill takes its own text colour.
+        for (const status of STATUSES) {
+            const ratio = contrast(parseColor(tokens[`--${status}-text`]), parseColor(tokens[`--${status}-fill`]));
+            assert(ratio >= 4.5, `${theme} ${status} text on its fill: ${ratio.toFixed(2)}`);
         }
     }
 });
 
-test('field edges reach 3:1, button labels 4.5:1, and white reads on the solid danger colour', () => {
+test('field edges reach 3:1, and words on the accent and on the solid danger fill 4.5:1', () => {
     for (const [theme, tokens] of Object.entries(themes())) {
-        const white = [255, 255, 255];
-        const danger = contrast(white, parseColor(tokens['--status-danger-solid']));
-        assert(danger >= 4.5, `${theme} white on the solid danger colour: ${danger.toFixed(2)}`);
+        const on = parseColor(tokens['--on-accent']);
+        for (const fill of ['--accent', '--accent-pressed', '--danger-fill']) {
+            const ratio = contrast(on, parseColor(tokens[fill]));
+            assert(ratio >= 4.5, `${theme} --on-accent on ${fill}: ${ratio.toFixed(2)}`);
+        }
+        const toast = contrast(parseColor(tokens['--on-inverse']), parseColor(tokens['--surface-inverse']));
+        assert(toast >= 4.5, `${theme} --on-inverse on --surface-inverse: ${toast.toFixed(2)}`);
         for (const name of SURFACES) {
-            const surface = parseColor(tokens[name]);
-            const edge = contrast(parseColor(tokens['--control-border-color']), surface);
+            const edge = contrast(parseColor(tokens['--border-strong']), parseColor(tokens[name]));
             assert(edge >= 3, `${theme} field edge on ${name}: ${edge.toFixed(2)}`);
-            const label = contrast(parseColor(tokens['--button-text-color']), surface);
-            assert(label >= 4.5, `${theme} button label on ${name}: ${label.toFixed(2)}`);
         }
     }
+});
+
+test('tokens.css holds the role names only', () => {
+    const css = fs.readFileSync(path.join(__dirname, '../src/style/tokens.css'), 'utf8');
+    const names = new Set(Array.from(css.matchAll(/(--[\w-]+):/g), (match) => match[1]));
+    for (const older of ['--main-bg-color', '--text-color', '--text-color-light', '--link-color', '--device-border-color', '--button-border-color', '--control-border-color', '--accent-solid', '--font-size', '--radius-control', '--status-ready-text', '--status-danger-solid']) {
+        assert.equal(names.has(older), false, `${older} is gone`);
+    }
+    // Every name a stylesheet reads is defined, so a rule cannot lean on a name that was removed.
+    const defined = new Set(names);
+    const local = /^--(sheet|typing|viewport|swipe|fx|kit|list|notification|toolbar|stream|switcher|card|live-text|device)-/;
+    const read = [];
+    const walk = (dir) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) walk(full);
+            else if (entry.name.endsWith('.css')) {
+                const source = fs.readFileSync(full, 'utf8');
+                // A property a file sets itself is local to it.
+                for (const match of source.matchAll(/(--[\w-]+)\s*:/g)) defined.add(match[1]);
+                for (const match of source.matchAll(/var\((--[\w-]+)/g)) read.push([path.relative(path.join(__dirname, '..'), full), match[1]]);
+            }
+        }
+    };
+    walk(path.join(__dirname, '../src/style'));
+    const unknown = read.filter(([, name]) => !defined.has(name) && !local.test(name)).map(([file, name]) => `${file} reads ${name}`);
+    assert.deepEqual([...new Set(unknown)], []);
 });

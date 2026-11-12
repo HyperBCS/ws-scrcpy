@@ -1,18 +1,9 @@
 @layer tokens, base, components, views;
 
 @layer components {
-/* The marker of every disclosure (`ui/AnimatedDetails.tsx`): a chevron drawn with two borders,
-   turned over while open. This is the one marker rule. The older class names leave the list as
-   their screens move to `kit-disclosure`. */
-:where(
-        .kit-disclosure,
-        .device-details,
-        .settings-advanced,
-        .settings-playback,
-        .sheet-details,
-        .notification-details
-    )
-    > summary::after {
+/* The marker of every disclosure (`Disclosure` in `ui/AnimatedDetails.tsx`): a chevron drawn
+   with two borders, turned over while open. This is the one marker rule. */
+.kit-disclosure > summary::after {
     content: '';
     width: 7px;
     height: 7px;
@@ -24,31 +15,15 @@
     transform: rotate(45deg);
     transition: transform var(--motion-settle) var(--ease-out);
 }
-:where(
-        .kit-disclosure,
-        .device-details,
-        .settings-advanced,
-        .settings-playback,
-        .sheet-details,
-        .notification-details
-    )[open]
-    > summary::after {
+.kit-disclosure[open] > summary::after {
     transform: rotate(225deg);
 }
-:where(
-        .kit-disclosure,
-        .device-details,
-        .settings-advanced,
-        .settings-playback,
-        .sheet-details,
-        .notification-details
-    )[data-expanded='false']
-    > summary::after {
+.kit-disclosure[data-expanded='false'] > summary::after {
     transform: rotate(45deg);
 }
 
-/* The disclosure in the kit look (`Disclosure` in `ui/AnimatedDetails.tsx`): a card whose first
-   line opens it, with rows inside. */
+/* The disclosure (`Disclosure` in `ui/AnimatedDetails.tsx`): a card whose first line opens it,
+   with rows inside. */
 .kit-disclosure {
     box-sizing: border-box;
     min-width: 0;

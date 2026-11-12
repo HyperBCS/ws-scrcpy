@@ -1,10 +1,11 @@
 @layer tokens, base, components, views;
 
 @layer tokens {
-/* Role tokens. New rules use these. Nothing reads them yet: each screen moves to them in its own
-   step, and the older names further down keep their values until the last screen has moved.
+/* The tokens every stylesheet takes its values from: colour roles, type, space, radius, control
+   heights, stacking and motion. No other file writes a colour, a font size, a radius or a z-index.
    The colours here are the light theme; the dark theme is the last block of the file. */
 :root {
+    color-scheme: light;
     --surface: #f5f6f8;
     --surface-raised: #ffffff;
     --surface-sunken: #eceef2;
@@ -14,7 +15,7 @@
     --text: #20242c;
     --text-muted: #5b6270;
     --accent: #2868e8;
-    /* Accent as words on a surface, and the tint behind a selected item. */
+    /* Accent as words on a surface, links among them, and the tint behind a selected item. */
     --accent-text: #1b56c9;
     --accent-soft: #e3ecfd;
     /* A primary button under the pointer or a finger. */
@@ -45,8 +46,9 @@
     --focus-ring-offset: 2px;
     --disabled-opacity: 0.5;
 
-    /* Type: six sizes, with 12px the floor and only for captions. Inputs are 16px so that iOS
-       does not zoom the page on focus. */
+    /* Type: six sizes, with 12px the floor and only for captions, and 15px the size of body
+       text. Inputs are 16px so that iOS does not zoom the page on focus. The root is 16px and
+       nothing is sized from it. */
     --font-size-12: 12px;
     --font-size-13: 13px;
     --font-size-15: 15px;
@@ -54,9 +56,13 @@
     --font-size-20: 20px;
     --font-size-24: 24px;
     --font-size-input: 16px;
+    --font-size-root: 16px;
     --font-weight-regular: 400;
     --font-weight-semibold: 600;
     --font-weight-bold: 700;
+    /* No webfont: the platform's own faces, so nothing is fetched over a phone connection. */
+    --font-stack: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-stack-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
     --space-4: 4px;
     --space-8: 8px;
@@ -80,90 +86,34 @@
     --z-sheet: 20;
     --z-toast: 30;
 
-    /* Breakpoints are 600px and 1024px. A media query cannot read a custom property, so rules
-       write the numbers. */
-}
-
-/* The older names: shared surfaces, controls and motion. Motion tokens stay. */
-:root {
-    color-scheme: light;
-    --accent-solid: #2868e8;
-    --muted-text-color: var(--text-color-light);
-    --radius-control: 10px;
-    --radius-panel: 14px;
+    /* Motion. `ui/motion.ts` has the same timings for the animations it runs. A control that is
+       pressed takes --press-transform: it shrinks a little. */
     --motion-fast: 160ms;
     --motion-settle: 320ms;
     --motion-exit: 220ms;
     --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-    --main-bg-color: #f5f6f8;
-    --stream-bg-color: hsl(0, 0%, 85%);
-    --shell-bg-color: hsl(0, 0%, 0%);
-    --text-shadow-color: hsl(218, 67%, 95%);
-    --header-bg-color: #eceef2;
-    --controls-bg-color: hsla(0, 0%, 95%, 0.8);
-    --control-buttons-bg-color: #eceef2;
-    --text-color: #20242c;
-    --text-color-light: #626977;
-    --link-color: hsl(218, 85%, 43%);
-    --link-color-light: hsl(218, 85%, 73%);
-    --link-color_visited: hsl(271, 68%, 32%);
-    --link-color_visited-light: hsl(271, 68%, 72%);
-    --svg-checkbox-bg-color: hsl(172, 100%, 37%);
-    --svg-button-fill: hsl(199, 17%, 46%);
-    --kill-button-hover-color: hsl(342, 100%, 37%);
-    --url-color: hsl(0, 0%, 60%);
-    /* 4.5:1 or better on every light surface, as text on outline buttons and links. */
-    --button-text-color: hsl(214, 82%, 44%);
-    --button-border-color: #cbd0d9;
-    /* The edge of a field or an off switch: 3:1 against the surface it sits on, so the control
-       can be found. `--button-border-color` is for dividers and button outlines only. */
-    --control-border-color: #828997;
-    --progress-background-color: hsla(225, 100%, 50%, 0.2);
-    --progress-background-error-color: hsla(0, 100%, 50%, 0.2);
-    --font-size: 14px;
-    /* No font stack was set at all, so the UI fell back to the browser default (Times on most
-       phones). Native stack: matches the platform and avoids shipping a webfont over a phone
-       connection. */
-    --font-stack: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    --font-stack-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    --panel-width: 52.01px;
+    --press-transform: scale(0.97);
 
-    --device-border-color: #dfe2e8;
-    --device-list-stripe-color: #f0f2f5;
-    --device-list-default-color: hsl(0, 0%, 100%);
-    --device-list-hover-color: hsl(218, 67%, 95%);
-
-    /* One status vocabulary, shared by the device list and the stream view -- see
-       `state/deviceStatus.ts`. Each status has two colours:
-       `-text` for words and icons. At least 4.5:1 on every surface and on its own 12% tint.
-       `-fill` for dots, bars and solid backgrounds, where the brighter colour reads better.
-       `-color` is the older name. Most rules use it for text, so it carries the text value. */
-    --status-streaming-fill: hsl(199, 89%, 42%);
-    --status-ready-fill: hsl(142, 71%, 33%);
-    --status-asleep-fill: hsl(231, 48%, 56%);
-    --status-starting-fill: hsl(38, 92%, 45%);
-    --status-offline-fill: hsl(0, 0%, 55%);
-    --status-unauthorized-fill: hsl(0, 84%, 50%);
-    --status-streaming-text: hsl(199, 89%, 30%);
-    --status-ready-text: hsl(142, 71%, 25%);
-    --status-asleep-text: hsl(231, 48%, 50%);
-    --status-starting-text: hsl(38, 92%, 27%);
-    --status-offline-text: hsl(0, 0%, 37%);
-    --status-unauthorized-text: hsl(0, 84%, 39%);
-    --status-streaming-color: var(--status-streaming-text);
-    --status-ready-color: var(--status-ready-text);
-    --status-asleep-color: var(--status-asleep-text);
-    --status-starting-color: var(--status-starting-text);
-    --status-offline-color: var(--status-offline-text);
-    --status-unauthorized-color: var(--status-unauthorized-text);
-    /* Background of a solid danger button. Dark enough for white text in both themes. */
-    --status-danger-solid: hsl(0, 72%, 45%);
+    /* Breakpoints are 600px and 1024px. A media query cannot read a custom property, so rules
+       write the numbers. */
 }
 
-/* The dark theme of both sets of names. It is the one dark block and it comes after every light
-   value: the contrast test in scripts/test-sheet-ui.js reads the file as light, then dark. */
+/* With motion reduced, whatever moves settles at once and a press does not shrink a control.
+   `app.css` gives every other transition and animation the same short time. */
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --motion-fast: 0.01ms;
+        --motion-settle: 0.01ms;
+        --motion-exit: 0.01ms;
+        --press-transform: none;
+    }
+}
+
+/* The dark theme. It is the one dark block and it comes after every light value: the contrast
+   test in scripts/test-sheet-ui.js reads the file as light, then dark. */
 @media (prefers-color-scheme: dark) {
     :root {
+        color-scheme: dark;
         --surface: #17191d;
         --surface-raised: #202329;
         --surface-sunken: #2a2e36;
@@ -185,48 +135,6 @@
         --neutral-fill: #2c3038;
         --scrim: rgba(0, 0, 0, 0.6);
         --shadow-raised: 0 8px 30px rgba(0, 0, 0, 0.5);
-
-        color-scheme: dark;
-        --main-bg-color: #17191d;
-        --stream-bg-color: hsl(0, 0%, 20%);
-        --shell-bg-color: hsl(0, 0%, 0%);
-        --text-shadow-color: hsl(218, 17%, 18%);
-        --header-bg-color: #282c33;
-        --controls-bg-color: rgb(32 35 41 / 90%);
-        --control-buttons-bg-color: #282c33;
-        --text-color: #edf0f5;
-        --text-color-light: #a0a7b3;
-        --link-color: hsl(218, 63%, 70%);
-        --link-color-light: hsl(218, 63%, 50%);
-        --link-color_visited: hsl(267, 31%, 47%);
-        --link-color_visited-light: hsl(267, 31%, 27%);
-        --svg-checkbox-bg-color: hsl(172, 100%, 27%);
-        --svg-button-fill: hsl(0, 0%, 100%);
-        --kill-button-hover-color: hsl(342, 100%, 27%);
-        --url-color: hsl(0, 0%, 60%);
-        --button-text-color: hsl(214, 82%, 76%);
-        --button-border-color: hsl(213, 5%, 39%);
-        --control-border-color: hsl(213, 6%, 52%);
-        --progress-background-color: hsla(225, 100%, 50%, 0.2);
-        --progress-background-error-color: hsla(0, 100%, 50%, 0.2);
-
-        --device-border-color: #343943;
-        --device-list-stripe-color: #252930;
-        --device-list-default-color: #202329;
-        --device-list-hover-color: #2c3340;
-
-        --status-streaming-fill: hsl(199, 89%, 62%);
-        --status-ready-fill: hsl(142, 60%, 55%);
-        --status-asleep-fill: hsl(231, 63%, 75%);
-        --status-starting-fill: hsl(38, 92%, 60%);
-        --status-offline-fill: hsl(0, 0%, 60%);
-        --status-unauthorized-fill: hsl(0, 84%, 68%);
-        --status-streaming-text: hsl(199, 89%, 62%);
-        --status-ready-text: hsl(142, 60%, 55%);
-        --status-asleep-text: hsl(231, 63%, 76%);
-        --status-starting-text: hsl(38, 92%, 60%);
-        --status-offline-text: hsl(0, 0%, 66%);
-        --status-unauthorized-text: hsl(0, 84%, 74%);
     }
 }
 }

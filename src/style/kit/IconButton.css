@@ -61,7 +61,7 @@
 }
 .kit-icon-button:active:not(:disabled, [aria-disabled='true']) {
     background: var(--surface-sunken);
-    transform: scale(0.97);
+    transform: var(--press-transform);
 }
 .kit-icon-button[aria-pressed='true']:active:not(:disabled, [aria-disabled='true']) {
     border-color: var(--accent-pressed);

@@ -7,7 +7,7 @@ html {
     overscroll-behavior: none;
     touch-action: pan-y;
     /* The root is 16px and no rule sizes anything from it: every length is px. */
-    font-size: 16px;
+    font-size: var(--font-size-root);
     font-family: var(--font-stack);
     /* Stops iOS Safari inflating text in landscape, which broke the measured touch targets. */
     -webkit-text-size-adjust: 100%;
@@ -61,20 +61,16 @@ a {
     }
 }
 
-a {
-    color: var(--link-color);
-}
-
+a,
 a:visited {
-    color: var(--link-color_visited);
+    color: var(--accent-text);
 }
 
 body {
     font-family: inherit;
-    /* Text that sets no size of its own stays at 14px until its screen moves to the type scale. */
-    font-size: var(--font-size);
-    color: var(--text-color);
-    background-color: var(--main-bg-color);
+    font-size: var(--font-size-15);
+    color: var(--text);
+    background-color: var(--surface);
     margin: 0;
     padding: 0;
     height: auto;
@@ -86,27 +82,15 @@ body {
     touch-action: pan-y;
 }
 
-body.shell {
-    background-color: var(--shell-bg-color);
-}
-
+/* Behind a phone's screen, where the stream view does not reach: under the keyboard while Type
+   text moves the view to the visible part of the window. */
 body.stream {
-    background-color: var(--stream-bg-color);
+    background-color: var(--surface-sunken);
 }
 
 #root {
     height: 100%;
     min-height: 0;
-}
-
-body.list {
-    /* Keep the scroll viewport clear of the iPhone status bar, notch and home
-       indicator. Insets inside a scrolling page would scroll away with it. */
-    box-sizing: border-box;
-    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
-        env(safe-area-inset-left, 0px);
-    width: 100%;
-    overflow: hidden;
 }
 
 .terminal-container {
@@ -120,23 +104,20 @@ body.list {
 }
 
 :focus-visible {
-    outline: 3px solid var(--link-color);
-    outline-offset: 3px;
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
 }
 
+/* With motion reduced, the motion tokens are 0.01ms and a press moves nothing (tokens.css), so
+   every rule that moves something settles at once. Anything else gets the same short time. */
 @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
     *::after {
-        animation-duration: 0.01ms !important;
-        transition-duration: 0.01ms !important;
-        scroll-behavior: auto !important;
+        animation-duration: 0.01ms;
+        transition-duration: 0.01ms;
+        scroll-behavior: auto;
     }
-}
-
-.flex-center {
-    display: flex;
-    align-items: center;
 }
 
 .visually-hidden {
@@ -149,82 +130,6 @@ body.list {
     clip-path: inset(50%);
     white-space: nowrap;
     border: 0;
-}
-
-.wait {
-    cursor: wait;
-}
-
-.notification-unread-count {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 20px;
-    height: 20px;
-    box-sizing: border-box;
-    padding: 0 5px;
-    border-radius: 999px;
-    background: #c82e40;
-    color: #fff;
-    font:
-        700 11px/1 system-ui,
-        sans-serif;
-    vertical-align: middle;
-    flex-shrink: 0;
-}
-/* Navigation actions share the same surface and touch target as buttons. */
-.ui-button,
-.ui-button:visited {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6.3px;
-    box-sizing: border-box;
-    min-height: 44px;
-    padding: 7px 11.9px;
-    border: 1px solid var(--device-border-color);
-    border-radius: var(--radius-control);
-    background: var(--control-buttons-bg-color);
-    color: var(--text-color);
-    font: 550 12.6px/1.25 var(--font-stack);
-    text-decoration: none;
-    text-align: center;
-    cursor: pointer;
-    transition:
-        background-color var(--motion-fast),
-        border-color var(--motion-fast),
-        transform var(--motion-fast) var(--ease-out);
-}
-.ui-button-primary {
-    background: var(--accent-solid);
-    border-color: var(--accent-solid);
-    color: white;
-}
-.ui-button:disabled {
-    opacity: 0.5;
-    cursor: default;
-}
-.ui-button:active:not(:disabled) {
-    transform: scale(0.97);
-}
-@media (hover: hover) {
-    .ui-button:hover {
-        border-color: var(--link-color);
-    }
-}
-
-/* Feedback stays on controls, never on the remote touch surface. */
-:where(#devices, .notifications-page, .floating-toolbar)
-    :where(button, a.desc-block, .notification-link-button) {
-    transition:
-        background-color var(--motion-fast) ease,
-        border-color var(--motion-fast) ease,
-        color var(--motion-fast) ease,
-        transform var(--motion-fast) var(--ease-out);
-}
-:where(#devices, .notifications-page, .floating-toolbar)
-    :where(button:not(:disabled), a.desc-block, .notification-link-button):active {
-    transform: scale(0.97);
 }
 
 [data-presence] {
@@ -243,12 +148,6 @@ details {
 details > summary {
     -webkit-tap-highlight-color: transparent;
 }
-@media (hover: hover) {
-    :where(.device-details, .settings-advanced, .settings-playback, .sheet-details, .notification-details)
-        > summary:hover {
-        color: var(--link-color);
-    }
-}
 @keyframes surface-enter {
     from {
         opacity: 0;
@@ -259,7 +158,6 @@ details > summary {
         transform: none;
     }
 }
-.device-list-header,
 .notification-page-header {
     animation: surface-enter var(--motion-settle) var(--ease-out);
 }
@@ -281,8 +179,9 @@ details > summary {
     min-width: 0;
     overflow: clip;
 }
+/* Only a Presence that stays mounted is hidden (`keepMounted`). No rule gives one a display. */
 [data-presence][hidden] {
-    display: none !important;
+    display: none;
 }
 .notification-panels {
     display: grid;
@@ -292,79 +191,13 @@ details > summary {
     grid-area: 1 / 1;
     min-width: 0;
 }
-.settings-sheet-apply-bar > div {
-    display: grid;
-    gap: 12px;
-}
-.toolbar-close-glyph,
-.toolbar-controls-glyph {
-    transform-origin: center;
-    transition:
-        opacity var(--motion-fast),
-        transform var(--motion-settle) var(--ease-out);
-}
-.toolbar-close-glyph {
-    opacity: 0;
-    transform: rotate(-90deg) scale(0.7);
-}
-.floating-toolbar.open .toolbar-close-glyph {
-    opacity: 1;
-    transform: none;
-}
-.floating-toolbar.open .toolbar-controls-glyph {
-    opacity: 0;
-    transform: rotate(90deg) scale(0.7);
-}
-.live-text-overlay[data-exiting] .live-text-backdrop {
-    opacity: 0;
-}
-.live-text-backdrop {
-    transition: opacity var(--motion-exit) ease;
-}
-@media (prefers-reduced-motion: reduce) {
-    :where(button, a):active {
-        transform: none !important;
-    }
-}
-
 .auto-height > div {
     display: flow-root;
     min-width: 0;
 }
-:where(.tool-view, .live-text-bar, .sleep-overlay-card) button {
-    transition:
-        background-color var(--motion-fast),
-        border-color var(--motion-fast),
-        color var(--motion-fast),
-        transform var(--motion-fast) var(--ease-out);
-}
-:where(.tool-view, .live-text-bar, .sleep-overlay-card) button:active:not(:disabled) {
-    transform: scale(0.97);
-}
-:where(
-    .sheet-input,
-    .settings-sheet-row input,
-    .settings-sheet-row select,
-    .notification-search-row input,
-    .live-text-input
-) {
-    transition:
-        border-color var(--motion-fast),
-        background-color var(--motion-fast),
-        box-shadow var(--motion-fast);
-}
-:where(
-    .sheet-input,
-    .settings-sheet-row input,
-    .settings-sheet-row select,
-    .notification-search-row input,
-    .live-text-input
-):focus-visible {
-    border-color: var(--link-color);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--link-color) 12%, transparent);
-}
-
-.settings-sheet-apply-bar.auto-height {
-    overflow: visible;
+/* The Type text field keeps the faint halo it had before the kit, inside the kit's focus ring.
+   Type text is rebuilt in its own package, which decides whether it stays. */
+.live-text-input:focus-visible {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-text) 12%, transparent);
 }
 }

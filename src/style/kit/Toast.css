@@ -61,7 +61,7 @@
 }
 .kit-toast-action:active:not(:disabled),
 .kit-toast-close:active {
-    transform: scale(0.97);
+    transform: var(--press-transform);
 }
 .kit-toast-action {
     padding: 0 var(--space-12);
