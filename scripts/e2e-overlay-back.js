@@ -578,7 +578,17 @@ async function notificationsPage(browser, viewport) {
         const overlays = [
             { name: 'the actions of a notification', open: () => press(test, page.getByRole('button', { name: 'Actions for Coffee at four?', exact: true })), shown: dialog, ways },
             { name: 'Notification actions', open: () => press(test, page.getByRole('button', { name: 'Notification actions', exact: true })), shown: dialog, ways },
-            { name: 'Filters', open: () => press(test, page.getByRole('button', { name: /^Filters/ })), shown: dialog, ways },
+            // Filters is in the search row, which Search in the bar opens. The row is not an overlay.
+            {
+                name: 'Filters',
+                open: async () => {
+                    const search = page.locator('.notifications-view > .kit-bar').getByRole('button', { name: 'Search', exact: true });
+                    if ((await search.getAttribute('aria-pressed')) !== 'true') await press(test, search);
+                    await press(test, page.getByRole('button', { name: /^Filters/ }));
+                },
+                shown: dialog,
+                ways,
+            },
         ];
         const home = await backClosesEach(test, label, overlays, page.locator('.notifications-page'));
         assert.equal(home.index, 1);

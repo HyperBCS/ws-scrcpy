@@ -455,7 +455,14 @@ async function notificationStates(test) {
     await page.locator('article.notification-history-item').first().waitFor();
     await shoot(test, 'notifications-inbox');
 
+    // The bar of Notifications: Search opens the search row with its Filters button.
+    const bar = page.locator('.notifications-view > .kit-bar');
     for (const [state, name] of [['notifications-card-actions', 'Actions for Design review'], ['notifications-page-actions', 'Notification actions'], ['notifications-filters', /^Filters/]]) {
+        if (state === 'notifications-filters') {
+            await press(test, bar.getByRole('button', { name: 'Search', exact: true }));
+            await settleMotion(page);
+            await shoot(test, 'notifications-search');
+        }
         await press(test, page.getByRole('button', { name, exact: true }));
         await dialog.waitFor();
         await shoot(test, state);
@@ -465,6 +472,7 @@ async function notificationStates(test) {
             await shootPrompt(test, dialog, 'notifications-confirm');
         }
         await dismiss(test, dialog);
+        if (state === 'notifications-filters') await press(test, bar.getByRole('button', { name: 'Search', exact: true }));
     }
 
     // Archive answers with a notice at the foot of the page. It is closed before the next state:
@@ -482,11 +490,12 @@ async function notificationStates(test) {
         await settleMotion(page);
     }
 
-    await press(test, page.getByRole('radio', { name: 'Setup & delivery', exact: true }));
+    await press(test, bar.getByRole('button', { name: 'Setup', exact: true }));
     await page.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
     await shoot(test, 'notifications-setup');
     await press(test, page.locator('summary').filter({ hasText: 'Settings for Bench iPhone' }));
-    await page.getByText('Comma-separated. Leave empty for all apps.').waitFor({ state: 'attached' });
+    await press(test, page.locator('summary').filter({ hasText: /^Apps/ }));
+    await page.locator('.notification-app-switches .kit-switch').first().waitFor();
     await shoot(test, 'notifications-setup-details');
     await press(test, page.getByRole('button', { name: 'Remove iPhone', exact: true }));
     await shootPrompt(test, page.locator('.notifications-page'), 'notifications-setup-confirm');

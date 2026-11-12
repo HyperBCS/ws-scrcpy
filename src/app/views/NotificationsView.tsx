@@ -3,16 +3,15 @@ import { Toast } from '../ui/Toast';
 import { Disclosure } from '../ui/AnimatedDetails';
 import { Banner } from '../ui/Banner';
 import { Button } from '../ui/Button';
-import { Checkbox } from '../ui/Checkbox';
 import { Chip } from '../ui/Chip';
-import { SelectField, TextField } from '../ui/Field';
+import { SelectField } from '../ui/Field';
 import { Icon } from '../ui/Icon';
+import { IconButton } from '../ui/IconButton';
 import { InlineStatus } from '../ui/InlineStatus';
-import { SegmentedControl } from '../ui/SegmentedControl';
+import { SheetToggleRow } from '../ui/SheetControls';
+import { useArmedAction } from '../ui/ConfirmAction';
 import { topSheet } from '../ui/Sheet';
-import { Switch } from '../ui/Switch';
-import { ConfirmPrompt, useArmedAction } from '../ui/ConfirmAction';
-import { useEffect, useId, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { devices, deviceName, findDeviceByUdid } from '../state/devices';
 import {
     notificationRequest as api,
@@ -23,16 +22,19 @@ import {
     pushReceiverId,
     syncPushSubscription,
 } from '../state/notifications';
-import { FeedBadge, NotificationHistory, UnreadBadge, feedState } from './NotificationHistory';
+import { saveNotificationSource } from '../state/notificationSources';
+import { FEED_LABELS, FEED_TONES, FeedBadge, NotificationHistory, UnreadBadge, feedState } from './NotificationHistory';
+import { NotificationActionSheet } from './NotificationActionSheet';
+import { SourceChange, SourceSettings } from './notifications/SourceSettings';
 import { route } from '../state/router';
 import { readNotificationPage } from '../state/notificationPage';
 import { changeNotificationPage } from '../state/notificationNav';
-import { AppBar } from '../ui/AppBar';
+import { AppBar, AppBarStatus } from '../ui/AppBar';
 import { privateAppUrl } from '../state/privateApp';
+import { SESSION } from '../copy';
 import type {
     NotificationHistoryItem,
     NotificationHistoryReply,
-    NotificationSource,
     NotificationStatus as Status,
 } from '../../common/Notification';
 import { readStorage, writeStorage } from '../ui/storage';
@@ -43,121 +45,10 @@ function choicesKey(sources: string[], receiver: string): string {
     return JSON.stringify({ sources: [...sources].sort(), receiver });
 }
 
-function SourceSettings({
-    source,
-    stored,
-    busy,
-    update,
-    remove,
-}: {
-    source: NotificationSource;
-    // How many of this iPhone's notifications the server holds; both prompts state the loss.
-    stored: number;
-    busy: boolean;
-    update: (source: NotificationSource) => void;
-    remove: () => void;
-}) {
-    const [filter, setFilter] = useState(source.apps.join(', '));
-    const confirm = useArmedAction<'erase-text' | 'remove'>();
-    const count = `${stored} stored notification${stored === 1 ? '' : 's'}`;
-    const textRow = useRef<HTMLLabelElement>(null);
-    const textId = useId();
-    useEffect(() => setFilter(source.apps.join(', ')), [source.apps.join(', ')]);
-    return (
-        <Disclosure title={`Settings for ${source.name}`}>
-            <label class="kit-row kit-row-toggle" ref={textRow}>
-                <div class="kit-row-text">
-                    <span class="kit-row-title" id={`${textId}-title`}>
-                        Include notification text
-                    </span>
-                    <span class="kit-row-desc" id={`${textId}-desc`}>
-                        Missing message text? Check Show Previews in this iPhone’s notification settings.
-                    </span>
-                </div>
-                <Switch
-                    checked={source.preview}
-                    disabled={busy}
-                    labelledBy={`${textId}-title`}
-                    describedBy={`${textId}-desc`}
-                    onChange={(preview) => {
-                        if (preview || !stored) {
-                            update({ ...source, preview });
-                            return;
-                        }
-                        // Turning text off also erases the text already stored, so it is
-                        // confirmed first and the switch stays on until then.
-                        const input = textRow.current?.querySelector('input');
-                        if (input) input.checked = true;
-                        confirm.arm('erase-text', textRow.current);
-                    }}
-                />
-            </label>
-            <div class="notification-details-content">
-                {confirm.armed === 'erase-text' && (
-                    <ConfirmPrompt
-                        action={confirm}
-                        question={`Stop storing notification text from ${source.name}?`}
-                        consequence={`The text of its ${count} is erased from the server and cannot be restored.`}
-                        confirmLabel="Erase text"
-                        danger
-                        onConfirm={() => update({ ...source, preview: false })}
-                    />
-                )}
-                <Disclosure
-                    title="Filter by app"
-                    note={source.apps.length ? `${source.apps.length} selected` : 'All apps'}
-                >
-                    <div class="notification-details-content">
-                        <TextField
-                            label="App identifiers"
-                            hint="Comma-separated. Leave empty for all apps."
-                            value={filter}
-                            onInput={(e) => setFilter(e.currentTarget.value)}
-                            placeholder="For example: com.apple.MobileSMS"
-                            disabled={busy}
-                        />
-                        <Button
-                            disabled={busy || filter === source.apps.join(', ')}
-                            onClick={() =>
-                                update({
-                                    ...source,
-                                    apps: filter
-                                        .split(',')
-                                        .map((app) => app.trim())
-                                        .filter(Boolean),
-                                })
-                            }
-                        >
-                            Save app filter
-                        </Button>
-                    </div>
-                </Disclosure>
-                <div class="notification-remove-source">
-                    <p class="notification-help">
-                        Removing this iPhone deletes its link and its {count} from the server. Nothing changes on the
-                        iPhone.
-                    </p>
-                    <Button variant="danger" disabled={busy} onClick={(e) => confirm.arm('remove', e.currentTarget)}>
-                        Remove iPhone
-                    </Button>
-                    {confirm.armed === 'remove' && (
-                        <ConfirmPrompt
-                            action={confirm}
-                            question={
-                                stored
-                                    ? `Remove ${source.name} and delete its ${count}?`
-                                    : `Remove ${source.name} from notification sharing?`
-                            }
-                            consequence="This cannot be undone. To share its notifications again, connect the iPhone again."
-                            confirmLabel="Remove iPhone"
-                            danger
-                            onConfirm={remove}
-                        />
-                    )}
-                </div>
-            </div>
-        </Disclosure>
-    );
+/** A toast of the page. With `undo` it offers Undo, which puts back what the change did. */
+interface Notice {
+    text: string;
+    undo?: () => Promise<void>;
 }
 
 export function NotificationsView() {
@@ -167,7 +58,8 @@ export function NotificationsView() {
     const historyRevision = useRef('');
     const [connectionError, setConnectionError] = useState('');
     const [error, setError] = useState('');
-    const [message, setMessage] = useState('');
+    const [notice, setNotice] = useState<Notice | null>(null);
+    const say = (text: string, undo?: () => Promise<void>) => setNotice({ text, undo });
     const [running, setRunning] = useState(0);
     const busy = running > 0;
     // The iPhone, the panel and the inbox filters are in the address; see `state/notificationPage.ts`.
@@ -221,7 +113,6 @@ export function NotificationsView() {
     const confirmed = savedChoices ? (JSON.parse(savedChoices) as { sources: string[]; receiver: string }) : null;
     const activeSources =
         status?.sources.filter((s) => confirmed?.sources.includes(s.id) && s.id !== confirmed.receiver) || [];
-    const changed = initialized && choicesKey(selected, receiver) !== savedChoices;
     const blockedPermission = supported && Notification.permission === 'denied';
     const enabled = !!subscription && !blockedPermission;
     const canEnable = supported && (!ios || installed) && workerLoaded && initialized && effectiveSources.length > 0;
@@ -339,25 +230,77 @@ export function NotificationsView() {
     }, [status, initialized]);
     // A failure goes to `onError` when given (the inbox reports it beside the list), otherwise
     // to the notice at the top of Setup.
-    const run = async (fn: () => Promise<void>, onError?: (message: string) => void) => {
+    // Resolves true when `fn` finished without an error.
+    const run = async (fn: () => Promise<void>, onError?: (message: string) => void): Promise<boolean> => {
         setRunning((value) => value + 1);
         setError('');
-        setMessage('');
+        setNotice(null);
         try {
             await fn();
+            return true;
         } catch (e) {
             (onError || setError)((e as Error).message);
+            return false;
         } finally {
             setRunning((value) => Math.max(0, value - 1));
         }
     };
-    const saveSubscription = async (sub: PushSubscription) => {
-        await api('subscriptions', 'POST', { subscription: sub.toJSON(), sources: selected, receiverSource: receiver });
-        writeStorage('notification-sources', JSON.stringify(selected));
-        writeStorage('notification-receiver-source', receiver);
-        setSavedChoices(choicesKey(selected, receiver));
+    const saveSubscription = async (sub: PushSubscription, sources = selected, receiverSource = receiver) => {
+        await api('subscriptions', 'POST', { subscription: sub.toJSON(), sources, receiverSource });
+        writeStorage('notification-sources', JSON.stringify(sources));
+        writeStorage('notification-receiver-source', receiverSource);
+        setSavedChoices(choicesKey(sources, receiverSource));
         // The delivery details must list this device before they are shown again.
         await refresh().catch(() => undefined);
+    };
+    // The status of the last poll, for an Undo pressed after later changes.
+    const latest = useRef(status);
+    latest.current = status;
+    const undoNotice = () => {
+        const undo = notice?.undo;
+        if (undo) void run(undo);
+    };
+    /**
+     * Applies a change to one iPhone's settings at once, then offers Undo. A refused change
+     * leaves the saved settings, which the controls show again, and the notice says why.
+     */
+    const changeSource = (id: string, change: SourceChange): Promise<boolean> =>
+        run(async () => {
+            const current = latest.current?.sources.find((s) => s.id === id);
+            if (!current) throw Error('This iPhone is no longer linked.');
+            await saveNotificationSource(change.apply(current));
+            await refresh().catch(() => undefined);
+            say(change.done, async () => {
+                const now = latest.current?.sources.find((s) => s.id === id);
+                if (!now) throw Error('This iPhone is no longer linked.');
+                await saveNotificationSource(change.undo(now));
+                await refresh().catch(() => undefined);
+            });
+        });
+    /**
+     * The iPhones this device receives from and the one it is open on. With notifications on
+     * here, a change is sent to the server at once and can be undone; otherwise Enable sends it.
+     */
+    const changeChoices = (sources: string[], receiverSource: string) => {
+        const before = { sources: selected, receiver };
+        setSelected(sources);
+        setReceiver(receiverSource);
+        if (!subscription || blockedPermission) return;
+        const sub = subscription;
+        void run(async () => {
+            try {
+                await saveSubscription(sub, sources, receiverSource);
+            } catch (e) {
+                setSelected(before.sources);
+                setReceiver(before.receiver);
+                throw e;
+            }
+            say('Notification choices saved.', async () => {
+                await saveSubscription(sub, before.sources, before.receiver);
+                setSelected(before.sources);
+                setReceiver(before.receiver);
+            });
+        });
     };
     const enable = () => {
         // Safari requires this call in the original button gesture, before any awaits.
@@ -370,7 +313,7 @@ export function NotificationsView() {
             const sub = (await pushSubscriptionFor(registration, status!.publicKey, true))!;
             await saveSubscription(sub);
             setSubscription(sub);
-            setMessage('Notifications enabled on this device.');
+            say('Notifications enabled on this device.');
         });
     };
     const requestedSource = page.source;
@@ -398,20 +341,110 @@ export function NotificationsView() {
                   { source: '', notification: '', panel: 'history', filter: 'inbox', app: '', q: '' }
                 : { panel: 'history' },
         );
-    const updateSource = async (source: NotificationSource) => {
-        await api('sources', 'POST', source);
-        await refresh();
+    const toggleSetup = () => (activePanel === 'setup' ? openInbox() : changeNotificationPage({ panel: 'setup' }));
+    // The search field of the inbox, opened from the bar. Text or an app in the address opens it.
+    const [searchOpen, setSearchOpen] = useState(!!page.q || !!page.app);
+    const toggleSearch = () => {
+        if (activePanel === 'history') {
+            setSearchOpen((open) => !open);
+            return;
+        }
+        openInbox();
+        setSearchOpen(true);
     };
+    // More than one linked iPhone: Switch in the bar lists them. The sheet is added on first use.
+    const [switching, setSwitching] = useState(false);
+    const [switcherUsed, setSwitcherUsed] = useState(false);
+    const openSwitcher = () => {
+        setSwitcherUsed(true);
+        setSwitching(true);
+    };
+    // The prompts of Setup: one armed at a time, for one iPhone.
+    const confirm = useArmedAction<string>();
+    const shown = historySource && !unlinkedRequest ? historySource : undefined;
+    const feed = shown ? feedState(status?.statuses[shown.id]) : undefined;
 
     return (
         <div class="notifications-view">
-            <AppBar title="Notifications">
-                <UnreadBadge
-                    count={historySource && !unlinkedRequest ? status?.unreadBySource?.[historySource.id] || 0 : 0}
+            {/* One row: back, the title with the iPhone shown, and the controls of the page. */}
+            <AppBar
+                title="Notifications"
+                status={
+                    activePanel === 'setup' && status ? (
+                        <AppBarStatus>Setup & delivery</AppBarStatus>
+                    ) : shown && feed ? (
+                        <AppBarStatus tone={FEED_TONES[feed]}>
+                            {shown.name} · {FEED_LABELS[feed]}
+                        </AppBarStatus>
+                    ) : undefined
+                }
+            >
+                <UnreadBadge count={shown ? status?.unreadBySource?.[shown.id] || 0 : 0} />
+                {!!status && status.sources.length > 1 && (
+                    <Button
+                        size="compact"
+                        class="notification-switch"
+                        attributes={{ 'aria-haspopup': 'dialog', 'aria-label': 'Switch iPhone' }}
+                        onClick={openSwitcher}
+                    >
+                        Switch
+                    </Button>
+                )}
+                <IconButton
+                    icon="search"
+                    variant="bare"
+                    label="Search"
+                    pressed={activePanel === 'history' && searchOpen}
+                    disabled={!status || !historySource}
+                    onClick={toggleSearch}
+                />
+                <IconButton
+                    icon="sliders"
+                    variant="bare"
+                    label="Setup"
+                    pressed={activePanel === 'setup'}
+                    // With no inbox to go back to, Setup is the page.
+                    disabled={!status || !historySource}
+                    onClick={toggleSetup}
                 />
             </AppBar>
+            {switcherUsed && status && status.sources.length > 1 && (
+                <NotificationActionSheet open={switching} title="Switch iPhone" onClose={() => setSwitching(false)}>
+                    {status.sources.map((s) => {
+                        const unread = status.unreadBySource?.[s.id] || 0;
+                        const current = s.id === shown?.id;
+                        return (
+                            <Button
+                                full
+                                key={s.id}
+                                attributes={{ 'aria-current': current ? 'true' : undefined }}
+                                onClick={() => {
+                                    // The address is written to the sheet's history entry, and the
+                                    // router carries it down to the page's entry as the sheet closes.
+                                    setSwitching(false);
+                                    if (!current)
+                                        changeNotificationPage({
+                                            source: s.id,
+                                            notification: '',
+                                            panel: 'history',
+                                            filter: 'inbox',
+                                            app: '',
+                                            q: '',
+                                        });
+                                }}
+                            >
+                                {s.name}
+                                {unread ? ` · ${unread} unread` : ''}
+                                {current ? ` · ${SESSION.viewing}` : ''}
+                            </Button>
+                        );
+                    })}
+                </NotificationActionSheet>
+            )}
             <main class="notifications-page">
-                <div class="notification-page-header">
+                <div
+                    class={`notification-page-header ${activePanel === 'history' ? 'notification-page-header-inbox' : ''}`.trim()}
+                >
                     {status && !status.sources.length && (
                         <p class="notification-page-intro">Connect an iPhone to receive its notifications.</p>
                     )}
@@ -433,7 +466,14 @@ export function NotificationsView() {
                     <span class="kit-banner-text">{error}</span>
                 </Presence>
                 {/* Not over a sheet of the inbox: it would cover the sheet's last action. */}
-                <Toast message={topSheet.value ? '' : message} identity={message} onDismiss={() => setMessage('')} />
+                <Toast
+                    message={topSheet.value ? '' : notice?.text || ''}
+                    identity={notice}
+                    duration={notice?.undo ? 12000 : 6000}
+                    onDismiss={() => setNotice(null)}
+                    dismissLabel={notice?.undo ? 'Dismiss undo notice' : undefined}
+                    action={notice?.undo ? { label: 'Undo', run: undoNotice, disabled: busy } : undefined}
+                />
                 {!status && !connectionError && (
                     <p role="status" class="notification-empty">
                         Loading…
@@ -464,32 +504,19 @@ export function NotificationsView() {
                 )}
                 {status && (
                     <>
-                        <div class="notification-page-tabs">
-                            <SegmentedControl
-                                label="Notification pages"
-                                options={[
-                                    { value: 'history', label: 'Inbox', disabled: !historySource },
-                                    { value: 'setup', label: 'Setup & delivery' },
-                                ]}
-                                value={activePanel}
-                                onChange={(panel) =>
-                                    panel === 'history' ? openInbox() : changeNotificationPage({ panel: 'setup' })
-                                }
-                                full
-                            />
-                        </div>
                         <div class="notification-panels">
                             <Presence show={activePanel === 'history'} class="notification-panel">
                                 <NotificationHistory
                                     sources={status.sources}
                                     items={history}
-                                    unreadBySource={status.unreadBySource || {}}
                                     statuses={status.statuses}
                                     feedError={status.error}
                                     connectionError={connectionError}
                                     busy={busy}
                                     run={run}
                                     refresh={refresh}
+                                    searchOpen={searchOpen}
+                                    setSearchOpen={setSearchOpen}
                                 />
                             </Presence>
                             <Presence show={activePanel === 'setup'} class="notification-panel" keepMounted>
@@ -518,18 +545,31 @@ export function NotificationsView() {
                                                 <SourceSettings
                                                     source={s}
                                                     stored={status.storedBySource?.[s.id] || 0}
+                                                    items={history}
                                                     busy={busy}
-                                                    update={(source) =>
-                                                        void run(async () => {
-                                                            await updateSource(source);
-                                                            setMessage('iPhone settings saved.');
-                                                        })
-                                                    }
+                                                    confirm={confirm}
+                                                    change={(change) => changeSource(s.id, change)}
                                                     remove={() =>
                                                         void run(async () => {
                                                             await api(`sources/${encodeURIComponent(s.id)}`, 'DELETE');
                                                             await refresh();
-                                                            setMessage(`${s.name} removed from notification sharing.`);
+                                                            // This device's choices lose the iPhone too.
+                                                            const sources = selected.filter((id) => id !== s.id);
+                                                            const receiverSource = receiver === s.id ? '' : receiver;
+                                                            setSelected(sources);
+                                                            setReceiver(receiverSource);
+                                                            if (
+                                                                subscription &&
+                                                                !blockedPermission &&
+                                                                (sources.length !== selected.length ||
+                                                                    receiverSource !== receiver)
+                                                            )
+                                                                await saveSubscription(
+                                                                    subscription,
+                                                                    sources,
+                                                                    receiverSource,
+                                                                );
+                                                            say(`${s.name} removed from notification sharing.`);
                                                         })
                                                     }
                                                 />
@@ -582,7 +622,7 @@ export function NotificationsView() {
                                                 onClick={() =>
                                                     void run(async () => {
                                                         await api('pair', 'POST');
-                                                        setMessage(
+                                                        say(
                                                             'On the sending iPhone, open Settings → Bluetooth and choose ws-scrcpy.',
                                                         );
                                                         await refresh();
@@ -668,19 +708,21 @@ export function NotificationsView() {
                                                             const entry = unlinkedPhones.find(
                                                                 (p) => p.descriptor.udid === chosenPhone,
                                                             )!;
-                                                            await updateSource({
+                                                            await saveNotificationSource({
                                                                 id: chosenPhone,
                                                                 address: chosenAddress,
                                                                 name: deviceName(entry),
                                                                 apps: [],
                                                                 preview: true,
+                                                                muted: [],
                                                             });
+                                                            await refresh();
                                                             setSelected((current) => [
                                                                 ...new Set([...current, chosenPhone]),
                                                             ]);
                                                             setPhone('');
                                                             setAddress('');
-                                                            setMessage(
+                                                            say(
                                                                 'iPhone connected. Now enable notifications on the device receiving them.',
                                                             );
                                                         })
@@ -711,7 +753,7 @@ export function NotificationsView() {
                                         {enabled && (
                                             <p class="notification-receiver-sources">
                                                 {!confirmed
-                                                    ? 'Review and save your choices below.'
+                                                    ? 'Choose below which iPhones to receive from.'
                                                     : activeSources.length
                                                       ? `From ${activeSources.map((s) => s.name).join(', ')}`
                                                       : 'No other iPhones selected'}
@@ -774,33 +816,32 @@ export function NotificationsView() {
                                         title="Choose phones and delivery options"
                                         open={!enabled && !!status.sources.length}
                                     >
+                                        {/* Each choice applies when it changes, so they are switches. */}
+                                        <fieldset class="notification-choices" disabled={busy}>
+                                            <legend class="notification-choices-title">Get notifications from</legend>
+                                            {status.sources.length ? (
+                                                status.sources.map((s) => (
+                                                    <SheetToggleRow
+                                                        key={s.id}
+                                                        title={s.name}
+                                                        checked={selected.includes(s.id)}
+                                                        onChange={(checked) =>
+                                                            changeChoices(
+                                                                checked
+                                                                    ? [...selected, s.id]
+                                                                    : selected.filter((id) => id !== s.id),
+                                                                receiver,
+                                                            )
+                                                        }
+                                                    />
+                                                ))
+                                            ) : (
+                                                <p class="notification-help notification-choices-empty">
+                                                    Your connected iPhones will appear here.
+                                                </p>
+                                            )}
+                                        </fieldset>
                                         <div class="notification-details-content">
-                                            <fieldset class="notification-choices" disabled={busy}>
-                                                <legend class="notification-choices-title">
-                                                    Get notifications from
-                                                </legend>
-                                                {status.sources.length ? (
-                                                    status.sources.map((s) => (
-                                                        <Checkbox
-                                                            key={s.id}
-                                                            checked={selected.includes(s.id)}
-                                                            onChange={(checked) =>
-                                                                setSelected(
-                                                                    checked
-                                                                        ? [...selected, s.id]
-                                                                        : selected.filter((id) => id !== s.id),
-                                                                )
-                                                            }
-                                                        >
-                                                            {s.name}
-                                                        </Checkbox>
-                                                    ))
-                                                ) : (
-                                                    <p class="notification-help">
-                                                        Your connected iPhones will appear here.
-                                                    </p>
-                                                )}
-                                            </fieldset>
                                             <SelectField
                                                 label="This app is open on"
                                                 hint="Prevents this iPhone from receiving its own notifications."
@@ -813,7 +854,7 @@ export function NotificationsView() {
                                                         label: `${s.name} itself`,
                                                     })),
                                                 ]}
-                                                onChange={(e) => setReceiver(e.currentTarget.value)}
+                                                onChange={(e) => changeChoices(selected, e.currentTarget.value)}
                                             />
                                             {subscription && (
                                                 <Button
@@ -825,7 +866,7 @@ export function NotificationsView() {
                                                             });
                                                             await subscription.unsubscribe();
                                                             setSubscription(null);
-                                                            setMessage('Notifications turned off on this device.');
+                                                            say('Notifications turned off on this device.');
                                                         })
                                                     }
                                                 >
@@ -837,23 +878,9 @@ export function NotificationsView() {
                                     <div class="notification-actions">
                                         {subscription && !blockedPermission ? (
                                             <>
-                                                {changed && (
-                                                    <Button
-                                                        variant="primary"
-                                                        disabled={busy || !initialized}
-                                                        onClick={() =>
-                                                            void run(async () => {
-                                                                await saveSubscription(subscription);
-                                                                setMessage('Notification choices saved.');
-                                                            })
-                                                        }
-                                                    >
-                                                        Save changes
-                                                    </Button>
-                                                )}
                                                 <Button
-                                                    variant={changed ? 'secondary' : 'primary'}
-                                                    disabled={busy || changed}
+                                                    variant="primary"
+                                                    disabled={busy}
                                                     onClick={() =>
                                                         void run(async () => {
                                                             try {
@@ -872,7 +899,7 @@ export function NotificationsView() {
                                                                     endpoint: subscription.endpoint,
                                                                 });
                                                             }
-                                                            setMessage(
+                                                            say(
                                                                 'Test notification queued. It should arrive on this device shortly.',
                                                             );
                                                         })
@@ -891,9 +918,6 @@ export function NotificationsView() {
                                             </Button>
                                         )}
                                     </div>
-                                    {changed && subscription && (
-                                        <p class="notification-help">Save your changes before sending a test.</p>
-                                    )}
                                     {!effectiveSources.length && !!status.sources.length && !subscription && (
                                         <p class="notification-help">
                                             Select at least one other iPhone to enable notifications here.

@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const { chromium, webkit } = require('playwright');
-const { fixture, historyItems } = require('./e2e-notifications');
+const { fixture, historyItems, showSetup } = require('./e2e-notifications');
 const { settleMotion } = require('./ui-motion');
 const BASE = process.env.BASE;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -12,12 +12,14 @@ async function main() {
     try {
         const f = await fixture(browser, { history: true, notifications: historyItems(), devices: true });
         try {
-            const button = f.page.getByRole('link', { name: 'Open screen', exact: true });
+            // The bar names the iPhone and holds Switch, Search and Setup in one row.
+            const bar = f.page.locator('.notifications-view > .kit-bar');
+            const button = bar.getByRole('button', { name: 'Switch iPhone', exact: true });
             await button.waitFor();
             await settleMotion(f.page);
-            const [action, device] = await Promise.all([button.boundingBox(), f.page.getByRole('combobox', { name: 'Device', exact: true }).boundingBox()]);
-            assert(Math.abs(action.y + action.height / 2 - (device.y + device.height / 2)) < 3, 'Open screen sits beside the iPhone it opens');
-            assert(action.width < 130 && action.height >= 44, 'compact width, full touch target');
+            const [action, search] = await Promise.all([button.boundingBox(), bar.getByRole('button', { name: 'Search', exact: true }).boundingBox()]);
+            assert(Math.abs(action.y + action.height / 2 - (search.y + search.height / 2)) < 3, 'Switch sits in the row of the bar');
+            assert(action.width < 130 && action.height >= 32, 'a compact button');
             assert.equal(await button.evaluate(el => getComputedStyle(el).textDecorationLine), 'none');
             assert.equal(await button.evaluate(el => getComputedStyle(el).borderTopStyle), 'solid');
             await f.page.screenshot({ path: `${out}/notifications.png`, fullPage: true });
@@ -28,7 +30,7 @@ async function main() {
             await f.page.getByRole('heading', { name: 'Status arrived over a slow connection', exact: true }).waitFor({ timeout: 14000 });
             assert(requests <= 2, 'polling never piles up slow requests');
             await f.page.unroute('**/api/notifications/status');
-            await f.page.getByRole('radio', { name: 'Setup & delivery', exact: true }).click();
+            await showSetup(f.page);
             const poll = () => f.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
             f.pairingOpen = true; await poll();
             await f.page.waitForFunction(() => document.querySelector('.notification-pairing')?.dataset.expanded === 'true');
@@ -93,7 +95,7 @@ async function main() {
         await recoveryPage.getByRole('heading', { name: "Can't reach the server" }).waitFor();
         assert.equal(await recoveryPage.locator('input[type="password"]').count(), 0);
         offline = false; await recoveryPage.getByRole('button', { name: 'Try again', exact: true }).click();
-        await recoveryPage.getByRole('radio', { name: 'Setup & delivery', exact: true }).waitFor();
+        await recoveryPage.getByRole('heading', { name: 'Send from an iPhone', exact: true }).waitFor();
         await recovery.close(); console.log('PASS notification connection failures recover with Retry, without setup credentials');
 
     } finally { await browser.close(); }

@@ -2,9 +2,11 @@
 
 @layer views {
 /* The Notifications page (`views/NotificationsView.tsx`): the bar stays in place and the page
-   under it scrolls. Every control is a kit part; these rules place the parts and set the text
-   between them. The inbox is in NotificationsInbox.css and Setup in NotificationsSetup.css.
-   No rule here selects a button, a field, a paragraph or a link by its tag. */
+   under it scrolls. The bar is one row: back, the title with the iPhone shown, the unread count,
+   Switch where more than one iPhone is linked, Search and Setup. Every control is a kit part;
+   these rules place the parts and set the text between them. The inbox is in
+   NotificationsInbox.css and Setup in NotificationsSetup.css. No rule here selects a button, a
+   field, a paragraph or a link by its tag. */
 .notifications-view {
     display: flex;
     flex-direction: column;
@@ -12,7 +14,10 @@
     background: var(--surface);
 }
 .notifications-view > .kit-bar .notification-unread-count {
-    margin-right: var(--space-8);
+    margin-right: var(--space-4);
+}
+.notification-switch {
+    flex: none;
 }
 .notifications-page {
     flex: 1 1 auto;
@@ -34,9 +39,17 @@
 .notification-page-header {
     padding-top: var(--space-20);
 }
+/* The inbox's own bar carries the space under the page's bar, so on a phone the first
+   notification starts high on the screen. */
+.notification-page-header-inbox {
+    padding-top: var(--space-12);
+}
 @media (max-width: 599px) {
     .notification-page-header {
         padding-top: var(--space-12);
+    }
+    .notification-page-header-inbox {
+        padding-top: 0;
     }
 }
 .notification-page-intro {
@@ -53,9 +66,6 @@
     top: 0;
     z-index: var(--z-header);
     box-shadow: var(--shadow-raised);
-}
-.notification-page-tabs {
-    margin-bottom: var(--space-16);
 }
 
 /* Text between the controls: an explanation, and the line shown where a list is empty. */

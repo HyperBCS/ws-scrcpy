@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { chromium, webkit } = require('playwright');
-const { fixture, article, historyItems, touchSequence, cardAction, openCardMenu } = require('./e2e-notifications');
+const { fixture, article, historyItems, touchSequence, cardAction, openCardMenu, showSetup, showInbox } = require('./e2e-notifications');
 const { settleMotion } = require('./ui-motion');
 const browserName = process.env.BROWSER || 'chromium';
 const OUT = process.env.E2E_OUT || '/tmp/ws-motion-review';
@@ -160,8 +160,7 @@ async function disclosuresAndSheets(browser) {
     try {
         await settleMotion(f.page);
         await instrument(f.page);
-        const setup = f.page.getByRole('radio', { name: 'Setup & delivery', exact: true });
-        await setup.click();
+        await showSetup(f.page);
         await settleMotion(f.page);
         const details = f.page.locator('.notification-delivery-details');
         const summary = details.locator('summary');
@@ -178,7 +177,7 @@ async function disclosuresAndSheets(browser) {
         await settleMotion(f.page);
         assert.equal(await details.evaluate(el => el.open), false);
         assert.equal(await summary.evaluate(el => document.activeElement === el), true, 'disclosure retains keyboard focus');
-        await f.page.getByRole('radio', { name: 'Inbox', exact: true }).click();
+        await showInbox(f.page);
         await settleMotion(f.page);
         const sheet = await openCardMenu(f.page, 'Coffee at four?');
         await settleMotion(f.page);
@@ -203,7 +202,7 @@ async function disclosuresAndSheets(browser) {
         assert.equal(await toast.evaluate(el => el.getAnimations().length), 0, 'reduced motion shows feedback without movement');
         await toast.getByRole('button', { name: 'Dismiss undo notice' }).click();
         await toast.waitFor({ state: 'detached' });
-        await setup.click();
+        await showSetup(f.page);
         await summary.click();
         assert.equal(await details.evaluate(el => el.open && !el.getAnimations().length), true, 'reduced motion changes disclosure state immediately');
         assert.deepEqual(f.errors, []);
@@ -225,7 +224,8 @@ async function toastTimer(browser) {
         await f.page.mouse.move(1, 1);
         await f.page.clock.fastForward(20000);
         assert.equal(await toast.count(), 1, 'keyboard focus pauses the timer after the pointer leaves');
-        await f.page.locator('input[type="search"]').focus();
+        // Focus moves to the list's filter, away from the toast.
+        await f.page.getByRole('radio', { name: 'All', exact: true }).focus();
         await f.page.clock.fastForward(13000);
         await f.page.clock.runFor(400);
         await toast.waitFor({ state: 'detached' });
