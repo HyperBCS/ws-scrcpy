@@ -193,7 +193,7 @@ async function sheetToSheetFocus(browser) {
         const { page } = droid;
         await toolbar(droid, 'Actions');
         await sheet(page, 'Actions').getByRole('button', { name: 'Open Stream settings', exact: true }).click();
-        const settings = sheet(page, 'Stream settings');
+        const settings = sheet(page, 'Settings');
         await settings.waitFor();
         // Past the end of the Actions sheet's exit, which is when it used to take focus back.
         await pause(500);
@@ -244,7 +244,7 @@ async function modalSheetsHoldPresses(browser) {
             const point = { x: picture.x + 16, y: picture.y + 8 };
             const sheets = [
                 ['Actions', () => toolbar(test, 'Actions')],
-                ['Stream settings', () => toolbar(test, 'Settings')],
+                ['Settings', () => toolbar(test, 'Settings')],
                 ['Switch device', () => page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }).click()],
             ];
             for (const [name, open] of sheets) {
@@ -564,7 +564,7 @@ async function listenControl(browser) {
         await page.keyboard.press('Escape');
         await actions.waitFor({ state: 'hidden' });
         await toolbar(droid, 'Settings');
-        const settings = sheet(page, 'Stream settings');
+        const settings = sheet(page, 'Settings');
         await settings.waitFor();
         const copy = await settings.textContent();
         assert.doesNotMatch(copy, /Mute sound|tap Sound|or Sound/, 'the sheet says Listen, not Sound or Mute');
@@ -652,25 +652,25 @@ async function statusInItsGroup(browser) {
             await test.context.close();
         }
     }
-    // The iPhone schedule sheet, opened from the device card.
+    // The iPhone's Settings, opened from the card: the passcode is the Server row of Saved passcode.
     const test = await ios(browser, { mobile: true, stream: false });
     try {
         const { page } = test;
         await page.locator(`[data-device-key="ios:${IOS_UDID}"]`).getByRole('button', { name: 'Settings for iPhone fixture', exact: true }).click();
-        const dialog = sheet(page, 'Scheduled unlock');
+        const dialog = sheet(page, 'Settings');
         await dialog.waitFor();
         await settleMotion(page);
         await dialog.getByLabel('Passcode for scheduled unlock').fill('1234');
         await dialog.getByLabel('Repeat the passcode').fill('4321');
         await dialog.getByRole('button', { name: 'Save on server', exact: true }).click();
-        const schedule = dialog.locator('section.kit-group').filter({ has: page.getByRole('heading', { name: 'Schedule', exact: true }) });
-        const error = schedule.locator('.kit-status.kit-status-error');
+        const passcode = dialog.locator('section.kit-group').filter({ has: page.getByRole('heading', { name: 'Saved passcode', exact: true }) });
+        const error = passcode.locator('.kit-status.kit-status-error');
         await error.waitFor();
         assert.match(await error.textContent(), /do not match/);
         await error.scrollIntoViewIfNeeded();
         const box = await error.boundingBox();
-        const runs = await dialog.getByRole('heading', { name: 'Runs', exact: true }).boundingBox();
-        assert(runs.y - (box.y + box.height) >= 14, 'the message belongs to Schedule, not to the heading under it');
+        const next = await dialog.getByRole('heading', { name: 'Schedule', exact: true }).boundingBox();
+        assert(next.y - (box.y + box.height) >= 14, 'the message belongs to Saved passcode, not to the heading under it');
         await shot(page, 'iphone-schedule-error-phone-light');
         assert.deepEqual(test.errors, []);
     } finally {
@@ -679,7 +679,8 @@ async function statusInItsGroup(browser) {
     console.log('PASS outcome messages sit in the group that produced them, with an icon and readable type');
 }
 
-// U-settings-13, U-settings-14
+// U-settings-13, U-settings-14, U-settings-4: a change applies when it is made and its outcome
+// shows in place. There is no Apply bar.
 async function applyBarAndReadability(browser) {
     for (const [mobile, dark] of [[true, false], [true, true], [false, false], [false, true]]) {
         const label = `${mobile ? 'phone' : 'desktop'}-${dark ? 'dark' : 'light'}`;
@@ -693,7 +694,7 @@ async function applyBarAndReadability(browser) {
             } else {
                 await toolbar(test, 'Settings');
             }
-            const settings = sheet(page, 'Stream settings');
+            const settings = sheet(page, 'Settings');
             await settings.waitFor();
             await page.waitForFunction(() => !document.querySelector('dialog.kit-sheet[open]')?.textContent.includes('Loading settings…'));
             await settleMotion(page);
@@ -701,61 +702,47 @@ async function applyBarAndReadability(browser) {
                 const ring = await settings.evaluate((el) => ({ focused: el === document.activeElement, style: getComputedStyle(el).outlineStyle }));
                 assert.deepEqual(ring, { focused: true, style: 'none' }, 'no ring round the whole dialog');
             }
-            // The apply step is the footer of the sheet, kept in view under the body.
-            const bar = settings.locator('.kit-sheet-footer');
-            assert.equal(await settings.getByRole('button', { name: 'Apply changes', exact: true }).count(), 0, 'no Apply before a change');
-            assert.equal(await settings.getByRole('button', { name: 'Discard', exact: true }).count(), 0, 'no Discard before a change');
-            assert.equal(await bar.count(), 0, 'with nothing to apply the sheet has no footer');
+            assert.equal(await settings.locator('.kit-sheet-footer').count(), 0, 'the sheet has no footer: a change applies when it is made');
+            assert.equal(await settings.getByRole('button', { name: /^(Apply changes|Apply & restart|Discard|Keep editing)$/ }).count(), 0, 'no Apply step');
             assert.equal(await page.locator('[class*="settings-sheet-"]').count(), 0, 'no row of the older Settings markup is left');
             for (const small of [settings.locator('[data-setting="quality"] .kit-row-desc'), settings.locator('.kit-row-desc').first()]) {
                 assert((await fontSize(small)) >= 13, 'help text is 13px or larger');
             }
             await shot(page, `stream-settings-${label}`);
 
+            // The fixture refuses the change: the reason sits under the presets, focus stays in the sheet.
             await settings.getByRole('radio', { name: 'Data saver', exact: true }).click();
-            const discard = settings.getByRole('button', { name: 'Discard', exact: true });
-            const apply = settings.getByRole('button', { name: 'Apply changes', exact: true });
-            await discard.click();
-            await apply.waitFor({ state: 'detached' });
-            assert.equal(await activeIn(settings), true, 'after Discard focus stays in the sheet');
-            await settings.getByRole('radio', { name: 'Data saver', exact: true }).click();
-            await apply.click();
-            const keep = settings.getByRole('button', { name: 'Keep editing', exact: true });
-            await keep.waitFor();
-            assert.equal(await keep.evaluate((el) => el === document.activeElement), true, 'after Apply changes focus is on Keep editing');
-            await settings.getByRole('button', { name: 'Apply & restart', exact: true }).click();
-            const alert = bar.locator('[role="alert"]');
+            const alert = settings.locator('.settings-quality > .kit-status[role="alert"]');
             await alert.waitFor();
             await settleMotion(page);
-            assert.equal(await alert.evaluate((el) => el.closest('.settings-apply-message') === document.activeElement), true, 'after a failed apply focus is on the message');
-            const items = await bar.locator('.settings-apply > *').evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
-            assert(items.length >= 3, 'the error, the note and the buttons are shown');
-            for (let index = 1; index < items.length; index++) {
-                const gap = items[index].top - items[index - 1].bottom;
-                assert(gap >= 8, `apply bar items are spaced (${gap}px)`);
-            }
-            assert((await contrastOf(alert)) >= 4.5, `${label}: error text contrast ${await contrastOf(alert)}`);
+            assert.equal(await activeIn(settings), true, 'after a refused change focus stays in the sheet');
             await alert.scrollIntoViewIfNeeded();
+            const card = await settings.locator('.settings-quality .kit-card').boundingBox();
+            const box = await alert.boundingBox();
+            const gap = box.y - (card.y + card.height);
+            assert(gap >= 4 && gap <= 12, `the reason sits directly under the presets (${gap}px)`);
+            assert((await contrastOf(alert)) >= 4.5, `${label}: error text contrast ${await contrastOf(alert)}`);
             await shot(page, `stream-settings-apply-error-${label}`);
             assert.deepEqual(test.errors, []);
         } finally {
             await test.context.close();
         }
     }
-    // Opened from the device card there is no stream: the hint under "Audio format" keeps its distance.
+    // Opened from the card there is no stream: Listen says why, and the next section keeps its distance.
     const card = await android(browser, { mobile: true, stream: false });
     try {
         const { page } = card;
         await page.locator('.device').filter({ hasText: UDID }).getByRole('button', { name: /^Settings for / }).click();
-        const settings = sheet(page, 'Stream settings');
+        const settings = sheet(page, 'Settings');
         await settings.waitFor();
         await page.waitForFunction(() => !document.querySelector('dialog.kit-sheet[open]')?.textContent.includes('Loading settings…'));
         await settleMotion(page);
-        const hint = settings.getByText('After applying, open the screen and tap Listen.', { exact: true });
-        await hint.scrollIntoViewIfNeeded();
+        await settings.getByText('Open the screen to listen.', { exact: true }).waitFor();
+        const heading = settings.locator('[data-section="keyboard"] .settings-section-title');
+        await heading.scrollIntoViewIfNeeded();
         const format = await settings.locator('.settings-advanced', { hasText: 'Audio format' }).boundingBox();
-        const gap = (await hint.boundingBox()).y - (format.y + format.height);
-        assert(gap >= 8, `the hint is clear of the Audio format card (${gap}px)`);
+        const gap = (await heading.boundingBox()).y - (format.y + format.height);
+        assert(gap >= 20, `the next section is clear of the Audio format card (${gap}px)`);
         await shot(page, 'stream-settings-from-card-phone-light');
     } finally {
         await card.context.close();
@@ -768,7 +755,7 @@ async function applyBarAndReadability(browser) {
     try {
         const { page } = list;
         await page.locator(`[data-device-key="ios:${IOS_UDID}"]`).getByRole('button', { name: 'Settings for iPhone fixture', exact: true }).click();
-        const dialog = sheet(page, 'Scheduled unlock');
+        const dialog = sheet(page, 'Settings');
         await dialog.waitFor();
         await settleMotion(page);
         await dialog.getByRole('button', { name: 'Replace', exact: true }).click();
@@ -779,7 +766,7 @@ async function applyBarAndReadability(browser) {
     } finally {
         await list.context.close();
     }
-    console.log('PASS apply bar spacing, hidden Apply and Discard, focus after each step, type sizes and contrast');
+    console.log('PASS a change applies in place with no Apply bar, its reason under its control, focus kept, type sizes and contrast');
 }
 
 // U-settings-15, and the labels of U-system-12 and U-system-4
@@ -803,7 +790,7 @@ async function namesAndLabels(browser) {
         assert((await contrastOf(actions.locator('.kit-button:not(.kit-button-primary):not(:disabled)').first())) >= 4.5, 'outline button labels meet 4.5:1');
         await shot(page, 'android-actions-phone-light');
         await actions.getByRole('button', { name: 'Open Stream settings', exact: true }).click();
-        const settings = sheet(page, 'Stream settings');
+        const settings = sheet(page, 'Settings');
         await settings.waitFor();
         assert.equal(await settings.locator('.kit-sheet-subtitle').textContent(), ANDROID_NAME);
         assert.equal(await page.locator('.settings-device-context, .settings-device-dot').count(), 0, 'no pill and no dot');
@@ -813,7 +800,7 @@ async function namesAndLabels(browser) {
             copy.querySelectorAll('[data-audio-state] .kit-row-desc').forEach((node) => node.remove());
             return copy.textContent;
         });
-        assert.doesNotMatch(settingsCopy, /\b(the|this) device\b|device's/i, 'Stream settings call the controlled phone a phone');
+        assert.doesNotMatch(settingsCopy, /\b(the|this) device\b|device's/i, 'Settings call the controlled phone a phone');
         assert.deepEqual(droid.errors, []);
     } finally {
         await droid.context.close();
@@ -839,7 +826,7 @@ async function namesAndLabels(browser) {
     try {
         const { page } = list;
         await page.locator(`[data-device-key="ios:${IOS_UDID}"]`).getByRole('button', { name: 'Settings for iPhone fixture', exact: true }).click();
-        const dialog = sheet(page, 'Scheduled unlock');
+        const dialog = sheet(page, 'Settings');
         await dialog.waitFor();
         assert.equal(await dialog.locator('.kit-sheet-subtitle').textContent(), 'iPhone fixture');
         assert.equal(await page.locator('.settings-device-context').count(), 0);
@@ -861,7 +848,7 @@ async function statusContrast(browser) {
             const ratio = await contrastOf(chip);
             assert(ratio >= 4.5, `${dark ? 'dark' : 'light'}: status chip text contrast ${ratio.toFixed(2)}`);
             await page.locator('.device').filter({ hasText: UDID }).getByRole('button', { name: /^Settings for / }).click();
-            const settings = sheet(page, 'Stream settings');
+            const settings = sheet(page, 'Settings');
             await settings.waitFor();
             await page.waitForFunction(() => !document.querySelector('dialog.kit-sheet[open]')?.textContent.includes('Loading settings…'));
             await settleMotion(page);

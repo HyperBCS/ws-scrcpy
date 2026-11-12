@@ -215,3 +215,70 @@ test('a closed sheet leaves no listener or timer, and later replies change nothi
     assert.equal(states.length, before);
     assert.equal(session.state, state);
 });
+
+// Step 5b: a control in the Settings sheet applies when it is changed.
+test('change sends only the values that differ, shows them while they are applied, and keeps them once confirmed', () => {
+    const { tracker, session } = loaded();
+    assert.equal(session.change({ bitrate: PHONE.bitrate, maxFps: PHONE.maxFps }), false, 'what the phone runs is not sent');
+    assert.equal(tracker.sent.length, 1);
+    assert.equal(session.change({ bitrate: 1000000, maxFps: 30, maxSize: PHONE.maxSize, videoEncoder: '' }), true);
+    assert.deepEqual(tracker.sent.at(-1), { id: 2, type: 'update_stream_config', data: { udid: UDID, config: { bitrate: 1000000, maxFps: 30 } } });
+    assert.equal(session.state.applying, true);
+    assert.deepEqual(session.state.patch, { bitrate: 1000000, maxFps: 30 }, 'the values show while they are applied');
+    assert.equal(session.change({ maxSize: 720 }), false, 'one change at a time');
+    assert.equal(tracker.sent.length, 2);
+    tracker.reply('update_stream_config', { udid: UDID, requestId: 2, config: { ...PHONE, bitrate: 1000000, maxFps: 30 } });
+    assert.equal(session.state.applying, false);
+    assert.deepEqual(session.state.baseline, { ...PHONE, bitrate: 1000000, maxFps: 30 });
+    assert.deepEqual(session.state.patch, {});
+    assert.equal(session.state.appliedNote, SETTINGS_SAVED);
+    session.dispose();
+});
+
+test('a change the phone refuses, or does not confirm in time, leaves what the phone runs on show', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { tracker, session } = loaded();
+    session.change({ audio: false });
+    tracker.reply('update_stream_config', { udid: UDID, requestId: 2, error: 'encoder failed' });
+    assert.equal(session.state.applying, false);
+    assert.equal(session.state.applyError, 'Could not apply changes: encoder failed');
+    assert.deepEqual(session.state.patch, {}, 'the control shows the phone value again');
+    assert.deepEqual(session.state.baseline, PHONE);
+
+    session.change({ maxSize: 720 });
+    t.mock.timers.tick(APPLY_TIMEOUT_MS);
+    assert.equal(session.state.applyError, APPLY_TIMED_OUT);
+    assert.deepEqual(session.state.patch, {});
+    tracker.reply('update_stream_config', { udid: UDID, requestId: 3, config: { ...PHONE, maxSize: 720 } });
+    assert.deepEqual(session.state.baseline, PHONE, 'a late reply does not claim the change was applied');
+
+    // Retry sound sends its value even when the phone already has it, through apply.
+    assert.equal(session.apply({ audio: true }), true);
+    assert.deepEqual(tracker.sent.at(-1).data.config, { audio: true });
+    session.dispose();
+    assert.equal(session.change({ bitrate: 1 }), false, 'nothing is sent once the sheet has closed');
+
+    const waiting = new StreamConfigSession(undefined, UDID);
+    waiting.load();
+    assert.equal(waiting.change({ bitrate: 1000000 }), false, 'nothing is sent without a tracker');
+});
+
+test('a session that ends with a change still out gives it up as if it had timed out', () => {
+    const { session } = loaded();
+    assert.equal(session.givenUp(), undefined, 'nothing out, nothing to say');
+    session.change({ maxSize: 720 });
+    const left = session.givenUp();
+    session.dispose();
+    assert.equal(left.applying, false, 'the sheet can close again');
+    assert.equal(left.applyError, APPLY_TIMED_OUT);
+    assert.deepEqual(left.patch, {}, 'the control shows what the phone ran before');
+    assert.deepEqual(left.baseline, PHONE);
+    assert.equal(session.givenUp(), undefined, 'asked once the session has ended, there is nothing out');
+
+    // A patch sent with apply is kept, as it is when the apply times out.
+    const staged = loaded().session;
+    staged.setFields({ bitrate: 1000000 });
+    staged.apply();
+    assert.deepEqual(staged.givenUp().patch, { bitrate: 1000000 });
+    staged.dispose();
+});

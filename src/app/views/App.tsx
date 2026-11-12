@@ -11,7 +11,6 @@ import './ToolRoute';
 import { DeviceList } from './DeviceList';
 import './StreamView';
 import { SettingsSheet } from './SettingsSheet';
-import { ApplSettingsSheet } from './ApplSettingsSheet';
 import { startHostTracker } from '../state/hosts';
 import { isToolAction } from './ToolView';
 import './CoreDeviceStreamView';
@@ -91,9 +90,9 @@ export function App() {
             >
                 {view}
             </ErrorBoundary>
-            {/* Mounted here rather than inside `StreamView` -- it is also reachable from a
-                device-list card (`DeviceCard`) with no stream open at all, see
-                `state/settingsSheet.ts`. */}
+            {/* Mounted here rather than inside a screen view -- it is also reachable from a list
+                card (`DeviceCard`) with no stream open at all, see `state/settingsSheet.ts`. One
+                sheet serves both kinds of phone. */}
             <ErrorBoundary
                 fallback={(reset) => (
                     <ScreenFailed
@@ -108,7 +107,6 @@ export function App() {
                 )}
             >
                 <SettingsSheet />
-                <ApplSettingsSheet />
             </ErrorBoundary>
         </>
     );

@@ -36,7 +36,11 @@ async function main() {
                     return route.fulfill({ response });
                 });
             }
-            await fixture(page, { sdk: mode === 'unknown-sdk' ? '' : mode === 'old-android' ? '29' : '37' });
+            await fixture(page, {
+                sdk: mode === 'unknown-sdk' ? '' : mode === 'old-android' ? '29' : '37',
+                // Turning capture off applies at once (step 5b). The phone takes the change.
+                onApply: (command, reply) => reply({ id: command.id, type: command.type, data: { udid: UDID } }),
+            });
             const socket = new URL('/__settings_fixture__', BASE);
             socket.protocol = socket.protocol === 'https:' ? 'wss:' : 'ws:';
             const url = new URL(BASE);

@@ -1,121 +1,71 @@
 @layer tokens, base, components, views;
 
 @layer views {
-/* Stream settings (views/SettingsSheet.tsx) and Scheduled unlock (views/ApplSettingsSheet.tsx)
-   are built from the kit's groups, rows and disclosures. These rules only place those parts in
-   the two sheets. */
-.stream-settings,
-.appl-settings {
+/* The Settings sheet (views/SettingsSheet.tsx and views/settings/) is built from the kit's
+   groups, rows and disclosures. These rules place its sections, and those parts in them. */
+.settings {
     min-width: 0;
 }
 
-/* A condition that covers the whole sheet stands above its first group. */
-.appl-settings > .kit-banner {
+/* A condition that covers the whole sheet stands above its first section. */
+.settings > .kit-banner {
     margin-bottom: var(--space-16);
 }
 
-/* A disclosure that holds the rest of the group above it sits closer to that group than the
-   next group does. */
-.settings-advanced {
-    margin: calc(var(--space-12) * -1) 0 var(--space-20);
+/* A section: its heading, then its groups. Sections stand further apart than the groups in them. */
+.settings-section {
+    min-width: 0;
+    margin: 0 0 var(--space-32);
+}
+.settings-section:last-child,
+.settings-section > :last-child {
+    margin-bottom: 0;
+}
+.settings-section-title {
+    margin: 0 var(--space-4) var(--space-12);
+    color: var(--text);
+    font-size: var(--font-size-17);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.3;
+    scroll-margin-top: var(--space-16);
+}
+/* It takes focus when the sheet is opened at its section. The ring shows for the keyboard only. */
+.settings-section-title:focus {
+    outline: none;
+}
+.settings-section-title:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+    border-radius: var(--radius-sm);
 }
 
-/* A line of text that is not a row: under the first line of a disclosure, and alone under the
-   last group. */
-.settings-note {
-    margin: 0;
-    padding: 0 var(--space-16) var(--space-12);
-    color: var(--text-muted);
-    font-size: var(--font-size-13);
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-}
-.stream-settings > .settings-note {
-    padding: 0 var(--space-4);
-}
-/* A note about the disclosure above it stays as close to it as the disclosure is to its group. */
-.settings-advanced + .settings-note {
+/* A disclosure that holds the rest of the section above it sits closer to it than the next
+   section does. */
+.settings-advanced,
+.settings-playback {
     margin: calc(var(--space-12) * -1) 0 var(--space-20);
 }
 
 /* Three presets share the width of a 320px phone. */
-.stream-settings [data-setting='quality'] .kit-segment > span {
+.settings [data-setting='quality'] .kit-segment > span {
     padding: 0 var(--space-4);
 }
 
 /* A select beside its text takes a fixed share of the row. Below 600px the row puts it under
    the text at full width. */
 @media (min-width: 600px) {
-    .stream-settings .kit-row-pair[data-setting] > .kit-row-control {
+    .settings .kit-row-pair[data-setting] > .kit-row-control {
         flex: 0 0 240px;
     }
-    .stream-settings .kit-row-pair[data-setting] > .kit-row-control > .kit-field-group {
+    .settings .kit-row-pair[data-setting] > .kit-row-control > .kit-field-group {
         flex: 1 1 auto;
     }
 }
 
-/* The footer of Stream settings: the outcome of the last apply, then the question or the two
-   buttons. It takes the width of the sheet at every size. */
-.settings-apply {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-8);
-    min-width: 0;
-}
-.kit-sheet-footer > .settings-apply {
-    flex: 1 1 auto;
-}
-/* A long reason from the phone scrolls in its own few lines, so the footer keeps its buttons in
-   view and leaves room for the settings above it. */
-.settings-apply-message {
-    max-height: calc(var(--space-32) * 3);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-}
-.settings-apply-message > .kit-status {
-    margin: 0;
-}
-/* A message takes focus when it replaces the button that was pressed. */
-.settings-apply-message:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: var(--focus-ring-offset);
-    border-radius: var(--radius-sm);
-}
-.settings-apply-question {
-    margin: 0;
-    font-size: var(--font-size-15);
-    font-weight: var(--font-weight-semibold);
-    line-height: 1.4;
-}
-.settings-apply-note {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-13);
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-}
-/* Side by side, and one under the other where the two labels do not fit. */
-.settings-apply-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-8);
-}
-.settings-apply-buttons > .kit-button {
-    flex: 1 1 auto;
-}
-@media (min-width: 600px) {
-    .settings-apply-buttons {
-        justify-content: flex-end;
-    }
-    .settings-apply-buttons > .kit-button {
-        flex: 0 0 auto;
-    }
-}
-
-/* Scheduled unlock: a schedule that cannot run and a run that failed must not look like one
-   that worked. */
-.appl-settings .kit-row[data-tone='error'] .kit-row-title,
-.appl-settings .kit-row[data-tone='error'] .kit-row-desc {
+/* A schedule that cannot run, a run that failed and a rejected passcode must not look like
+   what worked. */
+.settings .kit-row[data-tone='error'] .kit-row-title,
+.settings .kit-row[data-tone='error'] .kit-row-desc {
     color: var(--danger-text);
 }
 /* The warning icon before the title of such a row. */
@@ -124,8 +74,8 @@
     align-items: center;
     gap: var(--space-4);
 }
-/* The two passcode fields share a line; the buttons go under them. */
-.appl-settings .kit-row-stack > .kit-row-control > .kit-field-group {
+/* The two passcode fields of the Server row share a line; the buttons go under them. */
+.settings [data-store='server'].kit-row-stack > .kit-row-control > .kit-field-group {
     flex: 1 1 112px;
 }
 }

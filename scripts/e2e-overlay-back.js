@@ -167,7 +167,7 @@ function streamOverlays(test, platform) {
     const { page } = test;
     const overlays = [
         kitSheetOverlay('Actions', /^Actions$/, () => control(test, 'Actions')),
-        kitSheetOverlay('Settings', platform === 'android' ? /^Stream settings$/ : /^Scheduled unlock$/, () => control(test, 'Settings')),
+        kitSheetOverlay('Settings', /^Settings$/, () => control(test, 'Settings')),
         kitSheetOverlay('Switch', /Switch/, () => press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }))),
         // Not modal (U-stream-5): no backdrop. It closes by its close button, Escape and Back.
         {
@@ -304,7 +304,7 @@ async function streamPage(browser, viewport, platform) {
                 await title(/^Actions$/).waitFor();
                 await settleMotion(page);
                 await press(test, sheet(page).getByRole('button', { name: /^Open (Stream settings|Scheduled unlock)$/ }));
-            }, title(/^(Stream settings|Scheduled unlock)$/)],
+            }, title(/^Settings$/)],
             ['Actions to Unlock', async () => {
                 await control(test, 'Actions');
                 await title(/^Actions$/).waitFor();
@@ -534,8 +534,8 @@ async function listPage(browser, viewport) {
     const label = `${viewport.name} list`;
     try {
         const overlays = [
-            kitSheetOverlay('Settings of an Android phone', /^Stream settings$/, () => press(test, card(page, `android:${PIXEL_2}`).locator('button.stream-settings-button'))),
-            kitSheetOverlay('Settings of an iPhone', /^Scheduled unlock$/, () => press(test, card(page, `ios:${IPHONE}`).locator('button.stream-settings-button'))),
+            kitSheetOverlay('Settings of an Android phone', /^Settings$/, () => press(test, card(page, `android:${PIXEL_2}`).locator('button.stream-settings-button'))),
+            kitSheetOverlay('Settings of an iPhone', /^Settings$/, () => press(test, card(page, `ios:${IPHONE}`).locator('button.stream-settings-button'))),
         ];
         const home = await backClosesEach(test, label, overlays, page.locator('#devices'));
         assert.equal(home.index, 0);

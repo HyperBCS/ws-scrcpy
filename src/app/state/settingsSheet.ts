@@ -1,37 +1,46 @@
 import { signal } from '@preact/signals';
 
+/** The sections of the Settings sheet, in the order the sheet shows them. */
+export type SettingsSection = 'stream' | 'sound' | 'keyboard' | 'unlock' | 'about';
+
 export interface SettingsSheetTarget {
     udid: string;
     deviceKey?: string;
+    /** The section to scroll to and focus when the sheet opens. */
+    section?: SettingsSection;
 }
 
-// Reachable from two places that don't share a component tree -- the in-stream toolbar
-// (`GoogToolBox`, which only knows `udid`/`client`) and a device-list card (`DeviceCard`, which
-// only knows `udid`/`tracker`) -- so `SettingsSheet` is mounted once at the `App` level (see
-// `views/App.tsx`) and reads this instead of being passed the target as a prop.
+// Reachable from places that don't share a component tree -- the in-stream controls (which only
+// know `udid`/`client`) and a list card (which knows the list entry) -- so `SettingsSheet` is
+// mounted once at the `App` level (see `views/App.tsx`) and reads this instead of being passed
+// the target as a prop. One sheet serves both kinds of phone.
 export const settingsSheetTarget = signal<SettingsSheetTarget | undefined>(undefined);
 
 /**
- * Only the udid is carried: the sheet resolves the tracker itself from the device store. Taking
- * the tracker here meant the caller had to have found the device already, so on a reloaded stream
- * deep link -- where the store is still filling -- the button silently did nothing.
+ * Opens the Settings sheet for a phone in any state. Only the udid is needed: the sheet resolves
+ * the tracker itself from the device store. Taking the tracker here meant the caller had to have
+ * found the device already, so on a reloaded stream deep link -- where the store is still
+ * filling -- the button silently did nothing.
  */
+export function openSettings(udid: string, options: { deviceKey?: string; section?: SettingsSection } = {}): void {
+    settingsSheetTarget.value = { udid, deviceKey: options.deviceKey, section: options.section };
+}
+
+/** The opener the Android controls, Actions and the list card call. */
 export function openSettingsSheet(udid: string, deviceKey?: string): void {
-    settingsSheetTarget.value = { udid, deviceKey };
+    openSettings(udid, { deviceKey });
+}
+
+/** The opener the iPhone controls, Actions, Unlock and the list card call. It opens the same sheet. */
+export function openApplSettingsSheet(udid: string, deviceKey?: string): void {
+    openSettings(udid, { deviceKey });
 }
 
 export function closeSettingsSheet(): void {
     settingsSheetTarget.value = undefined;
 }
 
-// The iPhone card's Settings button opens its own sheet (`views/ApplSettingsSheet.tsx`), mounted
-// next to `SettingsSheet` at the `App` level for the same reason.
-export const applSettingsSheetTarget = signal<SettingsSheetTarget | undefined>(undefined);
-
-export function openApplSettingsSheet(udid: string, deviceKey?: string): void {
-    applSettingsSheetTarget.value = { udid, deviceKey };
-}
-
-export function closeApplSettingsSheet(): void {
-    applSettingsSheetTarget.value = undefined;
-}
+// The names the iPhone callers used while the iPhone had a sheet of its own. They act on the one
+// target, so code that reads or closes either sees the one sheet.
+export const applSettingsSheetTarget = settingsSheetTarget;
+export const closeApplSettingsSheet = closeSettingsSheet;

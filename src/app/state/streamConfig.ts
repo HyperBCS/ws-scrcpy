@@ -4,10 +4,11 @@ import { DEFAULT_SCRCPY_SERVER_CONFIG, ScrcpyServerConfig } from '../../common/C
 import { EncoderInfo } from '../../types/EncoderInfo';
 
 /**
- * The stream settings of one Android phone, as Stream settings shows them: what the phone
- * reports, what the user has changed since, and the two requests over the tracker socket
+ * The stream settings of one Android phone, as the Settings sheet shows them: what the phone
+ * reports, the change being applied, and the two requests over the tracker socket
  * (`list_encoders` to load, `update_stream_config` to apply). The sheet draws this state and
- * has no protocol of its own.
+ * has no protocol of its own. A control in the sheet applies when it is changed (`change`); the
+ * patch and `apply` remain for a change made of several values.
  */
 
 export const APPLY_TIMEOUT_MS = 20000;
@@ -16,8 +17,10 @@ export const LOAD_TIMEOUT_MS = 15000;
 export const WAITING_FOR_PHONE = 'Waiting for the phone…';
 export const LOAD_TIMED_OUT = 'Stream settings took too long to load. Check the connection and try again.';
 export const APPLY_TIMED_OUT =
-    'The phone has not confirmed the change. Reopen Stream settings to check its current values, or try again.';
+    'The phone has not confirmed the change. Reopen Settings to check its current values, or try again.';
 export const SETTINGS_SAVED = 'Settings saved.';
+/** What the sheet says while a change is applied: the server restarts the stream with it. */
+export const RESTARTING_STREAM = 'Restarting stream…';
 
 export type StreamConfigPatch = Partial<ScrcpyServerConfig>;
 
@@ -26,7 +29,7 @@ export interface StreamConfigState {
     baseline: ScrcpyServerConfig;
     /** False until the phone has reported its settings. Until then every changed value is kept. */
     configKnown: boolean;
-    /** The values the user changed and has not applied. */
+    /** The values the user changed and that are not applied yet, or are being applied. */
     patch: StreamConfigPatch;
     encoders: EncoderInfo[];
     loading: boolean;
@@ -106,9 +109,10 @@ export function patchWith(
 }
 
 /**
- * One opening of Stream settings for one phone. `load` asks for the encoders and the current
- * settings; `apply` sends a patch. Each waits for the reply with its own request id and gives up
- * after its time limit. `dispose` ends both: a reply that arrives later changes nothing.
+ * One opening of the Settings sheet for one Android phone. `load` asks for the encoders and the
+ * current settings; `change` and `apply` send values. Each waits for the reply with its own
+ * request id and gives up after its time limit. `dispose` ends both: a reply that arrives later
+ * changes nothing.
  */
 export class StreamConfigSession {
     public state = initialStreamConfigState();
@@ -117,6 +121,9 @@ export class StreamConfigSession {
     private pendingPatch?: StreamConfigPatch;
     private pendingRequestId?: number;
     private applyTimer?: ReturnType<typeof setTimeout>;
+    // Set by `change`: a value the phone did not take leaves the patch, so the control shows
+    // what the phone runs with again.
+    private dropOnFailure = false;
     private disposed = false;
 
     constructor(
@@ -177,7 +184,11 @@ export class StreamConfigSession {
         this.pendingPatch = undefined;
         this.pendingRequestId = undefined;
         if (data.error) {
-            this.update({ applying: false, applyError: `Could not apply changes: ${data.error}` });
+            this.update({
+                applying: false,
+                applyError: `Could not apply changes: ${data.error}`,
+                ...(this.dropOnFailure ? { patch: {} } : {}),
+            });
             return;
         }
         this.update({
@@ -206,10 +217,31 @@ export class StreamConfigSession {
 
     /** Sends `config` to the phone. Returns false when there is nothing to send or a request is out. */
     public apply(config: StreamConfigPatch = this.state.patch): boolean {
+        return this.send(config, false);
+    }
+
+    /**
+     * Applies `fields` at once, as a control in the sheet does when it is changed. Only these
+     * values are sent, and they are shown while they are applied. If the phone does not take
+     * them, or does not answer in time, they leave the patch again. Returns false when the
+     * values are already set, a request is out or nothing can be sent.
+     */
+    public change(fields: StreamConfigPatch): boolean {
+        const { baseline, configKnown } = this.state;
+        const patch = patchWith({}, fields, baseline, configKnown);
+        if (!this.tracker || !Object.keys(patch).length || this.pendingPatch || this.disposed) {
+            return false;
+        }
+        this.update({ patch });
+        return this.send(patch, true);
+    }
+
+    private send(config: StreamConfigPatch, dropOnFailure: boolean): boolean {
         const { tracker, udid } = this;
         if (!tracker || !Object.keys(config).length || this.pendingPatch || this.disposed) {
             return false;
         }
+        this.dropOnFailure = dropOnFailure;
         this.update({ applying: true, applyError: undefined, appliedNote: undefined });
         this.pendingPatch = { ...config };
         // Set the timeout before sending: a synchronous reply must be able to clear it.
@@ -217,10 +249,31 @@ export class StreamConfigSession {
             this.applyTimer = undefined;
             this.pendingPatch = undefined;
             this.pendingRequestId = undefined;
-            this.update({ applying: false, applyError: APPLY_TIMED_OUT });
+            this.update({
+                applying: false,
+                applyError: APPLY_TIMED_OUT,
+                ...(this.dropOnFailure ? { patch: {} } : {}),
+            });
         }, APPLY_TIMEOUT_MS);
         this.pendingRequestId = tracker.sendCommand(ControlCenterCommand.UPDATE_STREAM_CONFIG, { udid, config });
         return true;
+    }
+
+    /**
+     * What to show once the session ends with a change still out, because the phone went
+     * offline or the sheet closed: the change is given up as if it had timed out, and a value
+     * sent by `change` leaves the patch. Undefined when nothing was out. Read it before `dispose`.
+     */
+    public givenUp(): StreamConfigState | undefined {
+        if (!this.pendingPatch || this.disposed) {
+            return undefined;
+        }
+        return {
+            ...this.state,
+            applying: false,
+            applyError: APPLY_TIMED_OUT,
+            ...(this.dropOnFailure ? { patch: {} } : {}),
+        };
     }
 
     public dispose(): void {
@@ -239,6 +292,8 @@ export interface StreamConfig extends StreamConfigState {
     setFields(fields: StreamConfigPatch): void;
     discard(): void;
     apply(config?: StreamConfigPatch): boolean;
+    /** Applies these values at once; see `StreamConfigSession.change`. */
+    change(fields: StreamConfigPatch): boolean;
     /** Asks the phone again, after a load that failed. */
     reload(): void;
 }
@@ -266,9 +321,16 @@ export function useStreamConfig(
         setState(current.state);
         current.load();
         return () => {
+            // An apply that was still out is given up: nothing is waiting for it any more, and a
+            // sheet that stays shut on an apply would not close again. It says so, and a control
+            // goes back to what the phone ran before.
+            const left = current.givenUp();
             current.dispose();
             if (session.current === current) {
                 session.current = undefined;
+            }
+            if (left) {
+                setState(left);
             }
         };
     }, [opening, tracker, attempt]);
@@ -278,6 +340,7 @@ export function useStreamConfig(
         setFields: (fields) => session.current?.setFields(fields),
         discard: () => session.current?.discard(),
         apply: (config) => session.current?.apply(config) ?? false,
+        change: (fields) => session.current?.change(fields) ?? false,
         reload: () => setAttempt((value) => value + 1),
     };
 }
