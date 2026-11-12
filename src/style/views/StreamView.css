@@ -28,15 +28,26 @@
     padding-bottom: 0;
 }
 
+/* Type text docked beside the stage from 1024px (`ui/Sheet.tsx`) takes no height from it. */
+.stream-view.stream-typing:has(> .stream-stage[data-sheet-docked]) {
+    padding-bottom: 0;
+}
+
 .stream-stage {
-    /* The rail of controls beside the picture, under a mouse. */
+    /* The rail of controls beside the picture, under a mouse (below). */
     --stream-rail-width: 88px;
+    /* A sheet docked at the right edge of the stage (`ui/Sheet.tsx`, from 1024px). */
+    --stream-dock-width: 0px;
     /* The floating controls shield and the state card are positioned against the stage. */
     position: relative;
     display: flex;
     flex: 1 1 0;
     min-height: 0;
     min-width: 0;
+}
+
+.stream-stage[data-sheet-docked] {
+    --stream-dock-width: var(--kit-sheet-dock-width);
 }
 
 .stream-mount {
@@ -57,11 +68,53 @@
     border-left: 1px solid var(--border);
 }
 
+/* Under a mouse the rail stands against the right edge of the picture and is as tall as it
+   (`ScreenView.tsx` writes the picture's box), and the picture and the rail are one group in the
+   middle of what a docked sheet leaves of the stage: the mount node keeps the rail's width and
+   the sheet's free at its right. The rail draws its own box (`FloatingToolbar.css`). Before
+   there is a picture, the box is the mount node's, so the rail stands at its right edge. */
+@media not all and (hover: none) and (pointer: coarse) {
+    /* One column of 88px, where a caption of two words stays on one line, or two
+       (`controls/ControlRail.tsx`), and the rail's border at the right. */
+    .stream-stage {
+        --stream-rail-width: calc(var(--stream-rail-columns, 1) * 88px + 1px);
+    }
+
+    .stream-stage:has(> .stream-controls-slot > .floating-toolbar[data-columns='2']) {
+        --stream-rail-columns: 2;
+    }
+
+    .stream-mount {
+        margin-right: calc(var(--stream-rail-width) + var(--stream-dock-width));
+    }
+
+    /* The stage is one colour round the picture and the rail, the stream view's, also where the
+       mount node leaves room for them. */
+    .stream-mount .video {
+        background-color: transparent;
+    }
+
+    .stream-controls-slot {
+        position: absolute;
+        top: var(--stream-picture-top, 0px);
+        left: var(--stream-picture-right, 0px);
+        width: var(--stream-rail-width);
+        height: var(--stream-picture-height, 100%);
+        background: none;
+        border-left: 0;
+    }
+}
+
 /* Input capability keeps a wide touch tablet on the FAB and a narrow desktop on its rail.
    Match FloatingToolbar's MOBILE_CONTROLS_QUERY so its DOM and reserved space stay in sync. */
 @media (hover: none) and (pointer: coarse) {
     .stream-controls-slot {
         display: contents;
+    }
+
+    /* A wide touch screen: a docked sheet leaves the picture in sight. */
+    .stream-stage[data-sheet-docked] > .stream-mount {
+        margin-right: var(--stream-dock-width);
     }
 }
 
@@ -113,13 +166,14 @@
 }
 
 /* The card for a state without a picture (`screen/StateCard.tsx`) lies on this layer, centred on
-   the picture's part of the stage: under a mouse the rail of controls is beside it. The layer
-   dims the picture and takes no press; only the card does. It is above the picture (1), its
-   touch layer (2) and the controls' shield (4), and under the controls button and the sheets. */
+   the picture's part of the stage, the mount node: under a mouse the rail of controls is beside
+   it, and a docked sheet beside both. The layer dims the picture and takes no press; only the
+   card does. It is above the picture (1), its touch layer (2) and the controls' shield (4), and
+   under the controls button and the sheets. */
 .stream-state {
     position: absolute;
     top: 0;
-    right: var(--stream-rail-width);
+    right: calc(var(--stream-rail-width) + var(--stream-dock-width));
     bottom: 0;
     left: 0;
     z-index: 5;
@@ -134,6 +188,10 @@
 @media (hover: none) and (pointer: coarse) {
     .stream-state {
         right: 0;
+    }
+
+    .stream-stage[data-sheet-docked] > .stream-state {
+        right: var(--stream-dock-width);
     }
 }
 

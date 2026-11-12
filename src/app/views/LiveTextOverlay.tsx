@@ -103,9 +103,10 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
         let frame = 0;
         // While typing, the picture and the sheet share what the on-screen keyboard leaves in
         // view: the keyboard can pan as well as shrink Safari's visual viewport without a window
-        // resize. The sheet stands at the bottom of that area at every width (as a dialog from
-        // 600px, a little above the edge), and the whole picture is fitted above it, so the
-        // field being typed into on the phone stays in sight.
+        // resize. The sheet stands at the bottom of that area (as a dialog from 600px, a little
+        // above the edge), and the whole picture is fitted above it, so the field being typed
+        // into on the phone stays in sight. From 1024px it is docked beside the picture instead,
+        // and `StreamView.css` ignores the dock height.
         const update = () => {
             if (!stream || !panel) return;
             const bounds = typingViewport();
@@ -271,7 +272,7 @@ export function LiveTextOverlay({ open, target }: LiveTextOverlayProps) {
     };
 
     return (
-        <Sheet open={open} onClose={close} title="Type text" modal={false}>
+        <Sheet open={open} onClose={close} title="Type text" modal={false} dock>
             <div class="live-text" ref={contentRef} onKeyDown={onKeyDown} onKeyUp={(event) => event.stopPropagation()}>
                 <p id="live-text-hint" class="live-text-hint">
                     {target.hint}

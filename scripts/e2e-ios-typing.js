@@ -251,20 +251,21 @@ async function desktopFlow(browser) {
     const test = await start(browser, { mobile: false });
     const { page } = test;
     await openOverlay(page, false);
-    // A dialog from 600px, at the bottom of the window, with the picture fitted above it: the
+    // From 1024px a panel beside the picture, as tall as the stage (p6-desktop-layout; below
+    // 1024px it is a dialog with the picture fitted above it, scripts/e2e-desktop-layout.js): the
     // field being typed into on the phone is not under the sheet.
     await page.waitForFunction(() => {
         const video = document.querySelector('.video')?.getBoundingClientRect();
         const panel = document.querySelector('dialog.kit-sheet[open] .kit-sheet-panel')?.getBoundingClientRect();
-        return !!video && !!panel && video.height > 100 && video.bottom <= panel.top + 1;
+        return !!video && !!panel && video.height > 100 && video.right <= panel.left + 1;
     }, undefined, { timeout: 3000 }).catch(() => undefined);
     const desk = await page.evaluate(() => ({
         video: document.querySelector('.video').getBoundingClientRect().toJSON(),
         panel: document.querySelector('dialog.kit-sheet[open] .kit-sheet-panel').getBoundingClientRect().toJSON(),
         height: innerHeight,
     }));
-    assert.ok(desk.video.height > 100 && desk.video.bottom <= desk.panel.top + 1, `desktop: the picture is fitted above the dialog (${JSON.stringify(desk)})`);
-    assert.ok(desk.panel.bottom < desk.height && desk.panel.bottom > desk.height - 40, 'desktop: the dialog stands a little above the bottom edge');
+    assert.ok(desk.video.height > 100 && desk.video.right <= desk.panel.left + 1, `desktop: the picture is beside the panel (${JSON.stringify(desk)})`);
+    assert.ok(Math.abs(desk.panel.bottom - desk.height) < 1 && Math.abs(desk.panel.top - desk.video.top) < 1, 'desktop: the panel is as tall as the stage');
     await page.keyboard.type('a1!');
     assert.deepEqual(await test.waitForKeys(8), [...press(0x04), ...press(0x1e), ...shifted(0x1e)]);
     await page.keyboard.press('ArrowLeft');
@@ -322,7 +323,8 @@ async function pictureFlow(browser) {
             const picture = await page.locator('.stream-mount .touch-layer').boundingBox();
             const panel = await sheet.locator('.kit-sheet-panel').boundingBox();
             const point = { x: picture.x + picture.width / 2, y: picture.y + picture.height / 2 };
-            assert(point.y < panel.y, `${label}: the test presses the picture, not the sheet`);
+            // Above the sheet on a phone, beside it on a desktop (p6-desktop-layout).
+            assert(point.y < panel.y || point.x < panel.x, `${label}: the test presses the picture, not the sheet`);
             assert.equal(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.className, point), 'touch-layer', `${label}: nothing covers or dims the picture`);
             await captureTyping(page, `picture-${label}`);
 

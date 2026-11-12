@@ -372,10 +372,13 @@ async function typeTextKeepsPicture(browser) {
             assert.equal(await focusInField(), 'kit-field live-text-input', `${label}: the text field has focus, so the keyboard comes up`);
             const picture = await page.locator('.touch-layer').boundingBox();
             const panel = await typing.locator('.kit-sheet-panel').boundingBox();
-            // The picture is fitted above the sheet at every width, so what is typed can be seen.
-            assert(picture.height > 100 && picture.y + picture.height <= panel.y + 1, `${label}: the picture is above the sheet (${picture.y + picture.height} <= ${panel.y})`);
+            // The picture is fitted above the sheet, so what is typed can be seen. From 1024px the
+            // sheet stands beside the picture instead (p6-desktop-layout, e2e-desktop-layout.js).
+            const beside = (await page.evaluate(() => innerWidth)) >= 1024;
+            if (beside) assert(picture.height > 100 && picture.x + picture.width <= panel.x + 1, `${label}: the picture is beside the sheet (${picture.x + picture.width} <= ${panel.x})`);
+            else assert(picture.height > 100 && picture.y + picture.height <= panel.y + 1, `${label}: the picture is above the sheet (${picture.y + picture.height} <= ${panel.y})`);
             const point = { x: picture.x + picture.width / 2, y: picture.y + picture.height / 2 };
-            assert(point.y < panel.y, 'the test presses the picture, not the sheet');
+            assert(beside ? point.x < panel.x : point.y < panel.y, 'the test presses the picture, not the sheet');
             assert.equal(
                 await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.className, point),
                 'touch-layer',

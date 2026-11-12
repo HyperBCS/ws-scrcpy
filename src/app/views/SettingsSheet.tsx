@@ -76,7 +76,7 @@ export function SettingsSheet() {
 
     if (!shown) {
         return (
-            <Sheet open={false} onClose={closeSettingsSheet} title="Settings">
+            <Sheet open={false} onClose={closeSettingsSheet} title="Settings" dock>
                 {null}
             </Sheet>
         );
@@ -110,6 +110,9 @@ export function SettingsSheet() {
             }}
             title="Settings"
             subtitle={name}
+            // Beside the picture from 1024px when it opens from a phone's screen; from the list,
+            // the centred dialog.
+            dock
         >
             <SheetContent>
                 <div class="settings" ref={body} data-platform={platform}>
