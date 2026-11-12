@@ -3022,7 +3022,13 @@ nothing and closes the sheet; with nothing open the same press reaches the phone
 `test-style-rules.js` (no `!important`, breakpoints, exact `ALLOWED`), `test-kit.js` (one look
 for the sheet parts, the long press, the select width, the unread badge, `danger-solid`) and
 `test-sheet-ui.js` (role tokens only); the kit suite measures the row select in the browser. No
-test file is new, so `package.json` and `scripts/test-browser.js` did not change.
+test file is new, so `package.json` and `scripts/test-browser.js` did not change. At
+integration `pressAtRest` in `scripts/e2e-files.js` also makes a trial press before the press.
+`files-flows` "menus on short screens" failed about one run in four, on a build of 7cca59f too:
+when something covered the row menu button at 926x428, Playwright scrolled again inside the
+press, the scroll event came after the press, and the menu closed as a scroll that moves its
+button should. The trial press does that scroll first; a probe of the same steps went from 5
+failures in 40 to none. A real tap does not scroll, so the app did not change.
 
 **Atlas.** At integration the base (7cca59f, built from an export) and the merged head were
 each taken twice, with style hashes and with `ATLAS_STYLES=full`. 44 of 292 files have pictures

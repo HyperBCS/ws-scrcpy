@@ -330,9 +330,15 @@ const row = (page, name) => page.locator(`.fx-row[data-name="${name}"]`);
 // The command bar scrolls sideways on a short screen and the list scrolls, and a menu closes
 // when its button is scrolled away. The owner sees a button before pressing it, so the page is
 // at rest by then: the button is brought into view, and the scroll is over, before the press.
+// Playwright scrolls again before a press when something covers the button where it stands, and
+// the scroll event of that comes after the press and closes the menu it opened. A trial press
+// does that scroll first, without pressing.
 async function pressAtRest(page, button) {
+    const settle = () => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await button.evaluate((element) => element.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
-    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await settle();
+    await button.click({ trial: true });
+    await settle();
     await button.click();
 }
 async function command(page, button, item = button) {
