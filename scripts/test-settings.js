@@ -255,6 +255,10 @@ test('invalid IPv6 hosts fail before startup and adb receives an unbracketed add
     assert.doesNotThrow(() => validateConfiguration({ remoteHostList: [{
         type: 'ios', hostname: '[::1]', port: 8443, secure: true,
     }] }));
+    for (const hostname of [' remote.example ', '[fe80::1%eth0]'])
+        assert.throws(() => validateConfiguration({ remoteHostList: [{
+            type: 'ios', hostname, port: 8443, secure: true,
+        }] }), /remoteHostList\[0\].hostname/);
 });
 
 test('invalid TLS values and file credentials fail while Config is built without echoing contents', () => {

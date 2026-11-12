@@ -90,6 +90,12 @@ function host(value: unknown, field: string): string {
 function authorityHost(value: unknown, field: string): void {
     const name = host(value, field);
     if (net.isIP(name) === 6) invalid(field, 'an IPv6 address in brackets');
+    if (/\s/.test(value as string)) invalid(field, 'a host without whitespace');
+    try {
+        new URL(`http://${name}:1`);
+    } catch {
+        invalid(field, 'a valid URL host');
+    }
 }
 
 function url(value: string | undefined, field: string, protocols: string[]): string | undefined {
