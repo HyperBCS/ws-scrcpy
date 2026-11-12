@@ -67,7 +67,7 @@ async function start(browser, viewport) {
         colorScheme: viewport.colorScheme, serviceWorkers: 'block',
     });
     const page = await context.newPage();
-    const test = { context, page, viewport, mobile: viewport.mobile, errors: [], streams: [], closed: 0, posted: [], commands: [] };
+    const test = { context, page, viewport, mobile: viewport.mobile, errors: [], streams: [], closed: 0, posted: [], commands: [], keys: [] };
     page.on('pageerror', (error) => test.errors.push(error.message));
     await page.route('**/api/notifications/**', (route) => {
         const pathname = new URL(route.request().url()).pathname;
@@ -88,6 +88,13 @@ async function start(browser, viewport) {
         if (action === 'proxy-adb' || action === 'proxy-coredevice') {
             test.streams.push(url.searchParams.get('udid'));
             socket.onClose(() => test.closed++);
+            // What reaches the phone as a key: an Android key event or HID keyboard message, or
+            // an iPhone key report.
+            socket.onMessage((data) => {
+                if (typeof data === 'string') {
+                    if (JSON.parse(data).type === 'key') test.keys.push('key');
+                } else if ([0, 12, 13, 14].includes(Buffer.from(data)[0])) test.keys.push(Buffer.from(data)[0]);
+            });
             if (action === 'proxy-adb') setTimeout(() => socket.send(initialStreamPacket()), 40);
             else setTimeout(() => socket.send(JSON.stringify({ type: 'status', state: 'ready' })), 40);
             return;
@@ -138,6 +145,12 @@ async function control(test, title) {
     await press(test, page.locator(`.control-buttons-list [title="${title}"]`));
 }
 
+/** A key pressed and let go with the picture as its target, where no control has focus. */
+const keyOnPicture = (page) => page.evaluate(() => {
+    const picture = document.querySelector('.stream-stage');
+    for (const type of ['keydown', 'keyup']) picture.dispatchEvent(new KeyboardEvent(type, { code: 'KeyA', key: 'a', bubbles: true, cancelable: true }));
+});
+
 // Ways a sheet closes by itself.
 const sheetWays = {
     'the close button': (test) => press(test, sheet(test.page).locator('.bottom-sheet-close, .kit-sheet-close')),
@@ -176,7 +189,8 @@ function streamOverlays(test, platform) {
             },
         });
     }
-    return overlays;
+    // While a sheet is open no key goes to the phone (`googDevice/localKeyboardTarget.ts`).
+    return overlays.map((overlay) => (overlay.kit ? { ...overlay, keysStay: true } : overlay));
 }
 
 /**
@@ -210,6 +224,13 @@ async function backClosesEach(test, label, overlays, pageShown) {
                 olderSheets: document.querySelectorAll('.bottom-sheet-root.open, .live-text-overlay').length,
             }));
             assert.deepEqual(facts, { modal: true, headers: 1, titles: 1, named: true, olderRows: 0, olderSheets: 0 }, `${label} ${overlay.name}: it is the kit sheet`);
+        }
+        if (overlay.keysStay) {
+            const before = test.keys.length;
+            await keyOnPicture(page);
+            // An Android keyboard is registered and then waits about 450 ms before its first report.
+            await page.waitForTimeout(600);
+            assert.deepEqual(test.keys.slice(before), [], `${label} ${overlay.name}: a key pressed while it is open does not reach the phone`);
         }
         await page.goBack();
         await shown.waitFor({ state: 'hidden' });
@@ -246,6 +267,11 @@ async function streamPage(browser, viewport, platform) {
         const overlays = streamOverlays(test, platform);
         const home = await backClosesEach(test, label, overlays, stream);
         assert.deepEqual(test.streams, [udid], `${label}: one stream socket for the whole visit`);
+        // With nothing open the same key reaches the phone, so the check with a sheet open can fail.
+        const keysBefore = test.keys.length;
+        await keyOnPicture(page);
+        for (let i = 0; i < 50 && test.keys.length === keysBefore; i++) await page.waitForTimeout(20);
+        assert.ok(test.keys.length > keysBefore, `${label}: a key pressed on the picture with nothing open reaches the phone`);
 
         // One sheet takes the place of another: the sheet that is open has the one entry.
         const title = (text) => sheet(page).locator('.bottom-sheet-title, .kit-sheet-title', { hasText: text });
