@@ -24,12 +24,16 @@ interface KeyboardSectionProps {
  */
 export function KeyboardSection({ platform, android, ios, opening }: KeyboardSectionProps) {
     const screenOpen = !!(android || ios);
-    const [capture, setCapture] = useState(false);
-    const [uhid, setUhid] = useState(true);
+    const captured = () => (android ? android.isKeyboardCaptured() : ios ? ios.isHandlingKeyboardEvents() : false);
+    const usingUhid = () => (android ? android.isUsingUhidKeyboard() : true);
+    // Read when the section is first drawn as well, so a switch that is on does not slide on as
+    // the sheet opens.
+    const [capture, setCapture] = useState(captured);
+    const [uhid, setUhid] = useState(usingUhid);
 
     useEffect(() => {
-        setCapture(android ? android.isKeyboardCaptured() : ios ? ios.isHandlingKeyboardEvents() : false);
-        setUhid(android ? android.isUsingUhidKeyboard() : true);
+        setCapture(captured());
+        setUhid(usingUhid());
     }, [android, ios, opening]);
 
     const onCapture = (checked: boolean) => {

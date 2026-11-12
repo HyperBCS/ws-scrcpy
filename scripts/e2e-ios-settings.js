@@ -686,10 +686,24 @@ async function streamSheetsFlow(browser) {
             await settleMotion(page);
         };
         try {
+            // The keyboard switch as the sheet first draws it: on, as the screen sends keys, so it
+            // does not slide on while the sheet opens.
+            await page.evaluate(() => {
+                const observer = new MutationObserver(() => {
+                    const input = document.querySelector('dialog.kit-sheet [data-section="keyboard"] input[role="switch"]');
+                    if (input) {
+                        window.firstKeyboardSwitch = input.checked;
+                        observer.disconnect();
+                    }
+                });
+                observer.observe(document.body, { childList: true, subtree: true });
+            });
             // Settings is one of the stream controls and opens the one Settings sheet, with the
             // scheduled unlock in its Unlock section.
             await control('Settings', `stream-controls-${width}.png`);
             await settingsDialog.waitFor();
+            assert.equal(await page.evaluate(() => window.firstKeyboardSwitch), true, `${label}: the keyboard switch is drawn on from the start`);
+            assert.equal(await settingsDialog.getByRole('switch', { name: 'Send this keyboard to the phone' }).isChecked(), true);
             await settingsDialog.locator('[data-section="unlock"]').getByRole('heading', { name: 'Schedule', exact: true }).waitFor();
             await page.screenshot({ path: path.join(OUT, `stream-settings-${width}.png`) });
             // This screen would start a stopped session again at once, a counted start: Stop is
