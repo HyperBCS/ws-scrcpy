@@ -118,7 +118,7 @@ async function adbUnavailable(browser, layout, label) {
     // adb is back: the list that was already open gets the phone, and the notice goes.
     state.tracker.adb(true);
     state.tracker.update(phone({ 'screen.power': 'on', 'device.awake': true }));
-    await page.locator('.device').filter({ hasText: UDID }).waitFor();
+    await page.locator(`.device[data-device-key$=":${UDID}"]`).waitFor();
     await notice.waitFor({ state: 'detached' });
     assert.deepEqual(state.errors, [], 'no browser runtime errors');
     await context.close();
@@ -127,13 +127,17 @@ async function adbUnavailable(browser, layout, label) {
 async function wakeFromCard(browser, layout, label) {
     const { context, page, state } = await start(browser, { ...layout, device: phone() });
     await page.goto(BASE);
-    const card = page.locator('.device').filter({ hasText: UDID });
+    const card = page.locator(`.device[data-device-key$=":${UDID}"]`);
     await card.waitFor();
-    await card.locator('.stream-service-status[data-stream-service="stopped"]').waitFor();
-    const banner = card.locator('.device-asleep-banner');
-    const wake = banner.getByRole('button', { name: 'Wake', exact: true });
+    // Asleep is the status, with Wake beside it. The stream service is stopped, which does not
+    // keep Wake from working, and no banner repeats the status.
+    // Wake and its outcome are on the card: the button in the head, the outcome under it.
+    const banner = card;
+    const head = card.locator('.phone-row-status');
+    await head.locator('.kit-chip').getByText('Asleep', { exact: true }).waitFor();
+    const wake = head.getByRole('button', { name: 'Wake', exact: true });
     await wake.waitFor();
-    assert.match(await banner.textContent(), /Screen is asleep/);
+    assert.equal(await card.getByText('Screen is asleep').count(), 0, 'no banner says the status again');
 
     // The reply is held back so the pending state can be seen.
     let answer;
@@ -141,7 +145,7 @@ async function wakeFromCard(browser, layout, label) {
         if (command.type === 'wake_device') answer = (data) => send({ id: command.id, type: command.type, data });
     };
     await wake.click();
-    const waking = banner.getByRole('button', { name: 'Waking…', exact: true });
+    const waking = head.getByRole('button', { name: 'Waking…', exact: true });
     await waking.waitFor();
     assert.equal(await waking.isDisabled(), true, 'the button cannot be pressed twice while waking');
     const sent = state.commands.filter((command) => command.type === 'wake_device');
@@ -167,9 +171,12 @@ async function wakeFromCard(browser, layout, label) {
     assert(button.height >= (layout.mobile ? 44 : 32) && button.width >= 44, 'the Wake button keeps a touch-sized target');
     await card.screenshot({ path: path.join(OUT, `${label}-wake-failed.png`) });
 
-    // The screen came on: the banner goes with the asleep state.
+    // The screen came on: Wake and its outcome go with the asleep state.
     state.tracker.update(phone({ 'screen.power': 'on', 'device.awake': true }));
-    await banner.waitFor({ state: 'detached' });
+    await head.locator('.kit-chip').getByText('Ready', { exact: true }).waitFor();
+    await head.getByRole('button', { name: 'Wake', exact: true }).waitFor({ state: 'detached' });
+    assert.equal(await card.getByText('Could not wake the screen', { exact: false }).count(), 0, 'the outcome went with the sleep');
+    assert.equal(state.commands.filter((command) => command.type === 'wake_device').length, 2, 'one wake per press');
     assert.equal(state.streams.length, 0);
     assert.deepEqual(state.errors, [], 'no browser runtime errors');
     await context.close();

@@ -88,3 +88,28 @@ const TABLE: Record<Platform, PhoneCapabilities> = { android: ANDROID, ios: IOS 
 export function capabilities(target: DeviceEntry | Platform): PhoneCapabilities {
     return TABLE[typeof target === 'string' ? target : target.params.type];
 }
+
+// p5-list-rows
+/** What the card of a phone on the list offers besides the pages of the phone. */
+export interface CardCapabilities {
+    /** Wake from the card: the server sends the wake key through adb (`googDevice/client/wake.ts`). */
+    wake: boolean;
+    /**
+     * The stream service can be started from the card (`ControlCenterCommand.START_SERVER`). The
+     * card then says when the service is not running.
+     */
+    startStreamService: boolean;
+    /** The screen plays in one of this browser's players (`StreamClientScrcpy.getPlayers()`). */
+    player: boolean;
+}
+
+const ANDROID_CARD: CardCapabilities = { wake: true, startStreamService: true, player: true };
+// No wake request from the list, and the session starts when the screen opens.
+const IOS_CARD: CardCapabilities = { wake: false, startStreamService: false, player: false };
+
+const CARD_TABLE: Record<Platform, CardCapabilities> = { android: ANDROID_CARD, ios: IOS_CARD };
+
+/** What the card of a phone, or of a kind of phone, offers. */
+export function cardCapabilities(target: DeviceEntry | Platform): CardCapabilities {
+    return CARD_TABLE[typeof target === 'string' ? target : target.params.type];
+}

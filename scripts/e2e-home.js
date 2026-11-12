@@ -1,11 +1,13 @@
 /* eslint-disable */
 // node scripts/test-browser.js home
-// The Devices page, its cards and the screen headers, against socket fixtures: the Notifications
-// entry, one device name and one tab-title format, attention and error states, the action row,
-// scroll and disclosure restore, and the refusal of tool links that name an iPhone. The list is
-// also measured against the kit: the type scale, kit buttons at their heights, the kit bar with
-// one h1, status as a chip with words, and the unread count as a badge.
-// No device, adb or pymobiledevice3 is involved.
+// The Phones list, its cards, the switcher and the screen headers, against socket fixtures: the
+// Notifications entry, one name and one tab-title format, one status per card with at most one
+// line under it, Wake beside an asleep phone's status, Open screen disabled with the reason, the
+// action row, Settings on every card, the switcher rows as the card's head (current first, then
+// the phones that can be opened, then the rest, greyed), scroll restore, and the refusal of tool
+// links that name an iPhone. The list is also measured against the kit: the type scale, kit
+// buttons at their heights, the kit bar with one h1, status as a chip with words, and the unread
+// count as a badge. No phone, adb or pymobiledevice3 is involved.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -27,12 +29,14 @@ const iphone = (udid, name, extra = {}) => ({
 });
 const schedule = { enabled: true, time: '03:00', hasPasscode: true, serverTimeZone: 'UTC', lastUnlockedAt: NOW - 2 * 86400000 };
 
+// The last one is ready with its stream service stopped, so its card says so on one line.
 const ANDROIDS = [
     android('HOME-PIXEL-0001', 'Pixel 9 Pro'),
     android('HOME-TAB-0002', 'Galaxy Tab S9', { 'screen.power': 'off', 'device.awake': false }),
     android('HOME-LOCKED-0003', 'Pixel 8', { 'device.locked': true }),
     android('HOME-OFFLINE-0004', 'Pixel 7', { state: 'offline', pid: -1 }),
     android('HOME-UNAUTH-0005', 'Pixel 6', { state: 'unauthorized', pid: -1 }),
+    android('HOME-IDLE-0006', 'Pixel 5', { pid: -1, 'battery.level': 35, 'battery.charging': true }),
 ];
 const LINKED = 'HOME-IPHONE-LINKED';
 const IPHONES = [
@@ -99,6 +103,18 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
 }
 
 const card = (page, key) => page.locator(`article.device[data-device-key="${key}"]`);
+/** What each row of a switcher shows, in order. */
+const switcherRows = (sheet) => sheet.locator('.device-switcher-item').evaluateAll((items) => items.map((item) => ({
+    name: item.querySelector('.phone-row-name').textContent,
+    platform: item.querySelector('.phone-row-platform').textContent,
+    chips: [...item.querySelectorAll('.kit-chip')].map((chip) => chip.textContent),
+    chip: item.querySelector('.kit-chip').outerHTML,
+    unread: item.querySelector('.phone-row-unread .kit-badge')?.textContent ?? '',
+    inUse: item.querySelector('.phone-row-in-use')?.textContent ?? '',
+    disabled: item.disabled,
+    label: item.textContent,
+    text: item.textContent,
+})));
 // The bar of the list: the kit bar in its root form.
 const HEADER = 'header.kit-bar.kit-bar-root';
 const noOverflow = (page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
@@ -148,7 +164,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
             assert.ok(box.width >= 44 && box.height >= 44, `${label}: header controls keep a 44px target`);
         }
         const pill = header.locator('.kit-bar-status');
-        assert.equal((await pill.textContent()).trim(), '9 available · 3 need attention');
+        assert.equal((await pill.textContent()).trim(), '10 available · 3 need attention');
         assert.equal(await pill.getAttribute('role'), 'status');
         const title = await header.getByRole('heading', { name: 'Phones', exact: true }).boundingBox();
         assert.ok(Math.abs((await inbox.boundingBox()).y + 22 - (title.y + title.height / 2)) < 16, `${label}: the actions sit on the heading row`);
@@ -157,7 +173,7 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         // Status: 12px or larger and 4.5:1 on its own tint, for every state.
         const expected = {
             'android:HOME-PIXEL-0001': 'Ready', 'android:HOME-TAB-0002': 'Asleep', 'android:HOME-LOCKED-0003': 'Locked',
-            'android:HOME-OFFLINE-0004': 'Offline', 'android:HOME-UNAUTH-0005': 'Unauthorized',
+            'android:HOME-OFFLINE-0004': 'Offline', 'android:HOME-UNAUTH-0005': 'Unauthorized', 'android:HOME-IDLE-0006': 'Ready',
             [`ios:${LINKED}`]: 'Ready', 'ios:HOME-IPAD-NODEV': 'Needs attention', 'ios:HOME-IPHONE-ERROR': 'Error',
             'ios:HOME-IPHONE-UNLOCK': 'Needs attention', 'ios:HOME-IPHONE-STREAM': 'Ready', 'ios:HOME-IPHONE-START': 'Starting…',
             'ios:HOME-IPHONE-AWAY': 'Offline',
@@ -169,29 +185,79 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
             assert.ok(size >= 12, `${label} ${status}: status text is ${size}px`);
             assert.ok(ratio >= 4.5, `${label} ${status}: status contrast is ${ratio.toFixed(2)}`);
         }
-        // A running session is a second, neutral chip beside the status, on the iPhone only.
-        const sessionChips = await page.locator('article.device .device-session').evaluateAll((chips) =>
-            chips.map((chip) => [chip.closest('[data-device-key]').dataset.deviceKey, chip.textContent, chip.className]));
-        assert.deepEqual(sessionChips, [['ios:HOME-IPHONE-STREAM', 'Session running', 'kit-chip device-session']], `${label}: one session chip`);
-        assert.ok((await contrastOf(card(page, 'ios:HOME-IPHONE-STREAM').locator('.device-session'))).ratio >= 4.5, `${label}: the session chip is readable`);
+        // One status per card: one chip, and at most one line under the head. A running session is
+        // a dot and "In use" on the platform line, the same on both platforms, never a chip.
+        const cards = await page.locator('article.device').evaluateAll((items) => items.map((item) => ({
+            key: item.dataset.deviceKey,
+            chips: [...item.querySelectorAll('.kit-chip')].map((chip) => chip.textContent),
+            lines: [...item.querySelectorAll('.device-line')].map((line) => line.dataset.line),
+            inUse: item.querySelector('.phone-row-meta .phone-row-in-use')?.textContent ?? '',
+            dot: !!item.querySelector('.phone-row-in-use > .phone-row-dot'),
+            text: item.textContent,
+        })));
+        assert.equal(cards.length, Object.keys(expected).length);
+        for (const item of cards) {
+            assert.deepEqual(item.chips, [expected[item.key]], `${label} ${item.key}: one chip, the status`);
+            assert.ok(item.lines.length <= 1, `${label} ${item.key}: at most one line under the head (${item.lines})`);
+            assert.doesNotMatch(item.text, /Session running|Stream service: |Screen is asleep|Device unavailable|Waiting for trust/, `${label} ${item.key}: says its status once`);
+        }
+        const inUse = cards.filter((item) => item.inUse).map((item) => item.key).sort();
+        assert.deepEqual(inUse, ['android:HOME-LOCKED-0003', 'android:HOME-PIXEL-0001', 'android:HOME-TAB-0002', 'ios:HOME-IPHONE-STREAM'], `${label}: In use where a session runs`);
+        assert.ok(cards.filter((item) => item.inUse).every((item) => item.inUse === 'In use' && item.dot), `${label}: a dot and In use`);
+        const lines = Object.fromEntries(cards.filter((item) => item.lines.length).map((item) => [item.key, item.lines[0]]));
+        assert.deepEqual(lines, {
+            'android:HOME-OFFLINE-0004': 'offline', 'android:HOME-UNAUTH-0005': 'unauthorized', 'android:HOME-IDLE-0006': 'stream-service',
+            'ios:HOME-IPAD-NODEV': 'developer-mode', 'ios:HOME-IPHONE-ERROR': 'session', 'ios:HOME-IPHONE-UNLOCK': 'unlock', 'ios:HOME-IPHONE-AWAY': 'offline',
+        }, `${label}: the line of each card`);
         assert.equal(await page.getByText('Streaming', { exact: true }).count(), 0, `${label}: Streaming is not a status`);
-        const small = await page.locator('#devices .device').first().evaluate((el) =>
-            [...el.querySelectorAll('.device-meta, .device-serial, summary, .stream-service-status, .desc-block')]
+        assert.ok((await contrastOf(card(page, 'ios:HOME-IPHONE-STREAM').locator('.phone-row-in-use'))).ratio >= 4.5, `${label}: In use is readable`);
+        // The stream service line only where the service does not run on a ready phone, with Start.
+        const idle = card(page, 'android:HOME-IDLE-0006');
+        const service = idle.locator('.device-line[data-line="stream-service"]');
+        assert.equal(await service.getAttribute('data-stream-service'), 'stopped');
+        assert.equal(await service.locator('.device-note-text').textContent(), 'The stream service is stopped. Opening the screen starts it.');
+        await service.getByRole('button', { name: 'Start stream service', exact: true }).waitFor();
+        assert.equal(await page.locator('.stream-service-status').count(), 0, `${label}: no Stream service line on a card`);
+        const small = await page.locator('#devices .device').evaluateAll((items) =>
+            items.flatMap((el) => [...el.querySelectorAll('.phone-row-meta, .device-line, .device-schedule, .desc-block')])
                 .map((node) => parseFloat(getComputedStyle(node).fontSize)).filter((size) => size < 12));
         assert.deepEqual(small, [], `${label}: no card text under 12px`);
 
-        // Action row: Open screen takes at least half, Settings is the same icon button on both
-        // platforms, and Notifications shares its surface.
+        // The disclosure is gone: Settings is on every card, in every state.
+        assert.equal(await page.locator('#devices summary, #devices details').count(), 0, `${label}: no Details disclosure`);
+        for (const item of cards) {
+            const name = await card(page, item.key).locator('.phone-row-name').textContent();
+            await card(page, item.key).locator('.device-primary-actions').getByRole('button', { name: `Settings for ${name}`, exact: true }).waitFor();
+        }
+        // No serial and no tracker name on a card.
+        for (const device of [...ANDROIDS, ...IPHONES]) assert.equal(await page.getByText(device.udid).count(), 0, `${label}: no serial ${device.udid}`);
+        assert.equal(await page.locator('#devices').getByText('Fixture host').count(), 0, `${label}: no tracker name`);
+
+        // Open screen is always the first button. Where the screen cannot be opened it is
+        // disabled and the one line says why; no other words stand in for it.
+        for (const key of ['android:HOME-OFFLINE-0004', 'android:HOME-UNAUTH-0005', 'ios:HOME-IPAD-NODEV', 'ios:HOME-IPHONE-AWAY']) {
+            const open = card(page, key).getByRole('button', { name: 'Open screen', exact: true });
+            assert.equal(await open.isDisabled(), true, `${label} ${key}: Open screen is disabled`);
+            assert.equal(await card(page, key).getByRole('link', { name: 'Open screen', exact: true }).count(), 0);
+        }
+        await card(page, 'android:HOME-OFFLINE-0004').getByText("Not connected. Check the phone's cable or network connection.", { exact: true }).waitFor();
+        await card(page, 'android:HOME-UNAUTH-0005').getByText('Unlock this phone and approve the USB debugging or trust prompt to connect.', { exact: true }).waitFor();
+        for (const name of ['Device unavailable', 'Waiting for trust']) assert.equal(await page.getByRole('button', { name }).count(), 0, `${label}: no "${name}" button`);
+
+        // Action row: Open screen takes at least half, then Files and Shell where the phone has
+        // them, Notifications where it sends them here, and Settings, all icon buttons.
         const rowOf = (key) => card(page, key).locator('.device-primary-actions');
         const boxes = (key) => rowOf(key).evaluate((row) => [...row.children].map((child) => ({
             width: child.getBoundingClientRect().width, height: child.getBoundingClientRect().height, top: child.getBoundingClientRect().top,
-            text: child.textContent.trim(), background: getComputedStyle(child).backgroundColor, border: getComputedStyle(child).borderTopColor,
+            text: child.textContent.trim(), name: child.getAttribute('aria-label') || child.textContent.trim(),
+            background: getComputedStyle(child).backgroundColor, border: getComputedStyle(child).borderTopColor,
             row: row.clientWidth,
         })));
         const pixel = await boxes('android:HOME-PIXEL-0001');
         const linked = await boxes(`ios:${LINKED}`);
-        assert.deepEqual(pixel.map((box) => box.text), ['Open screen', '']);
+        assert.deepEqual(pixel.map((box) => box.name), ['Open screen', 'Files', 'Shell', 'Settings for Google Pixel 9 Pro']);
         assert.deepEqual(linked.map((box) => box.text), ['Open screen', '2', '']);
+        assert.deepEqual((await boxes('android:HOME-OFFLINE-0004')).map((box) => box.name), ['Open screen', 'Settings for Google Pixel 7'], `${label}: no Files or Shell for an offline phone`);
         for (const row of [pixel, linked]) {
             assert.ok(row[0].width >= row[0].row / 2 - 1, `${label}: Open screen takes at least half the row (${row[0].width} of ${row[0].row})`);
             assert.ok(row.every((box) => box.height >= 44 && Math.abs(box.top - row[0].top) < 1), `${label}: one row of 44px controls ${JSON.stringify(row)}`);
@@ -200,21 +266,40 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         await card(page, `ios:${LINKED}`).getByRole('link', { name: 'Notifications for iPhone linked, 2 unread', exact: true }).waitFor();
         assert.equal(linked[1].background, linked[2].background, `${label}: Notifications and Settings share a surface`);
         assert.equal(linked[1].border, linked[2].border);
-        assert.equal(pixel[1].background, linked[2].background, `${label}: Settings looks the same on both platforms`);
-        await card(page, 'android:HOME-PIXEL-0001').getByRole('button', { name: 'Settings for Google Pixel 9 Pro', exact: true }).waitFor();
+        assert.equal(pixel[3].background, linked[2].background, `${label}: Settings looks the same on both platforms`);
+        assert.equal(pixel[1].background, pixel[3].background, `${label}: Files is an icon button like Settings`);
 
         // Notifications on a card only where the iPhone sends its notifications to this server.
         assert.equal(await card(page, `ios:${LINKED}`).locator('.device-notification-history').getAttribute('href'), `#!action=notifications&source=${LINKED}`);
         for (const key of ['ios:HOME-IPAD-NODEV', 'ios:HOME-IPHONE-ERROR', 'ios:HOME-IPHONE-STREAM'])
             assert.equal(await card(page, key).locator('.device-notification-history').count(), 0, `${key} has no inbox to open`);
 
-        // Files and Shell are on the Android card, outside the disclosure, which is named Details.
+        // Files and Shell are icon links of the Android card, to the phone's tool pages.
         const pixelCard = card(page, 'android:HOME-PIXEL-0001');
-        assert.equal(await pixelCard.locator('.device-details').evaluate((el) => el.open), false);
-        for (const name of ['Files', 'Shell']) assert.equal(await pixelCard.getByRole('link', { name, exact: true }).isVisible(), true, `${name} is visible on the closed card`);
-        const summary = pixelCard.locator('summary');
-        assert.equal((await summary.textContent()).trim(), 'Details');
-        assert.ok((await summary.boundingBox()).height >= 44, `${label}: the disclosure row is a 44px target`);
+        for (const [name, view] of [['Files', 'files'], ['Shell', 'shell']]) {
+            const link = pixelCard.getByRole('link', { name, exact: true });
+            assert.equal(await link.isVisible(), true, `${name} is on the card`);
+            assert.match(await link.getAttribute('href'), new RegExp(`action=device&udid=HOME-PIXEL-0001&view=${view}`));
+        }
+        for (const key of [`ios:${LINKED}`, 'ios:HOME-IPHONE-STREAM']) assert.equal(await card(page, key).locator('.device-tool').count(), 0, `${key}: an iPhone has no Files or Shell`);
+
+        // Asleep: Wake sits beside the status in the head, and one press sends one wake. An iPhone
+        // has no wake request from the list, so its card has no Wake.
+        const tab = card(page, 'android:HOME-TAB-0002');
+        const wake = tab.locator('.phone-row-status').getByRole('button', { name: 'Wake', exact: true });
+        const chipBox = await tab.locator('.phone-row-status .kit-chip').boundingBox();
+        const wakeBox = await wake.boundingBox();
+        assert.ok(wakeBox.x >= chipBox.x + chipBox.width && Math.abs(wakeBox.y + wakeBox.height / 2 - (chipBox.y + chipBox.height / 2)) < 2, `${label}: Wake is beside the status`);
+        assert.equal(await card(page, 'ios:HOME-IPHONE-UNLOCK').getByRole('button', { name: 'Wake' }).count(), 0, `${label}: no Wake on an iPhone`);
+        assert.equal(await page.getByRole('button', { name: 'Wake', exact: true }).count(), 1, `${label}: Wake only on the asleep Android phone`);
+        await wake.click();
+        const waking = tab.getByRole('button', { name: 'Waking…', exact: true });
+        await waking.waitFor();
+        assert.equal(await waking.isDisabled(), true, `${label}: Wake cannot be pressed twice`);
+        await waking.click({ force: true }).catch(() => undefined);
+        await page.waitForTimeout(100);
+        assert.deepEqual(test.commands.filter((command) => command.type === 'wake_device').map((command) => command.data), [{ udid: 'HOME-TAB-0002' }], `${label}: one wake`);
+        assert.equal(await tab.locator('.device-line').count(), 0, `${label}: no line under an asleep phone`);
 
         // Developer Mode off: not Ready, and the screen cannot be opened.
         const ipad = card(page, 'ios:HOME-IPAD-NODEV');
@@ -230,13 +315,14 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         assert.ok((await contrastOf(line.locator('.kit-banner-text'))).ratio >= 4.5, `${label}: the error line is readable`);
         assert.notEqual(
             await line.evaluate((el) => getComputedStyle(el).color),
-            await failed.locator('.device-meta').evaluate((el) => getComputedStyle(el).color),
+            await failed.locator('.phone-row-meta').evaluate((el) => getComputedStyle(el).color),
             `${label}: an error is not the neutral grey`,
         );
+        // Open screen stays: the owner can still try the screen of a phone whose session failed.
+        await failed.getByRole('link', { name: 'Open screen', exact: true }).waitFor();
         await line.getByRole('button', { name: 'Restart services', exact: true }).click();
         const prompt = failed.getByRole('alertdialog', { name: 'Restart services on iPhone failed?', exact: true });
         await prompt.waitFor();
-        assert.equal(await failed.locator('.device-details').evaluate((el) => el.open), false, 'the prompt shows without opening Details');
         assert.equal(test.commands.filter((command) => command.type === 'restart_session').length, 0, 'the first press sends nothing');
         await prompt.locator('.kit-confirm-go:not([aria-disabled])').waitFor();
         await prompt.getByRole('button', { name: 'Restart services', exact: true }).click();
@@ -252,30 +338,40 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         const unlock = card(page, 'ios:HOME-IPHONE-UNLOCK');
         const unlockLine = unlock.locator('.device-problem[data-problem="unlock"]');
         assert.match(await unlockLine.locator('.device-unlock-schedule.problem').textContent(), /^Scheduled unlock 03:00 and 15:00 · /);
-        assert.equal(await unlock.locator('.device-meta .device-unlock-schedule').count(), 0, 'the problem is not repeated in the meta line');
-        await unlock.getByText('Screen is asleep', { exact: true }).waitFor();
+        assert.equal(await unlock.locator('.device-schedule').count(), 0, 'the problem is not said twice');
         await page.screenshot({ path: path.join(OUT, `devices-${label}.png`), fullPage: true });
-        // An unplugged iPhone has no action for its unlock problem, so the problem stays in its meta line.
+        // An unplugged iPhone has no action for its unlock problem: the schedule stays as its own
+        // line, and the line under the head says that the phone is not connected.
         const away = card(page, 'ios:HOME-IPHONE-AWAY');
         assert.equal(await away.locator('.device-problem').count(), 0);
-        assert.equal(await away.locator('.device-meta .device-unlock-schedule.problem').textContent(), 'Scheduled unlock cannot run: no passcode');
+        assert.equal(await away.locator('.device-schedule .device-unlock-schedule.problem').textContent(), 'Scheduled unlock cannot run: no passcode');
         await unlockLine.getByRole('button', { name: 'Open settings for iPhone unlock', exact: true }).click();
-        const dialog = page.getByRole('dialog', { name: 'Scheduled unlock', exact: true });
+        // The phone's Settings sheet; what it holds is checked by the settings suites.
+        const dialog = page.locator('dialog.kit-sheet[open]');
         await dialog.waitFor();
         await settleMotion(page);
         await dialog.getByRole('button', { name: /^Close/ }).click();
         await dialog.waitFor({ state: 'hidden' });
+        // Settings opens from a card in every state, offline and untrusted included.
+        for (const [key, name] of [['android:HOME-OFFLINE-0004', 'Google Pixel 7'], ['android:HOME-UNAUTH-0005', 'Google Pixel 6'], ['ios:HOME-IPHONE-AWAY', 'iPhone away']]) {
+            await card(page, key).getByRole('button', { name: `Settings for ${name}`, exact: true }).click();
+            await dialog.waitFor();
+            await settleMotion(page);
+            await dialog.getByRole('button', { name: /^Close/ }).click();
+            await dialog.waitFor({ state: 'hidden' });
+            await settleMotion(page);
+        }
 
         assert.deepEqual(test.errors, []);
-        console.log('PASS', label, 'Devices header, status badges, action row, problem lines');
+        console.log('PASS', label, 'Phones header, one status per card, one line under it, Wake beside the status, the action row');
     } finally {
         await test.context.close();
     }
 }
 
 /**
- * The list measured against the kit, with the details of an Android and an iPhone card open:
- * what a person can read and press on the page, as a list of faults.
+ * The list measured against the kit: what a person can read and press on the page, as a list of
+ * faults.
  */
 function auditList({ mobile }) {
     const faults = [];
@@ -310,24 +406,23 @@ function auditList({ mobile }) {
         const label = (element.getAttribute('aria-label') || element.textContent || '').trim();
         if (!label) faults.push(`a control without a name: ${name(element)}`);
     }
-    for (const summary of page.querySelectorAll('summary')) {
-        if (!summary.closest('.kit-disclosure')) faults.push(`not the kit disclosure: ${name(summary)}`);
-        if (summary.getBoundingClientRect().height < 44) faults.push(`under 44px: ${name(summary)}`);
-    }
+    // A card has no disclosure: what it held is in the phone's Settings.
+    for (const summary of page.querySelectorAll('summary')) faults.push(`a disclosure on the list: ${name(summary)}`);
     // The header is the kit bar, with the page's one h1. A sheet has a header of its own inside its
     // dialog, which stays in the page while the sheet is closed.
     const bars = [...document.querySelectorAll('header')].filter((header) => !header.closest('dialog'));
     if (bars.length !== 1 || !bars[0].matches('.kit-bar.kit-bar-root')) faults.push('the header is not the kit bar of the list');
     const headings = [...document.querySelectorAll('h1')].map((heading) => heading.textContent);
     if (headings.join('|') !== 'Phones') faults.push(`the page has these h1: ${headings.join('|') || 'none'}`);
-    // A status is a chip with words, never a glyph alone. A running session is a second chip.
+    // A status is one chip with words, never a glyph alone. A running session is a mark, not a chip.
     for (const item of page.querySelectorAll('article.device')) {
-        const chips = item.querySelectorAll('.device-header .kit-chip:not(.device-session)');
-        if (chips.length !== 1) faults.push(`${chips.length} status chips: ${name(item)}`);
+        const chips = item.querySelectorAll('.kit-chip');
+        if (chips.length !== 1 || !chips[0].closest('.device-header')) faults.push(`${chips.length} chips: ${name(item)}`);
         else if (!/^[A-Za-z][A-Za-z ]{3,}…?$/.test(chips[0].textContent)) faults.push(`a status without words: "${chips[0].textContent}"`);
-        for (const chip of item.querySelectorAll('.device-header .device-session')) {
-            if (chip.textContent !== 'Session running') faults.push(`a session chip says "${chip.textContent}"`);
+        for (const mark of item.querySelectorAll('.phone-row-in-use')) {
+            if (mark.textContent !== 'In use') faults.push(`the session mark says "${mark.textContent}"`);
         }
+        if (item.querySelectorAll('.device-line').length > 1) faults.push(`more than one line under the head: ${name(item)}`);
     }
     // Text glyphs that stood in for icons.
     const glyphs = page.textContent.match(/[☾⚠✕▶●▣◐○→←]/g);
@@ -349,10 +444,6 @@ async function kitList(browser, { width, height, mobile, colorScheme }) {
     try {
         await card(page, 'ios:HOME-IPHONE-START').waitFor();
         await page.locator(`${HEADER} .kit-badge`).waitFor();
-        for (const key of ['android:HOME-PIXEL-0001', `ios:${LINKED}`]) {
-            await card(page, key).locator('summary').evaluate((el) => el.click());
-            await page.waitForFunction((key) => document.querySelector(`[data-device-key="${key}"] .device-details`).open, key);
-        }
         await settleMotion(page);
         assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), mobile, `${label}: the pointer of the context`);
         assert.deepEqual(await page.evaluate(auditList, { mobile }), [], `${label}: the list against the kit`);
@@ -457,11 +548,6 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await target.waitFor();
         await settleMotion(page);
         const list = page.locator('#devices');
-        await target.locator('summary').scrollIntoViewIfNeeded();
-        await target.locator('summary').click();
-        await settleMotion(page);
-        await card(page, 'android:HOME-PIXEL-0001').locator('summary').evaluate((el) => el.click());
-        await settleMotion(page);
         await list.evaluate((el) => { el.scrollTop = el.scrollHeight; });
         await page.waitForTimeout(100);
         assert.ok((await list.evaluate((el) => el.scrollTop)) > 300, `${label}: the fixture list scrolls`);
@@ -475,15 +561,11 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
             assert.ok(before > 300, `${label}: the list is scrolled when it is left (${before})`);
             await control.evaluate((el) => el.click());
         };
-        const openBefore = () => page.evaluate(() => [...document.querySelectorAll('.device-details[open]')].map((el) => el.closest('.device').dataset.deviceKey).sort());
-        assert.deepEqual(await openBefore(), ['android:HOME-EXTRA-15', 'android:HOME-PIXEL-0001']);
-
         const check = async (how) => {
             await page.locator('#devices').waitFor();
             await card(page, 'android:HOME-EXTRA-15').waitFor();
             await page.waitForFunction(() => new Promise((resolve) => requestAnimationFrame(() => resolve(true))));
             assert.ok(Math.abs((await list.evaluate((el) => el.scrollTop)) - before) <= 2, `${label}: ${how} returns to the same scroll position`);
-            assert.deepEqual(await openBefore(), ['android:HOME-EXTRA-15', 'android:HOME-PIXEL-0001'], `${label}: ${how} keeps the open cards open`);
         };
 
         // A screen and back, by the header button and by browser Back.
@@ -516,22 +598,12 @@ async function returnToDevices(browser, { width, height, mobile, colorScheme }) 
         await check('Notifications');
         await page.waitForFunction(() => document.title === 'Phones · ws-scrcpy');
 
-        // Closing a card is remembered too.
-        await card(page, 'android:HOME-EXTRA-15').locator('summary').click();
-        await settleMotion(page);
-        await page.waitForFunction(() => !document.querySelector('[data-device-key="android:HOME-EXTRA-15"] .device-details').open);
-        await page.locator(`${HEADER} .notifications-link`).evaluate((el) => el.click());
-        await page.locator('.notifications-view').getByRole('button', { name: 'Phones', exact: true }).click();
-        await card(page, 'android:HOME-EXTRA-15').waitFor();
-        assert.deepEqual(await openBefore(), ['android:HOME-PIXEL-0001']);
-
-        // A reload starts at the top with every card closed.
+        // A reload starts at the top.
         await page.reload();
         await card(page, 'android:HOME-EXTRA-15').waitFor();
         assert.equal(await list.evaluate((el) => el.scrollTop), 0);
-        assert.deepEqual(await openBefore(), []);
         assert.deepEqual(test.errors, []);
-        console.log('PASS', label, 'Devices keeps its scroll position and open cards; one name and title format');
+        console.log('PASS', label, 'Phones keeps its scroll position; one name and title format');
     } finally {
         await test.context.close();
     }
@@ -583,19 +655,25 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         assert.equal(await headerLink.getAttribute('href'), '#!action=notifications');
         await fits('Shell');
         await page.getByRole('button', { name: 'Switch', exact: true }).click();
-        const sheet = page.getByRole('dialog', { name: 'Switch device · Shell', exact: true });
+        const sheet = page.getByRole('dialog', { name: 'Switch phone · Shell', exact: true });
         await sheet.waitFor();
         await settleMotion(page);
-        const rows = await sheet.locator('.device-switcher-item').evaluateAll((items) => items.map((item) => ({
-            name: item.querySelector('strong').textContent, status: item.querySelector('.device-switcher-status').textContent,
-        })));
-        assert.deepEqual(rows.map((row) => row.name).sort(), ANDROIDS.map((device) => `Google ${device['ro.product.model']}`).sort(), 'the Shell switcher lists Android devices only');
+        const rows = await switcherRows(sheet);
+        assert.deepEqual(rows.map((row) => row.name).sort(), ANDROIDS.map((device) => `Google ${device['ro.product.model']}`).sort(), 'the Shell switcher lists Android phones only');
         assert.equal(rows.some((row) => /iPhone|iPad/.test(row.name)), false);
-        assert.equal(rows.find((row) => row.name === 'Google Pixel 9 Pro').status, 'Viewing');
-        assert.equal(rows.find((row) => row.name === 'Google Pixel 8').status, 'Shell', 'a row says what it opens');
-        assert.equal(rows.find((row) => row.name === 'Google Galaxy Tab S9').status, 'Shell', 'a sleeping screen does not matter to Shell');
-        assert.equal(await sheet.locator('.device-switcher-item.current .kit-chip').textContent(), 'Viewing', 'the phone on screen is marked with a chip');
-        assert.equal(await sheet.locator('.device-switcher-item:not(:disabled) .device-switcher-status svg').count(), ANDROIDS.length - 3, 'the arrow is an icon');
+        // The phone on screen first, marked Viewing in place of its status; then the phones that
+        // can be opened; then the rest, each with its status word. Same words as the card.
+        assert.deepEqual(rows.map((row) => [row.name, row.chips.join('|'), row.disabled]), [
+            ['Google Pixel 9 Pro', 'Viewing', true],
+            ['Google Galaxy Tab S9', 'Asleep', false],
+            ['Google Pixel 5', 'Ready', false],
+            ['Google Pixel 8', 'Locked', false],
+            ['Google Pixel 6', 'Unauthorized', true],
+            ['Google Pixel 7', 'Offline', true],
+        ], `${label}: the Shell switcher rows`);
+        assert.equal(await sheet.locator('.device-switcher-item.current').getAttribute('aria-current'), 'true');
+        assert.equal(await sheet.locator('.device-switcher-item.current .kit-chip').getAttribute('class'), 'kit-chip kit-chip-info', 'the phone on screen is marked with the info chip');
+        assert.equal(await sheet.locator('.device-switcher-item svg.kit-icon:not(.phone-row-icon svg):not(.phone-row-unread svg)').count(), 0, 'no arrow in a row');
         await page.screenshot({ path: path.join(OUT, `switcher-shell-${label}.png`) });
         await sheet.getByRole('button', { name: /Google Pixel 8/ }).click();
         await page.waitForFunction(() => location.hash.includes('view=shell') && location.hash.includes('HOME-LOCKED-0003'));
@@ -604,7 +682,7 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         // Files: the switcher names Files. On a desktop Ctrl+K opens it, but not from a text field.
         await page.getByRole('button', { name: 'Files', exact: true }).click();
         await page.waitForFunction(() => document.title === 'Google Pixel 8 · Files · ws-scrcpy');
-        const filesSheet = page.getByRole('dialog', { name: 'Switch device · Files', exact: true });
+        const filesSheet = page.getByRole('dialog', { name: 'Switch phone · Files', exact: true });
         if (mobile) {
             await page.getByRole('button', { name: 'Switch', exact: true }).click();
         } else {
@@ -623,25 +701,58 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         await filesSheet.waitFor();
         await settleMotion(page);
         assert.equal(await filesSheet.locator('.device-switcher-item').filter({ hasText: /iPhone|iPad/ }).count(), 0);
-        assert.equal(await filesSheet.locator('.device-switcher-item').filter({ hasText: 'Google Pixel 9 Pro' }).locator('.device-switcher-status').textContent(), 'Files');
+        const filesRows = await switcherRows(filesSheet);
+        assert.deepEqual(filesRows[0].name, 'Google Pixel 8', 'the phone of this page is first');
+        assert.deepEqual(filesRows.find((row) => row.name === 'Google Pixel 9 Pro').chips, ['Ready']);
         await filesSheet.getByRole('button', { name: /^Close/ }).click();
         await filesSheet.waitFor({ state: 'hidden' });
 
-        // The stream switcher still lists every device and says it opens a screen.
+        // The stream switcher lists every phone. A row is the head of the phone's card: the same
+        // name, platform line, status word and tone, the unread count, and no serial or tracker.
         await page.getByRole('button', { name: 'Phones', exact: true }).click();
+        await card(page, 'ios:HOME-IPHONE-START').waitFor();
+        const heads = Object.fromEntries(await page.locator('article.device').evaluateAll((items) => items.map((item) => [
+            item.querySelector('.phone-row-name').textContent,
+            { platform: item.querySelector('.phone-row-platform').textContent, chip: item.querySelector('.kit-chip').outerHTML },
+        ])));
         await card(page, 'android:HOME-PIXEL-0001').getByRole('link', { name: 'Open screen', exact: true }).click();
         await page.locator('.touch-layer').waitFor({ state: 'visible' });
         await page.getByRole('button', { name: 'Switch', exact: true }).click();
-        const streamSheet = page.getByRole('dialog', { name: 'Switch device', exact: true });
+        const streamSheet = page.getByRole('dialog', { name: 'Switch phone', exact: true });
         await streamSheet.waitFor();
         await settleMotion(page);
-        assert.equal(await streamSheet.locator('.device-switcher-item').count(), ANDROIDS.length + IPHONES.length);
-        assert.equal(await streamSheet.locator('.device-switcher-item').filter({ hasText: 'iPhone linked' }).locator('.device-switcher-status').textContent(), 'Screen');
-        assert.equal(await streamSheet.locator('.device-switcher-item').filter({ hasText: 'Galaxy Tab S9' }).locator('.device-switcher-status .kit-chip').textContent(), 'Asleep', 'a sleeping phone says so in a chip');
-        // Developer Mode off: the screen cannot open, so the row cannot be chosen.
-        const ipadRow = streamSheet.locator('.device-switcher-item').filter({ hasText: 'iPad mini' });
-        assert.equal(await ipadRow.isDisabled(), true, 'an iPhone with Developer Mode off is not offered');
-        assert.equal(await ipadRow.locator('.device-switcher-status .kit-chip').textContent(), 'Needs attention');
+        const streamRows = await switcherRows(streamSheet);
+        assert.equal(streamRows.length, ANDROIDS.length + IPHONES.length);
+        assert.equal(streamRows[0].name, 'Google Pixel 9 Pro', 'the phone on screen is first');
+        let seenUnavailable = false;
+        for (const row of streamRows.slice(1)) {
+            assert.equal(row.platform, heads[row.name].platform, `${label} ${row.name}: the platform line of the card`);
+            assert.equal(row.chip, heads[row.name].chip, `${label} ${row.name}: the status chip of the card`);
+            assert.doesNotMatch(row.text, /HOME-|Fixture host/, `${label} ${row.name}: no serial and no tracker name`);
+            if (row.disabled) seenUnavailable = true;
+            else assert.equal(seenUnavailable, false, `${label} ${row.name}: the phones that cannot be opened come last`);
+        }
+        assert.deepEqual(streamRows.filter((row) => row.disabled).map((row) => row.name), ['Google Pixel 9 Pro', 'Google Pixel 6', 'Google Pixel 7', 'iPad mini', 'iPhone away']);
+        assert.equal(streamRows.find((row) => row.name === 'iPhone linked').unread, '2', 'the unread count of the iPhone');
+        assert.equal(streamRows.find((row) => row.name === 'iPhone linked').label.includes('2 unread'), true, 'and its words');
+        assert.equal(streamRows.filter((row) => row.unread).length, 1);
+        assert.equal(streamRows.find((row) => row.name === 'iPhone streaming').inUse, 'In use', 'a running session is the same mark as on the card');
+        // A row that cannot be opened is greyed, takes no hover and opens nothing.
+        const away = streamSheet.locator('.device-switcher-item').filter({ hasText: 'iPhone away' });
+        assert.equal(await away.locator('.phone-row-text').evaluate((el) => getComputedStyle(el).opacity), '0.5');
+        assert.equal(await away.locator('.kit-chip').evaluate((el) => getComputedStyle(el).opacity), '1', 'its status stays readable');
+        if (!mobile) {
+            await away.hover({ force: true });
+            await page.waitForTimeout(250);
+            assert.equal(await away.evaluate((el) => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)', `${label}: no hover on a row that cannot be opened`);
+        }
+        const before = await page.evaluate(() => location.href);
+        await away.click({ force: true });
+        await page.waitForTimeout(150);
+        assert.equal(await page.evaluate(() => location.href), before, `${label}: the row opens nothing`);
+        assert.equal(await streamSheet.isVisible(), true);
+        assert.equal(await away.evaluate((el) => { el.focus(); return el.tagName === 'BUTTON' && el.disabled && document.activeElement !== el; }), true, 'a disabled button that takes no focus');
+        await page.screenshot({ path: path.join(OUT, `switcher-screen-${label}.png`) });
         // The sheet is the kit's dialog, and the browser's Back closes it and stays on the page.
         assert.equal(await streamSheet.evaluate((el) => el.matches('dialog.kit-sheet[open]')), true, `${label}: the switcher is the kit sheet`);
         const address = await page.evaluate(() => location.href);
@@ -650,7 +761,7 @@ async function screenHeaders(browser, { width, height, mobile, colorScheme }) {
         assert.equal(await page.evaluate(() => location.href), address, `${label}: Back closes the switcher and leaves the page`);
         await page.locator('.touch-layer').waitFor({ state: 'visible' });
         assert.deepEqual(test.errors, []);
-        console.log('PASS', label, 'Notifications in screen and tool headers; tool switcher lists Android only');
+        console.log('PASS', label, 'Notifications in screen and tool headers; switcher rows are the card heads, current first, unavailable last and greyed');
     } finally {
         await test.context.close();
     }
@@ -732,7 +843,7 @@ async function installedApp(browser) {
         }
         // With no device listed, Devices still has the way into Notifications.
         await page.goto(BASE);
-        await page.getByRole('heading', { name: 'No devices connected', exact: true }).or(page.getByRole('heading', { name: 'Connection lost', exact: true })).waitFor();
+        await page.getByRole('heading', { name: 'No phones connected', exact: true }).or(page.getByRole('heading', { name: 'Connection lost', exact: true })).waitFor();
         await page.locator(HEADER).getByRole('link', { name: 'Notifications', exact: true }).click();
         await page.locator('.notifications-view h1.kit-bar-name').getByText('Notifications', { exact: true }).waitFor();
         console.log('PASS installed app: one name, a Notifications shortcut, page-coloured browser bar, inbox reachable with no devices');

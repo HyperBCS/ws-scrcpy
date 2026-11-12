@@ -1,14 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { Sheet } from '../ui/Sheet';
-import { canOpenScreen, devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/devices';
+import { canOpenScreen, devices, DeviceEntry, isDeviceAvailable, phoneName } from '../state/devices';
 import { activeStream, deviceSwitcherOpen, activeCoreDeviceStream, openSheet } from '../state/stream';
 import { deviceHref, followLink } from '../state/links';
 import { getDeviceStatusInfo } from '../state/phoneStatus';
+import { notificationSummary } from '../state/notifications';
+import { isNotificationSource } from '../state/notificationsTarget';
 import { SESSION } from '../copy';
 import { isSwitcherShortcut, nextHighlight } from '../state/switcherKeys';
-import { DeviceIcon } from '../ui/DeviceIcon';
 import { Chip } from '../ui/Chip';
 import { Icon } from '../ui/Icon';
+import { platformLine, PhoneRow } from '../ui/PhoneRow';
 // The search field is a plain input with the kit's field class, so that it can take a ref.
 import '../../style/kit/Field.css';
 import '../../style/views/DeviceSwitcherSheet.css';
@@ -16,12 +18,10 @@ import '../../style/views/DeviceSwitcherSheet.css';
 interface DeviceSwitcherSheetProps {
     currentDeviceKey?: string;
     onSelectDevice?: (entry: DeviceEntry) => void;
-    /** Lists only the devices the destination can open. Files and Shell pass Android only. */
+    /** Lists only the phones the destination can open. Files and Shell pass Android only. */
     filter?: (entry: DeviceEntry) => boolean;
-    /** Names the destination when it is not a screen: "Switch device · Shell". */
+    /** Names the destination when it is not a screen: "Switch phone · Shell". */
     title?: string;
-    /** What a row opens, shown on the row: "Screen", "Files", "Shell". */
-    openLabel?: string;
 }
 
 // A mouse and a keyboard: the search field can take focus without raising a phone keyboard.
@@ -40,8 +40,7 @@ export function DeviceSwitcherSheet({
     currentDeviceKey,
     onSelectDevice,
     filter,
-    title = 'Switch device',
-    openLabel = 'Screen',
+    title = 'Switch phone',
 }: DeviceSwitcherSheetProps = {}) {
     const session = activeStream.value;
     const open = deviceSwitcherOpen.value;
@@ -71,16 +70,24 @@ export function DeviceSwitcherSheet({
         });
         return () => cancelAnimationFrame(frame);
     }, [open]);
-    // A tool opens on any connected device. A screen also needs Developer Mode on an iPhone.
+    // A tool opens on any connected phone. A screen also needs Developer Mode on an iPhone.
     const canOpen = (entry: DeviceEntry) => (onSelectDevice ? isDeviceAvailable(entry) : canOpenScreen(entry));
+    const isCurrentPhone = (entry: DeviceEntry) =>
+        onSelectDevice
+            ? entry.key === currentDeviceKey
+            : entry.params.type === 'ios'
+              ? entry.descriptor.udid === activeCoreDeviceStream.value?.params.udid
+              : entry.descriptor.udid === session?.params.udid;
+    const nameOf = (entry: DeviceEntry) => phoneName(entry.descriptor.udid, entry);
+    // The phone on screen, then the phones that can be opened, then the rest; by name within each.
+    const rank = (entry: DeviceEntry) => (isCurrentPhone(entry) ? 0 : canOpen(entry) ? 1 : 2);
     const entries = Array.from(devices.value.values()).filter((entry) => !filter || filter(entry));
+    // The search reads what a row shows: the name and the platform line.
     const visible = entries
         .filter((entry) =>
-            `${deviceName(entry)} ${entry.descriptor.udid} ${entry.trackerName}`
-                .toLocaleLowerCase()
-                .includes(query.trim().toLocaleLowerCase()),
+            `${nameOf(entry)} ${platformLine(entry)}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
         )
-        .sort((a, b) => Number(canOpen(b)) - Number(canOpen(a)) || deviceName(a).localeCompare(deviceName(b)));
+        .sort((a, b) => rank(a) - rank(b) || nameOf(a).localeCompare(nameOf(b)));
 
     const onSelect = (entry: DeviceEntry) => {
         if (onSelectDevice) {
@@ -94,13 +101,16 @@ export function DeviceSwitcherSheet({
         followLink(deviceHref(entry.descriptor.udid, 'screen', entry.params), 'switch');
     };
 
+    const summary = notificationSummary.value;
     const rows = visible.map((entry) => {
-        const isCurrent = onSelectDevice
-            ? entry.key === currentDeviceKey
-            : entry.params.type === 'ios'
-              ? entry.descriptor.udid === activeCoreDeviceStream.value?.params.udid
-              : entry.descriptor.udid === session?.params.udid;
-        return { entry, isCurrent, available: canOpen(entry), info: getDeviceStatusInfo(entry) };
+        const udid = entry.descriptor.udid;
+        return {
+            entry,
+            isCurrent: isCurrentPhone(entry),
+            available: canOpen(entry),
+            info: getDeviceStatusInfo(entry),
+            unread: isNotificationSource(summary, udid) ? summary.unreadBySource[udid] || 0 : 0,
+        };
     });
     const selectable = rows.filter((row) => row.available && !row.isCurrent).map((row) => row.entry);
 
@@ -190,18 +200,21 @@ export function DeviceSwitcherSheet({
                             setQuery(event.currentTarget.value);
                             setHighlight(undefined);
                         }}
-                        placeholder="Find a device…"
-                        aria-label="Find a device to switch to"
+                        placeholder="Find a phone…"
+                        aria-label="Find a phone to switch to"
                     />
                 </label>
             )}
             {visible.length === 0 && (
                 <p class="device-switcher-empty">
-                    {entries.length ? 'No devices match your search.' : 'Connect a device to see it here.'}
+                    {entries.length ? 'No phones match your search.' : 'Connect a phone to see it here.'}
                 </p>
             )}
-            <div ref={listRef} class="device-switcher-list" role="region" aria-label="Devices to switch to">
-                {rows.map(({ entry, isCurrent, available, info }) => (
+            <div ref={listRef} class="device-switcher-list" role="region" aria-label="Phones to switch to">
+                {/* A row is the head of the phone's card: the same name, platform line, status
+                    and unread count. The phone on screen says Viewing in place of its status. A
+                    row that cannot be opened is a disabled button: no press, no focus, no hover. */}
+                {rows.map(({ entry, isCurrent, available, info, unread }) => (
                     <button
                         key={entry.key}
                         type="button"
@@ -213,37 +226,13 @@ export function DeviceSwitcherSheet({
                         disabled={isCurrent || !available}
                         aria-current={isCurrent ? 'true' : undefined}
                     >
-                        <DeviceIcon className="device-switcher-avatar" />
-                        <span class="device-switcher-copy">
-                            <strong>{deviceName(entry)}</strong>
-                            <small>
-                                {entry.trackerName} · {entry.descriptor.udid}
-                            </small>
-                        </span>
-                        <span class="device-switcher-status">
-                            {isCurrent ? (
-                                <Chip tone="info">{SESSION.viewing}</Chip>
-                            ) : !available ? (
-                                <>
-                                    <Chip tone={info.tone}>{info.label}</Chip>
-                                    {/* As on the card: an iPhone's running session is a second mark. */}
-                                    {info.sessionRunning && entry.params.type === 'ios' && (
-                                        <Chip class="device-session">{SESSION.running}</Chip>
-                                    )}
-                                </>
-                            ) : (
-                                <>
-                                    {/* What the row opens. A sleeping screen matters to a stream, not
-                                        to Files or Shell. */}
-                                    {info.status === 'asleep' && !onSelectDevice ? (
-                                        <Chip tone={info.tone}>{info.label}</Chip>
-                                    ) : (
-                                        openLabel
-                                    )}
-                                    <Icon name="arrowRight" size={16} />
-                                </>
-                            )}
-                        </span>
+                        <PhoneRow
+                            entry={entry}
+                            info={info}
+                            unread={unread}
+                            class="device-switcher-row"
+                            chip={isCurrent ? <Chip tone="info">{SESSION.viewing}</Chip> : undefined}
+                        />
                     </button>
                 ))}
             </div>

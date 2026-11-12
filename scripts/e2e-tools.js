@@ -162,7 +162,6 @@ async function main() {
             const state = await fixtures(page);
             await page.goto(BASE);
             const card = page.locator('.device').filter({hasText:'Phone A'});
-            await card.locator('summary').click();
             await card.getByRole('link',{name:'Shell',exact:true}).click();
             await page.locator('.tool-connection.connected').waitFor({state:'attached'});
             await page.locator('.terminal-container .xterm').waitFor();

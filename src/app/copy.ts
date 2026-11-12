@@ -126,3 +126,13 @@ export const STREAM_SERVICE = {
     stoppedTitle: 'Stream service stopped',
     stoppedMessage: 'The stream service on this phone was stopped. Start it to see the screen again.',
 } as const;
+
+// p5-list-rows
+/** The row of a phone on the list and in the switcher (`ui/PhoneRow.tsx`). */
+export const ROW = {
+    /**
+     * The mark after the platform line while the phone's screen session runs or this browser
+     * shows it. It sits beside the status and never takes its place.
+     */
+    inUse: 'In use',
+} as const;

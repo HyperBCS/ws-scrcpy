@@ -1,9 +1,10 @@
 // Run with: node --test scripts/test-home.js
-// The Devices page, its cards and the device switcher, without a browser: names and tab titles,
-// the Notifications target, the attention and error statuses, the switcher keys, the tool filter,
-// the installed-app name and colours, and what the list takes from the kit: the status chip, the
-// unread badge, kit buttons, icons and messages. scripts/e2e-home.js and scripts/e2e-switcher.js
-// cover the same changes in a browser.
+// The Phones list, its cards and the switcher, without a browser: names and tab titles, the
+// Notifications target, the attention and error statuses, the rules of a card (one status, at
+// most one line under it and the action for each status), the row a card and the switcher share,
+// the switcher keys, the tool filter, the installed-app name and colours, and what the list takes
+// from the kit: the status chip, the unread badge, kit buttons, icons and messages.
+// scripts/e2e-home.js and scripts/e2e-switcher.js cover the same changes in a browser.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const fs = require('node:fs');
@@ -30,11 +31,28 @@ const {
 } = require('../src/app/state/deviceStatus');
 const { isSwitcherShortcut, nextHighlight } = require('../src/app/state/switcherKeys');
 const view = require('../src/app/state/deviceListView');
+const { phoneCard } = require('../src/app/state/phoneCard');
+const { cardCapabilities } = require('../src/app/state/capabilities');
+const { markStarting, clearStarting } = require('../src/app/state/phoneStatus');
 const { Chip, chipClass } = require('../src/app/ui/Chip');
 const { Badge, badgeText } = require('../src/app/ui/Badge');
+const { PhoneRow, platformLine } = require('../src/app/ui/PhoneRow');
 
 const root = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
+
+/** Every element in a Preact tree, as { type, props }. Components without hooks are drawn. */
+function elements(node, found = []) {
+    if (Array.isArray(node)) node.forEach((child) => elements(child, found));
+    else if (node && typeof node === 'object') {
+        if (typeof node.type === 'function') elements(node.type(node.props), found);
+        else {
+            if (typeof node.type === 'string') found.push(node);
+            elements(node.props?.children, found);
+        }
+    }
+    return found;
+}
 
 const android = (udid, extra = {}) => ({
     key: `android:${udid}`,
@@ -259,18 +277,101 @@ test('the switcher shortcut and arrow keys', () => {
     assert.equal(nextHighlight([], 'a', 1), undefined);
 });
 
-test('the Devices page remembers its scroll position and open cards', () => {
+test('the Devices page remembers its scroll position, and a card has no disclosure to remember', () => {
     assert.equal(view.savedListScroll(), 0);
-    assert.equal(view.wasCardOpen('android:PIXEL-1'), false);
     view.rememberListScroll(1407);
-    view.rememberCardOpen('android:PIXEL-1', true);
-    view.rememberCardOpen('ios:IPHONE-1', true);
-    view.rememberCardOpen('ios:IPHONE-1', false);
     assert.equal(view.savedListScroll(), 1407);
-    assert.equal(view.wasCardOpen('android:PIXEL-1'), true);
-    assert.equal(view.wasCardOpen('ios:IPHONE-1'), false);
     view.rememberListScroll(0);
-    view.rememberCardOpen('android:PIXEL-1', false);
+    assert.deepEqual(Object.keys(view).sort(), ['rememberListScroll', 'savedListScroll']);
+});
+
+test('a card has one status, at most one line under it, and the action for that status', () => {
+    const now = Date.UTC(2026, 10, 11, 12, 0);
+    const card = (entry, playable = true) => {
+        const model = phoneCard(entry, playable, now);
+        return {
+            status: model.status.status,
+            line: model.line?.kind,
+            action: model.line?.action,
+            open: model.openScreen,
+            wake: model.wake,
+            tools: [...model.tools],
+            inUse: model.status.sessionRunning,
+        };
+    };
+    const ANDROID_TOOLS = ['files', 'shell'];
+    const cases = [
+        // Android: a running stream service is the In use mark, and no line.
+        ['android running', android('A1'), { status: 'ready', open: true, tools: ANDROID_TOOLS, inUse: true }],
+        // The stream service is not running on a phone that is otherwise ready: one note, with Start.
+        ['android stopped', android('A2', { pid: -1 }), { status: 'ready', line: 'stream-service', action: 'start-stream-service', open: true, tools: ANDROID_TOOLS }],
+        ['android unknown service', android('A3', { pid: 0 }), { status: 'ready', line: 'stream-service', action: 'start-stream-service', open: true, tools: ANDROID_TOOLS }],
+        // Asleep: Wake beside the status, and no line. The service line waits for a ready phone.
+        ['android asleep', android('A4', { pid: -1, 'screen.power': 'off' }), { status: 'asleep', open: true, wake: true, tools: ANDROID_TOOLS }],
+        ['android locked', android('A5', { pid: -1, 'device.locked': true }), { status: 'locked', open: true, tools: ANDROID_TOOLS }],
+        // Not reachable: the hint is the line, Open screen is disabled, no tools and no Wake.
+        ['android offline', android('A6', { state: 'offline', pid: -1, 'screen.power': 'off' }), { status: 'offline', line: 'offline', open: false }],
+        ['android unauthorized', android('A7', { state: 'unauthorized', pid: -1 }), { status: 'unauthorized', line: 'unauthorized', open: false }],
+        // No player in this browser: the line says why Open screen is disabled.
+        ['android no player', android('A8'), { status: 'ready', line: 'player', open: false, tools: ANDROID_TOOLS, inUse: true }, false],
+        // iPhone: no stream service line, no Wake and no tools; a running session is In use.
+        ['iphone ready', iphone('I1'), { status: 'ready', open: true }],
+        ['iphone session', iphone('I2', { session: 'ready' }), { status: 'ready', open: true, inUse: true }],
+        ['iphone asleep', iphone('I3', { 'screen.power': 'off' }), { status: 'asleep', open: true }],
+        ['iphone starting', iphone('I4', { session: 'starting' }), { status: 'starting', open: true }],
+        ['iphone developer mode', iphone('I5', { developerMode: false }), { status: 'attention', line: 'developer-mode', action: 'enable-developer-mode', open: false }],
+        ['iphone failed', iphone('I6', { session: 'error' }), { status: 'error', line: 'session', action: 'restart-services', open: true }],
+        // A failed session and Developer Mode off: the line says why the screen cannot open.
+        ['iphone failed, developer mode', iphone('I7', { session: 'error', developerMode: false }), { status: 'error', line: 'developer-mode', action: 'enable-developer-mode', open: false }],
+        ['iphone unlock', iphone('I8', { unlockSchedule: { enabled: true, time: '03:00', hasPasscode: false } }), { status: 'attention', line: 'unlock', action: 'open-settings', open: true }],
+        ['iphone offline', iphone('I9', { state: 'disconnected', unlockSchedule: { enabled: true, time: '03:00', hasPasscode: false } }), { status: 'offline', line: 'offline', open: false }],
+        ['iphone unauthorized', iphone('I10', { state: 'unauthorized' }), { status: 'unauthorized', line: 'unauthorized', open: false }],
+        // The browser's players do not matter to an iPhone.
+        ['iphone without a player', iphone('I11'), { status: 'ready', open: true }, false],
+    ];
+    for (const [label, entry, expected, playable] of cases) {
+        assert.deepEqual(card(entry, playable), { line: undefined, action: undefined, wake: false, tools: [], inUse: false, ...expected }, label);
+    }
+    // The Start flag: Starting is the status and the service line goes.
+    const starting = android('A9', { pid: -1 });
+    markStarting(starting.key);
+    try {
+        assert.deepEqual([card(starting).status, card(starting).line], ['starting', undefined]);
+    } finally {
+        clearStarting(starting.key);
+    }
+    // What a kind of phone offers on its card.
+    assert.deepEqual(cardCapabilities('android'), { wake: true, startStreamService: true, player: true });
+    assert.deepEqual(cardCapabilities('ios'), { wake: false, startStreamService: false, player: false });
+});
+
+test('the row of a phone is the head of its card and its switcher row: one chip, no serial, no tracker', () => {
+    const rowOf = (entry, props = {}) => elements(PhoneRow({ entry, ...props }));
+    const text = (nodes) => nodes.flatMap((node) => [node.props.children].flat().filter((child) => typeof child === 'string' || typeof child === 'number')).join(' ');
+    const chips = (nodes) => nodes.filter((node) => /\bkit-chip\b/.test(node.props.class || ''));
+    const pixel = android('SERIAL-PIXEL', { 'ro.build.version.release': '16', 'battery.level': 80, 'battery.charging': false });
+    const nodes = rowOf(pixel);
+    assert.deepEqual(chips(nodes).map((chip) => [chip.props.children, chip.props['data-status']]), [['Ready', 'ready']], 'one status chip');
+    assert.match(text(nodes), /Google Pixel 9 Pro/);
+    assert.equal(platformLine(pixel), 'Android 16 · 80%');
+    assert.equal(platformLine(android('C', { 'ro.build.version.release': '15', 'battery.level': 35, 'battery.charging': true })), 'Android 15 · 35% · Charging');
+    assert.equal(platformLine(android('D', { 'ro.build.version.release': '16', 'battery.level': 80, state: 'offline' })), 'Android 16', 'no stale level for a phone that is away');
+    assert.equal(platformLine(iphone('I')), 'iOS 27.2', 'an iPhone reports no battery');
+    assert.doesNotMatch(text(nodes), /SERIAL-PIXEL|Host/, 'no serial and no tracker name');
+    // A running session is a mark after the platform line, never a second chip.
+    assert.match(text(nodes), /In use/);
+    assert.doesNotMatch(text(rowOf(android('STOPPED', { pid: -1 }))), /In use/);
+    for (const entry of [android('X', { 'screen.power': 'off' }), iphone('Y', { session: 'ready', developerMode: false }), iphone('Z', { state: 'disconnected' })]) {
+        assert.equal(chips(rowOf(entry)).length, 1, `${entry.key}: one chip`);
+    }
+    // The switcher's current phone: Viewing in place of the status chip.
+    const viewing = rowOf(pixel, { chip: Chip({ tone: 'info', children: 'Viewing' }) });
+    assert.deepEqual(chips(viewing).map((chip) => chip.props.children), ['Viewing']);
+    // The unread count, with its words for a reader that does not see the badge.
+    assert.equal(rowOf(pixel).some((node) => /kit-badge/.test(node.props.class || '')), false, 'nothing for no unread');
+    const unread = rowOf(iphone('I'), { unread: 3 });
+    assert.equal(unread.find((node) => /kit-badge/.test(node.props.class || '')).props.children, '3');
+    assert.match(text(unread), /3 unread/);
 });
 
 test('the installed app has one name and the colours of the page', () => {
@@ -373,7 +474,7 @@ test('the status chip and the unread badge of the kit', () => {
 
 test('the list, its cards, the switcher and the notices take their controls, icons and messages from the kit', () => {
     const views = ['src/app/views/DeviceList.tsx', 'src/app/views/DeviceCard.tsx', 'src/app/views/DeviceSwitcherSheet.tsx'];
-    const parts = ['AsleepBanner', 'StreamServiceStatus', 'TrackerStatusNotice', 'ErrorBoundary', 'NotificationsLink', 'DeviceIcon'].map(
+    const parts = ['PhoneRow', 'WakeButton', 'StreamServiceStatus', 'TrackerStatusNotice', 'ErrorBoundary', 'NotificationsLink', 'DeviceIcon'].map(
         (name) => `src/app/ui/${name}.tsx`,
     );
     for (const file of [...views, ...parts]) {
@@ -385,7 +486,7 @@ test('the list, its cards, the switcher and the notices take their controls, ico
     }
     const styles = [
         'src/style/views/DeviceList.css', 'src/style/views/DeviceSwitcherSheet.css', 'src/style/ui/StreamServiceStatus.css',
-        'src/style/ui/ErrorBoundary.css', 'src/style/ui/DeviceIcon.css',
+        'src/style/ui/ErrorBoundary.css', 'src/style/ui/DeviceIcon.css', 'src/style/ui/PhoneRow.css',
     ];
     for (const file of styles) {
         const rules = read(file);
@@ -401,15 +502,34 @@ test('the list, its cards, the switcher and the notices take their controls, ico
     const list = read('src/app/views/DeviceList.tsx');
     assert.match(list, /<AppBar\s+root\s+title=\{LIST_PAGE_NAME\}/);
     assert.match(list, /<IconButton icon="refresh" label="Reload"/);
-    // Messages: a banner for a condition, a status line under the control for an outcome.
-    assert.match(read('src/app/ui/AsleepBanner.tsx'), /<Banner tone="info" action=/);
-    assert.match(read('src/app/ui/AsleepBanner.tsx'), /<InlineStatus tone="error">Could not wake the screen\./);
+    // Messages: a banner for a condition, a status line under the control for an outcome. The
+    // asleep banner is gone: Wake is a button beside the status, its outcome a status line.
+    assert.equal(fs.existsSync(path.join(root, 'src/app/ui/AsleepBanner.tsx')), false, 'the asleep banner is gone');
+    const wake = read('src/app/ui/WakeButton.tsx');
+    assert.match(wake, /<InlineStatus tone="error">Could not wake the screen\./);
+    assert.match(wake, /wakeDevice\(tracker, udid\)/, 'the wake request is the one of googDevice/client/wake.ts');
+    assert.doesNotMatch(wake, /<Banner\b/);
     assert.match(read('src/app/ui/TrackerStatusNotice.tsx'), /<Banner>/);
     const card = read('src/app/views/DeviceCard.tsx');
     assert.equal(/device-unavailable-hint/.test(card), false, 'the grey paragraph for every outcome is gone');
-    for (const place of ['developer-mode', 'restart-problem', 'refresh', 'restart', 'remount']) {
-        assert.match(card, new RegExp(`\\{feedbackAt\\('${place}'\\)\\}`), `the outcome of ${place} shows under its control`);
+    // One outcome at a time, under the line whose button sent the command.
+    assert.equal((card.match(/<InlineStatus\b/g) || []).length, 1, 'the outcome of a command has one place');
+    for (const place of ['developer-mode', 'restart']) {
+        assert.match(card, new RegExp(`setFeedback\\(\\{\\s*place: '${place}'`), `${place} reports its outcome there`);
     }
     assert.ok((card.match(/<ConfirmPrompt\b/g) || []).length > 0, 'a card asks with the confirm prompt');
     assert.doesNotMatch(card, /<ConfirmPrompt\s[^>]*\bkit\b/, 'which takes no kit prop: its look is the only one');
+    // The disclosure, the serial and the platform checks of the card are gone.
+    assert.doesNotMatch(card, /AnimatedDetails|<details|device-details|device-serial|trackerName/);
+    assert.doesNotMatch(card, /params\.type === '(android|ios)'/, 'the card reads capabilities, not the platform');
+    // Words say phone. The buttons in place of Open screen are gone.
+    for (const file of [...views, 'src/app/ui/PhoneRow.tsx', 'src/app/ui/WakeButton.tsx']) {
+        const strings = read(file).match(/'[^'\n]*'|"[^"\n]*"|>[^<>{}\n]+</g) || [];
+        // Words, not names: "devices-page", id="devices" and data-device-key name parts of the page.
+        const said = strings.filter(
+            (text) => (/\s/.test(text) || text.startsWith('>')) && /(^|[^-\w])[Dd]evices?(?![-\w])/.test(text),
+        );
+        assert.deepEqual(said, [], `${file} says phone, not device`);
+    }
+    assert.doesNotMatch(card, /Device unavailable|Waiting for trust|Browser cannot play/);
 });

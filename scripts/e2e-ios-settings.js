@@ -576,7 +576,7 @@ async function disconnectedFlow(browser) {
             try {
                 const card = page.locator(`[data-device-key="ios:${UDID}"]`);
                 await card.locator('.device-unlock-schedule').waitFor();
-                assert.equal(await card.getByRole('button', { name: 'Device unavailable', exact: true }).isDisabled(), true);
+                assert.equal(await card.getByRole('button', { name: 'Open screen', exact: true }).isDisabled(), true);
                 const settings = card.getByRole('button', { name: 'Settings for iPhone fixture', exact: true });
                 assert.ok(await settings.isVisible(), `${label}: Settings stays on a disconnected iPhone's card`);
                 assert.ok(await settings.isEnabled());

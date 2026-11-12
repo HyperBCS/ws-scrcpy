@@ -53,8 +53,10 @@ async function main() {
             }));
             await page.goto(BASE); await page.locator('.device').nth(1).waitFor(); await settleMotion(page);
             assert.equal(await page.getByRole('link', { name: 'Open screen', exact: true }).count(), 2);
-            assert.equal(await page.locator('.device summary').filter({ hasText: 'Details' }).count(), 2);
-            assert.equal(await page.locator('.device .stream-service-status').count(), 2);
+            // One status chip and a Settings button on each card; the disclosure is gone.
+            assert.equal(await page.locator('.device summary').count(), 0);
+            assert.equal(await page.locator('.device .phone-row-chip').count(), 2);
+            assert.equal(await page.locator('.device .stream-settings-button').count(), 2);
             assert.equal(await page.locator('.tracker-block').count(), 1, 'one host shares one grid across platforms');
             if (width > 720) {
                 const cards = await page.locator('.device').all();
@@ -64,7 +66,6 @@ async function main() {
             const buttons = await page.locator('.device-primary-actions .stream.primary').evaluateAll(nodes => nodes.map(el => ({ height: el.getBoundingClientRect().height, color: getComputedStyle(el).backgroundColor, radius: getComputedStyle(el).borderRadius })));
             assert.deepEqual(buttons[0], buttons[1], 'platform cards have matching primary controls');
             await page.screenshot({ path: `${out}/devices-${width}.png`, fullPage: true });
-            for (const details of await page.locator('.device-details').all()) { await details.locator('summary').click(); await settleMotion(page); assert.equal(await details.evaluate(el => el.open), true); }
             assert.deepEqual(errors, []); await context.close();
         }
         console.log('PASS coherent Android/iOS cards in light desktop and dark mobile layouts');

@@ -335,91 +335,47 @@ async function deviceCards(browser, mobile) {
         await card.getByText(/Enabling Developer Mode/).waitFor();
         assert.deepEqual(ofType('enable_developer_mode').map((command) => command.data), [{ udid: UDID }]);
 
-        // Recovery actions: own group, danger style, the consequence as visible text, confirmed.
-        await card.locator('summary').click();
-        await settleMotion(page);
-        const trouble = card.getByRole('group', { name: 'Troubleshooting', exact: true });
-        await trouble.getByRole('heading', { name: 'Troubleshooting', exact: true }).waitFor();
-        const rows = [
-            ['Stop stream service', /Ends the screen stream for every viewer\./, `Stop the stream service on ${NAME}?`, 'Stop stream service', 'kill_server'],
-            ['Restart services', /Ends the phone session for every viewer\./, `Restart services on ${NAME}?`, 'Restart services', 'restart_session'],
-            ['Remount developer image', /Ends the phone session first\./, `Remount the developer image on ${NAME}?`, 'Remount', 'remount_ddi'],
-        ];
-        for (const [name, visible] of rows) {
-            const button = trigger(trouble, name);
-            assert.match(await button.getAttribute('class'), /danger/, `${name} is a danger button`);
-            assert.equal(await button.getAttribute('title'), null, `${name} does not hide its warning in a tooltip`);
-            assert.match(await button.locator('xpath=..').textContent(), visible, `${name} shows what it ends`);
-        }
-        assert.equal(await trouble.getByRole('button', { name: 'Refresh info' }).count(), 0, 'Refresh info is not a troubleshooting action');
-        await shot(page, `card-iphone-troubleshooting-${label}-light`);
-        await page.emulateMedia({ colorScheme: 'dark' });
-        await shot(page, `card-iphone-troubleshooting-${label}-dark`);
-        await page.emulateMedia({ colorScheme: 'light' });
-        test.handlers.onCommand = (command) =>
-            ['restart_session', 'remount_ddi'].includes(command.type) ? { result: 'Fixture done.' } : undefined;
-        for (const [name, , question, confirmLabel, type] of rows) {
-            dialog = await armAndCheck(test, {
-                trigger: trigger(trouble, name), scope: trouble, question, consequence: /every viewer/,
-                confirmLabel, sentCount: () => ofType(type).length,
-            });
-            if (name === 'Restart services') await shot(page, `card-iphone-restart-armed-${label}-light`);
-            if (!(await dialog.count())) await trigger(trouble, name).click();
-            await confirmAfterGuard(dialog, confirmLabel);
-            await dialog.waitFor({ state: 'detached' });
-            assert.equal(ofType(type).length, 1, `${name} is sent once after confirming`);
-            if (type !== 'kill_server') {
-                await card.getByText('Fixture done.', { exact: true }).waitFor();
-                // The outcome is the status line under the row whose button was pressed.
-                const outcome = trouble.locator(`.device-trouble-row:has(> [aria-label="${name}"]) + .kit-status`);
-                assert.equal(await outcome.textContent(), 'Fixture done.', `${name}: the outcome is under its row`);
-            }
-        }
-        assert.deepEqual(ofType('kill_server')[0].data, { udid: UDID, pid: 1 });
+        // The card keeps the one action of its line. Stop, Restart and Remount under
+        // Troubleshooting are in the phone's Settings, which the settings suites check.
+        assert.equal(await card.locator('summary, details').count(), 0, 'the card has no disclosure');
+        assert.equal(await card.getByRole('group', { name: 'Troubleshooting' }).count(), 0);
 
-        // A waiting prompt goes away once its action no longer applies: the session stops
-        // elsewhere, or the phone disconnects.
-        await trigger(trouble, 'Stop stream service').click();
-        const stopPrompt = prompt(trouble, `Stop the stream service on ${NAME}?`);
-        await stopPrompt.waitFor();
-        test.handlers.iphone({ ...device, session: 'stopped' });
-        // Well inside the timeout, so it is the state change that removes it.
-        await stopPrompt.waitFor({ state: 'detached', timeout: 2000 });
-        await trigger(trouble, 'Restart services').click();
-        const restartPrompt = prompt(trouble, `Restart services on ${NAME}?`);
+        // A failed session: its line offers Restart services, confirmed like every action that
+        // ends the session for every viewer.
+        test.handlers.iphone({ ...device, developerMode: true, session: 'error', sessionMessage: 'The screen stream ended.' });
+        const line = card.locator('.device-problem[data-problem="session"]');
+        await line.waitFor();
+        test.handlers.onCommand = (command) => (command.type === 'restart_session' ? { result: 'Fixture done.' } : undefined);
+        const restart = trigger(line, 'Restart services');
+        assert.equal(await restart.getAttribute('title'), null, 'Restart services does not hide its warning in a tooltip');
+        dialog = await armAndCheck(test, {
+            trigger: restart, scope: card, question: `Restart services on ${NAME}?`, consequence: /The phone session ends for every viewer\./,
+            confirmLabel: 'Restart services', sentCount: () => ofType('restart_session').length,
+        });
+        await shot(page, `card-iphone-restart-armed-${label}-light`);
+        if (!(await dialog.count())) await restart.click();
+        await confirmAfterGuard(dialog, 'Restart services');
+        await dialog.waitFor({ state: 'detached' });
+        assert.equal(ofType('restart_session').length, 1, 'Restart services is sent once after confirming');
+        // The outcome is the status line under the line whose button was pressed.
+        await card.locator('.device-problem[data-problem="session"] + .kit-status', { hasText: 'Fixture done.' }).waitFor();
+
+        // A waiting prompt goes away once its action no longer applies: the phone disconnects.
+        await trigger(line, 'Restart services').click();
+        const restartPrompt = prompt(card, `Restart services on ${NAME}?`);
         await restartPrompt.waitFor();
         test.handlers.iphone({ ...device, state: 'Disconnected', session: 'stopped' });
+        // Well inside the timeout, so it is the state change that removes it.
         await restartPrompt.waitFor({ state: 'detached', timeout: 2000 });
-        assert.equal(ofType('kill_server').length, 1, 'no second stop was sent');
         assert.equal(ofType('restart_session').length, 1, 'no second restart was sent');
         test.handlers.iphone(device);
-
-        // Android: Stop stream service leaves the Files and Shell row and is confirmed.
-        const androidCard = page.locator(`[data-device-key="android:${android.udid}"]`);
-        await androidCard.locator('summary').click();
-        await settleMotion(page);
-        const androidTrouble = androidCard.getByRole('group', { name: 'Troubleshooting', exact: true });
-        const stop = trigger(androidTrouble, 'Stop stream service');
-        assert.equal(await androidCard.locator('.device-secondary-actions').getByRole('button', { name: /stream service/ }).count(), 0);
-        assert.match(await stop.getAttribute('class'), /danger/);
-        assert.match(await androidTrouble.textContent(), /Stopping it ends the stream for every viewer\./);
-        const killed = () => ofType('kill_server').filter((command) => command.data.udid === android.udid);
-        dialog = await armAndCheck(test, {
-            trigger: stop, scope: androidTrouble, question: 'Stop the stream service on Fixture Pixel fixture?', consequence: /every viewer/,
-            confirmLabel: 'Stop stream service', sentCount: () => killed().length,
-        });
-        await shot(page, `card-android-stop-armed-${label}-light`);
-        if (!(await dialog.count())) await stop.click();
-        await confirmAfterGuard(dialog, 'Stop stream service');
-        await dialog.waitFor({ state: 'detached' });
-        assert.deepEqual(killed().map((command) => command.data), [{ udid: android.udid, pid: 123 }]);
         assert.equal(
             await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),
             false,
             'the cards do not overflow the page',
         );
         assert.deepEqual(test.errors, []);
-        console.log(`PASS ${label} device cards: Developer Mode, stop, restart and remount are grouped, explained and confirmed`);
+        console.log(`PASS ${label} device cards: Developer Mode and Restart services are explained and confirmed on the line that needs them`);
     } finally {
         await test.context.close();
     }
@@ -537,9 +493,9 @@ async function controlsPanelShield(browser) {
 
         // The shield covers the stage only: the header above it takes a press directly.
         await page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }).tap();
-        const switcher = page.getByRole('dialog', { name: 'Switch device', exact: true });
+        const switcher = page.getByRole('dialog', { name: 'Switch phone', exact: true });
         await switcher.waitFor();
-        await page.getByRole('button', { name: 'Close Switch device', exact: true }).click();
+        await page.getByRole('button', { name: 'Close Switch phone', exact: true }).click();
         await switcher.waitFor({ state: 'hidden' });
         await fab.click();
         await panel.waitFor({ state: 'visible' });

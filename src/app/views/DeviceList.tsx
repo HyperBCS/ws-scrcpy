@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'preact/hooks';
-import { devices, DeviceEntry, deviceName, isDeviceAvailable } from '../state/devices';
+import { devices, DeviceEntry, isDeviceAvailable, phoneName } from '../state/devices';
 import { connectionStatus, listSummary, needsAttention } from '../state/phoneStatus';
 import { rememberListScroll, savedListScroll } from '../state/deviceListView';
 import { hostsError, hostsStatus } from '../state/hosts';
@@ -43,8 +43,7 @@ export function DeviceList() {
     const scroller = useRef<HTMLElement>(null);
     useLayoutEffect(() => {
         document.body.className = 'list';
-        // Back from a screen, a tool or Notifications: the list is where it was left. The cards
-        // have already reopened their disclosures (see `CardDetails`), so the height is final.
+        // Back from a screen, a tool or Notifications: the list is where it was left.
         if (scroller.current) {
             scroller.current.scrollTop = savedListScroll();
         }
@@ -55,7 +54,8 @@ export function DeviceList() {
     const attention = entries.filter(needsAttention).length;
     entries.sort(
         (a, b) =>
-            Number(isDeviceAvailable(b)) - Number(isDeviceAvailable(a)) || deviceName(a).localeCompare(deviceName(b)),
+            Number(isDeviceAvailable(b)) - Number(isDeviceAvailable(a)) ||
+            phoneName(a.descriptor.udid, a).localeCompare(phoneName(b.descriptor.udid, b)),
     );
     const groups = groupByHost(entries);
     const disconnected = hostsStatus.value === 'disconnected' || hostsStatus.value === 'error';
@@ -78,11 +78,11 @@ export function DeviceList() {
                     {!entries.length ? (
                         <section class="device-list-empty" role="status">
                             <DeviceIcon />
-                            <h2>{disconnected ? 'Connection lost' : 'No devices connected'}</h2>
+                            <h2>{disconnected ? 'Connection lost' : 'No phones connected'}</h2>
                             <p>
                                 {disconnected
                                     ? connectionStatus('reconnecting').label
-                                    : 'Connect a device by USB or wireless debugging, then unlock it.'}
+                                    : 'Connect a phone by USB or wireless debugging, then unlock it.'}
                             </p>
                             {hostsError.value && disconnected && (
                                 <InlineStatus tone="error">{hostsError.value}</InlineStatus>
@@ -93,13 +93,13 @@ export function DeviceList() {
                             <section
                                 key={group.key}
                                 class="tracker-block"
-                                aria-label={groups.length > 1 ? group.name : 'Connected devices'}
+                                aria-label={groups.length > 1 ? group.name : 'Connected phones'}
                             >
                                 {groups.length > 1 && (
                                     <div class="tracker-name">
                                         <span>{group.name}</span>
                                         <span>
-                                            {group.entries.length} device{group.entries.length === 1 ? '' : 's'}
+                                            {group.entries.length} phone{group.entries.length === 1 ? '' : 's'}
                                         </span>
                                     </div>
                                 )}
