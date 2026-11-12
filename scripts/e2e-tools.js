@@ -472,10 +472,23 @@ async function rememberedSize(browser) {
             assert(await smaller.isDisabled(),'12px is the smallest size');
             assert(state.resizes.at(-1).cols>state.starts[0].cols,'smaller text has more columns than the default');
             await smaller.evaluate(el=>el.closest('.shell-keys').scrollLeft=0);
+        } else {
+            // A touch screen attached to the computer: the row follows the pointer, the terminal
+            // gives it its height, and the session goes on.
+            const cdp = await context.newCDPSession(page);
+            const rows = state.starts[0].rows;
+            await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5});
+            await page.locator('.shell-keys').waitFor();
+            await until(()=>state.resizes.at(-1)?.rows<rows,'the phone is told the shorter terminal');
+            await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:false});
+            await page.locator('.shell-keys').waitFor({state:'detached'});
+            await until(()=>state.resizes.at(-1)?.rows===rows,'and the full height again');
+            await geometry(page);
+            assert.equal(state.starts.length,1,'the session is not started again');
         }
         await page.screenshot({path:`/tmp/ws-scrcpy-tools/${name}-shell.png`});
         assert.deepEqual(errors,[]);
-        console.log('PASS',name,mobile ? 'the text size is kept in this browser and the next session starts at it' : 'the terminal takes the height of the key row');
+        console.log('PASS',name,mobile ? 'the text size is kept in this browser and the next session starts at it' : 'the key row follows the pointer, and with a mouse the terminal takes its height');
         await context.close();
     }
 }
