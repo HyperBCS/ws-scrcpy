@@ -1513,15 +1513,22 @@ test('audio relay: real ffmpeg decodes the iPhone AAC-ELD fixture into audible P
     });
 });
 
-test('browser side: the CoreDevice receiver routes audio packets to the audio events, not the video decoder', () => {
+test('browser side: the CoreDevice receiver routes audio packets to the audio events, not the video decoder', (t) => {
     installBrowserMocks();
     const { CoreDeviceReceiver } = require('../src/app/applDevice/client/CoreDeviceReceiver');
     const { parseAudioPacket } = require('../src/app/client/audioPacket');
     const { CoreDeviceAudioRelay } = require('../src/server/appl-device/services/CoreDeviceAudio');
-    const receiver = Object.create(CoreDeviceReceiver.prototype);
+    // A real receiver (it owns the shared audio reader) with no socket behind it.
+    t.mock.method(CoreDeviceReceiver.prototype, 'openNewConnection', () => undefined);
+    const receiver = new CoreDeviceReceiver({
+        action: 'proxy-coredevice',
+        udid: 'audio-phone',
+        hostname: 'viewer.invalid',
+        port: 1,
+        pathname: '/',
+    });
     const events = [];
     receiver.emit = (name, payload) => events.push([name, payload]);
-    receiver.stopped = false;
     const metadata = CoreDeviceAudioRelay.packet(2, 0n, Buffer.from(JSON.stringify({ status: 'ready', codec: 'raw', sampleRate: 48000, channels: 2 })));
     const sample = CoreDeviceAudioRelay.packet(0, 20000n, Buffer.from([1, 2, 3, 4]));
     const toArrayBuffer = (buffer) => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.length);

@@ -8,7 +8,7 @@ import {
     CoreDeviceSessionState,
 } from '../../../common/CoreDeviceProtocol';
 import { AudioMetadata } from '../../../common/AudioProtocol';
-import { AudioFrame, audioErrorMetadata, parseAudioPacket } from '../../client/audioPacket';
+import { AudioEnvelopeReader, AudioFrame } from '../../client/audioPacket';
 
 export interface CoreDeviceReceiverEvents {
     connected: void;
@@ -63,8 +63,10 @@ export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, 
     private lastError?: string;
     private reconnectTimer?: ReturnType<typeof setTimeout>;
     private ready = false;
-    private audioMetadata?: AudioMetadata;
-    private audioConfig?: AudioFrame;
+    private readonly audio = new AudioEnvelopeReader({
+        audio: (frame) => this.emit('audio', frame),
+        metadata: (metadata) => this.emit('audioMetadata', metadata),
+    });
 
     constructor(params: ParamsCoreDeviceReceiver) {
         super({ ...params, action: ACTION.PROXY_COREDEVICE });
@@ -90,11 +92,11 @@ export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, 
     }
 
     public getAudioMetadata(): AudioMetadata | undefined {
-        return this.audioMetadata;
+        return this.audio.getMetadata();
     }
 
     public getAudioConfig(): AudioFrame | undefined {
-        return this.audioConfig;
+        return this.audio.getConfig();
     }
 
     /**
@@ -183,41 +185,17 @@ export class CoreDeviceReceiver extends ManagerClient<ParamsCoreDeviceReceiver, 
         }
         if (event.data instanceof ArrayBuffer) {
             if (new Uint8Array(event.data, 0, 1)[0] === COREDEVICE_FRAME_AUDIO) {
-                this.handleAudioPacket(event.data);
+                this.audio.read(event.data, 1);
                 return;
             }
             this.emit('video', new Uint8Array(event.data));
         }
     }
 
-    private handleAudioPacket(message: ArrayBuffer): void {
-        try {
-            const parsed = parseAudioPacket(message, 1);
-            if (parsed.kind === 'metadata') {
-                if (parsed.metadata.status !== 'ready' || parsed.metadata.codec !== this.audioMetadata?.codec) {
-                    this.audioConfig = undefined;
-                }
-                this.audioMetadata = parsed.metadata;
-                this.emit('audioMetadata', parsed.metadata);
-            } else {
-                if (parsed.frame.config) {
-                    this.audioConfig = parsed.frame;
-                }
-                this.emit('audio', parsed.frame);
-            }
-        } catch (error) {
-            // A bad audio packet only ever changes the audio status; video and input carry on.
-            this.audioConfig = undefined;
-            this.audioMetadata = audioErrorMetadata(error);
-            this.emit('audioMetadata', this.audioMetadata);
-        }
-    }
-
     protected onSocketClose(event?: CloseEvent): void {
         this.ready = false;
-        // The next session may run a different helper process; its audio state starts over.
-        this.audioMetadata = undefined;
-        this.audioConfig = undefined;
+        // The next session may run a different helper process.
+        this.audio.reset();
         this.emit('disconnected', undefined as never);
         if (this.stopped) {
             return;
