@@ -219,7 +219,7 @@ async function main() {
                 word('Esc'),word('Tab'),word('Ctrl'),
                 arrow('Left arrow',ICONS.arrowLeft),arrow('Up arrow',ICONS.arrowUp),arrow('Down arrow',ICONS.arrowDown),arrow('Right arrow',ICONS.arrowRight),
                 word('Paste'),word('Copy'),word('Smaller text','A−'),word('Larger text','A+')] : [],'the terminal keys');
-            if (mobile) assert.equal(await page.getByRole('group',{name:'Terminal keys',exact:true}).count(),1,'the row is named');
+            if (mobile) assert.equal(await page.getByRole('group',{name:'Extra keys',exact:true}).count(),1,'the row is named as in the mockup');
             assert.equal(await page.locator('header.kit-bar').count(),1,'the tool header is the kit bar');
             assert.deepEqual(await page.locator('h1').evaluateAll(list=>list.map(h1=>h1.className)),['kit-bar-name'],'one h1, the name in the bar');
             fs.mkdirSync('/tmp/ws-scrcpy-tools', {recursive:true});

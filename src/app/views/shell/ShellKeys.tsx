@@ -112,7 +112,7 @@ export function ShellKeys({ connected, control, onControl, terminal }: ShellKeys
     const send = (key: ShellKey) => terminal()?.sendKey?.(key);
     return (
         <>
-            <div class="shell-keys" role="group" aria-label="Terminal keys" onMouseDown={keepFocus}>
+            <div class="shell-keys" role="group" aria-label="Extra keys" onMouseDown={keepFocus}>
                 <Button size="compact" disabled={!connected} onClick={() => send('escape')}>
                     Esc
                 </Button>
