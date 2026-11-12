@@ -353,7 +353,7 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
                     }}
                     aria-expanded={open}
                     aria-controls="stream-controls"
-                    aria-label={open ? 'Hide controls' : 'Show controls'}
+                    aria-label={CONTROLS_LABEL}
                     title="Drag to move, tap for controls"
                 >
                     <Icon name={open ? 'close' : 'grid'} />

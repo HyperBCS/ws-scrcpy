@@ -352,7 +352,7 @@ async function main() {
             await page.screenshot({ path: path.join(OUT, label + '-rotated.png') });
 
             // Settings: playback options without the Fit screen toggle.
-            if (mobile) await page.getByRole('button', { name: 'Show controls', exact: true }).click();
+            if (mobile) await page.getByRole('button', { name: 'Phone controls', exact: true }).click();
             await page.getByRole('button', { name: 'Settings', exact: true }).click();
             const dialog = page.locator('dialog.kit-sheet[open]');
             await dialog.waitFor();
@@ -369,7 +369,7 @@ async function main() {
             await dialog.waitFor({ state: 'hidden' });
             const actionsControl = page.locator('.control-buttons-list [title="Actions"]');
             if (mobile && !(await actionsControl.isVisible())) {
-                await page.getByRole('button', { name: 'Show controls', exact: true }).click();
+                await page.getByRole('button', { name: 'Phone controls', exact: true }).click();
             }
             await actionsControl.click();
             const actions = page.getByRole('dialog', { name: 'Actions', exact: true });
