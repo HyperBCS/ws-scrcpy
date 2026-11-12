@@ -407,7 +407,7 @@ export function NotificationsView() {
 
     return (
         <div class="notifications-view">
-            <AppBar kit title="Notifications">
+            <AppBar title="Notifications">
                 <UnreadBadge
                     count={historySource && !unlinkedRequest ? status?.unreadBySource?.[historySource.id] || 0 : 0}
                 />

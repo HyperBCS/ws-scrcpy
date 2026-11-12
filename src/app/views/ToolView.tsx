@@ -344,7 +344,6 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
         >
             {active && (
                 <AppBar
-                    kit
                     title={entry ? deviceName(entry) : udid}
                     status={<StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />}
                 >

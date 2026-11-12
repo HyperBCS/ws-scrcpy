@@ -1012,18 +1012,19 @@ function elements(node, found = []) {
     return found;
 }
 
-test('AppBar and TabStrip are the stream header and the tool tabs, with their class names', () => {
+test('AppBar and TabStrip are the kit bar and the kit tabs, with their class names', () => {
     const { browser } = open('#!');
     const { AppBar, AppBarStatus } = require('../src/app/ui/AppBar');
     const { TabStrip } = require('../src/app/ui/TabStrip');
     const { DEVICE_TABS } = require('../src/app/state/routes');
 
-    const bar = elements(AppBar({ title: 'Pixel 9', status: AppBarStatus({ connected: true, children: 'Connected' }), children: 'actions' }));
+    const bar = elements(AppBar({ title: 'Pixel 9', status: AppBarStatus({ children: 'Connected' }), children: 'actions' }));
     const classes = bar.map((element) => element.props.class).filter(Boolean);
-    assert.deepEqual(classes, ['stream-header', 'stream-header-back', 'stream-header-device', 'stream-header-status connected', 'stream-header-status-dot']);
-    const back = bar.find((element) => element.props.class === 'stream-header-back');
+    assert.deepEqual(classes, ['kit-bar', 'kit-bar-back', 'kit-icon', 'kit-bar-back-label', 'kit-bar-title', 'kit-bar-name', 'kit-bar-status']);
+    const back = bar.find((element) => element.props.class === 'kit-bar-back');
     assert.equal(back.props['aria-label'], 'Phones', 'the back control is named after the list');
-    assert.equal(bar.find((element) => element.type === 'strong').props.children, 'Pixel 9');
+    assert.equal(bar.find((element) => element.type === 'h1').props.children, 'Pixel 9');
+    assert.equal(bar.find((element) => element.props.class === 'kit-bar-status').props.role, 'status');
     // The back control is up: with nothing below this page, the list replaces it.
     browser.location.hash = '#!action=shell&udid=PIXEL';
     browser.settle();

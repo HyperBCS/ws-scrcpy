@@ -43,7 +43,6 @@ a {
     summary,
     label,
     .floating-toolbar,
-    .stream-header,
     .device-avatar,
     .device-status,
     a.desc-block.stream {
@@ -215,7 +214,7 @@ body.list {
 }
 
 /* Feedback stays on controls, never on the remote touch surface. */
-:where(#devices, .notifications-page, .stream-header, .floating-toolbar)
+:where(#devices, .notifications-page, .floating-toolbar)
     :where(button, a.desc-block, .notification-link-button) {
     transition:
         background-color var(--motion-fast) ease,
@@ -223,7 +222,7 @@ body.list {
         color var(--motion-fast) ease,
         transform var(--motion-fast) var(--ease-out);
 }
-:where(#devices, .notifications-page, .stream-header, .floating-toolbar)
+:where(#devices, .notifications-page, .floating-toolbar)
     :where(button:not(:disabled), a.desc-block, .notification-link-button):active {
     transform: scale(0.97);
 }

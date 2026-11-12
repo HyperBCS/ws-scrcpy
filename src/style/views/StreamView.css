@@ -64,7 +64,7 @@
 }
 
 /* A long press on the header of a phone's page brings up no selection handles and no iOS
-   callout, as before the kit: `app.css` says this for the older header by its class. */
+   callout. */
 @media (hover: none) and (pointer: coarse) {
     .stream-view > .kit-bar,
     .tool-view > .kit-bar,

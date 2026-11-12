@@ -823,9 +823,8 @@ function Bars() {
                 <Demo name="a phone's page">
                     <div class="kit-demo-frame">
                         <AppBar
-                            kit
                             title="Pixel 9"
-                            status={<AppBarStatus kit>Connected · Android 16</AppBarStatus>}
+                            status={<AppBarStatus>Connected · Android 16</AppBarStatus>}
                             onBack={nothing}
                             onTitle={nothing}
                             titleLabel="Switch phone. Viewing Pixel 9"
@@ -838,9 +837,8 @@ function Bars() {
                 <Demo name="a page">
                     <div class="kit-demo-frame">
                         <AppBar
-                            kit
                             title="Notifications"
-                            status={<AppBarStatus kit>Receiving from Bench iPhone</AppBarStatus>}
+                            status={<AppBarStatus>Receiving from Bench iPhone</AppBarStatus>}
                             onBack={nothing}
                         >
                             <Button size="compact">Open screen</Button>
@@ -849,12 +847,7 @@ function Bars() {
                 </Demo>
                 <Demo name="root">
                     <div class="kit-demo-frame">
-                        <AppBar
-                            kit
-                            root
-                            title="Phones"
-                            status={<AppBarStatus kit>3 phones, 1 needs attention</AppBarStatus>}
-                        >
+                        <AppBar root title="Phones" status={<AppBarStatus>3 phones, 1 needs attention</AppBarStatus>}>
                             <IconButton icon="bell" label="Notifications" />
                             <IconButton icon="refresh" label="Refresh the list" />
                         </AppBar>

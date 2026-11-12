@@ -63,10 +63,9 @@ export function DeviceList() {
     return (
         <div class="devices-page">
             <AppBar
-                kit
                 root
                 title={LIST_PAGE_NAME}
-                status={<AppBarStatus kit>{listSummary(entries.length, available, attention)}</AppBarStatus>}
+                status={<AppBarStatus>{listSummary(entries.length, available, attention)}</AppBarStatus>}
             >
                 <NotificationsLink />
                 {/* An installed app has no browser reload button, and pull-to-refresh is off. */}

@@ -104,11 +104,10 @@ export function StreamView({ params, tabs }: StreamViewProps) {
     return (
         <div class="stream-view">
             <AppBar
-                kit
                 title={String(name)}
                 status={
                     <>
-                        <AppBarStatus kit>
+                        <AppBarStatus>
                             {error
                                 ? 'Unable to connect'
                                 : streamConnected.value
