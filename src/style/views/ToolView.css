@@ -20,6 +20,17 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+/* In the tone of its state, as the status line of a screen's header: Failed red, Connecting and
+   Reconnecting amber, Connected in the colour of the text, Offline and Stopped muted. */
+.tool-connection[data-tone='error'] {
+    color: var(--danger-text);
+}
+.tool-connection[data-tone='warning'] {
+    color: var(--warning-text);
+}
+.tool-connection[data-tone='success'] {
+    color: var(--text);
+}
 
 .tool-workspace {
     display: flex;

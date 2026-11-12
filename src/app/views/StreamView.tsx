@@ -124,7 +124,10 @@ export function StreamView({ params, tabs }: StreamViewProps) {
                 status={
                     <>
                         <AppBarStatus tone={connection.tone}>{connection.label}</AppBarStatus>
-                        <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />
+                        {/* Only while the service does not run. */}
+                        {descriptor && (
+                            <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} unlessRunning />
+                        )}
                     </>
                 }
             >

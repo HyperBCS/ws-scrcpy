@@ -2,9 +2,9 @@
 // node scripts/test-browser.js phone-status
 // The status words of a phone's page against socket fixtures, for an Android phone and an
 // iPhone: after a drop the header and the card over the picture both say Reconnecting, in the
-// warning tone; a phone that leaves the list keeps its name in the header and the tab title; a
-// phone the list reports as disconnected is Offline, in the neutral tone. At 390x844 and
-// 1280x800, light and dark. No device, adb or pymobiledevice3 is involved.
+// warning tone and its amber; a phone that leaves the list keeps its name in the header and the
+// tab title; a phone the list reports as disconnected is Offline, in the neutral tone and grey.
+// At 390x844 and 1280x800, light and dark. No device, adb or pymobiledevice3 is involved.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -84,13 +84,33 @@ const statusLine = (page) => page.locator('header.kit-bar .kit-bar-status').firs
 const headerSays = (page, text) =>
     page.waitForFunction((wanted) => document.querySelector('header.kit-bar .kit-bar-status')?.textContent.trim() === wanted, text, { timeout: 15000 });
 
-/** The header and the card over the picture say `text` in the tone of `state`. */
+/** The colour a role token draws in this theme. */
+const tokenColour = (page, token) =>
+    page.evaluate((name) => {
+        const probe = document.createElement('span');
+        probe.style.color = `var(${name})`;
+        document.body.append(probe);
+        const colour = getComputedStyle(probe).color;
+        probe.remove();
+        return colour;
+    }, token);
+const TONE_TOKEN = { warning: '--warning-text', neutral: '--text-muted', success: '--text', error: '--danger-text' };
+
+/**
+ * The header and the card over the picture say `text` in the tone of `state`, and the header's
+ * line is drawn in the colour of that tone.
+ */
 async function bothSay(page, label, text, state, tone) {
     await headerSays(page, text);
     const card = page.locator('.sleep-overlay-label');
     await card.getByText(text, { exact: true }).waitFor();
     assert.equal(await card.getAttribute('data-connection'), state, `${label}: the card is ${state}`);
     assert.equal(await statusLine(page).getAttribute('data-tone'), tone, `${label}: the header has the ${tone} tone`);
+    assert.equal(
+        await statusLine(page).evaluate((line) => getComputedStyle(line).color),
+        await tokenColour(page, TONE_TOKEN[tone]),
+        `${label}: the header's line is in the ${tone} colour`,
+    );
 }
 
 /** The card of an iPhone whose session runs: its status, and the session as a second chip. */
@@ -127,6 +147,7 @@ async function phonePage(browser, layout, kind) {
         await page.goto(`${BASE}#!action=device&udid=${udid}&view=screen`);
         await headerSays(page, 'Connected');
         assert.equal(await statusLine(page).getAttribute('data-tone'), 'success');
+        assert.equal(await statusLine(page).evaluate((line) => getComputedStyle(line).color), await tokenColour(page, '--text'), `${label}: Connected is in the text colour`);
         assert.equal(await page.locator('h1.kit-bar-name').textContent(), name);
 
         // The card over the picture follows the screen fact of the list, on both platforms.

@@ -349,7 +349,11 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
             {active && (
                 <AppBar
                     title={phoneName(udid, entry)}
-                    status={<StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} />}
+                    status={
+                        descriptor && (
+                            <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} unlessRunning />
+                        )
+                    }
                 >
                     <NotificationsLink compact />
                     <Button size="compact" onClick={() => openSheet('devices')}>

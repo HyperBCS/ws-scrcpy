@@ -6,7 +6,7 @@ import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import { streamSocketUrl } from '../googDevice/client/deviceInterfaces';
 import { DEFAULT_FILES_PATH } from '../googDevice/client/deviceTools';
 import { StreamClientCoreDevice } from '../applDevice/client/StreamClientCoreDevice';
-import { deviceName, findDeviceByUdid } from '../state/devices';
+import { deviceName, findDeviceByUdid, phoneName } from '../state/devices';
 import { goUp, switchRoute } from '../state/router';
 import {
     clientParams,
@@ -93,7 +93,8 @@ function PhoneNotListed({ udid }: { udid: string }) {
     }, []);
     return (
         <main class="tool-unavailable">
-            <AppBar title={udid} />
+            {/* A name the page saw earlier, else the serial. */}
+            <AppBar title={phoneName(udid)} />
             <section class="tool-unavailable-body" role="status">
                 <h2>This phone is not connected</h2>
                 <p>It is not in the list of phones. This page shows its screen when it is connected.</p>

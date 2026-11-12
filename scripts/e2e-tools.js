@@ -184,13 +184,15 @@ async function main() {
             assert.deepEqual(await page.locator('h1').evaluateAll(list=>list.map(h1=>h1.className)),['kit-bar-name'],'one h1, the name in the bar');
             fs.mkdirSync('/tmp/ws-scrcpy-tools', {recursive:true});
             await page.screenshot({path:`/tmp/ws-scrcpy-tools/${name}-shell.png`});
-            await page.locator('.stream-service-status[data-stream-service="running"]').waitFor();
+            // The header names the stream service only while it does not run (p5-screen-shell).
+            const service = page.locator('.kit-bar .stream-service-status');
+            assert.equal(await service.count(),0,'a running service has no line in the header');
             state.update({pid:-1});
             await page.locator('.stream-service-status[data-stream-service="stopped"]').waitFor();
             state.update({pid:0});
             await page.locator('.stream-service-status[data-stream-service="unknown"]').waitFor();
             state.update({pid:123,'screen.power':'off','device.awake':false});
-            await page.locator('.stream-service-status[data-stream-service="running"]').waitFor();
+            await service.waitFor({state:'detached'});
             await page.getByRole('button',{name:'Tab',exact:true}).click();
             const ctrl = page.getByRole('button',{name:'Ctrl',exact:true});
             // Ctrl is one-shot. Left on, it would turn "ls" and Enter into ^L ^S, which clears
