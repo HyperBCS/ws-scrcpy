@@ -354,6 +354,33 @@ test('a stale card says what the phone last reported, never Offline, and cannot 
     }
 });
 
+test('Settings opened from a card keeps its phone when a restarted server lists it under a new key', () => {
+    const { settingsPhone } = require('../src/app/views/settings/phone');
+    const moved = (entry, trackerId) => ({ ...entry, key: `${trackerId}:${entry.descriptor.udid}`, trackerId });
+    const previous = devices.value;
+    try {
+        const pixel = android('S6');
+        const phone = iphone('S7');
+        devices.value = new Map([pixel, phone].map((entry) => [entry.key, entry]));
+        assert.equal(settingsPhone({ udid: 'S6', deviceKey: pixel.key }).entry, pixel);
+        // The server restarted: the same phones under new tracker ids.
+        const later = [moved(pixel, 'android-2'), moved(phone, 'ios-2')];
+        devices.value = new Map(later.map((entry) => [entry.key, entry]));
+        assert.equal(settingsPhone({ udid: 'S6', deviceKey: pixel.key }).entry, later[0]);
+        assert.equal(settingsPhone({ udid: 'S7', deviceKey: phone.key }).entry, later[1]);
+        // A serial that two servers list is still not guessed for an Android phone.
+        const other = { ...moved(pixel, 'remote'), params: { type: 'android', hostname: 'remote.test' } };
+        devices.value = new Map([...later, other].map((entry) => [entry.key, entry]));
+        assert.equal(settingsPhone({ udid: 'S6', deviceKey: pixel.key }).entry, undefined);
+        assert.equal(settingsPhone({ udid: 'S6', deviceKey: other.key }).entry, other);
+        // A phone that is no longer listed is not found.
+        devices.value = new Map();
+        assert.equal(settingsPhone({ udid: 'S6', deviceKey: pixel.key }).entry, undefined);
+    } finally {
+        devices.value = previous;
+    }
+});
+
 test('a card has one status, at most one line under it, and the action for that status', () => {
     const now = Date.UTC(2026, 10, 11, 12, 0);
     const card = (entry, playable = true) => {

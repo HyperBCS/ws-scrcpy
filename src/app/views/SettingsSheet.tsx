@@ -119,7 +119,7 @@ export function SettingsSheet() {
                         !connected && (
                             <Banner>
                                 {entry.stale
-                                    ? 'Reconnecting to the server. Settings that need the phone are off until it is back.'
+                                    ? 'Reconnecting to the server. Settings that need it are off until it is back.'
                                     : platform === 'ios'
                                       ? 'The phone is not connected. Changes are kept on the server and apply when it is back.'
                                       : 'The phone is not connected. Settings that need it are off until it is back.'}

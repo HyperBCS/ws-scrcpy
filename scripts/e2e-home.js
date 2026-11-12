@@ -804,13 +804,33 @@ async function reconnectingList(browser, { width, height, mobile, colorScheme })
         await dialog.waitFor();
         await settleMotion(page);
         // It says what it last knew, and that the list is reconnecting, not that the phone is off.
-        await dialog.getByText('Reconnecting to the server. Settings that need the phone are off until it is back.', { exact: true }).waitFor();
+        const staleBanner = 'Reconnecting to the server. Settings that need it are off until it is back.';
+        await dialog.getByText(staleBanner, { exact: true }).waitFor();
         const fact = (name) => dialog.locator(`[data-fact="${name}"] .kit-row-value`).textContent();
         assert.deepEqual([await fact('status'), await fact('connection')], ['Ready', 'Reconnecting…'], `${label}: the stale phone in its Settings`);
         await dialog.getByRole('button', { name: /^Close/ }).click();
         await dialog.waitFor({ state: 'hidden' });
         await reconnect(again);
         await target.getByRole('link', { name: 'Open screen', exact: true }).waitFor();
+
+        // Settings of an iPhone stays open through a drop and the list of a restarted server.
+        // While the list is stale the schedule, which is kept on the server, cannot be changed.
+        // The new list lists the phone under a new key, and the sheet has the phone again.
+        const third = await drop();
+        await card(page, 'ios-2:HOME-IPHONE-UNLOCK').getByRole('button', { name: 'Settings for iPhone unlock', exact: true }).click();
+        await dialog.waitFor();
+        await settleMotion(page);
+        await dialog.getByText(staleBanner, { exact: true }).waitFor();
+        const toggle = dialog.getByRole('switch', { name: 'Unlock twice a day' });
+        assert.equal(await toggle.isDisabled(), true, `${label}: the schedule cannot be changed while the list is stale`);
+        test.listIds = { android: 'android-3', ios: 'ios-3' };
+        await reconnect(third);
+        await dialog.locator('[data-fact="connection"] .kit-row-value').getByText('Connected', { exact: true }).waitFor({ timeout: 5000 });
+        assert.equal(await dialog.getByText(/^(Reconnecting to the server|Waiting for the phone)/).count(), 0, `${label}: Settings has the phone again`);
+        assert.equal(await toggle.isEnabled(), true, `${label}: the schedule can be changed again`);
+        await dialog.getByRole('button', { name: /^Close/ }).click();
+        await dialog.waitFor({ state: 'hidden' });
+
         assert.equal(test.streams, 0, `${label}: no screen was opened`);
         assert.deepEqual(test.commands, [], `${label}: nothing was sent to a phone`);
         assert.deepEqual(test.errors, []);
