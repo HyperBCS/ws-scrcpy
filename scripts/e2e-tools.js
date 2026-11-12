@@ -484,7 +484,7 @@ async function rememberedSize(browser) {
         page.on('pageerror', error=>errors.push(error.message));
         const state = await fixtures(page);
         await page.goto(BASE);
-        await page.locator('.device').filter({hasText:'Phone A'}).getByRole('link',{name:'Shell',exact:true}).click();
+        await page.locator('.device').filter({hasText:'Phone A'}).getByRole('link',{name:'Shell on Fixture Phone A',exact:true}).click();
         await page.locator('.tool-connection.connected').waitFor({state:'attached'});
         await page.locator('.terminal-container .xterm').waitFor();
         await geometry(page);
