@@ -78,10 +78,12 @@ function integer(env: NodeJS.ProcessEnv, key: string, fallback: number, minimum 
 
 function host(value: unknown, field: string): string {
     if (typeof value !== 'string' || !value.trim()) invalid(field, 'a host name or IP address');
-    const name = value.trim().toLowerCase();
+    const original = value.trim();
+    const name = original.toLowerCase();
     const bracketed = name.startsWith('[') && name.endsWith(']');
     const bare = bracketed ? name.slice(1, -1) : name;
-    if (net.isIP(bare) && (!bracketed || net.isIP(bare) === 6)) return name;
+    // An IPv6 scope names an interface, whose case must be kept for socket hosts.
+    if (net.isIP(bare) && (!bracketed || net.isIP(bare) === 6)) return name.includes('%') ? original : name;
     const domain = name.endsWith('.') ? name.slice(0, -1) : name;
     if (domain.length > 253 || !domain.split('.').every((part) => /^[a-z\d](?:[a-z\d-]*[a-z\d])?$/.test(part)))
         invalid(field, 'a host name or IP address');

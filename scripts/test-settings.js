@@ -247,6 +247,7 @@ test('invalid IPv6 hosts fail before startup and adb receives an unbracketed add
         assert.throws(() => readSettings({ ADB_HOST: value }), /ADB_HOST/);
     }
     assert.equal(readSettings({ ADB_HOST: '[::1]' }).adbHost, '::1');
+    assert.equal(readSettings({ ADB_HOST: 'fe80::1%En0' }).adbHost, 'fe80::1%En0');
     assert.throws(() => validateConfiguration({ remoteHostList: [{
         type: 'ios', hostname: '::1', port: 8443, secure: true,
     }] }), /remoteHostList\[0\].hostname/);
