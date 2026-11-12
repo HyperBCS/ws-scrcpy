@@ -21,7 +21,6 @@ const ORDER = `@layer ${LAYERS.join(', ')};`;
 // not its own: a rule kept next to the rules it belongs with, in the layer it has to act in.
 const ALLOWED = {
     'app.css': { colours: 3, fontSizes: 3, radii: 1, important: 5 },
-    'morebox.css': { zIndex: 1, important: 1 },
     // The order of what lies over the picture: the controls (8) and their shield (4).
     'views/FloatingToolbar.css': { zIndex: 2 },
     // The sleep overlay, one step under the header (4).
