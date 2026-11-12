@@ -21,8 +21,10 @@ class BroadcastManager {
         port: number,
         audioEnabled: boolean,
         audioOptions?: BroadcastAudioOptions,
-    ): Promise<void> {
-        if (this.broadcasts.has(udid)) return;
+        signal?: AbortSignal,
+    ): Promise<Broadcast | undefined> {
+        signal?.throwIfAborted();
+        if (this.broadcasts.has(udid)) return this.broadcasts.get(udid);
 
         const endpoint = { host: '127.0.0.1', port };
         const socket = net.connect(endpoint);
@@ -36,29 +38,41 @@ class BroadcastManager {
             // Until the Broadcast takes ownership of every socket, a failure of any one of them
             // has to destroy the rest: an unattended net.Socket re-throws its 'error' as an
             // uncaught exception, and the surviving sockets would otherwise leak their fds.
+            const cleanup = (failed = true) => {
+                signal?.removeEventListener('abort', onAbort);
+                socket.off('connect', onConnect);
+                if (failed) {
+                    control.off('connect', onControlConnect);
+                    audio?.off('connect', onAudioConnect);
+                }
+                sockets.forEach((s) => s.off('error', onStartupError));
+            };
             const onStartupError = (err: Error) => {
                 if (settled) return;
                 settled = true;
-                sockets.forEach((s) => s.destroy());
+                cleanup();
+                // Destroyed sockets may still report an already queued error. Keep it handled.
+                sockets.forEach((s) => {
+                    s.on('error', () => undefined);
+                    s.destroy();
+                });
                 reject(err);
             };
 
+            const onAbort = () => onStartupError(signal?.reason ?? Error('The stream start was cancelled.'));
             sockets.forEach((s) => s.once('error', onStartupError));
 
-            control.once('connect', () => {
+            const onControlConnect = () => {
                 console.log(`Connected to control server at 127.0.0.1:${port}`);
-            });
+            };
+            const onAudioConnect = () => {
+                console.log(`Connected to audio server at 127.0.0.1:${port}`);
+            };
 
-            if (audio) {
-                audio.once('connect', () => {
-                    console.log(`Connected to audio server at 127.0.0.1:${port}`);
-                });
-            }
-
-            socket.once('connect', () => {
+            const onConnect = () => {
                 if (settled) return;
                 settled = true;
-                sockets.forEach((s) => s.off('error', onStartupError));
+                cleanup(false);
 
                 console.log('Connected to scrcpy');
                 // Pass the instance, not just the udid: a Broadcast that is already orphaned
@@ -72,8 +86,13 @@ class BroadcastManager {
                     audioOptions,
                 );
                 this.broadcasts.set(udid, broadcast);
-                resolve();
-            });
+                resolve(broadcast);
+            };
+            control.once('connect', onControlConnect);
+            audio?.once('connect', onAudioConnect);
+            socket.once('connect', onConnect);
+            signal?.addEventListener('abort', onAbort, { once: true });
+            if (signal?.aborted) onAbort();
         });
     }
 

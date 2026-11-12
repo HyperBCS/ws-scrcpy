@@ -292,15 +292,12 @@ test('invalid TLS values and file credentials fail while Config is built without
     }] }), (error) => /server\[0\].options/.test(error.message) && !error.message.includes('sentinel'));
 });
 
-test('every direct audio, icon and adb child filters a key set after module loading', async (t) => {
+test('every direct audio and icon child filters a key set after module loading', async (t) => {
     const cp = require('node:child_process');
     const { EventEmitter } = require('node:events');
     const { CoreDeviceAudioRelay } = require('../src/server/appl-device/services/CoreDeviceAudio');
     const { NotificationIcons } = require('../src/server/notifications/NotificationIcons');
     const { PyMobileDevice } = require('../src/server/appl-device/services/PyMobileDevice');
-    require.extensions['.jar'] = () => {};
-    require.cache[require.resolve('../vendor/Genymobile/scrcpy/LICENSE')] = { exports: {} };
-    const { Device } = require('../src/server/goog-device/Device');
     const inherited = [];
     t.mock.method(cp, 'spawn', (_command, _args, options) => {
         inherited.push(options.env || process.env);
@@ -324,12 +321,7 @@ test('every direct audio, icon and adb child filters a key set after module load
         const relay = Object.create(CoreDeviceAudioRelay.prototype);
         relay.startDecoder();
         await new NotificationIcons(temporary).get('fixture-phone', 'com.fixture');
-        const phone = Object.create(Device.prototype);
-        Object.assign(phone, { udid: 'fixture-phone', audioLaunchGeneration: 0,
-            connectionGeneration: 0, servicePidRevision: 0, connected: false, TAG: '[fixture-phone]', setServerPid: () => {} });
-        await phone.runShellCommandAdb('fixture');
-        await assert.rejects(phone.launchServer('fixture', false), /exited before it was ready/);
-        assert.equal(inherited.length, 4);
+        assert.equal(inherited.length, 2);
         for (const env of inherited) {
             assert.equal(Object.hasOwn(env, IOS_KEY_ENV), false, 'a child must not inherit the stored key');
             assert.equal(env.PATH, process.env.PATH);
@@ -365,7 +357,7 @@ test('server fixture setup cannot inherit an exported canonical data directory',
     fs.writeFileSync(marker, 'controlled fixture marker');
     const before = fs.statSync(marker);
     const probe = path.join(__dirname, 'fixtures', 'data-dir-probe.js');
-    for (const fixture of ['android-server', 'coredevice', 'crash-paths', 'ios-settings-store',
+    for (const fixture of ['android-server', 'android-owners', 'coredevice', 'crash-paths', 'ios-settings-store',
         'ios-unlock', 'notification-service', 'notifications', 'review-fixes', 'server-regressions',
         'settings', 'web-security']) {
         // No inherited settings, key paths or tool overrides can enter the subprocess.

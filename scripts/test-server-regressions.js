@@ -35,6 +35,7 @@ const { broadcastManager } = require('../src/common/BroadcastManager');
 const { ControlCenterCommand } = require('../src/common/ControlCenterCommand');
 const { Config } = require('../src/server/Config');
 const { Device } = require('../src/server/goog-device/Device');
+const { AdbShell } = require('../src/server/goog-device/AdbShell');
 const { ScrcpyServer } = require('../src/server/goog-device/ScrcpyServer');
 const { ScrcpyInstance } = require('../src/server/goog-device/ScrcpyInstance');
 const { streamConfig, validateStreamConfigPatch } = require('../src/server/goog-device/StreamConfig');
@@ -80,16 +81,12 @@ function lockDump({ user = 0, after = user, showing = true, occluded = false, lo
 }
 
 function lockDevice() {
-    const device = Object.create(Device.prototype);
-    Object.assign(device, {
-        connected: true,
-        connectionGeneration: 1,
-        lockReadSequence: 0,
-        lastAppliedLockRead: 0,
-        servicePidRevision: 0,
-        descriptor: { pid: 0, ...unknownLockState() },
-        updates: 0,
-    });
+    const device = new Device('state-fixture', 'offline');
+    device.connected = true;
+    device.descriptor.state = 'device';
+    device.poller.connected = true;
+    device.session.connected = true;
+    device.updates = 0;
     device.emitUpdate = () => device.updates++;
     return device;
 }
@@ -200,8 +197,6 @@ test('out-of-order or disconnected lock replies cannot restore stale state or au
     const pending = deferred();
     device.runShellCommandAdbKit = () => pending.promise;
     const disconnected = device.refreshLockState();
-    device.fetchDeviceInfo = () => {};
-    device.stopRuntimeStateUpdates = () => {};
     device.setState('offline');
     assert.equal(device.descriptor['device.locked'], 'unknown', 'Disconnect invalidates lock badges immediately');
     pending.resolve(lockDump());
@@ -210,27 +205,27 @@ test('out-of-order or disconnected lock replies cannot restore stale state or au
 });
 
 test('lock polling uses the fast cadence without overlapping reads or surviving disconnect', async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
-    const noStartup = t.mock.method(Device.prototype, 'setState', () => {});
-    const device = new Device('lock-poll-fixture', 'device');
-    noStartup.mock.restore();
-    device.runtimeStatePollActive = true;
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const device = lockDevice();
+    t.after(() => device.release());
+    const poller = device.poller;
+    poller.active = true;
     const pending = deferred();
     let calls = 0;
-    device.refreshLockState = () => {
-        calls++;
-        return pending.promise;
-    };
-    device.scheduleLockStateUpdate();
+    poller.refreshLockState = () => { calls++; return pending.promise; };
+    poller.due.lock = Date.now() + 2000;
+    poller.arm();
     t.mock.timers.tick(1999);
     assert.equal(calls, 0);
     t.mock.timers.tick(1);
+    await tick();
     assert.equal(calls, 1);
-    device.scheduleLockStateUpdate(true);
+    poller.due.lock = Date.now();
+    poller.arm();
     t.mock.timers.tick(5000);
+    await tick();
     assert.equal(calls, 1, 'Pending polls cannot overlap');
-    device.connected = false;
-    device.connectionGeneration++;
+    device.setState('offline');
     pending.resolve(unknownLockState());
     await tick();
     t.mock.timers.tick(60000);
@@ -240,10 +235,10 @@ test('lock polling uses the fast cadence without overlapping reads or surviving 
 test('bounded diagnostics destroy sockets which arrive after the request already timed out', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const pending = deferred();
-    const device = Object.create(Device.prototype);
-    device.client = { shell: () => pending.promise };
-    const reading = device.runShellCommandAdbKit('read-only fixture', 10);
+    const shell = new AdbShell('fixture', { shell: () => pending.promise });
+    const reading = shell.read('read-only fixture', 10);
     const rejected = assert.rejects(reading, /timed out/);
+    await tick();
     t.mock.timers.tick(10);
     await rejected;
     const socket = new Socket();
@@ -252,15 +247,13 @@ test('bounded diagnostics destroy sockets which arrive after the request already
     assert.equal(socket.destroyed, true);
 });
 
-test('tracker service release cancels device polling and invalidates pending lock replies', async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
-    const noStartup = t.mock.method(Device.prototype, 'setState', () => {});
-    const device = new Device('released-lock-fixture', 'device');
-    noStartup.mock.restore();
-    device.runtimeStatePollActive = true;
+test('tracker service release cancels phone polling and invalidates pending lock replies', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const device = lockDevice();
     const pending = deferred();
     device.runShellCommandAdbKit = () => pending.promise;
-    device.scheduleLockStateUpdate();
+    device.poller.due.lock = Date.now() + 2000;
+    device.poller.arm();
     const read = device.refreshLockState();
     const center = Object.create(AndroidControlCenter.prototype);
     center.stopTracker = () => {};
@@ -269,7 +262,7 @@ test('tracker service release cancels device polling and invalidates pending loc
     center.descriptors = new Map([['test', device.descriptor]]);
     center.adbListeners = new Set();
     center.release();
-    assert.equal(device.lockStateTimeoutId, undefined);
+    assert.equal(device.poller.timer, undefined);
     assert.equal(device.isConnected(), false);
     assert.equal(center.deviceMap.size, 0);
     device.setState('device');
@@ -277,7 +270,7 @@ test('tracker service release cancels device polling and invalidates pending loc
     pending.resolve(lockDump());
     assert.deepEqual(await read, unknownLockState());
     t.mock.timers.tick(60000);
-    assert.equal(device.lockStateTimeoutId, undefined);
+    assert.equal(device.poller.timer, undefined);
 });
 
 test('read-only service discovery counts this server only, ignores enumeration helpers and never kills', async () => {
@@ -313,13 +306,13 @@ test('service PID polling reports running, confirmed stop, and failed-read unkno
         if (failure) throw Error('Device diagnostic failed');
         return result;
     });
-    await device.refreshServicePid();
+    await device.poller.refreshServicePid();
     assert.equal(device.descriptor.pid, 321);
     result = [];
-    await device.refreshServicePid();
+    await device.poller.refreshServicePid();
     assert.equal(device.descriptor.pid, -1);
     failure = true;
-    await device.refreshServicePid();
+    await device.poller.refreshServicePid();
     assert.equal(device.descriptor.pid, 0);
     assert.equal(device.updates, 3);
 });
@@ -328,18 +321,17 @@ test('stale PID reads cannot restore a disconnected or replaced service', async 
     const device = lockDevice();
     let pending = deferred();
     t.mock.method(ScrcpyServer, 'getServerPid', () => pending.promise);
-    const first = device.refreshServicePid();
-    device.fetchDeviceInfo = () => {};
-    device.stopRuntimeStateUpdates = () => {};
+    const first = device.poller.refreshServicePid();
     device.setState('offline');
     pending.resolve([123]);
     await first;
     assert.equal(device.descriptor.pid, 0);
     device.connected = true;
-    device.connectionGeneration++;
+    device.poller.connected = true;
+    device.poller.generation++;
     pending = deferred();
-    const old = device.refreshServicePid();
-    device.setServerPid(456);
+    const old = device.poller.refreshServicePid();
+    device.poller.setServerPid(456);
     pending.resolve([123]);
     await old;
     assert.equal(device.descriptor.pid, 456);
@@ -349,23 +341,22 @@ test('owned process exit clears stale PID while an old close cannot overwrite th
     const device = lockDevice();
     device.udid = 'process-status-fixture';
     device.TAG = '[process-status-test]';
-    device.audioLaunchGeneration = 0;
     const children = [];
-    t.mock.method(childProcess, 'spawn', () => {
+    device.shell.open = async () => {
         const child = new EventEmitter();
-        child.pid = 500 + children.length;
-        child.stdout = new EventEmitter();
-        child.stderr = new EventEmitter();
-        child.kill = () => true;
+        child.destroy = () => {};
         children.push(child);
         return child;
-    });
+    };
+    t.mock.method(childProcess, 'spawn', () => assert.fail('Android must not spawn a CLI'));
     t.mock.method(ScrcpyServer, 'getServerPid', async () => []);
     // Neither launch connects a stream here, so each one ends as "exited before it was ready".
     const first = device.launchServer('fixture one', false).catch((error) => error);
-    device.setServerPid(123);
+    await tick();
+    device.poller.setServerPid(123);
     const second = device.launchServer('fixture two', false).catch((error) => error);
-    device.setServerPid(456);
+    await tick();
+    device.poller.setServerPid(456);
     children[0].emit('close', 0);
     assert.match((await first).message, /exited before it was ready/);
     assert.equal(device.descriptor.pid, 456);
@@ -378,13 +369,13 @@ test('owned process exit clears stale PID while an old close cannot overwrite th
 
 test('strict process discovery propagates adb failures instead of claiming no service exists', async () => {
     const device = lockDevice();
-    device.pidDetectionVariant = 1; // pidof supported.
+    device.poller.pidDetectionVariant = 1; // pidof supported.
     device.runShellCommandAdbKit = async () => {
         throw Error('USB gone');
     };
     await assert.rejects(device.getPidOf('app_process', true), /USB gone/);
     assert.deepEqual(await device.getPidOf('app_process'), [], 'Existing launch probing keeps its fallback behavior');
-    device.pidDetectionVariant = 0; // The initial capability probe must be bounded and truthful too.
+    device.poller.pidDetectionVariant = 0; // The initial capability probe must be bounded and truthful too.
     device.runShellCommandAdbKit = async (_command, timeout) => {
         assert.equal(timeout, 6500);
         throw Error('USB gone during capability probe');
@@ -1063,8 +1054,7 @@ test('leaving a stream while its header is pending does not leak proxy listeners
 
 test('simultaneous viewers launch only one scrcpy process', async (t) => {
     const launch = deferred();
-    const device = Object.create(Device.prototype);
-    device.restartChain = Promise.resolve();
+    const device = lockDevice().session;
     device.TAG = '[test]';
     device.viewers = new Set([{ close() {} }]);
     let pid;
@@ -1091,8 +1081,7 @@ test('a scrcpy server left behind by a previous ws-scrcpy process is replaced, n
     // Killing ws-scrcpy does not always kill the on-device servers. The next instance then finds
     // a pid but owns no broadcast for it, and without this every viewer is closed with
     // "No active stream for this device yet" until someone kills the phone-side process by hand.
-    const device = Object.create(Device.prototype);
-    device.restartChain = Promise.resolve();
+    const device = lockDevice().session;
     device.TAG = '[test]';
     device.udid = 'orphaned';
     device.viewers = new Set([{ close() {} }]);
@@ -1208,12 +1197,11 @@ test('scrcpy waits for its jar upload to finish and propagates transfer errors',
 
 test('queued Applies keep each launch config stable and reconnects wait for restart', async () => {
     const restarting = deferred();
-    const device = Object.create(Device.prototype);
-    device.restartChain = Promise.resolve();
-    device.udid = 'queued-device';
+    const device = lockDevice().session;
+    device.target.udid = 'queued-device';
     const seen = [];
     device.restartWithCurrentConfig = async () => {
-        seen.push(streamConfig.get(device.udid).audio);
+        seen.push(streamConfig.get(device.target.udid).audio);
         if (seen.length === 1) await restarting.promise;
     };
     device.startServerNow = async () => {
@@ -1224,7 +1212,7 @@ test('queued Applies keep each launch config stable and reconnects wait for rest
     const second = device.updateStreamConfig({ audio: true });
     const connect = device.startServer();
     await tick();
-    assert.equal(streamConfig.get(device.udid).audio, false);
+    assert.equal(streamConfig.get(device.target.udid).audio, false);
     assert.deepEqual(seen, [false]);
     restarting.resolve();
     await Promise.all([first, second, connect]);
@@ -1232,8 +1220,7 @@ test('queued Applies keep each launch config stable and reconnects wait for rest
 });
 
 test('a failed server operation does not block later reconnects', async () => {
-    const device = Object.create(Device.prototype);
-    device.restartChain = Promise.resolve();
+    const device = lockDevice().session;
     let attempts = 0;
     device.startServerNow = async () => {
         if (++attempts === 1) throw new Error('temporary failure');
@@ -1244,14 +1231,13 @@ test('a failed server operation does not block later reconnects', async () => {
 });
 
 test('audio failure changes only launch config and a deliberate Apply retries saved audio settings', async () => {
-    const device = Object.create(Device.prototype);
-    device.restartChain = Promise.resolve();
-    device.udid = 'audio-fallback-device';
-    streamConfig.set(device.udid, { audio: true, audioCodec: 'raw', audioSource: 'voice-call-downlink' });
+    const device = lockDevice().session;
+    device.target.udid = 'audio-fallback-device';
+    streamConfig.set(device.target.udid, { audio: true, audioCodec: 'raw', audioSource: 'voice-call-downlink' });
     device.audioFailure = { status: 'error', sampleRate: 48000, channels: 2, message: 'Capture rejected' };
     assert.equal(device.getLaunchStreamConfig().audio, false);
-    assert.equal(streamConfig.get(device.udid).audio, true);
-    assert.equal(streamConfig.get(device.udid).audioSource, 'voice-call-downlink');
+    assert.equal(streamConfig.get(device.target.udid).audio, true);
+    assert.equal(streamConfig.get(device.target.udid).audioSource, 'voice-call-downlink');
     device.restartWithCurrentConfig = async () => {
         assert.equal(device.getLaunchStreamConfig().audio, true);
     };
@@ -1261,30 +1247,28 @@ test('audio failure changes only launch config and a deliberate Apply retries sa
 });
 
 test('fatal audio startup logs trigger fallback, while late errors from an intentional restart are ignored', async (t) => {
-    const device = Object.create(Device.prototype);
+    const device = lockDevice();
     device.udid = 'audio-log-device';
-    device.TAG = '[audio-test]';
-    device.descriptor = { pid: 0 };
-    device.servicePidRevision = 0;
-    device.audioLaunchGeneration = 0;
-    device.getServerPid = async () => undefined;
+    device.session.target.udid = device.udid;
+    device.session.getServerPid = async () => undefined;
     streamConfig.set(device.udid, { audio: true });
-    const child = new EventEmitter();
-    child.pid = 123;
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
-    child.kill = () => true;
-    t.mock.method(childProcess, 'spawn', () => child);
+    const shell = new EventEmitter();
+    shell.destroy = () => {};
+    device.shell.open = async () => shell;
+    t.mock.method(childProcess, 'spawn', () => assert.fail('Android must not spawn a CLI'));
+    t.mock.method(AdbUtils, 'acquireForward', async () => ({ port: 18999, release: async () => {} }));
     const running = device.launchServer('scrcpy test fixture', true).catch((error) => error);
-    child.stderr.emit('data', Buffer.from('[server] ERROR: Audio recording error'));
+    await tick();
+    shell.emit('data', Buffer.from('[server] ERROR: Audio recording error'));
     assert.equal(device.getLaunchStreamConfig().audio, false);
-    await device.killServerNow(123);
-    device.audioFailure = undefined;
-    child.stderr.emit('data', Buffer.from('[server] ERROR: Audio recording error during old shutdown'));
-    assert.equal(device.audioFailure, undefined);
+    await device.session.killServerNow(123);
+    device.session.audioFailure = undefined;
+    shell.emit('data', Buffer.from('[server] ERROR: Audio recording error during old shutdown'));
+    assert.equal(device.session.audioFailure, undefined);
     assert.equal(device.getLaunchStreamConfig().audio, true);
-    child.emit('close', 0);
+    shell.emit('close');
     await running;
+    device.release();
 });
 
 test('iOS tracking: an attached phone is unauthorized until lockdown answers, then trusted with Developer Mode', async (t) => {

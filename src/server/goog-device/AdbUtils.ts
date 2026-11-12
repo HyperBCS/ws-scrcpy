@@ -1,7 +1,7 @@
 import * as portfinder from 'portfinder';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
-import { AdbExtended } from './adb';
+import { AdbExtended, HostAdbClient } from './adb';
 import { Forward } from '@dead50f7/adbkit/lib/Forward';
 import Entry from '@dead50f7/adbkit/lib/adb/sync/entry';
 import Stats from '@dead50f7/adbkit/lib/adb/sync/stats';
@@ -10,26 +10,34 @@ import { FileStats } from '../../types/FileStats';
 import Protocol from '@dead50f7/adbkit/lib/adb/protocol';
 import { Multiplexer } from '../../packages/multiplexer/Multiplexer';
 import { ReadStream } from 'fs';
-import { Duplex } from 'stream';
 import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
+import { AdbShell, ShellResult } from './AdbShell';
+
+export type { ShellResult } from './AdbShell';
+
 import { sendFileDownload } from './filePush/FileDownload';
 
-export type ShellResult = {
-    code: number;
-    output: string;
-};
+export interface ForwardLease {
+    port: number;
+    /** Removes only a forward created by this acquisition. Reused forwards belong to their owner. */
+    release(): Promise<void>;
+}
 
 // Copying or deleting a large folder takes far longer than a diagnostic shell read.
 const FILE_OPERATION_TIMEOUT = 120000;
-// adb frames a request with four hex digits of length, so anything past 65,535 bytes is cut
-// short without an error. The limit leaves room for the service prefix and the status marker.
-const MAX_SHELL_COMMAND_BYTES = 65000;
 // One `rm` command stays well under that limit; a larger selection is deleted in batches.
 const MAX_REMOVE_COMMAND_BYTES = 32 * 1024;
 // How many ports to try when adb reports that one is already forwarded or bound.
 const FORWARD_ATTEMPTS = 10;
 
+interface OwnedForward {
+    users: number;
+    remove(): Promise<void>;
+}
+
 export class AdbUtils {
+    private static readonly FORWARD_CLEANUP_TIMEOUT_MS = 6500;
+    private static ownedForwards = new Map<string, OwnedForward>();
     private static forwardQueue: Promise<void> = Promise.resolve();
 
     private static async formatStatsMin(entry: Entry): Promise<FileStats> {
@@ -136,7 +144,11 @@ export class AdbUtils {
      * the same free port, and adb would point it at whichever asked last.
      */
     public static forward(serial: string, remote: string): Promise<number> {
-        const pending = AdbUtils.forwardQueue.then(() => AdbUtils.forwardNow(serial, remote));
+        return AdbUtils.acquireForward(serial, remote).then((lease) => lease.port);
+    }
+
+    public static acquireForward(serial: string, remote: string, signal?: AbortSignal): Promise<ForwardLease> {
+        const pending = AdbUtils.forwardQueue.then(() => AdbUtils.forwardNow(serial, remote, signal));
         AdbUtils.forwardQueue = pending.then(
             () => undefined,
             () => undefined,
@@ -144,15 +156,63 @@ export class AdbUtils {
         return pending;
     }
 
-    private static async forwardNow(serial: string, remote: string): Promise<number> {
+    private static async adbOperation<T>(
+        client: HostAdbClient,
+        signal: AbortSignal | undefined,
+        run: (scoped: HostAdbClient) => PromiseLike<T>,
+    ): Promise<T> {
+        const operation = AdbExtended.operation(client, signal);
+        try {
+            return await run(operation.client);
+        } finally {
+            operation.close();
+        }
+    }
+
+    /** A stopped launch still gets one bounded cleanup attempt with a fresh signal. */
+    private static async cleanupOperation<T>(
+        client: HostAdbClient,
+        run: (scoped: HostAdbClient) => PromiseLike<T>,
+        signal?: AbortSignal,
+    ): Promise<T> {
+        const controller = new AbortController();
+        const abort = () => controller.abort(signal?.reason);
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
+        const timer = setTimeout(
+            () => controller.abort(Error('Removing the phone connection forward timed out.')),
+            AdbUtils.FORWARD_CLEANUP_TIMEOUT_MS,
+        );
+        try {
+            return await AdbUtils.adbOperation(client, controller.signal, run);
+        } finally {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', abort);
+        }
+    }
+
+    private static removeForward(client: HostAdbClient, serial: string, local: string): Promise<void> {
+        return AdbUtils.cleanupOperation(client, (scoped) => scoped.killForward(serial, local));
+    }
+
+    private static async forwardNow(serial: string, remote: string, signal?: AbortSignal): Promise<ForwardLease> {
+        signal?.throwIfAborted();
         const client = AdbExtended.createClient();
-        const forwards = await client.listForwards(serial);
+        const forwards = await AdbUtils.adbOperation(client, signal, (scoped) => scoped.listForwards(serial));
+        signal?.throwIfAborted();
         const forward = forwards.find((item: Forward) => {
             return item.remote === remote && item.local.startsWith('tcp:') && item.serial === serial;
         });
         if (forward) {
             const { local } = forward;
-            return parseInt(local.split('tcp:')[1], 10);
+            const port = parseInt(local.split('tcp:')[1], 10);
+            const key = JSON.stringify([serial, local, remote]);
+            const owned = AdbUtils.ownedForwards.get(key);
+            if (owned) {
+                owned.users++;
+                return AdbUtils.forwardLease(key, owned, port);
+            }
+            return { port, release: async () => undefined };
         }
         // adb lists the forwards of every device here. A port another phone holds is not free,
         // even where this process cannot see adb's listener (adb on another host).
@@ -172,8 +232,22 @@ export class AdbUtils {
             try {
                 // Another server on the same adb may take the port between the check and here.
                 // adb then refuses, where the plain form would move that forward to this device.
-                await client.forwardNoRebind(serial, `tcp:${port}`, remote);
-                return port;
+                signal?.throwIfAborted();
+                await AdbUtils.adbOperation(client, signal, (scoped) =>
+                    scoped.forwardNoRebind(serial, `tcp:${port}`, remote),
+                );
+                if (signal?.aborted) {
+                    await AdbUtils.removeForward(client, serial, `tcp:${port}`);
+                    signal.throwIfAborted();
+                }
+                const key = JSON.stringify([serial, `tcp:${port}`, remote]);
+                const owned: OwnedForward = {
+                    users: 1,
+                    // Cleanup has its own scope: the launch signal may already be aborted.
+                    remove: () => AdbUtils.removeForward(client, serial, `tcp:${port}`),
+                };
+                AdbUtils.ownedForwards.set(key, owned);
+                return AdbUtils.forwardLease(key, owned, port);
             } catch (error) {
                 failure = error as Error;
                 if (!/rebind|bind|in use/i.test(failure.message)) {
@@ -181,72 +255,54 @@ export class AdbUtils {
                 }
             }
         }
-        throw failure ?? Error('No free port for the device connection.');
+        throw failure ?? Error('No free port for the phone connection.');
+    }
+
+    private static forwardLease(key: string, owned: OwnedForward, port: number): ForwardLease {
+        let released = false;
+        return {
+            port,
+            release: () => {
+                if (released) return Promise.resolve();
+                released = true;
+                // Serialize removal with acquisition, and retain a forward a successor already reused.
+                const removal = AdbUtils.forwardQueue.then(async () => {
+                    if (AdbUtils.ownedForwards.get(key) !== owned) return;
+                    if (--owned.users > 0) return;
+                    await owned.remove();
+                    // Retain confirmed ownership if removal could not be confirmed. A later
+                    // acquisition may reuse it; an old lease still cannot remove its successor.
+                    AdbUtils.ownedForwards.delete(key);
+                });
+                AdbUtils.forwardQueue = removal.then(
+                    () => undefined,
+                    () => undefined,
+                );
+                return removal;
+            },
+        };
     }
 
     /** Remove legacy filesystem forwards left by an earlier server version. */
-    public static async removeFileSocketForwards(serial: string): Promise<void> {
+    public static async removeFileSocketForwards(serial: string, signal?: AbortSignal): Promise<void> {
         const client = AdbExtended.createClient();
-        const forwards = await client.listForwards(serial);
+        const forwards = await AdbUtils.cleanupOperation(client, (scoped) => scoped.listForwards(serial), signal);
 
         // Over the adb protocol, not the adb CLI: a spawned client starts an adb server of its own
         // when none answers, and replaces a server of another version.
         const removals = forwards
             .filter((forward) => forward.serial === serial && forward.local.includes('localfilesystem:'))
-            .map((forward) => client.killForward(serial, forward.local));
+            .map((forward) => AdbUtils.removeForward(client, serial, forward.local));
 
         await Promise.all(removals);
     }
     /**
      * Runs one shell command and returns its combined output plus the shell exit status.
-     * `Device.runShellCommandAdbKit` exists for diagnostics; file operations need the exit
+     * Diagnostics use the same reader; file operations also need the exit
      * code, because `mkdir`/`mv`/`rm` report failures on stderr and adb still exits 0.
      */
     public static async shellExec(serial: string, command: string, timeoutMs = 15000): Promise<ShellResult> {
-        if (Buffer.byteLength(command) > MAX_SHELL_COMMAND_BYTES) {
-            throw Error('This command is too long to send to the device.');
-        }
-        const client = AdbExtended.createClient();
-        let stream: Duplex | undefined;
-        let expired = false;
-        let timer: NodeJS.Timeout | undefined;
-        const reading = client
-            .shell(serial, `${command} 2>&1; echo "__rc=$?"`)
-            .then((socket) => {
-                stream = socket;
-                if (expired) {
-                    socket.destroy();
-                    throw Error('The device did not answer in time.');
-                }
-                return AdbExtended.util.readAll(socket);
-            })
-            .then((buffer: Buffer) => {
-                const output = buffer.toString();
-                const match = output.match(/__rc=(\d+)\s*$/);
-                // No marker means the shell died before finishing: treat that as a failure
-                // rather than reporting success with truncated output.
-                const code = match ? parseInt(match[1], 10) : -1;
-                return { code, output: (match ? output.slice(0, match.index) : output).trim() };
-            });
-        if (!timeoutMs) {
-            return reading;
-        }
-        try {
-            return await Promise.race([
-                reading,
-                new Promise<ShellResult>((_resolve, reject) => {
-                    timer = setTimeout(() => {
-                        expired = true;
-                        stream?.destroy();
-                        reject(Error('The device did not answer in time.'));
-                    }, timeoutMs);
-                }),
-            ]);
-        } finally {
-            if (timer) {
-                clearTimeout(timer);
-            }
-        }
+        return new AdbShell(serial).exec(command, timeoutMs);
     }
 
     /** Single-quote one shell argument. File names legitimately contain spaces, quotes and `$`. */
@@ -270,7 +326,7 @@ export class AdbUtils {
         return AdbUtils.runFileOperation(
             serial,
             `mkdir -- ${AdbUtils.quote(pathString)}`,
-            'The device refused to create this folder.',
+            'The phone refused to create this folder.',
         );
     }
 
@@ -281,15 +337,15 @@ export class AdbUtils {
      */
     public static checkDevicePath(pathString: string): string {
         if (!pathString.startsWith('/')) {
-            throw Error('Only absolute device paths are allowed.');
+            throw Error('Only absolute phone paths are allowed.');
         }
         // eslint-disable-next-line no-control-regex
         if (/[\x00-\x1f\x7f]/.test(pathString)) {
-            throw Error('This name contains characters that cannot be used on the device.');
+            throw Error('This name contains characters that cannot be used on the phone.');
         }
         const normalized = path.posix.normalize(pathString).replace(/\/+$/, '') || '/';
         if (normalized === '/') {
-            throw Error('The device root cannot be changed.');
+            throw Error('The phone root cannot be changed.');
         }
         return normalized;
     }
@@ -303,7 +359,7 @@ export class AdbUtils {
                 `elif [ -e ${item} ] || [ -L ${item} ]; then echo item; else echo missing; fi`,
         );
         if (code !== 0 || (output !== 'missing' && output !== 'item' && output !== 'folder')) {
-            throw Error(output || 'The device did not say whether this name is in use.');
+            throw Error(output || 'The phone did not say whether this name is in use.');
         }
         return output;
     }
@@ -364,7 +420,7 @@ export class AdbUtils {
             return AdbUtils.runFileOperation(
                 serial,
                 `${AdbUtils.replaceGuards(source, destination)}else mv -fT -- ${source} ${destination}; fi`,
-                'The device refused to replace this item.',
+                'The phone refused to replace this item.',
                 FILE_OPERATION_TIMEOUT,
             );
         }
@@ -374,7 +430,7 @@ export class AdbUtils {
             `if [ -e ${destination} ] || [ -L ${destination} ]; then ${conflict}; ` +
                 `else mv -nT -- ${source} ${destination} && { ` +
                 `if [ -e ${source} ] || [ -L ${source} ]; then ${conflict}; else true; fi; }; fi`,
-            'The device refused to move this item.',
+            'The phone refused to move this item.',
             FILE_OPERATION_TIMEOUT,
         );
     }
@@ -390,7 +446,7 @@ export class AdbUtils {
                 `${AdbUtils.replaceGuards(source, destination)}` +
                     `elif cp -T -- ${source} ${partial} && mv -fT -- ${partial} ${destination}; then true; ` +
                     `else rm -f -- ${partial}; false; fi`,
-                'The device refused to replace this item.',
+                'The phone refused to replace this item.',
                 FILE_OPERATION_TIMEOUT,
             );
         }
@@ -403,7 +459,7 @@ export class AdbUtils {
                 `else report=$(cp -rnTv -- ${source} ${destination} 2>&1); result=$?; ` +
                 `if [ "$result" -ne 0 ]; then printf '%s\\n' "$report"; (exit "$result"); ` +
                 `elif [ -z "$report" ]; then ${conflict}; else true; fi; fi`,
-            'The device refused to copy this item.',
+            'The phone refused to copy this item.',
             FILE_OPERATION_TIMEOUT,
         );
     }
@@ -431,7 +487,7 @@ export class AdbUtils {
             await AdbUtils.runFileOperation(
                 serial,
                 command,
-                'The device refused to delete this item.',
+                'The phone refused to delete this item.',
                 FILE_OPERATION_TIMEOUT,
             );
         };
