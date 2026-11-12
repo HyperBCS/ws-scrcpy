@@ -561,6 +561,7 @@ async function listPage(browser, viewport) {
     }
 }
 
+// p6-inbox: touch sheets and mouse menus keep the same notification-page history.
 async function notificationsPage(browser, viewport) {
     const test = await start(browser, viewport);
     const { page } = test;
@@ -575,8 +576,14 @@ async function notificationsPage(browser, viewport) {
             Escape: () => page.keyboard.press('Escape'),
             'the backdrop': () => (test.mobile ? page.touchscreen.tap(8, 8) : page.mouse.click(8, 8)),
         };
+        const cardActions = test.mobile ? dialog : () => page.getByRole('menu', { name: 'Notification actions', exact: true });
+        const cardWays = test.mobile ? ways : {
+            Escape: () => page.keyboard.press('Escape'),
+            Tab: () => page.keyboard.press('Tab'),
+            'a press outside': () => page.mouse.click(8, 8),
+        };
         const overlays = [
-            { name: 'the actions of a notification', open: () => press(test, page.getByRole('button', { name: 'Actions for Coffee at four?', exact: true })), shown: dialog, ways },
+            { name: 'the actions of a notification', open: () => press(test, page.getByRole('button', { name: 'Actions for Coffee at four?', exact: true })), shown: cardActions, ways: cardWays },
             { name: 'Notification actions', open: () => press(test, page.getByRole('button', { name: 'Notification actions', exact: true })), shown: dialog, ways },
             // Filters is in the search row, which Search in the bar opens. The row is not an overlay.
             {
@@ -596,9 +603,10 @@ async function notificationsPage(browser, viewport) {
         // A confirm prompt in the sheet: the first Back cancels it, as Escape does, the next
         // one closes the sheet. Nothing is sent to the phone.
         await press(test, page.getByRole('button', { name: 'Actions for Design review', exact: true }));
-        await dialog().waitFor();
+        await cardActions().waitFor();
         await settleMotion(page);
-        await press(test, dialog().getByRole('button', { name: 'Decline on iPhone', exact: true }));
+        await press(test, cardActions().getByRole(test.mobile ? 'button' : 'menuitem', { name: 'Decline on iPhone', exact: true }));
+        await dialog().waitFor();
         await dialog().locator('.kit-confirm').waitFor();
         await page.goBack();
         await dialog().locator('.kit-confirm').waitFor({ state: 'detached' });
@@ -617,9 +625,10 @@ async function notificationsPage(browser, viewport) {
             node.dispatchEvent(new Event('cancel', { cancelable: true }));
         });
         await press(test, page.getByRole('button', { name: 'Actions for Design review', exact: true }));
-        await dialog().waitFor();
+        await cardActions().waitFor();
         await settleMotion(page);
-        await press(test, dialog().getByRole('button', { name: 'Decline on iPhone', exact: true }));
+        await press(test, cardActions().getByRole(test.mobile ? 'button' : 'menuitem', { name: 'Decline on iPhone', exact: true }));
+        await dialog().waitFor();
         await dialog().locator('.kit-confirm').waitFor();
         await closeRequest();
         await dialog().locator('.kit-confirm').waitFor({ state: 'detached' });
@@ -634,12 +643,13 @@ async function notificationsPage(browser, viewport) {
 
         // Another page while the sheet is open: it does not show there.
         await overlays[0].open();
-        await dialog().waitFor();
+        await cardActions().waitFor();
         await settleMotion(page);
         await page.evaluate((udid) => { location.hash = `#!action=device&udid=${udid}&view=shell`; }, PIXEL);
         await page.locator('.tool-view-shell').waitFor();
-        await dialog().waitFor({ state: 'hidden' });
+        await cardActions().waitFor({ state: 'hidden' });
         assert.equal(await dialog().count(), 0, `${label}: the sheet does not show over Shell`);
+        assert.equal(await page.getByRole('menu').count(), 0, `${label}: the menu does not show over Shell`);
         await page.locator('.kit-bar-back').first().click();
         await page.locator('#devices').waitFor();
 
@@ -658,7 +668,7 @@ async function notificationsPage(browser, viewport) {
         assert.equal((await at(page)).index, here.index - 1, `${label}: one Back leaves Notifications`);
         assert.deepEqual(test.streams, []);
         assert.deepEqual(test.errors, []);
-        console.log(`PASS ${label}: Back closes the action sheets and stays on Notifications; the next Back is the list`);
+        console.log(`PASS ${label}: Back closes the notification overlays and stays on Notifications; the next Back is the list`);
     } finally {
         await test.context.close();
     }

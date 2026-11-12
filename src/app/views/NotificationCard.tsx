@@ -11,6 +11,7 @@ import { AutoHeight } from '../ui/AutoHeight';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
 import { IconButton } from '../ui/IconButton';
+import { notificationTime } from './notifications/inbox';
 import '../../style/views/NotificationsInbox.css';
 
 /** The app's icon from the iPhone, or its first letter where the server has none. Setup lists apps with it too. */
@@ -53,6 +54,9 @@ export function NotificationCard({
     openMenu,
     openScreen,
     removeOnRead,
+    onExpand,
+    showSource = false,
+    menuIsPopover = false,
 }: {
     item: HistoryItem;
     source: NotificationSource;
@@ -60,15 +64,32 @@ export function NotificationCard({
     highlighted: boolean;
     markRead: () => Promise<void>;
     dismiss: () => Promise<void>;
-    openMenu: () => void;
+    openMenu: (anchor?: HTMLElement) => void;
     // Enter on the focused card, or a double-click with a mouse, opens the iPhone's screen.
     openScreen: () => void;
     removeOnRead: boolean;
+    onExpand?: (expanded: boolean) => void;
+    showSource?: boolean;
+    menuIsPopover?: boolean;
 }) {
     // A double tap on a touch screen is too easy to make by accident to start a stream.
     const lastPointer = useRef('');
     const [expanded, setExpanded] = useState(false);
     const [overflow, setOverflow] = useState(false);
+    const expansion = useRef({ expanded, onExpand });
+    expansion.current = { expanded, onExpand };
+    useLayoutEffect(
+        () => () => {
+            // A collapsed stack or search can hide an expanded card. Its read record no
+            // longer needs to stay in Unread once that preview leaves the list.
+            if (expansion.current.expanded) expansion.current.onExpand?.(false);
+        },
+        [],
+    );
+    const expand = () => {
+        onExpand?.(!expanded);
+        setExpanded(!expanded);
+    };
     const [offset, setOffset] = useState(0);
     const [direction, setDirection] = useState(0);
     const [committing, setCommitting] = useState(false);
@@ -91,7 +112,10 @@ export function NotificationCard({
         if (committingRef.current) return;
         offsetRef.current = value;
         setOffset(value);
-        if (value) setDirection(Math.sign(value));
+        if (value) {
+            setDirection(Math.sign(value));
+            suppressClick.current = Date.now() + 400;
+        }
     };
     const finishSwipe = async (action: NotificationSwipeAction, velocity = 0) => {
         if (committingRef.current || latest.current.busy || latest.current.dismissed) {
@@ -247,7 +271,10 @@ export function NotificationCard({
                 aria-busy={committing || undefined}
                 class={`notification-history-item ${!n.read ? 'unread' : ''} ${n.dismissed ? 'dismissed' : ''} ${highlighted ? 'highlighted' : ''} ${offset && !committing ? 'swiping' : ''}`}
                 onKeyDown={(event) => {
-                    if (event.key === 'Enter' && event.target === event.currentTarget) {
+                    if (event.key === ' ' && event.target === event.currentTarget) {
+                        event.preventDefault();
+                        if (!busy && !event.repeat) expand();
+                    } else if (event.key === 'Enter' && event.target === event.currentTarget) {
                         event.preventDefault();
                         openScreen();
                     }
@@ -324,6 +351,18 @@ export function NotificationCard({
                     if (event.target === event.currentTarget && swipe.current.pointerId === event.pointerId)
                         cancelSwipe();
                 }}
+                onClick={(event) => {
+                    if (
+                        busy ||
+                        committingRef.current ||
+                        (event.target instanceof Element &&
+                            event.target.closest(
+                                'button, a, input, select, textarea, video, audio, .notification-media',
+                            ))
+                    )
+                        return;
+                    expand();
+                }}
                 onClickCapture={(event) => {
                     if (Date.now() < suppressClick.current) {
                         event.preventDefault();
@@ -334,14 +373,10 @@ export function NotificationCard({
                 <div class="notification-history-item-heading">
                     <AppIcon source={n.source} app={n.app} name={n.appName || n.app || 'App'} />
                     <div class="notification-history-app">
-                        <strong class="notification-app-name">{n.appName || n.app || 'iPhone app'}</strong>
+                        <span class="notification-app-name">{n.appName || n.app || 'iPhone app'}</span>
+                        {showSource && <span class="notification-source-name-on-card">{source.name}</span>}
                         <time class="notification-time" dateTime={new Date(n.received).toISOString()}>
-                            {new Date(n.received).toLocaleString([], {
-                                month: 'short',
-                                day: 'numeric',
-                                hour: 'numeric',
-                                minute: '2-digit',
-                            })}
+                            {notificationTime(n.received)}
                         </time>
                     </div>
                     {!n.read && <span class="notification-unread-dot" aria-label="Unread" />}
@@ -349,9 +384,9 @@ export function NotificationCard({
                         icon="more"
                         variant="bare"
                         label={`Actions for ${n.title || n.appName || n.app || 'notification'}`}
-                        attributes={{ 'aria-haspopup': 'dialog' }}
+                        attributes={{ 'aria-haspopup': menuIsPopover ? 'menu' : 'dialog' }}
                         disabled={busy || committing}
-                        onClick={openMenu}
+                        onClick={(event) => openMenu(event.currentTarget as HTMLElement)}
                     />
                 </div>
                 <AutoHeight className="notification-preview-size">
@@ -391,7 +426,7 @@ export function NotificationCard({
                             'aria-expanded': String(expanded),
                             'aria-controls': `notification-content-${n.key}`,
                         }}
-                        onClick={() => setExpanded(!expanded)}
+                        onClick={expand}
                     >
                         {expanded ? 'Show less' : 'Show more'}
                     </Button>
@@ -407,6 +442,33 @@ export function NotificationCard({
                         ))}
                     </section>
                 )}
+                <div class="notification-card-actions" aria-label="Notification actions">
+                    {!n.dismissed && (
+                        <IconButton
+                            icon={n.read ? 'mail' : 'check'}
+                            variant="bare"
+                            label={n.read ? 'Mark unread' : 'Mark read'}
+                            disabled={busy || committing}
+                            onClick={() => void markRead()}
+                        />
+                    )}
+                    {!n.dismissed && (
+                        <IconButton
+                            icon="archive"
+                            variant="bare"
+                            label="Dismiss"
+                            disabled={busy || committing}
+                            onClick={() => void dismiss()}
+                        />
+                    )}
+                    <IconButton
+                        icon="phone"
+                        variant="bare"
+                        label="Open screen"
+                        disabled={busy || committing}
+                        onClick={openScreen}
+                    />
+                </div>
                 {n.dismissed && <span class="notification-history-status">Archived</span>}
             </article>
         </div>

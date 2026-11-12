@@ -22,8 +22,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-8);
-    margin-bottom: var(--space-4);
-    padding: var(--space-8) 0;
+    margin-bottom: 0;
+    padding: 0;
     background: var(--surface);
 }
 .notification-search,
@@ -179,7 +179,8 @@
 .notification-app-name {
     overflow: hidden;
     font-size: var(--font-size-13);
-    font-weight: var(--font-weight-semibold);
+    font-weight: var(--font-weight-regular);
+    color: var(--text-muted);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -235,7 +236,8 @@
 }
 /* The words of the button line up with the text above it. */
 .notification-expand {
-    margin-left: calc(var(--space-12) * -1);
+    margin: 0 0 calc(var(--space-12) * -1) calc(var(--space-12) * -1);
+    min-height: var(--control-height);
 }
 
 /* A picture, a sound or a film that a notification links to, loaded when asked for. */
@@ -315,4 +317,50 @@
 .notification-action-sheet-actions > .kit-confirm {
     margin: 0;
 }
+/* Group labels use the room kept below the filter row. */
+.notification-day {
+    margin: 0 0 var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--space-16);
+}
+.notification-stack-toggle {
+    margin-top: calc(var(--space-12) * -1);
+    margin-bottom: var(--space-12);
+}
+.notification-source-name-on-card {
+    color: var(--text-muted);
+    font-size: var(--font-size-12);
+}
+.notification-card-actions {
+    display: none;
+}
+@media (min-width: 1024px) and (pointer: fine) {
+    .notifications-view .notifications-page-inbox {
+        max-width: 1024px;
+    }
+}
+@media (pointer: fine) {
+    .notification-history-item {
+        padding-right: calc(var(--control-height) * 3 + var(--space-24));
+    }
+    .notification-history-item-heading > .kit-icon-button {
+        position: absolute;
+        top: var(--space-8);
+        right: var(--space-8);
+    }
+    .notification-card-actions {
+        position: absolute;
+        right: var(--space-12);
+        bottom: var(--space-8);
+        display: flex;
+        visibility: hidden;
+    }
+    .notification-history-item:hover .notification-card-actions,
+    .notification-history-item:focus-within .notification-card-actions {
+        visibility: visible;
+    }
+}
+
 }

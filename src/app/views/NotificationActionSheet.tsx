@@ -2,6 +2,11 @@ import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { Sheet } from '../ui/Sheet';
 
+// A component keeps Preact's parent links current when the Sheet renders itself.
+function ActionSheetContent({ children }: { children: ComponentChildren }) {
+    return <>{children}</>;
+}
+
 interface NotificationActionSheetProps {
     open: boolean;
     title: string;
@@ -44,7 +49,7 @@ export function NotificationActionSheet({ open, title, description, onClose, chi
                 onClose={onClose}
                 bodyClassName="notification-action-sheet-actions"
             >
-                {children}
+                <ActionSheetContent>{children}</ActionSheetContent>
             </Sheet>
         </div>
     );

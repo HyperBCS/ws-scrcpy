@@ -447,6 +447,7 @@ async function otherStates(test) {
     await shoot(test, 'android-asleep');
 }
 
+// p6-inbox: notification states only.
 /** Notifications: the inbox, the sheets it opens, and Setup. */
 async function notificationStates(test) {
     const { page } = test;
@@ -454,6 +455,24 @@ async function notificationStates(test) {
     await page.goto(`${BASE}#!action=notifications&source=${IPHONE}`);
     await page.locator('article.notification-history-item').first().waitFor();
     await shoot(test, 'notifications-inbox');
+    // This shot needs two linked sources; the other atlas states keep their original fixture.
+    SOURCES.push({ id: IPHONE_2, name: 'Spare iPhone', address: 'AA:BB:CC:DD:EE:02', apps: [], preview: true });
+    NOTIFICATIONS.splice(1, 0, { ...NOTIFICATIONS[0], key: 'spare-read', source: IPHONE_2, title: 'Spare phone update', read: true });
+    try {
+        await page.goto(`${BASE}#!action=notifications`);
+        await page.reload();
+        const second = page.locator('[data-notification-key="spare-read"]');
+        await second.waitFor();
+        assert.equal(await page.locator('.kit-bar-status').textContent(), 'All iPhones');
+        assert.equal(await second.locator('.notification-source-name-on-card').textContent(), 'Spare iPhone');
+        await shoot(test, 'notifications-all');
+    } finally {
+        SOURCES.pop();
+        NOTIFICATIONS.splice(1, 1);
+    }
+    await page.goto(`${BASE}#!action=notifications&source=${IPHONE}`);
+    await page.reload();
+    await page.locator('article.notification-history-item').first().waitFor();
 
     // The bar of Notifications: Search opens the search row with its Filters button.
     const bar = page.locator('.notifications-view > .kit-bar');
@@ -464,11 +483,13 @@ async function notificationStates(test) {
             await shoot(test, 'notifications-search');
         }
         await press(test, page.getByRole('button', { name, exact: true }));
-        await dialog.waitFor();
+        const popup = state === 'notifications-card-actions' && !test.mobile ? page.getByRole('menu') : dialog;
+        await popup.waitFor();
         await shoot(test, state);
         if (state === 'notifications-card-actions') {
             // An action on the phone asks first, inside the sheet.
-            await press(test, dialog.getByRole('button', { name: 'Decline on iPhone', exact: true }));
+            await press(test, popup.getByRole(test.mobile ? 'button' : 'menuitem', { name: 'Decline on iPhone', exact: true }));
+            await dialog.waitFor();
             await shootPrompt(test, dialog, 'notifications-confirm');
         }
         await dismiss(test, dialog);
@@ -478,12 +499,13 @@ async function notificationStates(test) {
     // Archive answers with a notice at the foot of the page. It is closed before the next state:
     // it would leave by itself after a time that no picture should depend on.
     await press(test, page.getByRole('button', { name: 'Actions for Design review', exact: true }));
-    await dialog.waitFor();
+    const cardActions = test.mobile ? dialog : page.getByRole('menu');
+    await cardActions.waitFor();
     await settleMotion(page);
-    await press(test, dialog.getByRole('button', { name: 'Archive', exact: true }));
+    await press(test, cardActions.getByRole(test.mobile ? 'button' : 'menuitem', { name: 'Archive', exact: true }));
     const toast = page.locator('.kit-toast');
     await toast.first().waitFor();
-    await dialog.waitFor({ state: 'hidden' });
+    await cardActions.waitFor({ state: 'hidden' });
     await shoot(test, 'notifications-toast');
     while (await toast.count()) {
         await press(test, toast.first().locator('.kit-toast-close'));
