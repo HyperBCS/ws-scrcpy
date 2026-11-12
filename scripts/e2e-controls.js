@@ -12,7 +12,8 @@
 //     rotation and a resize, never over the header, the tabs or the banner slot, inside the
 //     safe-area insets, without motion when motion is reduced, and 3:1 against a white and a
 //     black picture when idle, light and dark; with Type text open, the button and the panel
-//     beside it stay above its sheet.
+//     beside it stay above its sheet, and the button keeps its place on the stage when the
+//     keyboard shrinks the part in view and the browser pans it.
 // CONTROLS_ONLY=button runs only the checks of the controls button.
 // CONTROLS_ONLY=sends runs only the check of what each control sends. It finds the controls by
 // their icons, so it also runs on a build from before the slot map; that is how the sends were
@@ -496,13 +497,22 @@ async function touchButton(browser, platform, viewport) {
         // opens nothing, sends no touch, and slides to the left edge at the top of the stage.
         test.packets.length = 0;
         test.messages.length = 0;
+        // Counts the slides started on the button, so that a slow run cannot miss one that has
+        // already ended.
+        await fab.evaluate((button) => {
+            window.slides = 0;
+            const animate = button.animate.bind(button);
+            button.animate = (...args) => {
+                window.slides++;
+                return animate(...args);
+            };
+        });
         let during;
         await touch.drag(centre(state.fab), { x: viewport.width * 0.3, y: 10 }, async () => (during = await buttonState(page)));
         assert.ok(during.fab.top >= buttonArea(during).top - 0.5, `${label}: dragged over the header, the button stays under it (${during.fab.top})`);
         assert.equal(during.opacity, 1, `${label}: opaque while dragged`);
         await dropped(page);
-        state = await buttonState(page);
-        assert.equal(state.moving, 1, `${label}: let go, it slides to the edge`);
+        assert.equal(await page.evaluate(() => window.slides), 1, `${label}: let go, it slides to the edge`);
         await settleMotion(page);
         state = await buttonState(page);
         assert.ok(Math.abs(onEdge(label, state, 'left')) < 0.01, `${label}: at the top of the stage`);
@@ -607,6 +617,53 @@ async function panelAboveTypeText(browser, platform) {
         await test.context.close();
     }
     console.log(`PASS ${label}: the button and its panel stay above the sheet`);
+}
+
+/**
+ * Type text keeps the view on the part of the window in view. The on-screen keyboard shrinks
+ * that part, and Safari can then pan it without a resize; the view follows a frame later
+ * (`LiveTextOverlay.tsx`). The button keeps its place on the stage through both, so it is never
+ * left over the header or over the sheet. The keyboard and the pan are played by the visual
+ * viewport's own values and events.
+ */
+async function followsTypingView(browser, platform) {
+    const label = `phone ${platform} Type text with the keyboard`;
+    const test = await start(browser, platform, { viewport: PHONE });
+    const { page } = test;
+    const viewport = async (values, event) => {
+        await page.evaluate(({ values, event }) => {
+            const visual = window.visualViewport;
+            if (!window.fakeViewport) {
+                window.fakeViewport = { offsetTop: visual.offsetTop, height: visual.height };
+                for (const name of ['offsetTop', 'height']) Object.defineProperty(visual, name, { configurable: true, get: () => window.fakeViewport[name] });
+            }
+            Object.assign(window.fakeViewport, values);
+            visual.dispatchEvent(new Event(event));
+        }, { values, event });
+        await pause(100);
+        await settleMotion(page);
+        return buttonState(page);
+    };
+    try {
+        await openPanel(test);
+        await byName(page, 'Type text').click();
+        await openSheet(page).filter({ has: page.locator('.kit-sheet-title', { hasText: /^Type text$/ }) }).waitFor();
+        await settleMotion(page);
+        const keyboard = await viewport({ height: PHONE.height - 300 }, 'resize');
+        const fraction = onEdge(`${label} up`, keyboard, 'right');
+        const panned = await viewport({ offsetTop: 300 }, 'scroll');
+        assert.equal(panned.bar.top, 300, `${label}: the view follows the pan`);
+        const kept = onEdge(`${label} panned`, panned, 'right');
+        assert.ok(Math.abs(kept - fraction) < 0.01, `${label} panned: at the same height of the stage (${kept}, was ${fraction})`);
+        const back = await viewport({ offsetTop: 0 }, 'scroll');
+        assert.equal(back.bar.top, 0, `${label}: the view follows the pan back`);
+        const again = onEdge(`${label} panned back`, back, 'right');
+        assert.ok(Math.abs(again - fraction) < 0.01, `${label} panned back: at the same height of the stage (${again}, was ${fraction})`);
+        assert.deepEqual(test.errors, []);
+    } finally {
+        await test.context.close();
+    }
+    console.log(`PASS ${label}: the button stays on the stage when the view is panned`);
 }
 
 /** With motion reduced, the button let go is at its edge at once. */
@@ -722,7 +779,10 @@ async function main() {
                       for (const platform of ['android', 'ios']) {
                           for (const viewport of [PHONE, LANDSCAPE]) await touchButton(browser, platform, viewport);
                       }
-                      for (const platform of ['android', 'ios']) await panelAboveTypeText(browser, platform);
+                      for (const platform of ['android', 'ios']) {
+                          await panelAboveTypeText(browser, platform);
+                          await followsTypingView(browser, platform);
+                      }
                       await snapWithoutMotion(browser);
                       await idleContrast(browser);
                   })(),

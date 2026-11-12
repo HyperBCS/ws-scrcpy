@@ -232,12 +232,19 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
         if (current) sizes.observe(current);
         if (mount) added.observe(mount, { childList: true, subtree: true });
         watchPicture();
+        // Type text keeps the view on the part in view (`LiveTextOverlay.tsx`). When the browser
+        // pans that part, the view moves a frame later through its style, without a change of
+        // size that the observer above would see.
+        const moved = new MutationObserver(() => layout());
+        const view = rootRef.current?.closest('.stream-view');
+        if (view) moved.observe(view, { attributes: true, attributeFilter: ['style', 'class'] });
         window.addEventListener('resize', layout);
         window.visualViewport?.addEventListener('resize', layout);
         window.visualViewport?.addEventListener('scroll', layout);
         return () => {
             sizes.disconnect();
             added.disconnect();
+            moved.disconnect();
             window.removeEventListener('resize', layout);
             window.visualViewport?.removeEventListener('resize', layout);
             window.visualViewport?.removeEventListener('scroll', layout);
