@@ -66,10 +66,11 @@ function cardControl(target: EventTarget | null): CardControl | undefined {
  */
 function focusCardControl(root: HTMLElement, { key, control }: CardControl): void {
     const cards = Array.from(root.querySelectorAll<HTMLElement>('article.device'));
-    const serial = `:${key.slice(key.indexOf(':') + 1)}`;
+    // The key is `<tracker id>:<serial>`. The id has no colon; a serial can (`host:port`).
+    const serialOf = (value = '') => value.slice(value.indexOf(':') + 1);
     const card =
         cards.find((item) => item.dataset.deviceKey === key) ??
-        cards.find((item) => item.dataset.deviceKey?.endsWith(serial));
+        cards.find((item) => serialOf(item.dataset.deviceKey) === serialOf(key));
     const controls = Array.from(card?.querySelectorAll<HTMLElement>('a[href], button:not(:disabled)') ?? []);
     (controls.find((item) => controlName(item) === control) ?? controls[0])?.focus({ preventScroll: true });
 }
@@ -110,14 +111,24 @@ export function DeviceList() {
     const reconnecting = connectionStatus('reconnecting').label;
 
     // A stale card turns its links off, and a link that is off cannot keep the focus. When the
-    // next list turns them on, the control that had the focus gets it back.
-    const lastFocus = useRef<CardControl>();
+    // next list turns them on, the control that had the focus gets it back. It is read when the
+    // list turns stale, before the cards are drawn stale, while it still has the focus. A control
+    // focused while the list is stale takes its place. Focus that had left the cards before the
+    // drop stays where it is.
+    const staleFocus = useRef<CardControl>();
     const wasStale = useRef(false);
+    if (stale && !wasStale.current) {
+        staleFocus.current = cardControl(document.activeElement);
+    }
+    wasStale.current = stale;
     useEffect(() => {
-        if (wasStale.current && !stale && lastFocus.current && scroller.current && focusLost()) {
-            focusCardControl(scroller.current, lastFocus.current);
+        if (stale) {
+            return;
         }
-        wasStale.current = stale;
+        if (staleFocus.current && scroller.current && focusLost()) {
+            focusCardControl(scroller.current, staleFocus.current);
+        }
+        staleFocus.current = undefined;
     }, [stale]);
 
     // A plain press on a link of a card leaves the list for that page.
@@ -159,7 +170,9 @@ export function DeviceList() {
                 ref={scroller}
                 onScroll={(event) => rememberListScroll(event.currentTarget.scrollTop)}
                 onFocusIn={(event) => {
-                    lastFocus.current = cardControl(event.target);
+                    if (wasStale.current) {
+                        staleFocus.current = cardControl(event.target);
+                    }
                 }}
                 onClickCapture={onClickCapture}
             >

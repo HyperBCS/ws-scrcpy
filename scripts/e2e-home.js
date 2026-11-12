@@ -831,6 +831,13 @@ async function reconnectingList(browser, { width, height, mobile, colorScheme })
         await dialog.getByRole('button', { name: /^Close/ }).click();
         await dialog.waitFor({ state: 'hidden' });
 
+        // Focus that had left the cards before the drop stays where it is after the next list.
+        await page.evaluate(() => document.activeElement?.blur());
+        const fourth = await drop();
+        test.listIds = { android: 'android-4', ios: 'ios-4' };
+        await reconnect(fourth);
+        await card(page, 'android-4:HOME-MORE-15').getByRole('link', { name: 'Open screen', exact: true }).waitFor();
+        assert.equal(await focusedCardControl(page), null, `${label}: no card takes the focus it did not have`);
         assert.equal(test.streams, 0, `${label}: no screen was opened`);
         assert.deepEqual(test.commands, [], `${label}: nothing was sent to a phone`);
         assert.deepEqual(test.errors, []);
