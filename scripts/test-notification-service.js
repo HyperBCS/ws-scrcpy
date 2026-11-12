@@ -1,4 +1,5 @@
-// Collector supervision, Setup page errors and stored previews in NotificationService.
+// Collector supervision, Setup page errors and stored previews in NotificationService, and the
+// feed it keeps (NotificationFeed) on its own.
 const assert = require('node:assert/strict');
 const { test, after } = require('node:test');
 const crypto = require('node:crypto');
@@ -12,6 +13,7 @@ const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-notification-service
 process.env.WS_NOTIFICATION_DATA = temporary;
 process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
 const { NotificationService } = require('../src/server/notifications/NotificationService');
+const { NotificationFeed, shouldRelay } = require('../src/server/notifications/NotificationFeed');
 after(() => fs.rmSync(temporary, { recursive: true, force: true }));
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -339,4 +341,107 @@ test('a text fingerprint saved by an earlier version is removed when previews ar
             restarted.release();
         }
     });
+});
+
+// The feed on its own: no file, no timer and no push. The clock and the keys are the test's.
+function feedFixture() {
+    let now = Date.parse('2026-11-12T12:00:00Z');
+    let next = 0;
+    const feed = new NotificationFeed(() => now, () => `key-${++next}`);
+    return { feed, advance: (ms) => (now += ms) };
+}
+
+test('the feed keeps a new alert once, offers it for a push once, and knows it again after a reconnect', () => {
+    const { feed } = feedFixture();
+    assert.deepEqual(feed.receive(event, source, 'a'), { changed: true, push: 'key-1' });
+    assert.equal(feed.items.get('key-1').active, true);
+    // The same alert of the same session again: kept as it is, not offered again.
+    assert.deepEqual(feed.receive({ ...event, title: 'Bank (2)' }, source, 'a'), { changed: true });
+    assert.equal(feed.items.size, 1);
+    assert.equal(feed.items.get('key-1').title, 'Bank (2)');
+    assert.deepEqual(feed.receive({ ...event, event: 'modified', title: 'Bank (2)', body: 'Edited' }, source, 'a'), { changed: true });
+    assert.equal(feed.items.get('key-1').body, 'Edited');
+    // An event of another session than the one the service holds is left out.
+    assert.deepEqual(feed.receive({ ...event, session: 'old', uid: 7 }, source, 'a'), { changed: false });
+    assert.equal(feed.items.size, 1);
+    // A new session: the iPhone announces its alerts again under new numbers. The read state of
+    // the stored one is kept and nothing is offered for a push.
+    feed.items.get('key-1').read = true;
+    feed.deactivate('iphone');
+    feed.rememberReplays('iphone');
+    assert.equal(feed.items.get('key-1').active, false);
+    assert.deepEqual(feed.receive({ ...event, session: 'b', uid: 42, title: 'Bank (2)', body: 'Edited' }, source, 'b'), { changed: true });
+    assert.equal(feed.items.size, 1);
+    const kept = feed.items.get('key-1');
+    assert.deepEqual([kept.session, kept.uid, kept.read, kept.active], ['b', 42, true, true]);
+    // An alert that was there before the session started is kept and not pushed.
+    assert.deepEqual(feed.receive({ ...event, session: 'b', uid: 43, date: '20261025T130000', preExisting: true }, source, 'b'), { changed: true });
+    assert.equal(feed.items.size, 2);
+    // Removed on the iPhone: kept here, no longer live, never matched again.
+    assert.deepEqual(feed.receive({ ...event, session: 'b', uid: 42, event: 'removed' }, source, 'b'), { changed: true });
+    assert.deepEqual([kept.active, kept.reconnectable], [false, false]);
+    assert.deepEqual(feed.receive({ ...event, session: 'b', uid: 99, event: 'removed' }, source, 'b'), { changed: false }, 'an unknown removal changes nothing');
+    // The link state: live only while receiving, and only for the alerts of the session.
+    feed.setActive('iphone', 'b', true);
+    assert.deepEqual([...feed.items.values()].map((item) => item.active), [false, true]);
+    feed.setActive('iphone', 'b', false);
+    assert.deepEqual([...feed.items.values()].map((item) => item.active), [false, false]);
+});
+
+test('the feed takes the saved history, drops a text hash of a phone with previews off, and rebuilds its hints', () => {
+    const { feed } = feedFixture();
+    const record = (id, fingerprint) => ({ ...event, source: id, key: `saved-${id}`, received: Date.now(), read: false, dismissed: false, active: false, reconnectable: true, fingerprint });
+    const shown = { ...source, id: 'shown', address: 'AA:BB:CC:DD:EE:00' };
+    assert.equal(feed.load([record('iphone', 'a'.repeat(64)), record('shown', 'b'.repeat(64))], [hidden, shown]), true);
+    assert.equal(feed.items.get('saved-iphone').fingerprint, undefined);
+    assert.deepEqual([...feed.replayCandidates.values()].map((hint) => hint.historyKey), ['saved-shown']);
+    assert.equal(new NotificationFeed().load([record('shown', `l:${'c'.repeat(64)}`)], [shown]), false, 'nothing to change');
+});
+
+test('the feed drops history after 30 days or past 500 per iPhone, and hints after an hour or past 2000', () => {
+    const { feed, advance } = feedFixture();
+    for (let uid = 0; uid < 502; uid++) {
+        feed.receive({ ...event, uid, date: `d${uid}` }, source, 'a');
+        advance(1);
+    }
+    assert.equal(feed.items.size, 500, 'the oldest go first');
+    assert.deepEqual([feed.items.has('key-2'), feed.items.has('key-3')], [false, true]);
+    assert.equal(feed.prune(), false, 'nothing more to drop');
+    advance(3600001);
+    assert.equal(feed.prune(), false, 'hints are not history');
+    assert.deepEqual([feed.observed.size, feed.replayCandidates.size], [0, 0]);
+    advance(30 * 86400000);
+    assert.equal(feed.prune(), true);
+    assert.equal(feed.items.size, 0);
+    for (let uid = 0; uid < 2100; uid++) feed.receive({ ...event, uid, date: `e${uid}`, preExisting: true }, source, 'a');
+    assert.deepEqual([feed.observed.size, feed.replayCandidates.size], [2000, 2000]);
+});
+
+test('the feed counts unread notifications that are not archived, for each iPhone', () => {
+    const { feed } = feedFixture();
+    const other = { ...source, id: 'other', address: 'AA:BB:CC:DD:EE:01' };
+    for (let uid = 1; uid <= 3; uid++) feed.receive({ ...event, uid, date: `d${uid}` }, source, 'a');
+    feed.receive({ ...event, source: 'other', session: 'x', uid: 1 }, other, 'x');
+    feed.items.get('key-1').read = true;
+    feed.items.get('key-2').dismissed = true;
+    assert.deepEqual(feed.counts([source, other, { ...source, id: 'empty' }]), { unread: 2, unreadBySource: { iphone: 1, other: 1, empty: 0 } });
+    assert.deepEqual(feed.storedBySource([source, other]), { iphone: 3, other: 1 });
+    assert.deepEqual(feed.history('iphone').map((item) => item.key).sort(), ['key-1', 'key-2', 'key-3']);
+    assert.equal('fingerprint' in feed.history()[0], false, 'the page is not sent the fingerprint');
+    feed.removeSource('iphone');
+    assert.deepEqual(feed.history().map((item) => item.key), ['key-4']);
+});
+
+test('shouldRelay is the one app filter: what it refuses is neither kept nor pushed', () => {
+    const { feed } = feedFixture();
+    const sub = { id: 'sub', sources: ['iphone'], receiverSource: '' };
+    for (const app of ['com.apple.WebKit.WebPush.1', 'com.apple.WebKit.PushBundle.2', '']) {
+        assert.equal(shouldRelay({ ...event, app }, source), false, app);
+        assert.deepEqual(feed.receive({ ...event, app }, source, 'a'), { changed: false });
+    }
+    assert.equal(feed.items.size, 0);
+    assert.equal(shouldRelay(event, source), true);
+    assert.equal(shouldRelay(event, source, sub), true);
+    assert.equal(shouldRelay({ ...event, preExisting: true }, source), true, 'kept');
+    assert.equal(shouldRelay({ ...event, preExisting: true }, source, sub), false, 'and not pushed');
 });
