@@ -1,8 +1,8 @@
 @layer tokens, base, components, views;
 
 @layer components {
-/* The toast in the kit look (`ui/Toast.tsx` with `kit`): a dark bar in both themes, for an
-   action that is done, with an optional action such as Undo and a close button. */
+/* The toast (`ui/Toast.tsx`): a dark bar in both themes, for an action that is done, with an
+   optional action such as Undo and a close button. */
 .kit-toast {
     position: fixed;
     z-index: var(--z-toast);
@@ -53,6 +53,15 @@
     font-family: inherit;
     font-size: inherit;
     cursor: pointer;
+    transition:
+        background-color var(--motion-fast) ease,
+        border-color var(--motion-fast) ease,
+        color var(--motion-fast) ease,
+        transform var(--motion-fast) var(--ease-out);
+}
+.kit-toast-action:active:not(:disabled),
+.kit-toast-close:active {
+    transform: scale(0.97);
 }
 .kit-toast-action {
     padding: 0 var(--space-12);

@@ -947,7 +947,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private renderToast(message: string, error: boolean): void {
         render(
             h(Toast, {
-                kit: true,
                 message,
                 identity: this.toastCount,
                 tone: error ? 'error' : 'success',

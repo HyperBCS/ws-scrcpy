@@ -24,7 +24,6 @@ const ALLOWED = {
     'morebox.css': { zIndex: 1, important: 1 },
     'ui/ConfirmAction.css': { colours: 3, fontSizes: 3, radii: 1 },
     'ui/SheetControls.css': { colours: 7, fontSizes: 10, radii: 5 },
-    'ui/Toast.css': { colours: 1, fontSizes: 1, radii: 1, zIndex: 1 },
     // The order of what lies over the picture: the controls (8) and their shield (4).
     'views/FloatingToolbar.css': { zIndex: 2 },
     // The sleep overlay, one step under the header (4).

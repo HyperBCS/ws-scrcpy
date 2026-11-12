@@ -738,7 +738,6 @@ export function NotificationHistory({
                 <p class="notification-history-note">Notifications are kept for 30 days, up to 500 per iPhone.</p>
             )}
             <Toast
-                kit
                 className="notification-undo"
                 dismissLabel="Dismiss undo notice"
                 message={!noticesHeld && undo?.source === source?.id ? undo?.label || '' : ''}
@@ -748,14 +747,12 @@ export function NotificationHistory({
                 action={{ label: 'Undo', run: undoLast, disabled: busy }}
             />
             <Toast
-                kit
                 className="notification-phone-result"
                 message={noticesHeld ? '' : phoneResult}
                 identity={phoneResult}
                 onDismiss={() => setPhoneResult('')}
             />
             <Toast
-                kit
                 className="notification-failure"
                 tone="error"
                 dismissLabel="Dismiss error"

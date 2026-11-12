@@ -435,12 +435,7 @@ export function NotificationsView() {
                     <span class="kit-banner-text">{error}</span>
                 </Presence>
                 {/* Not over a sheet of the inbox: it would cover the sheet's last action. */}
-                <Toast
-                    kit
-                    message={topSheet.value ? '' : message}
-                    identity={message}
-                    onDismiss={() => setMessage('')}
-                />
+                <Toast message={topSheet.value ? '' : message} identity={message} onDismiss={() => setMessage('')} />
                 {!status && !connectionError && (
                     <p role="status" class="notification-empty">
                         Loading…

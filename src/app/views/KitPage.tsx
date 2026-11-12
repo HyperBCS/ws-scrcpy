@@ -480,7 +480,6 @@ function Messages() {
                     </Button>
                 </Demo>
                 <Toast
-                    kit
                     message={toast.message}
                     identity={toast.message}
                     tone={toast.tone}
@@ -792,7 +791,7 @@ function SheetsAndMenu() {
                 </Sheet>
 
                 {/* Outside every sheet, where a page keeps its toast. */}
-                <Toast kit message={message} identity={message} duration={0} onDismiss={() => setMessage('')} />
+                <Toast message={message} identity={message} duration={0} onDismiss={() => setMessage('')} />
             </Section>
 
             <Section title="Menu">
