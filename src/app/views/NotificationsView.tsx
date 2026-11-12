@@ -344,6 +344,12 @@ export function NotificationsView() {
     const toggleSetup = () => (activePanel === 'setup' ? openInbox() : changeNotificationPage({ panel: 'setup' }));
     // The search field of the inbox, opened from the bar. Text or an app in the address opens it.
     const [searchOpen, setSearchOpen] = useState(!!page.q || !!page.app);
+    // Search pressed on Setup shows the inbox with the row open; the field then takes focus here.
+    const [searchFocus, setSearchFocus] = useState(0);
+    useEffect(() => {
+        if (searchFocus)
+            document.querySelector<HTMLInputElement>('.notifications-page .notification-search input')?.focus();
+    }, [searchFocus]);
     const toggleSearch = () => {
         if (activePanel === 'history') {
             setSearchOpen((open) => !open);
@@ -351,6 +357,7 @@ export function NotificationsView() {
         }
         openInbox();
         setSearchOpen(true);
+        setSearchFocus((count) => count + 1);
     };
     // More than one linked iPhone: Switch in the bar lists them. The sheet is added on first use.
     const [switching, setSwitching] = useState(false);

@@ -2278,6 +2278,16 @@ async function viewStateInAddress(browser) {
         await hashIs('#!action=notifications&source=phone-b');
         await switchIphone(page, 'Phone A');
         await hashIs('#!action=notifications&source=phone-a');
+        // Back closes the switcher and leaves the iPhone shown and the page's entry as they were.
+        await switchControl(page).click();
+        const switcher = page.getByRole('dialog', { name: 'Switch iPhone', exact: true });
+        await switcher.waitFor();
+        await settleMotion(page);
+        await page.goBack();
+        await switcher.waitFor({ state: 'hidden' });
+        await hashIs('#!action=notifications&source=phone-a');
+        await page.waitForFunction(index => history.state?.nav?.index === index, start);
+        assert.equal(await shownIphone(page), 'Phone A');
         // The panel. A reload on Setup stays on Setup.
         await showSetup(page);
         await hashIs('#!action=notifications&source=phone-a&panel=setup');
@@ -2374,6 +2384,16 @@ async function viewStateInAddress(browser) {
         await hashIs('#!action=notifications');
         assert.equal(await search.count(), 0);
         assert.equal(await shown(), 25);
+        // Search pressed on Setup shows the inbox with the field in focus. The inbox has gone
+        // from the page by then.
+        await showSetup(page);
+        await settleMotion(page);
+        await page.locator('#notification-history-heading').waitFor({ state: 'detached' });
+        await searchControl(page).click();
+        await page.locator('#notification-history-heading').waitFor();
+        await hashIs('#!action=notifications');
+        await page.waitForFunction(() => document.activeElement?.matches('input[type="search"]'));
+        assert.equal(await searchControl(page).getAttribute('aria-pressed'), 'true');
         console.log('PASS the iPhone, the panel, the filter, the app and the search text are in the address without new history entries; a reload and Back from a screen show the same inbox at the same place');
     } finally { await f.context.close(); }
 }
