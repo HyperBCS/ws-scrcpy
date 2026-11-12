@@ -2,8 +2,8 @@
 
 @layer components {
 /* The one sheet. Markup, for code that builds it without Preact:
-     dialog.kit-sheet                      opened with showModal()
-       .kit-sheet-backdrop
+     dialog.kit-sheet                      opened with showModal(); with .kit-sheet-modeless, show()
+       .kit-sheet-backdrop                 a modal sheet only
        .kit-sheet-panel
          header.kit-sheet-header
            .kit-sheet-handle
@@ -173,6 +173,26 @@
 .kit-sheet-footer > * {
     flex: 1 1 0;
     min-width: 0;
+}
+
+/* A sheet that leaves the page in use (`modal={false}`, Type text): shown with show(), so it is
+   not in the top layer and has no backdrop. The dialog lets presses through to the page and only
+   the panel takes them. It is not dragged, so it has no handle. */
+.kit-sheet-modeless {
+    z-index: var(--z-sheet);
+    pointer-events: none;
+}
+
+.kit-sheet-modeless > .kit-sheet-panel {
+    pointer-events: auto;
+}
+
+.kit-sheet-modeless .kit-sheet-handle {
+    display: none;
+}
+
+.kit-sheet-modeless .kit-sheet-header {
+    cursor: default;
 }
 
 /* Holds what `AboveSheet` renders in the dialog. It has no box of its own. */

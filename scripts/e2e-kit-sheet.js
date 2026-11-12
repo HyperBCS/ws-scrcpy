@@ -13,6 +13,8 @@
 //   a sheet opened from a sheet stacks and closes in order; one that takes the place of another
 //   keeps its history entry;
 //   a toast raised while a sheet is open shows above it and can be pressed;
+//   a sheet that is not modal (Type text) has no backdrop, leaves the page in use, keeps a
+//   toast on the page, closes by its close control, Escape and Back, and returns focus;
 //   touch, mouse and wheel events in a sheet or a menu do not reach document.body;
 //   the sheet follows the visual viewport when an on-screen keyboard resizes it;
 //   the menu opens at its button, moves with the arrow keys, closes on Escape, a press outside,
@@ -600,6 +602,143 @@ async function eventsStop(test) {
     console.log(`PASS ${test.label}: touch, mouse and wheel events inside a sheet do not reach document.body`);
 }
 
+/**
+ * The sheet that is not modal, as Type text is: the same look, no backdrop and no handle, the
+ * page stays in use and a press on it leaves the sheet open, events in the sheet stay in it, a
+ * toast shows on the page, and Escape, the close control and Back close it with focus back on
+ * the button that opened it.
+ */
+async function modeless(test) {
+    const { page, viewport, mobile, colorScheme } = test;
+    const button = opener(page, 'Sheet that leaves the page in use');
+    const home = await at(page);
+    const dialog = sheet(page, 'Page in use');
+    const panel = dialog.locator(':scope > .kit-sheet-panel');
+    // The checks after this one press places on the page: leave it scrolled as it was.
+    const scrolled = await page.evaluate(() => document.querySelector('.kit-page').scrollTop);
+    const openByKey = async () => {
+        await button.focus();
+        await page.keyboard.press('Enter');
+        await dialog.waitFor();
+        await settleMotion(page);
+        await untilAt(page, home.index + 1, home.overlay + 1);
+    };
+    await openByKey();
+    assert.deepEqual(
+        await dialog.evaluate((node) => ({
+            modal: node.matches(':modal'),
+            backdrop: node.querySelectorAll('.kit-sheet-backdrop').length,
+            through: getComputedStyle(node).pointerEvents,
+            handle: getComputedStyle(node.querySelector('.kit-sheet-handle')).display,
+            locked: document.body.classList.contains('sheet-open'),
+        })),
+        { modal: false, backdrop: 0, through: 'none', handle: 'none', locked: false },
+        'the sheet is not modal: no backdrop, no handle, and the page is not locked',
+    );
+    assert.ok(await dialog.evaluate((node) => document.activeElement === node), 'the dialog takes focus, as every sheet does');
+    const rect = await box(panel);
+    assert.equal((await style(panel, 'backgroundColor')).backgroundColor, SURFACE[colorScheme], 'the sheet has the surface colour of the theme');
+    if (mobile) {
+        assert.equal(rect.width, viewport.width, 'a bottom sheet is as wide as the window');
+        near(rect.bottom, viewport.height, 'a bottom sheet sits on the bottom edge');
+    } else {
+        assert.equal(rect.width, 560, 'a dialog is 560px wide');
+    }
+    await shot(test, 'sheet-modeless');
+
+    // The page is not inert: a control on it takes focus, and a press on it reaches the page and
+    // leaves the sheet open.
+    const other = opener(page, 'Short sheet');
+    await other.focus();
+    assert.equal(await focused(page), 'button.kit-button:Short sheet', 'a control on the page takes focus');
+    const heading = await box(page.locator('[data-kit-section="Sheet"] > .kit-section-title'));
+    const spot = { x: heading.left + 10, y: heading.top + heading.height / 2 };
+    assert.ok(spot.y < rect.top || spot.x < rect.left || spot.x > rect.right, 'the test presses the page, not the sheet');
+    assert.equal(
+        await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('dialog'), spot),
+        false,
+        'nothing of the sheet covers the page',
+    );
+    await listen(page);
+    await pressAt(test, spot.x, spot.y);
+    await page.waitForTimeout(150);
+    assert.ok((await reached(page)).includes(mobile ? 'touchstart' : 'mousedown'), 'a press on the page reaches the page');
+    assert.equal(await openSheets(page), 1, 'a press on the page leaves the sheet open');
+    assert.deepEqual(await at(page), { ...home, index: home.index + 1, overlay: home.overlay + 1 });
+
+    // Events in the sheet stay in it.
+    await listen(page);
+    const title = await box(dialog.locator('.kit-sheet-title'));
+    await pressAt(test, title.left + 10, title.top + title.height / 2);
+    await page.mouse.move(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    await page.mouse.wheel(0, 60);
+    await page.waitForTimeout(150);
+    assert.deepEqual(await reached(page), [], 'nothing in the sheet reaches document.body');
+
+    // A toast raised while it is open shows on the page, above it.
+    const toast = page.locator('.kit-toast');
+    await press(test, dialog.getByRole('button', { name: 'Show a message' }));
+    await toast.waitFor();
+    await settleMotion(page);
+    assert.ok(await page.evaluate(() => !document.querySelector('dialog .kit-toast')), 'the toast is on the page, not in the sheet');
+    assert.ok(await onTop(toast), 'the toast is above the sheet');
+    await press(test, toast.getByRole('button', { name: 'Dismiss message' }));
+    await toast.waitFor({ state: 'detached' });
+    assert.equal(await openSheets(page), 1, 'closing the toast leaves the sheet open');
+
+    // Escape in the sheet closes it and focus goes back to the button that opened it.
+    await dialog.getByLabel('Text for the phone', { exact: true }).focus();
+    await page.keyboard.press('Escape');
+    await closed(test, dialog, home, 'Escape');
+    assert.equal(await focused(page), 'button.kit-button:Sheet that leaves the page in use', 'focus returns to the button that opened the sheet');
+    await openByKey();
+    await press(test, dialog.locator('.kit-sheet-close'));
+    await closed(test, dialog, home, 'the close button');
+    await openByKey();
+    await page.goBack();
+    await closed(test, dialog, home, 'Back');
+    assert.equal(await focused(page), 'button.kit-button:Sheet that leaves the page in use', 'Back returns focus to the opener too');
+
+    // In the place of a modal sheet, as Type text takes the place of Actions: the modal sheet
+    // goes at once instead of playing its exit, so the page takes focus in the same press. Asked
+    // for again before that exit would have ended, it shows again and is modal.
+    const short = await open(test, 'Short sheet', 'Short sheet');
+    const handedOver = await short.dialog.getByRole('button', { name: 'Go to the page in use' }).evaluate((node) => new Promise((resolve) => {
+        node.click();
+        setTimeout(() => {
+            const field = document.querySelector('dialog.kit-sheet-modeless input');
+            field.focus();
+            resolve({ modal: document.querySelectorAll('dialog:modal').length, shown: !!document.querySelector('dialog.kit-sheet-modeless[open]'), focus: document.activeElement === field });
+        }, 0);
+    }));
+    assert.deepEqual(handedOver, { modal: 0, shown: true, focus: true }, 'the modal sheet goes at once and the page takes focus');
+    await short.dialog.waitFor({ state: 'hidden' });
+    await dialog.waitFor();
+    await settleMotion(page);
+    assert.deepEqual(await at(page), { ...short.home, index: short.home.index + 1, overlay: short.home.overlay + 1 }, 'the sheets share one entry');
+    await press(test, dialog.locator('.kit-sheet-close'));
+    await closed(test, dialog, short.home, 'the close button');
+    const again = await open(test, 'Short sheet', 'Short sheet');
+    await again.dialog.getByRole('button', { name: 'Go to the page in use' }).evaluate((node) => new Promise((resolve) => {
+        node.click();
+        setTimeout(() => {
+            document.querySelector('[data-kit-demo="examples"] .kit-demo-specimen button').click();
+            resolve();
+        }, 0);
+    }));
+    await again.dialog.waitFor();
+    await dialog.waitFor({ state: 'hidden' });
+    await settleMotion(page);
+    assert.ok(await again.dialog.evaluate((node) => node.open && node.matches(':modal')), 'the short sheet asked for again during its exit is modal');
+    assert.ok(await onTop(again.panel), 'and on top');
+    assert.equal(await openSheets(page), 1);
+    assert.equal(await page.evaluate(() => document.body.classList.contains('sheet-open')), true);
+    await page.keyboard.press('Escape');
+    await closed(test, again.dialog, again.home, 'Escape');
+    await page.evaluate((top) => { document.querySelector('.kit-page').scrollTop = top; }, scrolled);
+    console.log(`PASS ${test.label}: a sheet that is not modal has no backdrop, leaves the page in use and returns focus to its opener; it takes the place of a modal sheet at once`);
+}
+
 async function keyboardResize(test) {
     const { page, viewport } = test;
     const { dialog, panel, home } = await open(test, 'Sheet with a text field', 'Text field');
@@ -694,7 +833,11 @@ async function menu(test) {
 
     const heading = await pageSpot(page, 'Menu');
     await openMenu();
-    await pressAt(test, heading.left + 10, heading.top + 10);
+    // The right end of the section title: on a phone the menu may open over its left end.
+    const outside = { x: heading.right - 10, y: heading.top + 10 };
+    const opened = await box(list);
+    assert.ok(outside.x > opened.right || outside.y < opened.top || outside.y > opened.bottom, 'the test presses beside the menu');
+    await pressAt(test, outside.x, outside.y);
     await gone('a press outside');
 
     await openMenu();
@@ -863,13 +1006,13 @@ async function run(browser, viewport, colorScheme, checks) {
 async function main() {
     const browser = await chromium.launch();
     try {
-        const behaviour = [history, confirmFirst, busyStays, focus, stack, toastAbove, eventsStop, keyboardResize, menu, compactMenu];
+        const behaviour = [history, confirmFirst, busyStays, focus, stack, toastAbove, modeless, eventsStop, keyboardResize, menu, compactMenu];
         // Side by side, each in a context of its own: the suite has four minutes.
         await Promise.all([
             run(browser, PHONE, 'light', [layout, ...behaviour]),
             run(browser, DESKTOP, 'dark', [layout, ...behaviour]),
-            run(browser, PHONE, 'dark', [layout, confirmFirst, toastAbove, menu, compactMenu]),
-            run(browser, DESKTOP, 'light', [layout, confirmFirst, toastAbove, menu, compactMenu]),
+            run(browser, PHONE, 'dark', [layout, confirmFirst, toastAbove, modeless, menu, compactMenu]),
+            run(browser, DESKTOP, 'light', [layout, confirmFirst, toastAbove, modeless, menu, compactMenu]),
             chosen(widthRule) ? widthRule(browser) : undefined,
         ]);
     } finally {

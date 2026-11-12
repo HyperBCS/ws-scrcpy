@@ -572,7 +572,7 @@ function Groups() {
     );
 }
 
-type SheetExample = 'short' | 'long' | 'field' | 'footer' | 'busy' | 'stack' | 'confirm' | 'toast';
+type SheetExample = 'short' | 'long' | 'field' | 'footer' | 'busy' | 'stack' | 'confirm' | 'toast' | 'modeless';
 
 const SHEET_EXAMPLES: ReadonlyArray<{ id: SheetExample; label: string }> = [
     { id: 'short', label: 'Short sheet' },
@@ -583,6 +583,7 @@ const SHEET_EXAMPLES: ReadonlyArray<{ id: SheetExample; label: string }> = [
     { id: 'stack', label: 'Sheet opened from a sheet' },
     { id: 'confirm', label: 'Sheet with a confirm prompt' },
     { id: 'toast', label: 'Toast over a sheet' },
+    { id: 'modeless', label: 'Sheet that leaves the page in use' },
 ];
 const SHEET_PHONE = 'Pixel 9';
 const SHEET_ROWS = Array.from({ length: 40 }, (_, index) => `Row ${index + 1}`);
@@ -703,6 +704,9 @@ function SheetsAndMenu() {
                         </Button>
                         {/* One sheet takes the place of another, as Stream settings does from Actions. */}
                         <Button onClick={() => setExample('long')}>Go to the long sheet</Button>
+                        {/* A sheet that is not modal takes the place of a modal one, as Type text
+                            does from Actions. */}
+                        <Button onClick={() => setExample('modeless')}>Go to the page in use</Button>
                     </div>
                 </Sheet>
 
@@ -788,6 +792,18 @@ function SheetsAndMenu() {
                     <p class="kit-demo-text">
                         A message raised while a sheet is open shows above it and can be closed there.
                     </p>
+                    <Button onClick={() => setMessage('Saved to the phone.')}>Show a message</Button>
+                </Sheet>
+
+                {/* Not modal, as Type text is: no backdrop, the page stays in use and a press on it
+                    leaves the sheet open. */}
+                <Sheet {...props('modeless')} modal={false} subtitle={SHEET_PHONE} title="Page in use">
+                    <p class="kit-demo-text">
+                        The page stays in use while this sheet is open. It closes by its close control, Escape or Back.
+                    </p>
+                    <div class="kit-demo-fields">
+                        <TextField label="Text for the phone" autocomplete="off" />
+                    </div>
                     <Button onClick={() => setMessage('Saved to the phone.')}>Show a message</Button>
                 </Sheet>
 
