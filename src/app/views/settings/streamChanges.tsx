@@ -46,6 +46,18 @@ interface Options {
 }
 
 /**
+ * Gives focus back to a control that was off while its change was asked or applied, if focus
+ * fell to the sheet or the page meanwhile. Focus that moved somewhere else stays there.
+ */
+function refocus(control: HTMLElement | null | undefined): void {
+    const active = document.activeElement;
+    const fell = !active || active === document.body || active.matches('dialog');
+    if (fell && control?.isConnected && !control.matches(':disabled') && control.closest('dialog[open]')) {
+        control.focus({ preventScroll: true });
+    }
+}
+
+/**
  * The stream values of an Android phone as the Settings sheet changes them: each control applies
  * when it is changed, the stream restarts, and 'Restarting stream…' then the result show under
  * the group of that control. The code knows of other viewers only through a screen open here
@@ -54,7 +66,14 @@ interface Options {
 export function useStreamChanges({ opening, tracker, udid, connected, client, name }: Options): StreamChanges {
     const config = useStreamConfig(connected ? opening : undefined, connected ? tracker : undefined, udid);
     const [place, setPlace] = useState<ChangePlace>();
-    const asking = useRef<{ fields: StreamConfigPatch; place: ChangePlace; retry: boolean; others: number }>();
+    // The change being asked, and the control it was made with.
+    const asking = useRef<{
+        fields: StreamConfigPatch;
+        place: ChangePlace;
+        retry: boolean;
+        others: number;
+        control: HTMLElement | null;
+    }>();
     const confirm = useArmedAction<ChangePlace>(!!opening);
     // The control that was changed. It is disabled while the change is applied, and gets focus
     // back afterwards if focus fell to the sheet meanwhile.
@@ -63,6 +82,13 @@ export function useStreamChanges({ opening, tracker, udid, connected, client, na
     useEffect(() => {
         setPlace(undefined);
     }, [opening]);
+
+    // A question about a phone that has gone is withdrawn: nothing could be sent.
+    useEffect(() => {
+        if (!connected) {
+            confirm.disarm();
+        }
+    }, [connected]);
 
     // On the render that ends an apply, so that it comes before anything pressed after it.
     const wasApplying = useRef(false);
@@ -74,19 +100,26 @@ export function useStreamChanges({ opening, tracker, udid, connected, client, na
             return;
         }
         changed.current = null;
-        const active = document.activeElement;
-        const fell = !active || active === document.body || active.matches('dialog');
-        if (fell && control.isConnected && !control.matches(':disabled') && control.closest('dialog[open]')) {
-            control.focus({ preventScroll: true });
-        }
+        refocus(control);
     }, [config.applying]);
+
+    // A question answered with Cancel, or withdrawn: the control was off while it was asked, so
+    // the prompt could not hand focus back to it. A confirmed change hands it back when it ends.
+    const wasAsking = useRef(false);
+    useLayoutEffect(() => {
+        const asked = wasAsking.current;
+        wasAsking.current = !!confirm.armed;
+        if (!asked || confirm.armed || config.applying) {
+            return;
+        }
+        refocus(asking.current?.control);
+    }, [confirm.armed]);
 
     const locked = config.applying || config.loading || !tracker || !connected || !!confirm.armed;
     const shown = { ...config.baseline, ...config.patch };
 
-    const run = (fields: StreamConfigPatch, where: ChangePlace, retry: boolean) => {
-        const active = document.activeElement;
-        changed.current = active instanceof HTMLElement ? active : null;
+    const run = (fields: StreamConfigPatch, where: ChangePlace, retry: boolean, control: HTMLElement | null) => {
+        changed.current = control;
         if (retry ? config.apply(fields) : config.change(fields)) {
             setPlace(where);
         }
@@ -96,25 +129,27 @@ export function useStreamChanges({ opening, tracker, udid, connected, client, na
         if (locked) {
             return;
         }
+        const active = document.activeElement;
+        const control = active instanceof HTMLElement ? active : null;
         const others = client?.getClientsCount() ?? 0;
         if (others > 0) {
-            asking.current = { fields, place: where, retry, others };
-            confirm.arm(where, document.activeElement);
+            asking.current = { fields, place: where, retry, others, control };
+            confirm.arm(where, control);
             return;
         }
-        run(fields, where, retry);
+        run(fields, where, retry, control);
     };
 
     const status = (where: ChangePlace): ComponentChildren => {
         const question = asking.current;
-        if (confirm.armed === where && question) {
+        if (confirm.armed === where && question && connected) {
             return (
                 <ConfirmPrompt
                     action={confirm}
                     question={`Restart the stream of ${name}?`}
                     consequence={`${question.others} other open screen${question.others === 1 ? '' : 's'} will also reconnect.`}
                     confirmLabel="Restart stream"
-                    onConfirm={() => run(question.fields, question.place, question.retry)}
+                    onConfirm={() => run(question.fields, question.place, question.retry, question.control)}
                 />
             );
         }

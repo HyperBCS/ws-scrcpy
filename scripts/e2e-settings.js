@@ -422,11 +422,37 @@ async function viewersFlow(browser) {
         assert.equal(applies(commands).length, 1, 'sent once, after the answer');
         answer();
         await statusOf(dialog, 'settings-quality').filter({ hasText: 'Settings saved.' }).waitFor();
+
+        // From the keyboard: the select is off while the question is asked, and focus comes back
+        // to it after Escape and after the confirmed change has been applied.
+        await dialog.locator('.settings-advanced summary').first().click();
+        await settleMotion(page);
+        const bitrate = dialog.locator('[data-setting="bitrate"] select');
+        const onBitrate = () => bitrate.evaluate((el) => el === document.activeElement);
+        await bitrate.focus();
+        await page.keyboard.press('ArrowDown');
+        await prompt.waitFor();
+        assert.equal(await bitrate.isDisabled(), true, 'no second change while one is asked');
+        assert.equal(await bitrate.inputValue(), '1000000', 'the select shows what the phone runs while it is asked');
+        await page.keyboard.press('Escape');
+        await prompt.waitFor({ state: 'detached' });
+        assert.equal(await dialog.isVisible(), true, 'Escape withdraws the question, not the sheet');
+        assert.equal(await onBitrate(), true, 'focus is back on the select after Escape');
+        assert.equal(applies(commands).length, 1);
+        await page.keyboard.press('ArrowDown');
+        await prompt.locator('.kit-confirm-actions .kit-button:not([aria-disabled])').first().waitFor();
+        await prompt.getByRole('button', { name: 'Restart stream', exact: true }).click();
+        await statusOf(dialog, 'settings-quality').filter({ hasText: 'Restarting stream…' }).waitFor();
+        assert.deepEqual(applies(commands).at(-1).data.config, { bitrate: 2000000 });
+        answer();
+        await statusOf(dialog, 'settings-quality').filter({ hasText: 'Settings saved.' }).waitFor();
+        assert.equal(await bitrate.inputValue(), '2000000');
+        assert.equal(await onBitrate(), true, 'focus is back on the select once the change is applied');
         assert.deepEqual(errors, []);
     } finally {
         await test.context.close();
     }
-    console.log('PASS Settings asks before a restart that reconnects other screens');
+    console.log('PASS Settings asks before a restart that reconnects other screens, and focus returns to the control');
 }
 
 const phone = (udid, model, extra = {}) => ({
