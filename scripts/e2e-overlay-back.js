@@ -67,7 +67,7 @@ async function start(browser, viewport) {
         colorScheme: viewport.colorScheme, serviceWorkers: 'block',
     });
     const page = await context.newPage();
-    const test = { context, page, viewport, mobile: viewport.mobile, errors: [], streams: [], closed: 0, posted: [], commands: [], keys: [] };
+    const test = { context, page, viewport, mobile: viewport.mobile, errors: [], streams: [], closed: 0, posted: [], commands: [], keys: [], texts: 0 };
     page.on('pageerror', (error) => test.errors.push(error.message));
     await page.route('**/api/notifications/**', (route) => {
         const pathname = new URL(route.request().url()).pathname;
@@ -89,11 +89,12 @@ async function start(browser, viewport) {
             test.streams.push(url.searchParams.get('udid'));
             socket.onClose(() => test.closed++);
             // What reaches the phone as a key: an Android key event or HID keyboard message, or
-            // an iPhone key report.
+            // an iPhone key report. Text that Type text sends to an Android phone is counted apart.
             socket.onMessage((data) => {
                 if (typeof data === 'string') {
                     if (JSON.parse(data).type === 'key') test.keys.push('key');
                 } else if ([0, 12, 13, 14].includes(Buffer.from(data)[0])) test.keys.push(Buffer.from(data)[0]);
+                else if (Buffer.from(data)[0] === 1) test.texts++;
             });
             if (action === 'proxy-adb') setTimeout(() => socket.send(initialStreamPacket()), 40);
             else setTimeout(() => socket.send(JSON.stringify({ type: 'status', state: 'ready' })), 40);
@@ -168,7 +169,14 @@ function streamOverlays(test, platform) {
         kitSheetOverlay('Actions', /^Actions$/, () => control(test, 'Actions')),
         kitSheetOverlay('Settings', platform === 'android' ? /^Stream settings$/ : /^Scheduled unlock$/, () => control(test, 'Settings')),
         kitSheetOverlay('Switch', /Switch/, () => press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }))),
-        kitSheetOverlay('Type text', /^Type text$/, () => control(test, 'Type text')),
+        // Not modal (U-stream-5): no backdrop. It closes by its close button, Escape and Back.
+        {
+            ...kitSheetOverlay('Type text', /^Type text$/, () => control(test, 'Type text')),
+            modal: false,
+            // Which phone it types on.
+            typed: platform,
+            ways: { 'the close button': sheetWays['the close button'], Escape: sheetWays.Escape },
+        },
         platform === 'android'
             ? kitSheetOverlay('Unlock', /^Unlock/, () => press(test, page.locator('.lock-screen-notice').getByRole('button', { name: 'Unlock', exact: true })))
             : kitSheetOverlay('Unlock', /^Unlock/, async () => {
@@ -214,7 +222,8 @@ async function backClosesEach(test, label, overlays, pageShown) {
         await opened();
         entries ??= await page.evaluate(() => history.length);
         if (overlay.kit) {
-            // One modal dialog with one header that names it, and nothing of the older markup.
+            // One dialog with one header that names it, and nothing of the older markup. Every
+            // sheet is modal but Type text.
             const facts = await shown.evaluate((dialog) => ({
                 modal: dialog.matches('dialog.kit-sheet:modal'),
                 headers: dialog.querySelectorAll('.kit-sheet-header').length,
@@ -223,7 +232,7 @@ async function backClosesEach(test, label, overlays, pageShown) {
                 olderRows: document.querySelectorAll('[class*="settings-sheet-"], [class*="unlock-sheet-"]').length,
                 olderSheets: document.querySelectorAll('.bottom-sheet-root.open, .live-text-overlay').length,
             }));
-            assert.deepEqual(facts, { modal: true, headers: 1, titles: 1, named: true, olderRows: 0, olderSheets: 0 }, `${label} ${overlay.name}: it is the kit sheet`);
+            assert.deepEqual(facts, { modal: overlay.modal ?? true, headers: 1, titles: 1, named: true, olderRows: 0, olderSheets: 0 }, `${label} ${overlay.name}: it is the kit sheet`);
         }
         if (overlay.keysStay) {
             const before = test.keys.length;
@@ -231,6 +240,20 @@ async function backClosesEach(test, label, overlays, pageShown) {
             // An Android keyboard is registered and then waits about 450 ms before its first report.
             await page.waitForTimeout(600);
             assert.deepEqual(test.keys.slice(before), [], `${label} ${overlay.name}: a key pressed while it is open does not reach the phone`);
+        }
+        if (overlay.typed) {
+            // A key pressed in the field goes to the phone once, as text: an Android phone gets
+            // one text message and no key event, an iPhone one key press (down and up).
+            const keys = test.keys.length;
+            const texts = test.texts;
+            await shown.locator('.live-text-input').focus();
+            await page.keyboard.type('a');
+            await page.waitForTimeout(600);
+            if (overlay.typed === 'android') {
+                assert.deepEqual([test.texts - texts, test.keys.length - keys], [1, 0], `${label} ${overlay.name}: a key in the field is sent once, as text`);
+            } else {
+                assert.equal(test.keys.length - keys, 2, `${label} ${overlay.name}: a key in the field is one key press on the iPhone`);
+            }
         }
         await page.goBack();
         await shown.waitFor({ state: 'hidden' });
@@ -414,11 +437,13 @@ async function streamPage(browser, viewport, platform) {
 }
 
 /**
- * Type text is a sheet, so nothing behind it can be pressed: with the controls button moved to
- * where the sheet leaves it in sight, a press there lands on the backdrop and closes the sheet.
- * The controls panel does not open over it, and the sheet's one history entry is stepped back.
+ * Type text is not modal (U-stream-5), so the page under it stays in use. With the controls
+ * button moved to where the sheet leaves it in sight, a press there opens the controls panel over
+ * Type text: Back closes the panel first, then Type text. The header's Switch takes the place of
+ * Type text with its one history entry. A tab change (Android) or another page (the bell) closes
+ * Type text, and coming back does not open it again.
  */
-async function nothingOpensOverTyping(browser, platform) {
+async function pageInUseUnderTyping(browser, platform) {
     const test = await start(browser, VIEWPORTS[0]);
     const { page } = test;
     const label = `phone ${platform} stream`;
@@ -432,24 +457,72 @@ async function nothingOpensOverTyping(browser, platform) {
         await connected(page);
         const home = await at(page);
         const typing = kitSheet(page, /^Type text$/);
-        await control(test, 'Type text');
-        await typing.waitFor();
-        await settleMotion(page);
-        await untilAt(page, home.index + 1, 1);
+        const openTyping = async () => {
+            await control(test, 'Type text');
+            await typing.waitFor();
+            await settleMotion(page);
+            await untilAt(page, home.index + 1, 1);
+        };
+
+        await openTyping();
         const fab = await page.locator('.floating-toolbar-fab').boundingBox();
         const panel = await typing.locator('.kit-sheet-panel').boundingBox();
         assert.ok(fab.y + fab.height < panel.y, `${label}: the controls button is above the sheet`);
         await page.touchscreen.tap(fab.x + fab.width / 2, fab.y + fab.height / 2);
-        await typing.waitFor({ state: 'hidden' });
-        await untilAt(page, home.index, 0);
+        await page.locator('.floating-toolbar.open').waitFor();
         await settleMotion(page);
-        assert.equal(await page.locator('.floating-toolbar.open').count(), 0, `${label}: the controls panel did not open over Type text`);
-        assert.deepEqual(await at(page), home, `${label}: the press closed Type text and left the page`);
+        await untilAt(page, home.index + 2, 2);
+        assert.equal(await typing.count(), 1, `${label}: Type text stays open under the controls panel`);
+        await page.goBack();
+        await page.locator('.floating-toolbar-panel').waitFor({ state: 'hidden' });
+        await settleMotion(page);
+        assert.deepEqual(await at(page), { ...home, index: home.index + 1, overlay: 1 }, `${label}: Back closes the panel opened over Type text first`);
+        assert.equal(await typing.count(), 1, `${label}: Type text is still open`);
+        await page.goBack();
+        await typing.waitFor({ state: 'hidden' });
+        await settleMotion(page);
+        assert.deepEqual(await at(page), home, `${label}: the next Back closes Type text`);
+
+        // The header's Switch: the switcher takes the place of Type text and its entry.
+        await openTyping();
+        const entries = await page.evaluate(() => history.length);
+        await press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }));
+        const switcher = kitSheet(page, /Switch/);
+        await switcher.waitFor();
+        await typing.waitFor({ state: 'hidden' });
+        await settleMotion(page);
+        assert.deepEqual(await at(page), { ...home, index: home.index + 1, overlay: 1 }, `${label}: the switcher has the entry Type text had`);
+        assert.equal(await page.evaluate(() => history.length), entries, `${label}: no entry was added`);
+        await page.goBack();
+        await switcher.waitFor({ state: 'hidden' });
+        await untilAt(page, home.index, 0);
+        assert.deepEqual(test.streams, [udid], `${label}: one stream socket so far`);
+
+        // Another tab (Android) or another page (the bell) closes Type text.
+        await openTyping();
+        if (platform === 'android') {
+            await press(test, page.locator('.kit-tabs').getByText('Files', { exact: true }));
+            await page.locator('.file-explorer').waitFor();
+            await untilAt(page, home.index, 0);
+            assert.equal(await page.locator('dialog.kit-sheet[open]').count(), 0, `${label}: the Files tab closes Type text`);
+            assert.ok((await at(page)).hash.includes('view=files'), `${label}: the tab replaced the entry of the page`);
+            await press(test, page.locator('.kit-tabs').getByText('Screen', { exact: true }));
+        } else {
+            await press(test, page.locator('.kit-bar [title="Notifications"]'));
+            await page.locator('.notifications-page').waitFor();
+            assert.equal(await page.locator('dialog.kit-sheet[open]').count(), 0, `${label}: another page closes Type text`);
+            assert.deepEqual(test.streams, [udid], `${label}: leaving the page started no stream`);
+            await page.goBack();
+        }
+        await page.locator('.stream-view').waitFor();
+        await connected(page);
+        await untilAt(page, home.index, 0);
+        await page.waitForTimeout(300);
+        assert.equal(await page.locator('dialog.kit-sheet[open]').count(), 0, `${label}: coming back does not open Type text again`);
         assert.equal(await page.locator('.stream-view').count(), 1);
-        assert.deepEqual(test.streams, [udid]);
-        assert.equal(test.closed, 0);
+        assert.deepEqual(test.streams, [udid, udid], `${label}: the screen was opened once more on the way back`);
         assert.deepEqual(test.errors, []);
-        console.log(`PASS ${label}: a press on the controls button behind Type text closes the sheet and opens nothing over it`);
+        console.log(`PASS ${label}: under Type text the controls button, Switch and ${platform === 'android' ? 'the tabs' : 'the bell'} can be pressed; Back closes the panel first; leaving closes Type text`);
     } finally {
         await test.context.close();
     }
@@ -637,8 +710,8 @@ async function main() {
                     await notificationsPage(browser, viewport);
                 }
                 await stepNeverReported(browser);
-                await nothingOpensOverTyping(browser, 'android');
-                await nothingOpensOverTyping(browser, 'ios');
+                await pageInUseUnderTyping(browser, 'android');
+                await pageInUseUnderTyping(browser, 'ios');
             })(),
         ]);
     } finally {
