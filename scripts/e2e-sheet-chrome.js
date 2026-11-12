@@ -585,6 +585,14 @@ async function listenControl(browser) {
         await toolbar(phone, 'Actions');
         await sheet(page, 'Actions').getByRole('heading', { name: 'Clipboard', exact: true }).waitFor();
         assert.equal(await sheet(page, 'Actions').getByText('Listen in this browser', { exact: true }).count(), 0, 'no Sound rows in Actions');
+        await page.keyboard.press('Escape');
+        await sheet(page, 'Actions').waitFor({ state: 'hidden' });
+        // The iPhone's Sound is in its Settings, with the same rows as on Android.
+        await toolbar(phone, 'Settings');
+        const settings = sheet(page, 'Settings');
+        await settings.waitFor();
+        await settings.locator('[data-section="sound"]').getByText('Listen in this browser', { exact: true }).waitFor();
+        assert.doesNotMatch(await settings.textContent(), /Mute sound|tap Sound|or Sound/, 'the iPhone sheet says Listen, not Sound or Mute');
     } finally {
         await phone.context.close();
     }

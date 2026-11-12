@@ -357,6 +357,109 @@ async function deviceCards(browser, mobile) {
     }
 }
 
+// The service rows of the card's former Details, now under About and troubleshooting in the
+// phone's Settings: grouped, explained, confirmed, and withdrawn when they no longer apply.
+async function settingsServices(browser, mobile) {
+    const test = await start(browser, { mobile });
+    const { page, ofType } = test;
+    const label = mobile ? 'phone' : 'desktop';
+    try {
+        const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+        const open = async (name) => {
+            await page.getByRole('button', { name: `Settings for ${name}`, exact: true }).click();
+            await settings.waitFor();
+            await settleMotion(page);
+            return settings.locator('[data-section="about"]');
+        };
+        const close = async () => {
+            await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
+            await settings.waitFor({ state: 'hidden' });
+        };
+        let about = await open(NAME);
+        const services = about.locator('.settings-services');
+        const rows = [
+            ['Stop stream service', /Stopping it ends the screen stream for every viewer\./, `Stop the stream service on ${NAME}?`, 'Stop stream service', 'kill_server', 'stream-service'],
+            ['Restart services', /Ends the phone session for every viewer\./, `Restart services on ${NAME}?`, 'Restart services', 'restart_session', 'restart-services'],
+            ['Remount developer image', /Ends the phone session first\./, `Remount the developer image on ${NAME}?`, 'Remount', 'remount_ddi', 'remount'],
+        ];
+        for (const [name, visible, , , , id] of rows) {
+            const button = trigger(services, name);
+            assert.match(await button.getAttribute('class'), /danger/, `${name} is a danger button`);
+            assert.equal(await button.getAttribute('title'), null, `${name} does not hide its warning in a tooltip`);
+            assert.match(await services.locator(`[data-service="${id}"]`).textContent(), visible, `${name} shows what it ends`);
+        }
+        assert.doesNotMatch(await trigger(services, 'Refresh').getAttribute('class'), /danger/, 'Refresh info is not a danger action');
+
+        // Remount: Cancel sends nothing.
+        let dialog = await armAndCheck(test, {
+            trigger: trigger(services, 'Remount developer image'), scope: about, question: `Remount the developer image on ${NAME}?`,
+            consequence: /while the image is reloaded/, confirmLabel: 'Remount', sentCount: () => ofType('remount_ddi').length,
+        });
+        await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await dialog.waitFor({ state: 'detached' });
+        assert.equal(ofType('remount_ddi').length, 0, 'Cancel sends no remount');
+
+        test.handlers.onCommand = (command) => (['restart_session', 'remount_ddi'].includes(command.type) ? { result: 'Fixture done.' } : undefined);
+        for (const [name, , question, confirmLabel, type] of rows) {
+            dialog = await armAndCheck(test, {
+                trigger: trigger(services, name), scope: about, question, consequence: /every viewer/,
+                confirmLabel, sentCount: () => ofType(type).length,
+            });
+            if (name === 'Restart services') await shot(page, `settings-iphone-restart-armed-${label}-light`);
+            if (!(await dialog.count())) await trigger(services, name).click();
+            await confirmAfterGuard(dialog, confirmLabel);
+            await dialog.waitFor({ state: 'detached' });
+            assert.equal(ofType(type).length, 1, `${name} is sent once after confirming`);
+            if (type !== 'kill_server') {
+                // The outcome is the status line under the group of the row that was pressed.
+                await services.locator('.kit-status', { hasText: 'Fixture done.' }).waitFor();
+            }
+        }
+        assert.deepEqual(ofType('kill_server')[0].data, { udid: UDID, pid: 1 });
+
+        // A waiting prompt goes away once its action no longer applies: the session stops
+        // elsewhere, or the phone disconnects.
+        await trigger(services, 'Stop stream service').click();
+        const stopPrompt = prompt(about, `Stop the stream service on ${NAME}?`);
+        await stopPrompt.waitFor();
+        test.handlers.iphone(iphone({ session: 'stopped' }));
+        // Well inside the timeout, so it is the state change that removes it.
+        await stopPrompt.waitFor({ state: 'detached', timeout: 2000 });
+        test.handlers.iphone(iphone());
+        await trigger(services, 'Restart services').click();
+        const restartPrompt = prompt(about, `Restart services on ${NAME}?`);
+        await restartPrompt.waitFor();
+        test.handlers.iphone(iphone({ state: 'Disconnected', session: 'stopped' }));
+        await restartPrompt.waitFor({ state: 'detached', timeout: 2000 });
+        assert.equal(ofType('kill_server').length, 1, 'no second stop was sent');
+        assert.equal(ofType('restart_session').length, 1, 'no second restart was sent');
+        test.handlers.iphone(iphone());
+        await close();
+
+        // Android: Stop stream service is confirmed and names the running service.
+        about = await open('Fixture Pixel fixture');
+        const androidServices = about.locator('.settings-services');
+        const stop = trigger(androidServices, 'Stop stream service');
+        assert.match(await stop.getAttribute('class'), /danger/);
+        assert.match(await androidServices.textContent(), /Stopping it ends the stream for every viewer\./);
+        const killed = () => ofType('kill_server').filter((command) => command.data.udid === android.udid);
+        dialog = await armAndCheck(test, {
+            trigger: stop, scope: about, question: 'Stop the stream service on Fixture Pixel fixture?', consequence: /every viewer/,
+            confirmLabel: 'Stop stream service', sentCount: () => killed().length,
+        });
+        await shot(page, `settings-android-stop-armed-${label}-light`);
+        if (!(await dialog.count())) await stop.click();
+        await confirmAfterGuard(dialog, 'Stop stream service');
+        await dialog.waitFor({ state: 'detached' });
+        assert.deepEqual(killed().map((command) => command.data), [{ udid: android.udid, pid: 123 }]);
+        await close();
+        assert.deepEqual(test.errors, []);
+        console.log(`PASS ${label} Settings service rows: stop, restart and remount are grouped, explained, confirmed and withdrawn`);
+    } finally {
+        await test.context.close();
+    }
+}
+
 // U-settings-1, U-system-1
 async function removePasscode(browser, mobile) {
     const status = { enabled: true, time: '03:00', hasPasscode: true, nextRunAt: Date.now() + 3600000 };
@@ -495,6 +598,7 @@ async function controlsPanelShield(browser) {
         for (const mobile of [true, false]) {
             await powerActions(browser, mobile);
             await deviceCards(browser, mobile);
+            await settingsServices(browser, mobile);
             await removePasscode(browser, mobile);
         }
         await controlsPanelShield(browser);
