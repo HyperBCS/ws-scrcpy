@@ -259,34 +259,6 @@ export class Device extends TypedEmitter<DeviceEvents> {
         return this.runShellCommandAdbKit(command);
     }
 
-    public async runShellCommandAdb(command: string): Promise<string> {
-        return new Promise<string>((resolve, reject) => {
-            const cmd = 'adb';
-            const args = ['-s', `${this.udid}`, 'shell', command];
-            const adb = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: childEnvironment() });
-            let output = '';
-
-            adb.stdout.on('data', (data) => {
-                output += data.toString();
-                console.log(this.TAG, `stdout: ${data.toString().replace(/\n$/, '')}`);
-            });
-
-            adb.stderr.on('data', (data) => {
-                console.error(this.TAG, `stderr: ${data}`);
-            });
-
-            adb.on('error', (error: Error) => {
-                console.error(this.TAG, `failed to spawn adb process.\n${error.stack}`);
-                reject(error);
-            });
-
-            adb.on('close', (code) => {
-                console.log(this.TAG, `adb process (${args.join(' ')}) exited with code ${code}`);
-                resolve(output);
-            });
-        });
-    }
-
     /**
      * Starts the scrcpy server through `adb shell` and connects its stream. The adb child stays
      * for as long as the server runs.

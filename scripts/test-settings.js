@@ -327,9 +327,8 @@ test('every direct audio, icon and adb child filters a key set after module load
         const phone = Object.create(Device.prototype);
         Object.assign(phone, { udid: 'fixture-phone', audioLaunchGeneration: 0,
             connectionGeneration: 0, servicePidRevision: 0, connected: false, TAG: '[fixture-phone]', setServerPid: () => {} });
-        await phone.runShellCommandAdb('fixture');
         await assert.rejects(phone.launchServer('fixture', false), /exited before it was ready/);
-        assert.equal(inherited.length, 4);
+        assert.equal(inherited.length, 3);
         for (const env of inherited) {
             assert.equal(Object.hasOwn(env, IOS_KEY_ENV), false, 'a child must not inherit the stored key');
             assert.equal(env.PATH, process.env.PATH);
