@@ -4,8 +4,15 @@ const { EventEmitter } = require('node:events');
 require('ts-node').register({ transpileOnly: true });
 const { passcodeMessages, MAX_PASSCODE_LENGTH, UnlockRequestError } = require('../src/app/googDevice/client/passcode');
 const { TextControlMessage } = require('../src/app/controlMessage/TextControlMessage');
-const { submitDevicePasscode, requestLockState } = require('../src/app/state/unlockDevice');
-const { activeStream, unlockSheetOpen } = require('../src/app/state/stream');
+const {
+    submitDevicePasscode,
+    requestLockState,
+    oneTapUnlock,
+    unlockingFromNotice,
+    noticeUnlockFailure,
+    UNLOCK_CONFIRM_TIMEOUT_MS,
+} = require('../src/app/state/unlockDevice');
+const { activeStream, activeCoreDeviceStream, streamConnected, unlockSheetOpen } = require('../src/app/state/stream');
 const { devices } = require('../src/app/state/devices');
 const { findDeviceForStream } = require('../src/app/state/streamDevice');
 const { readSavedPasscode, savePasscode, forgetPasscode, purgeLegacyPasscodes } = require('../src/app/state/savedPasscode');
@@ -475,6 +482,189 @@ test('the card line shows a schedule that cannot run or failed as a problem, and
     assert.match(formatUnlockMoment(at, 'America/New_York'), /03:00/);
     assert.match(formatUnlockMoment(at, 'Asia/Kolkata'), /13:30|01:30/);
     assert.equal(typeof formatUnlockMoment(at, 'Not/A_Zone'), 'string', 'an unknown zone falls back instead of throwing');
+});
+
+// The lock notice's Unlock in one tap (U-settings-6). Lock replies arrive on microtasks; the
+// waits between the steps and the 25 s for a confirmed unlock are mocked timers.
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+const textFrames = (f) => f.sent.flat().filter((packet) => packet[0] === 1).map((packet) => packet.subarray(5).toString());
+const REMEMBERED = 'ws-scrcpy:remembered-passcode:test';
+
+function oneTapFixture(t, storage) {
+    const values = fakeStorage(t);
+    if (storage) values.set(REMEMBERED, storage);
+    const f = fixture(t);
+    // No sheet: the notice's attempt is not tied to it.
+    unlockSheetOpen.value = false;
+    streamConnected.value = true;
+    t.after(() => {
+        streamConnected.value = false;
+        unlockingFromNotice.value = undefined;
+        noticeUnlockFailure.value = undefined;
+    });
+    const report = (patch) => {
+        const entry = devices.value.get('test');
+        devices.value = new Map([['test', { ...entry, descriptor: { ...entry.descriptor, ...patch } }]]);
+    };
+    report({ 'device.locked': true, 'keyguard.showing': true, 'keyguard.occluded': false });
+    return { ...f, values, report };
+}
+
+test('one tap on Android: nothing saved means the sheet opens; a saved passcode is sent once and confirmed by the list', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const none = oneTapFixture(t);
+    assert.equal(oneTapUnlock('test'), undefined, 'without a saved passcode the notice opens the sheet');
+    assert.deepEqual(none.requests, [], 'and nothing is asked of the phone');
+
+    const f = oneTapFixture(t, JSON.stringify({ value: '000719', mode: 'pin' }));
+    const before = [...f.values.entries()];
+    // No live stream: the sheet says to wait for the phone instead.
+    streamConnected.value = false;
+    assert.equal(oneTapUnlock('test'), undefined, 'nothing is sent without a live stream');
+    streamConnected.value = true;
+    // Another screen over the lock screen: the sheet explains it instead.
+    f.report({ 'keyguard.occluded': true });
+    assert.equal(oneTapUnlock('test'), undefined);
+    f.report({ 'keyguard.occluded': false });
+    const run = oneTapUnlock('test');
+    assert.equal(typeof run, 'function');
+    let outcome;
+    const done = run(new AbortController().signal).then((value) => (outcome = value));
+    assert.equal(unlockingFromNotice.value, 'test', 'the notice says Unlocking…');
+    for (const ms of [300, 500]) {
+        await flush();
+        t.mock.timers.tick(ms);
+    }
+    await flush();
+    assert.deepEqual(textFrames(f), ['000719'], 'the saved passcode is sent once, leading zeros kept');
+    assert.equal(f.requests.length, 2, 'two fresh lock readings, as from the sheet');
+    assert.equal(outcome, undefined, 'sent is not unlocked');
+    f.report({ 'device.locked': false, 'keyguard.showing': true });
+    await flush();
+    assert.equal(outcome, undefined, 'a lock screen still showing is not confirmation');
+    f.report({ 'device.locked': false, 'keyguard.showing': false });
+    await done;
+    assert.equal(outcome, 'unlocked');
+    assert.equal(unlockingFromNotice.value, undefined);
+    assert.equal(noticeUnlockFailure.value, undefined);
+    assert.deepEqual([...f.values.entries()], before, 'one tap writes nothing to storage');
+    assert.deepEqual(textFrames(f), ['000719'], 'and sends nothing again');
+});
+
+test('one tap on Android: a wrong passcode is not confirmed, is removed, and the sheet gets the error', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = oneTapFixture(t, JSON.stringify({ value: '1111', mode: 'pin' }));
+    let outcome;
+    const done = oneTapUnlock('test')(new AbortController().signal).then((value) => (outcome = value));
+    for (const ms of [300, 500, UNLOCK_CONFIRM_TIMEOUT_MS - 1]) {
+        await flush();
+        t.mock.timers.tick(ms);
+    }
+    await flush();
+    assert.equal(outcome, undefined, 'still waiting one millisecond before the limit');
+    t.mock.timers.tick(1);
+    await done;
+    assert.equal(outcome, 'failed', 'the notice then opens the sheet');
+    assert.deepEqual(textFrames(f), ['1111'], 'sent once, never again');
+    assert.equal(noticeUnlockFailure.value.udid, 'test');
+    assert.match(noticeUnlockFailure.value.message, /^Unlock was not confirmed\./);
+    assert.match(noticeUnlockFailure.value.message, /The passcode saved in this browser was removed\.$/);
+    assert.ok(!noticeUnlockFailure.value.message.includes('1111'), 'the error never holds the passcode');
+    assert.equal(readSavedPasscode('test'), undefined, 'an unconfirmed passcode does not stay saved');
+    assert.deepEqual([...f.values.keys()], [], 'and nothing else was written');
+    assert.equal(unlockingFromNotice.value, undefined);
+
+    // A lock screen that could not be checked: nothing is typed, the saved copy stays.
+    const unchecked = oneTapFixture(t, JSON.stringify({ value: '2222', mode: 'pin' }));
+    unchecked.tracker.sendCommand = (type) => {
+        unchecked.requests.push({ type });
+        queueMicrotask(() => unchecked.tracker.emit(type, { ...locked, 'device.locked': 'unknown', udid: 'test', requestId: 1 }));
+        return 1;
+    };
+    assert.equal(await oneTapUnlock('test')(new AbortController().signal), 'failed');
+    assert.deepEqual(textFrames(unchecked), []);
+    assert.match(noticeUnlockFailure.value.message, /could not be confirmed/);
+    assert.equal(readSavedPasscode('test').value, '2222', 'a passcode that was not typed is kept');
+
+    // The page goes away: nothing is sent and nothing is handed to a sheet.
+    const left = oneTapFixture(t, JSON.stringify({ value: '3333', mode: 'pin' }));
+    const leaving = new AbortController();
+    const canceled = oneTapUnlock('test')(leaving.signal);
+    leaving.abort();
+    assert.equal(await canceled, 'canceled');
+    assert.deepEqual(textFrames(left), []);
+    assert.equal(noticeUnlockFailure.value, undefined);
+});
+
+function iphoneFixture(t, schedule, replies) {
+    const { tracker, sent } = unlockTracker(replies.map((reply) => ({ udid: 'phone', ...reply })));
+    const entry = (patch = {}) => ({
+        tracker,
+        params: { type: 'ios', hostname: '127.0.0.1', port: 8000, pathname: '/' },
+        descriptor: { udid: 'phone', name: 'Bench iPhone', state: 'Connected', 'device.locked': true, unlockSchedule: schedule, ...patch },
+    });
+    devices.value = new Map([['ios:phone', entry()]]);
+    activeCoreDeviceStream.value = { params: { action: 'stream-coredevice', udid: 'phone' }, client: {} };
+    streamConnected.value = true;
+    t.after(() => {
+        devices.value = new Map();
+        activeCoreDeviceStream.value = undefined;
+        streamConnected.value = false;
+        unlockingFromNotice.value = undefined;
+        noticeUnlockFailure.value = undefined;
+    });
+    return { sent, report: (patch) => (devices.value = new Map([['ios:phone', entry(patch)]])) };
+}
+
+test('one tap on an iPhone: one server run with the stored passcode, the list confirms, and each refusal reaches the sheet', async (t) => {
+    const stored = { enabled: false, time: '03:00', hasPasscode: true };
+    for (const schedule of [
+        { ...stored, hasPasscode: false },
+        { ...stored, passcodeRejected: true },
+        { ...stored, needsManualUnlock: true },
+    ]) {
+        const f = iphoneFixture(t, schedule, []);
+        assert.equal(oneTapUnlock('phone'), undefined, `${JSON.stringify(schedule)}: the sheet says why`);
+        assert.deepEqual(f.sent, []);
+    }
+
+    const ok = iphoneFixture(t, stored, [{ result: JSON.stringify({ at: 1, trigger: 'manual', outcome: 'unlocked' }) }]);
+    // No ready screen session: a run would start one. The sheet says to wait instead.
+    streamConnected.value = false;
+    assert.equal(oneTapUnlock('phone'), undefined, 'no run without a live stream');
+    assert.deepEqual(ok.sent, []);
+    streamConnected.value = true;
+    let outcome;
+    const done = oneTapUnlock('phone')(new AbortController().signal).then((value) => (outcome = value));
+    assert.equal(unlockingFromNotice.value, 'phone');
+    assert.equal(oneTapUnlock('phone'), undefined, 'no second attempt while one runs');
+    await flush();
+    assert.deepEqual(ok.sent, [{ type: 'run_unlock_now', data: { udid: 'phone', keepUnlocked: true } }]);
+    assert.equal(outcome, undefined, 'the server said unlocked; the list has not yet');
+    ok.report({ 'device.locked': false });
+    await done;
+    assert.equal(outcome, 'unlocked');
+    assert.equal(ok.sent.length, 1);
+
+    for (const [reply, message] of [
+        [
+            { result: JSON.stringify({ at: 1, trigger: 'manual', outcome: 'failed-rejected', message: 'Scheduled unlock is paused until the passcode is saved again' }) },
+            'Failed: the stored passcode was rejected. Scheduled unlock is paused until the passcode is saved again.',
+        ],
+        [
+            { result: JSON.stringify({ at: 1, trigger: 'manual', outcome: 'needs-manual-unlock', message: 'Enter the passcode on the phone.' }) },
+            'The iPhone stopped accepting connections. Enter the passcode on the phone.',
+        ],
+        [
+            { error: 'A screen session was opened for this phone a moment ago. Try again in 90 s.' },
+            'A screen session was opened for this phone a moment ago. Try again in 90 s.',
+        ],
+    ]) {
+        const f = iphoneFixture(t, stored, [reply]);
+        assert.equal(await oneTapUnlock('phone')(new AbortController().signal), 'failed');
+        assert.deepEqual(noticeUnlockFailure.value, { udid: 'phone', message });
+        assert.equal(f.sent.length, 1, 'never sent again');
+    }
 });
 
 test('scheduled-unlock commands time out, clean up, and ignore a late reply', async (t) => {

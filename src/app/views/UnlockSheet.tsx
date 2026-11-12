@@ -1,52 +1,94 @@
-import { useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { Banner } from '../ui/Banner';
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { Banner, BannerTone } from '../ui/Banner';
 import { Button } from '../ui/Button';
 import { Checkbox } from '../ui/Checkbox';
-import { InlineStatus } from '../ui/InlineStatus';
+import { InlineStatus, StatusTone } from '../ui/InlineStatus';
+import { UNLOCK } from '../copy';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Sheet } from '../ui/Sheet';
-import { UnlockRequestError } from '../googDevice/client/passcode';
 import { readSavedPasscode, savePasscode, forgetPasscode, PasscodeMode } from '../state/savedPasscode';
+import {
+    androidUnlock,
+    noticeUnlockFailure,
+    UNLOCK_TEXT,
+    UnlockAdapter,
+    unlockErrorText,
+    unlockingFromNotice,
+    UnlockNotConfirmed,
+    unlockOnce,
+} from '../state/unlockDevice';
 import type { DeviceLockValue } from './LockScreenNotice';
 import '../../style/views/UnlockSheet.css';
 
-interface UnlockSheetProps {
-    open: boolean;
-    udid: string;
-    /** Shown under the sheet title, as on every device sheet. */
-    deviceName?: string;
-    sessionKey?: object;
-    connected: boolean;
-    locked: DeviceLockValue;
-    keyguardShowing: DeviceLockValue;
-    keyguardOccluded?: DeviceLockValue;
-    onClose: () => void;
-    // A true result only means sent. The descriptor must confirm the device is unlocked.
-    onSubmit: (passcode: string, signal: AbortSignal) => boolean | Promise<boolean>;
+/** A condition over the form. One that `blocks` keeps Unlock from being pressed. */
+export interface UnlockBanner {
+    tone: BannerTone;
+    text: string;
+    blocks?: boolean;
+    action?: { label: string; run: () => void };
 }
 
-type Phase = 'idle' | 'sending' | 'waiting' | 'confirmed' | 'unconfirmed' | 'error';
-const CONFIRM_TIMEOUT_MS = 25000;
+interface PhoneUnlockSheetProps {
+    open: boolean;
+    udid: string;
+    /** Shown under the sheet title, as on every phone sheet. */
+    subtitle?: string;
+    /** A new stream client starts a new form. */
+    sessionKey?: object;
+    connected: boolean;
+    /** The phone list reports the phone unlocked. */
+    unlocked: boolean;
+    adapter: UnlockAdapter;
+    intro?: string;
+    banners?: UnlockBanner[];
+    onClose: () => void;
+}
 
-export function UnlockSheet({
+/** idle, waiting (sent or being sent, not yet confirmed), confirmed, failed: the same on both kinds of phone. */
+type Phase = 'idle' | 'waiting' | 'confirmed' | 'failed';
+
+// A mouse and a keyboard: the field can take focus without raising a phone keyboard.
+const KEYBOARD_QUERY = '(hover: hover) and (pointer: fine)';
+const HINT = 'You can also unlock on the remote screen or on the phone itself.';
+
+function focusSoon(target: { current: HTMLElement | null }): () => void {
+    if (!window.matchMedia(KEYBOARD_QUERY).matches) {
+        return () => undefined;
+    }
+    // The sheet takes focus itself when it opens, and a field is enabled only after the render
+    // that ends an attempt; the field takes over after that.
+    let frame = requestAnimationFrame(() => {
+        frame = requestAnimationFrame(() => target.current?.focus({ preventScroll: true }));
+    });
+    return () => cancelAnimationFrame(frame);
+}
+
+/**
+ * The one Unlock sheet of both kinds of phone. The adapter says how the passcode reaches the
+ * phone and whether there is a field for it: on Android the owner types a PIN or password here;
+ * an iPhone has no field, because the server types the passcode it stores. The states, the
+ * Unlock button, the tones and the hint are the same for both. The sheet closes when the phone
+ * list reports the phone unlocked.
+ */
+export function PhoneUnlockSheet({
     open,
     udid,
-    deviceName,
+    subtitle,
     sessionKey,
     connected,
-    locked,
-    keyguardShowing,
-    keyguardOccluded,
+    unlocked,
+    adapter,
+    intro,
+    banners = [],
     onClose,
-    onSubmit,
-}: UnlockSheetProps) {
+}: PhoneUnlockSheetProps) {
     const input = useRef<HTMLInputElement>(null);
     const controller = useRef<AbortController>();
-    const timeout = useRef<ReturnType<typeof setTimeout>>();
     const composing = useRef(false);
     // The passcode of the attempt in flight, kept only when it is to be remembered: it is
-    // written to storage once the device confirms the unlock and dropped in every other case.
+    // written to storage once the phone confirms the unlock and dropped in every other case.
     const toRemember = useRef<{ value: string; mode: PasscodeMode }>();
+    const wasUnlocked = useRef(unlocked);
     const [mode, setMode] = useState<PasscodeMode>('pin');
     const [hasDraft, setHasDraft] = useState(false);
     const [saved, setSaved] = useState(false);
@@ -55,8 +97,16 @@ export function UnlockSheet({
     const [feedback, setFeedback] = useState('');
     const formId = useId();
     const fieldId = useId();
-    const confirmed = connected && locked === false && keyguardShowing === false;
-    const pending = phase === 'sending' || phase === 'waiting';
+    // One Unlock sheet per page, so these two can be fixed names.
+    const rememberHintId = 'unlock-input-hint';
+    const feedbackId = 'unlock-feedback';
+    const field = adapter.field;
+    // The lock notice is sending the saved passcode, or could not.
+    const noticeBusy = unlockingFromNotice.value === udid;
+    const handed = noticeUnlockFailure.value;
+    const pending = phase === 'waiting' || noticeBusy;
+    const blocked = banners.some((banner) => banner.blocks);
+    const canSend = connected && !unlocked && !blocked && (!field || hasDraft);
 
     const clearDraft = () => {
         if (input.current) input.current.value = '';
@@ -65,14 +115,7 @@ export function UnlockSheet({
     const cancelPending = () => {
         controller.current?.abort();
         controller.current = undefined;
-        if (timeout.current !== undefined) clearTimeout(timeout.current);
-        timeout.current = undefined;
         toRemember.current = undefined;
-    };
-    // A saved passcode that did not unlock the device may be out of date; sending it again
-    // from a prefilled field would be another failed attempt.
-    const dropSaved = () => {
-        if (forgetPasscode(udid)) setSaved(false);
     };
     const close = () => {
         clearDraft();
@@ -84,7 +127,9 @@ export function UnlockSheet({
         clearDraft();
         cancelPending();
         composing.current = false;
-        const stored = open ? readSavedPasscode(udid) : undefined;
+        // A closed sheet keeps its last words, so they stay while it slides away.
+        if (!open) return;
+        const stored = field ? readSavedPasscode(udid) : undefined;
         setSaved(!!stored);
         setRemember(!!stored);
         setMode(stored?.mode || 'pin');
@@ -100,31 +145,37 @@ export function UnlockSheet({
         };
     }, [open, udid, sessionKey]);
 
+    // What the lock notice's attempt ended with.
     useLayoutEffect(() => {
+        if (!open || handed?.udid !== udid) return;
+        noticeUnlockFailure.value = undefined;
+        setPhase('failed');
+        setFeedback(handed.message);
+    }, [open, handed, udid]);
+
+    useLayoutEffect(() => (open && field ? focusSoon(input) : undefined), [open, field]);
+
+    useLayoutEffect(() => {
+        const before = wasUnlocked.current;
+        wasUnlocked.current = unlocked;
         if (!open) return;
         if (!connected) {
             clearDraft();
-            if (controller.current) {
+            // An Android passcode goes over the stream, so the attempt ends with it. An iPhone
+            // run is the server's and goes on without the stream; its answer still counts.
+            if (controller.current && adapter.isLost()) {
                 cancelPending();
-                setPhase('error');
-                setFeedback(
-                    'Connection lost. The passcode may already have been sent. Check the phone before trying again.',
-                );
+                setPhase('failed');
+                setFeedback(UNLOCK_TEXT.connectionLost);
             }
-        } else if (confirmed && controller.current) {
-            const confirmedPasscode = toRemember.current;
-            cancelPending();
+        } else if (unlocked && before === false && !controller.current) {
+            // Unlocked another way while the sheet was open: on the phone, or from the notice.
             clearDraft();
-            // The only place a passcode is written to storage: after the device confirmed it.
-            if (confirmedPasscode) setSaved(savePasscode(udid, confirmedPasscode.value, confirmedPasscode.mode));
             setPhase('confirmed');
-            setFeedback('Phone confirmed unlocked.');
-        } else if (!confirmed && phase === 'confirmed') {
-            clearDraft();
-            setPhase('idle');
-            setFeedback('The phone lock state changed. Check the phone before sending another passcode.');
+            setFeedback(UNLOCK_TEXT.confirmed);
+            onClose();
         }
-    }, [open, connected, confirmed, phase]);
+    }, [open, connected, unlocked]);
 
     useLayoutEffect(() => {
         if (!open) return;
@@ -146,96 +197,95 @@ export function UnlockSheet({
         };
     }, [open]);
 
-    const submit = async (event: Event) => {
-        event.preventDefault();
-        if (!connected || confirmed || controller.current || composing.current) return;
-        let passcode = input.current?.value || '';
-        if (!passcode) return;
-        clearDraft();
-        if (passcode.length > 128 || (mode === 'pin' ? !/^\d+$/.test(passcode) : !/^[\x20-\x7e]+$/.test(passcode))) {
-            setPhase('error');
-            setFeedback(
-                mode === 'pin'
-                    ? 'A PIN uses digits only. Choose Password for letters or symbols.'
-                    : 'Use up to 128 standard English letters, numbers, spaces or symbols. Other characters must be entered on the phone.',
-            );
-            return;
+    const fail = (message: string) => {
+        setPhase('failed');
+        setFeedback(message);
+        if (field) focusSoon(input);
+    };
+
+    const submit = async (event?: Event) => {
+        event?.preventDefault();
+        if (!canSend || pending || controller.current || composing.current) return;
+        let passcode = '';
+        if (field) {
+            passcode = input.current?.value || '';
+            if (!passcode) return;
+            clearDraft();
+            if (
+                passcode.length > 128 ||
+                (mode === 'pin' ? !/^\d+$/.test(passcode) : !/^[\x20-\x7e]+$/.test(passcode))
+            ) {
+                fail(
+                    mode === 'pin'
+                        ? 'A PIN uses digits only. Choose Password for letters or symbols.'
+                        : 'Use up to 128 standard English letters, numbers, spaces or symbols. Other characters must be entered on the phone.',
+                );
+                return;
+            }
         }
         const attempt = new AbortController();
+        const current = () => !attempt.signal.aborted && controller.current === attempt;
         controller.current = attempt;
-        toRemember.current = remember ? { value: passcode, mode } : undefined;
-        setPhase('sending');
-        setFeedback('Checking the phone lock before sending…');
-        timeout.current = setTimeout(() => {
-            if (controller.current !== attempt) return;
-            cancelPending();
-            dropSaved();
-            setPhase('unconfirmed');
-            setFeedback(
-                `Unlock was not confirmed. Check the remote screen before trying again. Nothing will be resent automatically.${
-                    saved ? ' The passcode saved in this browser was removed.' : ''
-                }`,
-            );
-        }, CONFIRM_TIMEOUT_MS);
+        toRemember.current = field && remember ? { value: passcode, mode } : undefined;
+        setPhase('waiting');
+        setFeedback(adapter.sending);
         try {
-            const result = onSubmit(passcode, attempt.signal);
+            const result = unlockOnce(adapter, passcode, attempt.signal, () => {
+                if (current()) setFeedback(adapter.sent);
+            });
             passcode = '';
-            const sent = await result;
-            if (attempt.signal.aborted || controller.current !== attempt) return;
-            if (!sent) {
-                cancelPending();
-                setPhase('error');
-                setFeedback(
-                    'The passcode was not sent. Make sure the phone is connected and its PIN or password screen is visible, then try again.',
-                );
-            } else {
-                setPhase('waiting');
-                setFeedback('Passcode sent once. Waiting for the phone to confirm it is unlocked…');
-            }
-        } catch (error) {
-            if (attempt.signal.aborted || controller.current !== attempt) return;
+            await result;
+            if (!current()) return;
+            const confirmedPasscode = toRemember.current;
             cancelPending();
-            setPhase('error');
-            // Transport errors may contain arguments. Never echo them into the UI or console.
-            setFeedback(
-                error instanceof UnlockRequestError
-                    ? error.message
-                    : 'Could not complete the unlock request. Check the phone before trying again.',
-            );
+            clearDraft();
+            // The only place a passcode is written to storage: after the phone confirmed it.
+            if (confirmedPasscode) setSaved(savePasscode(udid, confirmedPasscode.value, confirmedPasscode.mode));
+            setPhase('confirmed');
+            setFeedback(UNLOCK_TEXT.confirmed);
+            onClose();
+        } catch (error) {
+            if (!current()) return;
+            cancelPending();
+            let message = unlockErrorText(error);
+            // A saved passcode that did not unlock the phone may be out of date; sending it
+            // again from a prefilled field would be another failed attempt.
+            if (error instanceof UnlockNotConfirmed && field && forgetPasscode(udid)) {
+                if (saved) message = `${message} ${UNLOCK_TEXT.savedRemoved}`;
+                setSaved(false);
+            }
+            fail(message);
         }
     };
 
-    const stateMessage = !connected
-        ? 'Waiting for the phone to reconnect. No passcode will be queued.'
-        : confirmed
-          ? phase === 'confirmed'
-              ? feedback
-              : 'This phone reports that it is unlocked.'
-          : feedback;
-
-    const failed = phase === 'error' || phase === 'unconfirmed';
+    // What the line under the form says: the state of the phone first, then the attempt.
+    const [stateMessage, tone]: [string, StatusTone] =
+        !connected && (!pending || adapter.isLost())
+            ? ['Waiting for the phone to reconnect. No passcode will be queued.', 'neutral']
+            : noticeBusy && phase !== 'waiting'
+              ? [UNLOCK.unlocking, 'neutral']
+              : unlocked && phase !== 'confirmed'
+                ? ['This phone reports that it is unlocked.', 'neutral']
+                : [feedback, phase === 'failed' ? 'error' : phase === 'confirmed' ? 'success' : 'neutral'];
 
     return (
         <Sheet
             open={open}
             onClose={close}
-            title="Unlock device"
-            subtitle={deviceName}
+            title="Unlock phone"
+            subtitle={subtitle}
             footer={
-                <div class="unlock-actions">
-                    <Button onClick={close}>{confirmed ? 'Back to screen' : 'Use remote screen'}</Button>
-                    {!confirmed && (
-                        <Button
-                            type="submit"
-                            variant="primary"
-                            // The form is in the body of the sheet; the button belongs to it by name.
-                            attributes={{ form: formId }}
-                            disabled={!connected || pending || !hasDraft || keyguardOccluded === true}
-                        >
-                            {pending ? 'Waiting for the phone…' : `Send ${mode === 'pin' ? 'PIN' : 'password'}`}
-                        </Button>
-                    )}
-                </div>
+                <Button
+                    type={field ? 'submit' : 'button'}
+                    variant="primary"
+                    // The form is in the body of the sheet; the button belongs to it by name.
+                    attributes={field ? { form: formId } : undefined}
+                    onClick={field ? undefined : () => void submit()}
+                    busy={pending}
+                    disabled={!pending && !canSend}
+                >
+                    Unlock
+                </Button>
             }
         >
             <form
@@ -245,100 +295,155 @@ export function UnlockSheet({
                 autoComplete="off"
                 onKeyUp={(event) => event.stopPropagation()}
             >
-                <p class="unlock-intro">Enter the phone’s PIN or password.</p>
-                {keyguardOccluded === true && (
-                    <Banner>
-                        Another screen is covering the phone lock. Return to the lock screen before sending a passcode.
+                {intro && <p class="unlock-intro">{intro}</p>}
+                {banners.map((banner) => (
+                    <Banner key={banner.text} tone={banner.tone} action={banner.action}>
+                        {banner.text}
                     </Banner>
+                ))}
+                {field && (
+                    <>
+                        <div class="kit-field-group">
+                            <span class="kit-field-label">Unlock with</span>
+                            <SegmentedControl
+                                label="Unlock with"
+                                full
+                                value={mode}
+                                options={[
+                                    { value: 'pin', label: 'PIN' },
+                                    { value: 'password', label: 'Password' },
+                                ]}
+                                disabled={pending || unlocked}
+                                onChange={(value) => {
+                                    clearDraft();
+                                    setMode(value);
+                                    setFeedback('');
+                                    setPhase('idle');
+                                }}
+                            />
+                        </div>
+                        {/* Written with the kit's classes: the field keeps its value out of the
+                            component state and is read and cleared through its ref. */}
+                        <div class="kit-field-group">
+                            <label class="kit-field-label" for={fieldId}>
+                                {mode === 'pin' ? 'Phone PIN' : 'Phone password'}
+                            </label>
+                            <input
+                                ref={input}
+                                id={fieldId}
+                                class="kit-field unlock-field"
+                                type="password"
+                                inputMode={mode === 'pin' ? 'numeric' : 'text'}
+                                enterKeyHint="go"
+                                maxLength={128}
+                                autoComplete="off"
+                                autoCapitalize="off"
+                                autoCorrect="off"
+                                spellcheck={false}
+                                aria-describedby={`${rememberHintId} ${feedbackId}`}
+                                disabled={!connected || pending || unlocked}
+                                onInput={(event) => setHasDraft(event.currentTarget.value.length > 0)}
+                                onKeyDown={(event) => event.stopPropagation()}
+                                onCompositionStart={() => (composing.current = true)}
+                                onCompositionEnd={() => (composing.current = false)}
+                            />
+                        </div>
+                        <div class="unlock-remember">
+                            <Checkbox
+                                checked={remember}
+                                disabled={pending}
+                                describedBy={rememberHintId}
+                                onChange={(checked) => {
+                                    setRemember(checked);
+                                    if (!checked && saved && forgetPasscode(udid)) {
+                                        setSaved(false);
+                                        clearDraft();
+                                    }
+                                }}
+                            >
+                                Remember in this browser
+                            </Checkbox>
+                            <p id={rememberHintId} class="unlock-hint">
+                                {saved
+                                    ? 'Saved in this browser as plain text. Clear the box to forget it.'
+                                    : remember
+                                      ? 'Saved as plain text in this browser once the phone confirms it is unlocked.'
+                                      : 'Not saved. Tick the box to keep it in this browser after a confirmed unlock.'}
+                            </p>
+                        </div>
+                    </>
                 )}
-                {locked === false && keyguardShowing === true && (
-                    <Banner tone="info">
-                        The phone does not report a passcode lock. You may only need to swipe its lock screen.
-                    </Banner>
-                )}
-                <div class="kit-field-group">
-                    <span class="kit-field-label">Unlock with</span>
-                    <SegmentedControl
-                        label="Unlock with"
-                        full
-                        value={mode}
-                        options={[
-                            { value: 'pin', label: 'PIN' },
-                            { value: 'password', label: 'Password' },
-                        ]}
-                        disabled={pending || confirmed}
-                        onChange={(value) => {
-                            clearDraft();
-                            setMode(value);
-                            setFeedback('');
-                            setPhase('idle');
-                        }}
-                    />
-                </div>
-                {/* Written with the kit's classes: the field keeps its value out of the component
-                    state and is read and cleared through its ref. */}
-                <div class="kit-field-group">
-                    <label class="kit-field-label" for={fieldId}>
-                        {mode === 'pin' ? 'Phone PIN' : 'Phone password'}
-                    </label>
-                    <input
-                        ref={input}
-                        id={fieldId}
-                        class="kit-field unlock-field"
-                        type="password"
-                        inputMode={mode === 'pin' ? 'numeric' : 'text'}
-                        enterKeyHint="go"
-                        maxLength={128}
-                        autoComplete="off"
-                        autoCapitalize="off"
-                        autoCorrect="off"
-                        spellcheck={false}
-                        aria-describedby="unlock-input-hint unlock-feedback"
-                        disabled={!connected || pending || confirmed}
-                        onInput={(event) => setHasDraft(event.currentTarget.value.length > 0)}
-                        onKeyDown={(event) => event.stopPropagation()}
-                        onCompositionStart={() => (composing.current = true)}
-                        onCompositionEnd={() => (composing.current = false)}
-                    />
-                </div>
-                <div class="unlock-remember">
-                    <Checkbox
-                        checked={remember}
-                        disabled={pending}
-                        describedBy="unlock-input-hint"
-                        onChange={(checked) => {
-                            setRemember(checked);
-                            if (!checked && saved && forgetPasscode(udid)) {
-                                setSaved(false);
-                                clearDraft();
-                            }
-                        }}
-                    >
-                        Remember in this browser
-                    </Checkbox>
-                    <p id="unlock-input-hint" class="unlock-hint">
-                        {saved
-                            ? 'Saved in this browser as plain text. Clear the box to forget it.'
-                            : remember
-                              ? 'Saved as plain text in this browser once the phone confirms it is unlocked.'
-                              : 'Not saved. Tick the box to keep it in this browser after a confirmed unlock.'}
-                    </p>
-                </div>
                 {/* A live region from the start, so the first message is read out too. */}
                 <div
-                    id="unlock-feedback"
+                    id={feedbackId}
                     class="unlock-feedback"
                     aria-live="polite"
-                    data-unlock-state={confirmed ? 'confirmed' : !connected ? 'disconnected' : phase}
+                    data-unlock-state={noticeBusy && phase !== 'waiting' ? 'waiting' : phase}
                 >
-                    {stateMessage && (
-                        <InlineStatus tone={failed ? 'error' : confirmed ? 'success' : 'neutral'}>
-                            {stateMessage}
-                        </InlineStatus>
-                    )}
+                    {stateMessage && <InlineStatus tone={tone}>{stateMessage}</InlineStatus>}
                 </div>
-                <p class="unlock-hint">For a pattern lock, draw on the remote screen or unlock on the phone.</p>
+                <p class="unlock-hint">{HINT}</p>
             </form>
         </Sheet>
+    );
+}
+
+interface UnlockSheetProps {
+    open: boolean;
+    udid: string;
+    /** Shown under the sheet title, as on every phone sheet. */
+    deviceName?: string;
+    sessionKey?: object;
+    connected: boolean;
+    locked: DeviceLockValue;
+    keyguardShowing: DeviceLockValue;
+    keyguardOccluded?: DeviceLockValue;
+    onClose: () => void;
+    // A true result only means sent. The phone list must confirm the phone is unlocked.
+    onSubmit: (passcode: string, signal: AbortSignal) => boolean | Promise<boolean>;
+}
+
+/** The Unlock sheet of an Android phone: the owner types its PIN or password. */
+export function UnlockSheet({
+    open,
+    udid,
+    deviceName,
+    sessionKey,
+    connected,
+    locked,
+    keyguardShowing,
+    keyguardOccluded,
+    onClose,
+    onSubmit,
+}: UnlockSheetProps) {
+    const send = useRef(onSubmit);
+    send.current = onSubmit;
+    const adapter = useMemo(() => androidUnlock(udid, (passcode, signal) => send.current(passcode, signal)), [udid]);
+    const banners: UnlockBanner[] = [];
+    if (keyguardOccluded === true) {
+        banners.push({
+            tone: 'warning',
+            text: 'Another screen is covering the phone lock. Return to the lock screen before sending a passcode.',
+            blocks: true,
+        });
+    }
+    if (locked === false && keyguardShowing === true) {
+        banners.push({
+            tone: 'info',
+            text: 'The phone does not report a passcode lock. You may only need to swipe its lock screen.',
+        });
+    }
+    return (
+        <PhoneUnlockSheet
+            open={open}
+            udid={udid}
+            subtitle={deviceName}
+            sessionKey={sessionKey}
+            connected={connected}
+            unlocked={locked === false && keyguardShowing === false}
+            adapter={adapter}
+            banners={banners}
+            onClose={onClose}
+        />
     );
 }

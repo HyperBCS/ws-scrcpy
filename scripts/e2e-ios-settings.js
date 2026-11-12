@@ -474,10 +474,18 @@ async function themeFlow(browser) {
 async function streamUnlockFlow(browser) {
     const legacy = { [`ws-scrcpy:passcode:${UDID}`]: JSON.stringify({ value: PASSCODE, mode: 'pin' }) };
     const stored = { enabled: true, time: '03:00', hasPasscode: true, timeZone: ZONE, nextRunAt: Date.UTC(2026, 10, 11, 8, 0) };
-    const openUnlock = async (page) => {
-        await page.locator('.lock-screen-notice').getByRole('button', { name: 'Unlock', exact: true }).click();
+    // With a stored passcode the lock notice unlocks in one tap (scripts/e2e-unlock.js covers
+    // that); the sheet itself is opened from Actions.
+    const openUnlock = async (page, mobile) => {
+        if (mobile) {
+            await page.locator('.floating-toolbar-fab').click();
+            await settleMotion(page);
+        }
+        await page.locator('.control-buttons-list [title="Actions"]').click();
         await settleMotion(page);
-        const dialog = page.getByRole('dialog', { name: 'Unlock device', exact: true });
+        await page.getByRole('dialog', { name: 'Actions', exact: true }).getByRole('button', { name: 'Unlock', exact: true }).click();
+        await settleMotion(page);
+        const dialog = page.getByRole('dialog', { name: 'Unlock phone', exact: true });
         await dialog.waitFor();
         return dialog;
     };
@@ -490,10 +498,11 @@ async function streamUnlockFlow(browser) {
                 [],
                 'a passcode an earlier version saved for this iPhone is removed on load',
             );
-            const dialog = await openUnlock(page);
+            const dialog = await openUnlock(page, mobile);
             assert.equal(await dialog.locator('input').count(), 0, 'no passcode field: nothing to mistype, prefill or resend');
-            const button = dialog.getByRole('button', { name: 'Unlock with stored passcode', exact: true });
-            const state = dialog.locator('[data-unlock-state]');
+            const button = dialog.getByRole('button', { name: 'Unlock', exact: true });
+            // Read while the sheet is closed too.
+            const state = page.locator('[data-unlock-state]');
             assert.equal(await state.getAttribute('data-unlock-state'), 'idle');
             await page.screenshot({ path: path.join(OUT, `stream-unlock-${width}.png`) });
 
@@ -501,10 +510,9 @@ async function streamUnlockFlow(browser) {
             handlers.onCommand = (command) =>
                 command.type === 'run_unlock_now' ? new Promise((resolve) => { release = resolve; }) : undefined;
             await button.click();
-            const busy = dialog.getByRole('button', { name: 'Unlocking…', exact: true });
-            await busy.waitFor();
-            assert.equal(await busy.isDisabled(), true);
-            assert.equal(await state.getAttribute('data-unlock-state'), 'running');
+            await dialog.locator('[data-unlock-state="waiting"]').waitFor();
+            assert.equal(await button.getAttribute('aria-busy'), 'true');
+            for (let i = 0; i < 100 && !release; i++) await page.waitForTimeout(20);
             assert.deepEqual(ofType(commands, 'run_unlock_now').map((command) => command.data), [{ udid: UDID, keepUnlocked: true }]);
             // Still locked after the digits: said plainly, and nothing is sent again.
             release({ result: JSON.stringify({ at: Date.now(), trigger: 'manual', outcome: 'failed-rejected', message: 'Scheduled unlock is paused until the passcode is saved again' }) });
@@ -517,40 +525,40 @@ async function streamUnlockFlow(browser) {
             test.sendDevice(iphone({ ...stored, passcodeRejected: true, nextRunAt: undefined }, { session: 'ready', 'screen.power': 'on' }));
             const settings = dialog.getByRole('button', { name: 'Open Settings', exact: true });
             await settings.waitFor();
-            assert.equal(await button.count(), 0);
-            await page.getByRole('button', { name: 'Close Unlock device' }).click();
+            assert.equal(await button.isDisabled(), true);
+            await page.getByRole('button', { name: 'Close Unlock phone' }).click();
             test.sendDevice(iphone(stored, { session: 'ready', 'screen.power': 'on' }));
 
-            // A confirmed unlock.
-            await openUnlock(page);
+            // A confirmed unlock: the server's answer, then the phone's own report closes the sheet.
+            await openUnlock(page, mobile);
             handlers.onCommand = (command) =>
                 command.type === 'run_unlock_now' ? { result: JSON.stringify({ at: Date.now(), trigger: 'manual', outcome: 'unlocked' }) } : undefined;
             await button.click();
-            await dialog.locator('[data-unlock-state="confirmed"]').waitFor();
-            assert.equal(await state.textContent(), 'Unlocked.');
+            await page.waitForFunction(() => document.querySelector('[data-unlock-state="waiting"]')?.textContent.includes('Waiting for the phone to confirm'));
             test.sendDevice(iphone(stored, { session: 'ready', 'screen.power': 'on', 'device.locked': false }));
-            await page.waitForFunction(() => document.querySelector('dialog.kit-sheet[open] .kit-sheet-footer .kit-button-primary')?.disabled === true);
-            await page.getByRole('button', { name: 'Close Unlock device' }).click();
+            await dialog.waitFor({ state: 'hidden' });
+            assert.equal(await state.getAttribute('data-unlock-state'), 'confirmed');
+            assert.equal(await state.textContent(), 'Phone confirmed unlocked.');
             test.sendDevice(iphone(stored, { session: 'ready', 'screen.power': 'on' }));
 
             // A run the server refuses says when it can run.
-            await openUnlock(page);
+            await openUnlock(page, mobile);
             handlers.onCommand = (command) =>
                 command.type === 'run_unlock_now' ? { error: 'A screen session was opened for this phone a moment ago. Try again in 90 s.' } : undefined;
             await button.click();
             await dialog.locator('[data-unlock-state="failed"]').waitFor();
             assert.match(await state.textContent(), /Try again in 90 s\.$/);
-            await page.getByRole('button', { name: 'Close Unlock device' }).click();
+            await page.getByRole('button', { name: 'Close Unlock phone' }).click();
 
             // No stored passcode: the sheet leads to Settings instead of asking for one.
             test.sendDevice(iphone({ ...BASE_STATUS }, { session: 'ready', 'screen.power': 'on' }));
-            await openUnlock(page);
-            assert.match(await state.textContent(), /^No passcode is stored on the server for this phone\./);
+            await openUnlock(page, mobile);
+            await dialog.getByText(/^No passcode is stored on the server for this phone\./).waitFor();
             await settings.click();
             await page.getByRole('dialog', { name: 'Settings', exact: true }).waitFor();
             await settleMotion(page);
             await page.getByLabel('Passcode for scheduled unlock').waitFor();
-            assert.equal(await page.getByRole('dialog', { name: 'Unlock device', exact: true }).count(), 0, 'one sheet at a time');
+            assert.equal(await page.getByRole('dialog', { name: 'Unlock phone', exact: true }).count(), 0, 'one sheet at a time');
 
             assert.deepEqual(test.streamMessages.filter((message) => ['key', 'touch', 'button'].includes(message.type)), [], 'the page itself types and touches nothing');
             assert.ok(!(await page.evaluate(() => JSON.stringify(Object.entries(localStorage)))).includes(PASSCODE));

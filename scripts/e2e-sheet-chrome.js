@@ -599,15 +599,17 @@ async function desktopDialogTop(browser) {
     });
     try {
         const { page } = test;
-        await page.locator('.lock-screen-notice').getByRole('button', { name: 'Unlock', exact: true }).click();
-        const dialog = sheet(page, 'Unlock device');
+        // A passcode is stored, so the notice's Unlock unlocks in one tap; the sheet is in Actions.
+        await toolbar(test, 'Actions');
+        await sheet(page, 'Actions').getByRole('button', { name: 'Unlock', exact: true }).click();
+        const dialog = sheet(page, 'Unlock phone');
         await dialog.waitFor();
         await settleMotion(page);
         // The dialog element covers the window; its panel is what is seen.
         const panel = dialog.locator('.kit-sheet-panel');
         const before = await panel.boundingBox();
         // The feedback line appears: the dialog grows.
-        await dialog.getByRole('button', { name: 'Unlock with stored passcode', exact: true }).click();
+        await dialog.getByRole('button', { name: 'Unlock', exact: true }).click();
         await dialog.getByText('Unlocking with the passcode stored on the server…', { exact: true }).waitFor();
         await settleMotion(page);
         const grown = await panel.boundingBox();

@@ -15,8 +15,8 @@
     border-radius: 0;
 }
 
-/* The two Unlock sheets (views/UnlockSheet.tsx, views/ApplUnlockSheet.tsx): text, a field and a
-   status in one column. The controls are the kit's. */
+/* The one Unlock sheet (views/UnlockSheet.tsx): text, banners, the Android field and a status in
+   one column. The controls are the kit's; the footer holds the one Unlock button. */
 .unlock-form {
     display: flex;
     flex-direction: column;
@@ -46,28 +46,5 @@
 }
 .unlock-feedback:empty {
     display: none;
-}
-
-/* The actions in the footer: side by side, and one under the other where the two labels do not
-   fit. */
-.unlock-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-8);
-    min-width: 0;
-}
-.kit-sheet-footer > .unlock-actions {
-    flex: 1 1 auto;
-}
-.unlock-actions > .kit-button {
-    flex: 1 1 auto;
-}
-@media (min-width: 600px) {
-    .unlock-actions {
-        justify-content: flex-end;
-    }
-    .unlock-actions > .kit-button {
-        flex: 0 0 auto;
-    }
 }
 }
