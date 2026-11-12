@@ -13,7 +13,7 @@ export type NotificationPanel = 'history' | 'setup';
 export type NotificationFilter = 'inbox' | 'unread' | 'archive';
 
 export interface NotificationPage {
-    /** The iPhone whose inbox is shown. Empty: the first linked one. */
+    /** The iPhone whose inbox is shown. Empty: all linked iPhones. */
     source: string;
     panel: NotificationPanel;
     filter: NotificationFilter;

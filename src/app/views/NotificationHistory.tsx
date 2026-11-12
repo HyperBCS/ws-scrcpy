@@ -7,6 +7,9 @@ import {
     BULK_PHONE_ACTION_TIMEOUT_MS,
 } from '../state/notifications';
 import { route } from '../state/router';
+import { setAppMuted, isAppMuted } from '../state/notificationSources';
+import { Menu, MenuItem } from '../ui/Menu';
+import { notificationDay, notificationDayLabel, notificationStacks } from './notifications/inbox';
 import { deviceHref } from '../state/links';
 import { NotificationFilter, readNotificationPage } from '../state/notificationPage';
 import { changeNotificationPage, openScreenFromNotifications, takeNotificationScroll } from '../state/notificationNav';
@@ -92,12 +95,12 @@ export const HIGHLIGHT_MS = 4000;
  */
 const QUERY_WRITE_MS = 400;
 
-// Undo puts back what one action changed. `source` keeps it from being offered for another iPhone.
+// Undo belongs to the viewed scope: one source, or all iPhones when `source` is empty.
 type UndoAction = { source: string; label: string; revert: () => Promise<unknown> };
 // `retry` is offered only for actions that need no confirmation.
-type Failure = { message: string; retry?: () => void };
+type Failure = { message: string; retry?: () => void; undo?: boolean };
 const FILTERS: ReadonlyArray<{ value: NotificationFilter; label: string }> = [
-    { value: 'inbox', label: 'All' },
+    { value: 'inbox', label: 'Inbox' },
     { value: 'unread', label: 'Unread' },
     { value: 'archive', label: 'Archive' },
 ];
@@ -151,15 +154,26 @@ export function NotificationHistory({
 }) {
     // The iPhone, the filter, the app and the search text are in the address, so a reload, a
     // link and a return with Back show the same inbox; see `state/notificationPage.ts`.
+    const alive = useRef(true);
+    useLayoutEffect(() => {
+        alive.current = true;
+        return () => {
+            alive.current = false;
+        };
+    }, []);
     const page = readNotificationPage(route.value);
     const { filter, app: appFilter } = page;
-    // An iPhone that is not linked has no inbox of its own: the first linked one is shown.
-    const source = sources.find((s) => s.id === page.source) || sources[0];
-    const currentSource = useRef(source?.id);
-    currentSource.current = source?.id;
+    // An explicit source stays scoped. With several linked iPhones, no source shows them together.
+    const source = sources.find((s) => s.id === page.source) || (sources.length === 1 ? sources[0] : undefined);
+    const scope = source?.id || '';
+    const currentSource = useRef(scope);
+    currentSource.current = scope;
+    const latestSources = useRef(sources);
+    latestSources.current = sources;
     // The notification a push banner opened. The address names it only until it is found.
     const [highlighted, setHighlighted] = useState('');
     const [highlightOn, setHighlightOn] = useState(false);
+    const expandedHighlight = useRef('');
     // Where the list was when a screen was opened from it, on the return with Back.
     const [kept] = useState(takeNotificationScroll);
     const [limit, setLimit] = useState(kept?.limit ?? 25);
@@ -209,6 +223,36 @@ export function NotificationHistory({
     const searchWasOpen = useRef(searchOpen);
     const [menu, setMenu] = useState<'filters' | 'bulk' | null>(null);
     const [menuKey, setMenuKey] = useState('');
+    const menuAnchor = useRef<HTMLElement>(null);
+    const [mouseMenu, setMouseMenu] = useState(() => matchMedia('(min-width: 1024px) and (pointer: fine)').matches);
+    const [cardSheet, setCardSheet] = useState(false);
+    const cardSheetRef = useRef(false);
+    const [openStacks, setOpenStacks] = useState(new Set<string>());
+    const [expandedNotifications, setExpandedNotifications] = useState(new Set<string>());
+    const focusAfterAction = useRef('');
+    useEffect(() => {
+        const media = matchMedia('(min-width: 1024px) and (pointer: fine)');
+        const change = () => {
+            setMouseMenu(media.matches);
+            setMenuKey('');
+        };
+        media.addEventListener('change', change);
+        return () => media.removeEventListener('change', change);
+    }, []);
+    const closeCardMenu = () => {
+        if (!cardSheetRef.current) setMenuKey('');
+    };
+    const closeCardSheet = () => {
+        cardSheetRef.current = false;
+        setCardSheet(false);
+        setMenuKey('');
+    };
+    const openCardMenu = (key: string, anchor?: HTMLElement) => {
+        menuAnchor.current = anchor || null;
+        cardSheetRef.current = false;
+        setCardSheet(false);
+        setMenuKey(key);
+    };
     const [undo, setUndo] = useState<UndoAction | null>(null);
     const [failure, setFailure] = useState<Failure | null>(null);
     const pending = useRef(new Set<string>());
@@ -257,7 +301,9 @@ export function NotificationHistory({
         observer.observe(node);
         return () => observer.disconnect();
     }, []);
-    const phoneItems = items.filter((n) => n.source === source?.id);
+    const phoneItems = items.filter((n) =>
+        source ? n.source === source.id : sources.some((phone) => phone.id === n.source),
+    );
     const apps = [...new Map(phoneItems.filter((n) => n.app).map((n) => [n.app!, n.appName || n.app!])).entries()].sort(
         (a, b) => a[1].localeCompare(b[1]),
     );
@@ -265,7 +311,7 @@ export function NotificationHistory({
     const filtered = phoneItems.filter(
         (n) =>
             (filter === 'archive' ? n.dismissed : !n.dismissed) &&
-            (filter !== 'unread' || !n.read) &&
+            (filter !== 'unread' || !n.read || expandedNotifications.has(n.key)) &&
             (!appFilter || n.app === appFilter) &&
             (!tokens.length || matchesSearch(n, tokens)),
     );
@@ -274,6 +320,8 @@ export function NotificationHistory({
         (n) => n.active && n.canDismiss && isDismissActionLabel(n.negativeActionLabel) && !accepted.includes(n.key),
     );
     const selectedMenuItem = phoneItems.find((n) => n.key === menuKey);
+    const menuSource = sources.find((s) => s.id === selectedMenuItem?.source);
+    const menuScreen = menuSource ? screenLink(menuSource) : undefined;
     const previousMenuItem = useRef<HistoryItem>();
     if (selectedMenuItem) previousMenuItem.current = selectedMenuItem;
     const menuItem = selectedMenuItem || previousMenuItem.current;
@@ -281,6 +329,11 @@ export function NotificationHistory({
     // Closing the card's sheet disarms it.
     const phoneConfirm = useArmedAction<string>(!!selectedMenuItem);
     const [phoneResult, setPhoneResult] = useState('');
+    // The Sheet first takes focus itself. Arm after it opens so that focus move does not
+    // withdraw the prompt the menu requested. No command is sent until confirmation.
+    useEffect(() => {
+        if (cardSheet && selectedMenuItem) phoneConfirm.arm(selectedMenuItem.key, menuAnchor.current);
+    }, [cardSheet]);
     const matchingUnread = filtered.filter((n) => !n.read && !n.dismissed);
     const narrowed = !!query.trim() || !!appFilter;
     // Text or an app filter keeps the search row open, also when it came with a link.
@@ -325,29 +378,44 @@ export function NotificationHistory({
         setPhoneResult('');
         setUndo(action);
     };
-    const openScreen = () => {
-        if (!screen) return;
-        if (screen.unavailable) {
+    const openScreen = (item?: HistoryItem) => {
+        const phone = item ? sources.find((s) => s.id === item.source) : source;
+        const link = phone ? screenLink(phone) : undefined;
+        if (!link) return;
+        if (link.unavailable) {
             setUndo(null);
             setPhoneResult('');
-            setFailure({ message: screen.unavailable });
-        } else if (screen.href) {
-            // A router call, not a plain link: one row that opens the screen is inside a sheet,
-            // and the router leaves the sheet's history entry before it adds the screen's.
-            clearTimeout(queryTimer.current);
-            queryTimer.current = undefined;
-            queryInAddress.current = typed.current;
-            openScreenFromNotifications(screen.href, typed.current, {
-                top: scroller()?.scrollTop ?? 0,
-                limit,
-            });
+            setFailure({ message: link.unavailable });
+        } else if (link.href) {
+            // Flush a pending search before the read request, so its debounce cannot cancel
+            // this open by changing the address while the request is waiting.
+            show();
+            const openedFrom = route.peek().toString();
+            const navigate = () => {
+                if (!alive.current || route.peek().toString() !== openedFrom) return;
+                clearTimeout(queryTimer.current);
+                queryTimer.current = undefined;
+                queryInAddress.current = typed.current;
+                openScreenFromNotifications(link.href!, typed.current, {
+                    top: scroller()?.scrollTop ?? 0,
+                    limit,
+                });
+            };
+            if (item && !item.read)
+                attempt(async () => {
+                    await markRead([item.key]);
+                    navigate();
+                });
+            else navigate();
         }
     };
-    const followScreenLink = (event: MouseEvent) => {
-        // A click that asks for a new tab or window is left to the browser.
-        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const followScreenLink = (event: MouseEvent, item?: HistoryItem) => {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+            if (item && !item.read) attempt(() => markRead([item.key]));
+            return;
+        }
         event.preventDefault();
-        openScreen();
+        openScreen(item);
     };
     const markRead = async (keys: string[], read = true) => {
         await api('history/read', 'POST', { keys, read });
@@ -358,7 +426,7 @@ export function NotificationHistory({
     useEffect(() => {
         // Not on the first run: a return with Back lists as many as were listed before.
         if (shownBefore.current) setLimit(25);
-    }, [filter, source?.id, query, appFilter]);
+    }, [filter, scope, query, appFilter]);
     useEffect(() => {
         // The filters of another iPhone are the ones the address has: the iPhone select clears
         // them when it changes the iPhone. Text typed for the first one does not follow.
@@ -370,7 +438,10 @@ export function NotificationHistory({
         setFailure(null);
         setConfirmation(null);
         setPhoneResult('');
-    }, [source?.id]);
+        setOpenStacks(new Set());
+        setExpandedNotifications(new Set());
+        focusAfterAction.current = '';
+    }, [scope]);
     useEffect(() => {
         if (!page.notification) return;
         const item = phoneItems.find((n) => n.key === page.notification);
@@ -381,11 +452,22 @@ export function NotificationHistory({
         setHighlighted(item.key);
         show({ notification: '', filter: item.dismissed ? 'archive' : 'inbox', app: '', q: '' });
         if (!item.read) attempt(() => markRead([item.key]));
-    }, [page.notification, items, source?.id]);
+    }, [page.notification, items, scope]);
     useEffect(() => {
         if (highlighted && !query && !appFilter) {
             const index = filtered.findIndex((n) => n.key === highlighted);
-            if (index >= 0) setLimit((current) => Math.max(current, index + 1));
+            if (index >= 0) {
+                setLimit((current) => Math.max(current, index + 1));
+                if (expandedHighlight.current !== highlighted) {
+                    const stack = notificationStacks(filtered).find((group) =>
+                        group.some((n) => n.key === highlighted),
+                    );
+                    if (stack) {
+                        expandedHighlight.current = highlighted;
+                        setOpenStacks((current) => new Set([...current, stack[0].key]));
+                    }
+                }
+            }
         }
     }, [highlighted, items, filter, query, appFilter]);
     // An opened notification is brought to the middle of the screen once, then its outline fades.
@@ -407,8 +489,38 @@ export function NotificationHistory({
         const timer = setTimeout(() => setHighlightOn(false), HIGHLIGHT_MS);
         return () => clearTimeout(timer);
     }, [highlightOn, highlighted]);
-    const localAction = async (item: HistoryItem, kind: 'read' | 'dismiss') => {
+    const planFocus = (key: string) => {
+        const cards = Array.from(
+            list.current?.querySelectorAll<HTMLElement>('article.notification-history-item') || [],
+        );
+        const index = cards.findIndex(
+            (card) => card.closest<HTMLElement>('[data-notification-key]')?.dataset.notificationKey === key,
+        );
+        const next = cards[index + 1] || cards[index - 1];
+        return next?.closest<HTMLElement>('[data-notification-key]')?.dataset.notificationKey || '';
+    };
+    const restoreCardFocus = () => {
+        if (!focusAfterAction.current) return;
+        const node = list.current?.querySelector<HTMLElement>(
+            `[data-notification-key="${CSS.escape(focusAfterAction.current)}"] article`,
+        );
+        if (node) {
+            node.focus({ preventScroll: true });
+            focusAfterAction.current = '';
+        }
+    };
+    useLayoutEffect(() => {
+        if (!topSheet.peek()) restoreCardFocus();
+    }, [items]);
+    useEffect(() => {
+        const closed = () => requestAnimationFrame(restoreCardFocus);
+        document.addEventListener('close', closed, true);
+        return () => document.removeEventListener('close', closed, true);
+    }, []);
+    const localAction = async (item: HistoryItem, kind: 'read' | 'dismiss', moveFocus = true) => {
         if ((busy && !pending.current.size) || pending.current.has(item.key)) return;
+        const nextFocus = moveFocus ? planFocus(item.key) : '';
+        const actionScope = scope;
         pending.current.add(item.key);
         setPendingKeys(new Set(pending.current));
         setMenuKey('');
@@ -419,17 +531,21 @@ export function NotificationHistory({
                     if (kind === 'read') await api('history/read', 'POST', { keys: [item.key], read: !item.read });
                     else await api(`history/${encodeURIComponent(item.key)}/dismiss`, 'POST');
                     if (kind === 'dismiss' || !item.read) closeReadNotifications([item.key]);
-                    offerUndo({
-                        source: item.source,
-                        label: kind === 'dismiss' ? 'Archived' : item.read ? 'Marked unread' : 'Marked read',
-                        revert: () =>
-                            kind === 'dismiss'
-                                ? api(`history/${encodeURIComponent(item.key)}/restore`, 'POST', { read: item.read })
-                                : api('history/read', 'POST', { keys: [item.key], read: item.read }),
-                    });
+                    if (currentSource.current === actionScope) focusAfterAction.current = nextFocus;
+                    if (moveFocus)
+                        offerUndo({
+                            source: actionScope,
+                            label: kind === 'dismiss' ? 'Archived' : item.read ? 'Marked unread' : 'Marked read',
+                            revert: () =>
+                                kind === 'dismiss'
+                                    ? api(`history/${encodeURIComponent(item.key)}/restore`, 'POST', {
+                                          read: item.read,
+                                      })
+                                    : api('history/read', 'POST', { keys: [item.key], read: item.read }),
+                        });
                     await refresh();
                 },
-                () => void localAction(item, kind),
+                () => void localAction(item, kind, moveFocus),
             );
         } finally {
             pending.current.delete(item.key);
@@ -437,7 +553,7 @@ export function NotificationHistory({
         }
     };
     const undoLast = () => {
-        if (!undo || busy || undo.source !== source?.id) return;
+        if (!undo || busy || undo.source !== scope) return;
         const action = undo;
         attempt(async () => {
             await action.revert();
@@ -481,8 +597,7 @@ export function NotificationHistory({
         go();
     };
     const markAllRead = () => {
-        if (!source) return;
-        const sourceId = source.id;
+        const sourceId = scope;
         const keys = matchingUnread.map((n) => n.key);
         setMenu(null);
         setUndo(null);
@@ -496,34 +611,53 @@ export function NotificationHistory({
         });
     };
     const archiveAll = () => {
-        if (!source || busy || bulkBusy) return;
-        // This exact set, taken now: a notification that arrives in the meantime stays in the inbox.
-        const sourceId = source.id;
-        const name = source.name;
-        const snapshot = localDismissals.map((n) => ({ key: n.key, read: n.read }));
-        if (!snapshot.length) return;
+        if (busy || bulkBusy || !localDismissals.length) return;
+        const actionScope = scope;
+        const snapshot = localDismissals.map((n) => ({ source: n.source, key: n.key, read: n.read }));
         setMenu(null);
         setUndo(null);
         setPhoneResult('');
         attempt(async () => {
             setBulkBusy('archive');
+            const archived: typeof snapshot = [];
+            let problem: unknown;
             try {
-                const reply = await api<{ dismissed: string[] }>('history/dismiss', 'POST', {
-                    source: sourceId,
-                    keys: snapshot.map((n) => n.key),
-                });
-                closeReadNotifications(reply.dismissed);
-                const archived = snapshot.filter((n) => reply.dismissed.includes(n.key));
+                for (const sourceId of new Set(snapshot.map((n) => n.source))) {
+                    const selected = snapshot.filter((n) => n.source === sourceId);
+                    const reply = await api<{ dismissed: string[] }>('history/dismiss', 'POST', {
+                        source: sourceId,
+                        keys: selected.map((n) => n.key),
+                    });
+                    closeReadNotifications(reply.dismissed);
+                    archived.push(...selected.filter((n) => reply.dismissed.includes(n.key)));
+                }
+            } catch (error) {
+                problem = error;
+            } finally {
                 if (archived.length)
                     offerUndo({
-                        source: sourceId,
-                        label: `Archived ${count(archived.length)} from ${name}`,
-                        revert: () => api('history/restore', 'POST', { source: sourceId, items: archived }),
+                        source: actionScope,
+                        label: `Archived ${count(archived.length)}${source ? ` from ${source.name}` : ''}`,
+                        revert: async () => {
+                            for (const sourceId of new Set(archived.map((n) => n.source))) {
+                                await api('history/restore', 'POST', {
+                                    source: sourceId,
+                                    items: archived
+                                        .filter((n) => n.source === sourceId)
+                                        .map(({ key, read }) => ({ key, read })),
+                                });
+                            }
+                        },
                     });
-                await refresh();
-            } finally {
+                try {
+                    await refresh();
+                } catch (error) {
+                    problem = problem || error;
+                }
                 setBulkBusy('');
             }
+            if (problem && currentSource.current === actionScope)
+                setFailure({ message: (problem as Error).message, undo: !!archived.length });
         });
     };
     const clearAllOnPhone = (trigger: EventTarget | null) => {
@@ -565,6 +699,86 @@ export function NotificationHistory({
             }
         });
     };
+    const muteApp = (item: HistoryItem) => {
+        if (!item.app || busy) return;
+        const actionScope = scope;
+        setMenuKey('');
+        attempt(async () => {
+            const phone = latestSources.current.find((s) => s.id === item.source);
+            if (!phone) throw Error('This iPhone is no longer linked.');
+            const wasMuted = isAppMuted(phone, item.app!);
+            await setAppMuted(phone, item.app!, item.appName || item.app!, true);
+            await refresh();
+            offerUndo({
+                source: actionScope,
+                label: `${item.appName || item.app} muted`,
+                revert: async () => {
+                    const current = latestSources.current.find((s) => s.id === item.source);
+                    if (!current) throw Error('This iPhone is no longer linked.');
+                    await setAppMuted(current, item.app!, item.appName || item.app!, wasMuted);
+                },
+            });
+        });
+    };
+    const keys = useRef<(event: KeyboardEvent) => void>();
+    keys.current = (event) => {
+        if (
+            event.defaultPrevented ||
+            event.ctrlKey ||
+            event.altKey ||
+            event.metaKey ||
+            event.isComposing ||
+            document.querySelector('dialog.kit-sheet[open], .kit-menu[role="menu"]') ||
+            (event.target instanceof Element &&
+                event.target.closest(
+                    'input, textarea, select, video, audio, [contenteditable]:not([contenteditable="false"])',
+                ))
+        )
+            return;
+        const key = event.key.toLowerCase();
+        const cards = Array.from(
+            list.current?.querySelectorAll<HTMLElement>('article.notification-history-item') || [],
+        );
+        const current = cards.findIndex(
+            (card) => card === document.activeElement || card.contains(document.activeElement),
+        );
+        const item =
+            current >= 0
+                ? phoneItems.find(
+                      (n) =>
+                          n.key ===
+                          cards[current].closest<HTMLElement>('[data-notification-key]')?.dataset.notificationKey,
+                  )
+                : undefined;
+        if (key === '/') {
+            event.preventDefault();
+            setSearchOpen(true);
+            requestAnimationFrame(() => searchRow.current?.querySelector('input')?.focus());
+        } else if (key === 'j' || key === 'arrowdown' || key === 'k' || key === 'arrowup') {
+            event.preventDefault();
+            const step = key === 'j' || key === 'arrowdown' ? 1 : -1;
+            cards[
+                current < 0
+                    ? step > 0
+                        ? 0
+                        : cards.length - 1
+                    : Math.max(0, Math.min(cards.length - 1, current + step))
+            ]?.focus();
+        } else if (key === 'z' && undo) {
+            event.preventDefault();
+            undoLast();
+        } else if (item && !busy && (key === 'u' || (key === 'e' && !item.dismissed))) {
+            event.preventDefault();
+            void localAction(item, key === 'e' ? 'dismiss' : 'read');
+        }
+    };
+    useEffect(() => {
+        const listener = (event: KeyboardEvent) => keys.current?.(event);
+        document.addEventListener('keydown', listener);
+        return () => document.removeEventListener('keydown', listener);
+    }, []);
+    const stacks = notificationStacks(filtered.slice(0, limit));
+    let previousDay = '';
     return (
         <section class="notification-history" aria-labelledby="notification-history-heading" aria-busy={!!bulkBusy}>
             <h2 id="notification-history-heading" class="visually-hidden">
@@ -586,6 +800,9 @@ export function NotificationHistory({
                         </Banner>
                     ) : null}
                 </div>
+            )}
+            {!source && feedError && (
+                <Banner tone="error">Notifications are not being received. {sentence(feedError)}</Banner>
             )}
             <div class="notification-history-tools">
                 {connectionError && <Banner tone="error">Connection interrupted. {connectionError}</Banner>}
@@ -618,10 +835,23 @@ export function NotificationHistory({
                 <div class="notification-history-toolbar">
                     <SegmentedControl
                         label="Notification view"
-                        options={FILTERS}
+                        options={FILTERS.map((option) => ({
+                            ...option,
+                            label:
+                                option.value === 'archive'
+                                    ? option.label
+                                    : `${option.label} ${phoneItems.filter((n) => !n.dismissed && (option.value !== 'unread' || !n.read)).length}`,
+                        }))}
                         value={filter}
                         onChange={(value) => show({ filter: value })}
                         full
+                    />
+                    <IconButton
+                        icon="check"
+                        variant="bare"
+                        label="Mark all read"
+                        disabled={busy || !matchingUnread.length}
+                        onClick={markAllRead}
                     />
                     <IconButton
                         icon="more"
@@ -672,26 +902,71 @@ export function NotificationHistory({
                     ) : null}
                 </div>
             )}
-            {source && (
+            {!!sources.length && (
                 <section
                     ref={list}
                     class="notification-history-group"
-                    aria-label={`${source.name} notification history`}
+                    aria-label={`${source?.name || 'All iPhones'} notification history`}
                 >
-                    {filtered.slice(0, limit).map((n) => (
-                        <NotificationCard
-                            key={n.key}
-                            item={n}
-                            source={source}
-                            busy={pendingKeys.has(n.key) || (busy && !pendingKeys.size)}
-                            removeOnRead={filter === 'unread' && !n.read}
-                            highlighted={highlightOn && highlighted === n.key}
-                            markRead={() => localAction(n, 'read')}
-                            dismiss={() => localAction(n, 'dismiss')}
-                            openMenu={() => setMenuKey(n.key)}
-                            openScreen={openScreen}
-                        />
-                    ))}
+                    {stacks.map((stack) => {
+                        const head = stack[0];
+                        const day = notificationDay(head.received);
+                        const heading = day !== previousDay;
+                        previousDay = day;
+                        const expanded = openStacks.has(head.key);
+                        return (
+                            <div class="notification-stack" key={head.key}>
+                                {heading && <h3 class="notification-day">{notificationDayLabel(head.received)}</h3>}
+                                {(expanded ? stack : stack.slice(0, 1)).map((n) => {
+                                    const phone = sources.find((s) => s.id === n.source)!;
+                                    return (
+                                        <NotificationCard
+                                            key={n.key}
+                                            item={n}
+                                            source={phone}
+                                            busy={pendingKeys.has(n.key) || (busy && !pendingKeys.size)}
+                                            removeOnRead={filter === 'unread' && !n.read}
+                                            highlighted={highlightOn && highlighted === n.key}
+                                            markRead={() => localAction(n, 'read')}
+                                            dismiss={() => localAction(n, 'dismiss')}
+                                            onExpand={(expanded) => {
+                                                setExpandedNotifications((current) => {
+                                                    const next = new Set(current);
+                                                    if (expanded) next.add(n.key);
+                                                    else next.delete(n.key);
+                                                    return next;
+                                                });
+                                                if (expanded && !n.read) void localAction(n, 'read', false);
+                                            }}
+                                            showSource={!source && sources.length > 1}
+                                            menuIsPopover={mouseMenu}
+                                            openMenu={(anchor) => openCardMenu(n.key, anchor)}
+                                            openScreen={() => openScreen(n)}
+                                        />
+                                    );
+                                })}
+                                {stack.length > 1 && (
+                                    <Button
+                                        variant="quiet"
+                                        class="notification-stack-toggle"
+                                        attributes={{ 'aria-expanded': String(expanded) }}
+                                        onClick={() =>
+                                            setOpenStacks((current) => {
+                                                const next = new Set(current);
+                                                if (expanded) next.delete(head.key);
+                                                else next.add(head.key);
+                                                return next;
+                                            })
+                                        }
+                                    >
+                                        {expanded
+                                            ? 'Collapse stack'
+                                            : `Show ${stack.length - 1} older notification${stack.length === 2 ? '' : 's'}`}
+                                    </Button>
+                                )}
+                            </div>
+                        );
+                    })}
                 </section>
             )}
             {filtered.length > limit && (
@@ -705,7 +980,7 @@ export function NotificationHistory({
             <Toast
                 className="notification-undo"
                 dismissLabel="Dismiss undo notice"
-                message={!noticesHeld && undo?.source === source?.id ? undo?.label || '' : ''}
+                message={!noticesHeld && !failure && undo?.source === scope ? undo?.label || '' : ''}
                 identity={undo}
                 duration={12000}
                 onDismiss={() => setUndo(null)}
@@ -725,7 +1000,13 @@ export function NotificationHistory({
                 identity={failure}
                 duration={0}
                 onDismiss={() => setFailure(null)}
-                action={failure?.retry ? { label: 'Retry', run: failure.retry, disabled: busy } : undefined}
+                action={
+                    failure?.undo && undo
+                        ? { label: 'Undo', run: undoLast, disabled: busy }
+                        : failure?.retry
+                          ? { label: 'Retry', run: failure.retry, disabled: busy }
+                          : undefined
+                }
             />
             <NotificationActionSheet
                 open={menu === 'filters'}
@@ -754,37 +1035,37 @@ export function NotificationHistory({
             </NotificationActionSheet>
             <NotificationActionSheet
                 open={menu === 'bulk'}
-                title={`${source?.name || 'iPhone'} notifications`}
+                title={`${source?.name || 'All iPhones'} notifications`}
                 description={`${count(filtered.length)} in this view.`}
                 onClose={() => setMenu(null)}
             >
-                {screen?.unavailable ? (
-                    <>
-                        <Button full disabled attributes={{ 'aria-describedby': reasonId }}>
+                {source &&
+                    (screen?.unavailable ? (
+                        <>
+                            <Button full disabled attributes={{ 'aria-describedby': reasonId }}>
+                                Open iPhone screen
+                            </Button>
+                            <p id={reasonId} class="notification-help">
+                                {screen.unavailable}
+                            </p>
+                        </>
+                    ) : (
+                        <Button full href={screen?.href} onClick={(event) => followScreenLink(event)}>
                             Open iPhone screen
                         </Button>
-                        <p id={reasonId} class="notification-help">
-                            {screen.unavailable}
-                        </p>
-                    </>
-                ) : (
-                    <Button full href={screen?.href} onClick={followScreenLink}>
-                        Open iPhone screen
-                    </Button>
-                )}
-                <Button full disabled={busy || !matchingUnread.length} onClick={markAllRead}>
-                    Mark all read
-                </Button>
+                    ))}
+
                 <Button full disabled={busy || !localDismissals.length} onClick={archiveAll}>
                     Archive all
                 </Button>
                 <Button
                     full
-                    disabled={busy || !phoneDismissals.length}
+                    disabled={busy || !source || !phoneDismissals.length}
                     onClick={(event) => clearAllOnPhone(event.currentTarget)}
                 >
                     Clear all on iPhone
                 </Button>
+                {!source && <p class="notification-help">Choose an iPhone to clear notifications on it.</p>}
                 {bulkConfirm.armed && confirmation && (
                     <ConfirmPrompt
                         action={bulkConfirm}
@@ -797,24 +1078,71 @@ export function NotificationHistory({
                     />
                 )}
             </NotificationActionSheet>
+            {selectedMenuItem && mouseMenu && (
+                <Menu open={!cardSheet} anchor={menuAnchor} label="Notification actions" onClose={closeCardMenu}>
+                    <MenuItem disabled={!menuScreen?.href || busy} onSelect={() => openScreen(selectedMenuItem)}>
+                        Open iPhone screen
+                    </MenuItem>
+                    {!selectedMenuItem.dismissed && (
+                        <MenuItem disabled={busy} onSelect={() => void localAction(selectedMenuItem, 'read')}>
+                            {selectedMenuItem.read ? 'Mark unread' : 'Mark read'}
+                        </MenuItem>
+                    )}
+                    {!selectedMenuItem.dismissed && (
+                        <MenuItem disabled={busy} onSelect={() => void localAction(selectedMenuItem, 'dismiss')}>
+                            Archive
+                        </MenuItem>
+                    )}
+                    {selectedMenuItem.dismissed && (
+                        <MenuItem disabled={busy} onSelect={() => moveToInbox(selectedMenuItem)}>
+                            Move to inbox
+                        </MenuItem>
+                    )}
+                    {selectedMenuItem.app && (
+                        <MenuItem
+                            disabled={busy || !!(menuSource && isAppMuted(menuSource, selectedMenuItem.app))}
+                            onSelect={() => muteApp(selectedMenuItem)}
+                        >
+                            Mute this app
+                        </MenuItem>
+                    )}
+                    {selectedMenuItem.active && selectedMenuItem.canDismiss && selectedMenuItem.negativeActionLabel && (
+                        <MenuItem
+                            disabled={busy || accepted.includes(selectedMenuItem.key)}
+                            onSelect={() => {
+                                if (isDismissActionLabel(selectedMenuItem.negativeActionLabel))
+                                    phoneAction(selectedMenuItem);
+                                else {
+                                    cardSheetRef.current = true;
+                                    setCardSheet(true);
+                                }
+                            }}
+                        >
+                            {accepted.includes(selectedMenuItem.key)
+                                ? 'Action sent'
+                                : `${selectedMenuItem.negativeActionLabel} on iPhone`}
+                        </MenuItem>
+                    )}
+                </Menu>
+            )}
             {menuItem && (
                 <NotificationActionSheet
-                    open={!!selectedMenuItem}
+                    open={!!selectedMenuItem && (!mouseMenu || cardSheet)}
                     title={menuItem.appName || menuItem.app || 'Notification'}
                     description={menuItem.title}
-                    onClose={() => setMenuKey('')}
+                    onClose={closeCardSheet}
                 >
-                    {screen?.unavailable ? (
+                    {menuScreen?.unavailable ? (
                         <>
                             <Button full disabled attributes={{ 'aria-describedby': sheetReasonId }}>
                                 Open iPhone screen
                             </Button>
                             <p id={sheetReasonId} class="notification-help">
-                                {screen.unavailable}
+                                {menuScreen!.unavailable}
                             </p>
                         </>
                     ) : (
-                        <Button full href={screen?.href} onClick={followScreenLink}>
+                        <Button full href={menuScreen?.href} onClick={(event) => followScreenLink(event, menuItem)}>
                             Open iPhone screen
                         </Button>
                     )}
@@ -833,9 +1161,18 @@ export function NotificationHistory({
                             Move to inbox
                         </Button>
                     )}
+                    {menuItem.app && (
+                        <Button
+                            full
+                            disabled={busy || !!(menuSource && isAppMuted(menuSource, menuItem.app))}
+                            onClick={() => muteApp(menuItem)}
+                        >
+                            Mute this app
+                        </Button>
+                    )}
                     {menuItem.active && menuItem.canDismiss && menuItem.negativeActionLabel && (
                         <>
-                            <h3 class="notification-action-sheet-group">On {source?.name || 'the iPhone'}</h3>
+                            <h3 class="notification-action-sheet-group">On {menuSource?.name || 'the iPhone'}</h3>
                             <Button
                                 full
                                 disabled={busy || accepted.includes(menuItem.key)}
@@ -851,7 +1188,7 @@ export function NotificationHistory({
                             {phoneConfirm.armed === menuItem.key && (
                                 <ConfirmPrompt
                                     action={phoneConfirm}
-                                    question={`${menuItem.negativeActionLabel} on ${source?.name || 'the iPhone'}?`}
+                                    question={`${menuItem.negativeActionLabel} on ${menuSource?.name || 'the iPhone'}?`}
                                     consequence={`This runs on the iPhone for “${menuItem.title || menuItem.appName || 'this notification'}” and cannot be undone from here.`}
                                     confirmLabel={menuItem.negativeActionLabel}
                                     danger

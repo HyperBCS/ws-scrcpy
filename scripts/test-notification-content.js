@@ -53,3 +53,21 @@ test('GIF/audio formats, malformed escaping, and large media lists are bounded',
     assert.equal(media([Array.from({ length: 100 }, (_, i) => `https://example.com/${i}.png`).join(' ')]).length, 4);
     assert.deepEqual(media([undefined, '', 'Someone sent a photo']), []);
 });
+
+const { notificationStacks, notificationDay, notificationDayLabel, notificationTime } = require('../src/app/views/notifications/inbox');
+const note = (key, changes = {}) => ({ key, source: 'a', app: 'chat', title: 'Sam', received: new Date(2026, 10, 12, 12).getTime(), ...changes });
+test('notification stacks keep adjacent conversations together without crossing phones, days or missing titles', () => {
+    const items = [note('a'), note('b'), note('c', { source: 'b' }), note('d'), note('e', { title: 'Alex' }), note('f', { received: new Date(2026, 10, 11, 23).getTime() }), note('g', { title: '' }), note('h', { title: '' })];
+    assert.deepEqual(notificationStacks(items).map(stack => stack.map(n => n.key)), [['a', 'b'], ['c'], ['d'], ['e'], ['f'], ['g'], ['h']]);
+    assert.equal(items.length, 8, 'grouping leaves the history unchanged');
+});
+test('notification dates use local calendar days, with recent times kept short', () => {
+    const now = new Date(2026, 10, 12, 12, 30).getTime();
+    assert.equal(notificationDayLabel(now, now), 'Today');
+    assert.equal(notificationDayLabel(new Date(2026, 10, 11, 23, 59).getTime(), now), 'Yesterday');
+    assert.equal(notificationTime(now - 5000, now), 'Just now');
+    assert.equal(notificationTime(now - 7 * 60000, now), '7 min ago');
+    assert.equal(notificationTime(now - 60 * 60000, now), new Date(now - 60 * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    assert.notEqual(notificationDay(now), notificationDay(now - 86400000));
+    assert.notEqual(notificationDayLabel(now - 3 * 86400000, now), 'Yesterday');
+});

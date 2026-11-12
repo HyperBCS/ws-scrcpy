@@ -368,7 +368,10 @@ export function NotificationsView() {
     };
     // The prompts of Setup: one armed at a time, for one iPhone.
     const confirm = useArmedAction<string>();
-    const shown = historySource && !unlinkedRequest ? historySource : undefined;
+    const shown = unlinkedRequest
+        ? undefined
+        : linkedRequest || (status?.sources.length === 1 ? status.sources[0] : undefined);
+    const allShown = !unlinkedRequest && !!status && status.sources.length > 1 && !linkedRequest;
     const feed = shown ? feedState(status?.statuses[shown.id]) : undefined;
 
     return (
@@ -383,19 +386,23 @@ export function NotificationsView() {
                         <AppBarStatus tone={FEED_TONES[feed]}>
                             {shown.name} · {FEED_LABELS[feed]}
                         </AppBarStatus>
+                    ) : allShown ? (
+                        <AppBarStatus>All iPhones</AppBarStatus>
                     ) : undefined
                 }
             >
-                <UnreadBadge count={shown ? status?.unreadBySource?.[shown.id] || 0 : 0} />
+                <UnreadBadge
+                    count={shown ? status?.unreadBySource?.[shown.id] || 0 : allShown ? status?.unread || 0 : 0}
+                />
                 {!!status && status.sources.length > 1 && (
-                    <Button
-                        size="compact"
+                    <IconButton
+                        icon="chevDown"
+                        variant="bare"
                         class="notification-switch"
-                        attributes={{ 'aria-haspopup': 'dialog', 'aria-label': 'Switch iPhone' }}
+                        label="Switch iPhone"
+                        attributes={{ 'aria-haspopup': 'dialog' }}
                         onClick={openSwitcher}
-                    >
-                        Switch
-                    </Button>
+                    />
                 )}
                 <IconButton
                     icon="search"
@@ -417,6 +424,24 @@ export function NotificationsView() {
             </AppBar>
             {switcherUsed && status && status.sources.length > 1 && (
                 <NotificationActionSheet open={switching} title="Switch iPhone" onClose={() => setSwitching(false)}>
+                    <Button
+                        full
+                        attributes={{ 'aria-current': allShown ? 'true' : undefined }}
+                        onClick={() => {
+                            setSwitching(false);
+                            changeNotificationPage({
+                                source: '',
+                                notification: '',
+                                panel: 'history',
+                                filter: 'inbox',
+                                app: '',
+                                q: '',
+                            });
+                        }}
+                    >
+                        All iPhones{status.unread ? ` · ${status.unread} unread` : ''}
+                        {allShown ? ` · ${SESSION.viewing}` : ''}
+                    </Button>
                     {status.sources.map((s) => {
                         const unread = status.unreadBySource?.[s.id] || 0;
                         const current = s.id === shown?.id;
@@ -448,7 +473,7 @@ export function NotificationsView() {
                     })}
                 </NotificationActionSheet>
             )}
-            <main class="notifications-page">
+            <main class={`notifications-page ${activePanel === 'history' ? 'notifications-page-inbox' : ''}`}>
                 <div
                     class={`notification-page-header ${activePanel === 'history' ? 'notification-page-header-inbox' : ''}`.trim()}
                 >
