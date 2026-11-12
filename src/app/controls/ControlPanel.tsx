@@ -70,15 +70,19 @@ function visibleBox(): Box {
     };
 }
 
-/** Where the panel may open: the part in view, inside the safe area and 12px from its edges. */
-function panelArea(): Box {
+/**
+ * Where the panel may open: the part in view, inside the safe area and 12px from its edges. It
+ * may lie over the header, but not below the stage, where Type text docks its sheet.
+ */
+function panelArea(stage: Element | null): Box {
     const view = visibleBox();
     const inset = safeInsets();
+    const bottom = stage?.getBoundingClientRect().bottom ?? view.bottom;
     return {
         left: view.left + Math.max(EDGE_MARGIN, inset.left),
         top: view.top + Math.max(EDGE_MARGIN, inset.top),
         right: view.right - Math.max(EDGE_MARGIN, inset.right),
-        bottom: view.bottom - Math.max(EDGE_MARGIN, inset.bottom),
+        bottom: Math.min(view.bottom - Math.max(EDGE_MARGIN, inset.bottom), bottom - EDGE_MARGIN),
     };
 }
 
@@ -257,12 +261,13 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
         if (!open || !panelRef.current) {
             return;
         }
-        const bounds = panelArea();
+        const bounds = panelArea(stage());
         const size = buttonSize();
         const panel = panelRef.current;
         let maxHeight = bounds.bottom - bounds.top;
         const height = Math.min(panel.scrollHeight, maxHeight);
-        const width = panel.getBoundingClientRect().width;
+        // The layout width: the panel is still scaled down as it opens.
+        const width = panel.offsetWidth;
         // Beside the button, on the side away from its edge and centred on it.
         const beside = side === 'left' ? pos.x + size.width + PANEL_GAP : pos.x - PANEL_GAP - width;
         let left = beside;

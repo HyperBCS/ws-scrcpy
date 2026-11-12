@@ -11,7 +11,8 @@
 //     the nearer edge after a drag that opens nothing and sends no touch, kept after a reload, a
 //     rotation and a resize, never over the header, the tabs or the banner slot, inside the
 //     safe-area insets, without motion when motion is reduced, and 3:1 against a white and a
-//     black picture when idle, light and dark.
+//     black picture when idle, light and dark; with Type text open, the button and the panel
+//     beside it stay above its sheet.
 // CONTROLS_ONLY=button runs only the checks of the controls button.
 // CONTROLS_ONLY=sends runs only the check of what each control sends. It finds the controls by
 // their icons, so it also runs on a build from before the slot map; that is how the sends were
@@ -423,6 +424,10 @@ async function finger(page) {
         down: (point) => cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: at(point) }),
         move: (point) => cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: at(point) }),
         up: () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }),
+        async tap(point) {
+            await this.down(point);
+            await this.up();
+        },
         async drag(from, to, during) {
             await this.down(from);
             for (let step = 1; step <= 10; step++) await this.move({ x: from.x + ((to.x - from.x) * step) / 10, y: from.y + ((to.y - from.y) * step) / 10 });
@@ -563,6 +568,47 @@ async function touchButton(browser, platform, viewport) {
     console.log(`PASS ${label}: the controls button is translucent when idle, snaps to an edge, keeps its place and stays clear of the header`);
 }
 
+/**
+ * Type text leaves the button in reach above its sheet. With the button low on the stage, its
+ * panel opens beside it and stays above the sheet, all of it in view.
+ */
+async function panelAboveTypeText(browser, platform) {
+    const label = `phone ${platform} Type text`;
+    const test = await start(browser, platform, { viewport: PHONE });
+    const { page } = test;
+    const touch = await finger(page);
+    try {
+        const state = await buttonState(page);
+        await touch.drag(centre(state.fab), { x: PHONE.width - 10, y: PHONE.height - 5 });
+        await dropped(page);
+        await settleMotion(page);
+        // A tap soon after a fast drag sent this way brings no click, with the button of the
+        // base as well: the browser takes the tap as the end of the gesture before it.
+        await pause(2000);
+        await touch.tap(centre((await buttonState(page)).fab));
+        await page.locator('.floating-toolbar.open').waitFor();
+        await settleMotion(page);
+        await touch.tap(centre(await byName(page, 'Type text').evaluate((button) => button.getBoundingClientRect().toJSON())));
+        const sheet = openSheet(page).filter({ has: page.locator('.kit-sheet-title', { hasText: /^Type text$/ }) });
+        await sheet.waitFor();
+        await settleMotion(page);
+        const typing = await buttonState(page);
+        const dock = await sheet.locator('.kit-sheet-panel').boundingBox();
+        assert.ok(typing.fab.bottom <= dock.y + 0.5, `${label}: the button is above the sheet (${typing.fab.bottom}, sheet at ${dock.y})`);
+        await touch.tap(centre(typing.fab));
+        await page.locator('.floating-toolbar.open').waitFor();
+        await settleMotion(page);
+        const panel = await page.locator('.floating-toolbar-panel').boundingBox();
+        assert.ok(panel.y >= 0 && panel.y + panel.height <= dock.y + 0.5, `${label}: the panel is above the sheet (${panel.y}-${panel.y + panel.height}, sheet at ${dock.y})`);
+        assert.ok(panel.x + panel.width <= typing.fab.left + 0.5, `${label}: the panel is beside the button (${panel.x}+${panel.width}, button at ${typing.fab.left})`);
+        assert.deepEqual(test.errors, []);
+    } finally {
+        await touch.detach().catch(() => undefined);
+        await test.context.close();
+    }
+    console.log(`PASS ${label}: the button and its panel stay above the sheet`);
+}
+
 /** With motion reduced, the button let go is at its edge at once. */
 async function snapWithoutMotion(browser) {
     const test = await start(browser, 'android', { viewport: PHONE, reducedMotion: 'reduce' });
@@ -676,6 +722,7 @@ async function main() {
                       for (const platform of ['android', 'ios']) {
                           for (const viewport of [PHONE, LANDSCAPE]) await touchButton(browser, platform, viewport);
                       }
+                      for (const platform of ['android', 'ios']) await panelAboveTypeText(browser, platform);
                       await snapWithoutMotion(browser);
                       await idleContrast(browser);
                   })(),
