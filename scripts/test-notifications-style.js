@@ -86,8 +86,8 @@ test('the views draw their controls with the kit parts', () => {
     assert.match(page, /<AppBar title="Notifications">/);
     assert.match(page, /<Toast\b/);
     assert.equal((inbox.match(/<Toast\b/g) || []).length, 3, 'the three notices of the inbox are toasts');
-    assert.doesNotMatch(`${page}${inbox}`, /<(AppBar|AppBarStatus|Toast)\s[^>]*\bkit\b/, 'the kit look is the only one: no part takes a kit prop');
-    assert.equal((`${page}${inbox}`.match(/<ConfirmPrompt\b/g) || []).length, (`${page}${inbox}`.match(/<ConfirmPrompt\s+kit\b/g) || []).length, 'every confirm prompt is the kit one');
+    assert.doesNotMatch(`${page}${inbox}`, /<(AppBar|AppBarStatus|Toast|ConfirmPrompt)\s[^>]*\bkit\b/, 'the kit look is the only one: no part takes a kit prop');
+    assert.ok((`${page}${inbox}`.match(/<ConfirmPrompt\b/g) || []).length > 0, 'the page asks with the confirm prompt');
     assert.equal((`${page}${inbox}`.match(/<SegmentedControl\b/g) || []).length, 2, 'the page tabs and the inbox filter are one control');
     assert.match(read('src/app/views/NotificationActionSheet.tsx'), /<Sheet\b/, 'the action sheet is the shared sheet');
 });

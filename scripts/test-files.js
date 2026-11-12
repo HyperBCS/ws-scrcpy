@@ -860,8 +860,8 @@ test('a question is written as the kit sheet, and Escape answers it at the key',
     }
     assert.equal(/fx-button|fx-primary|fx-danger/.test(markup), false, 'no button of the older kind');
     assert.ok(markup.includes('class="kit-button" value="keep"'), 'the answers are kit buttons');
-    assert.ok(markup.includes('class="kit-button kit-confirm-go" value="replace"'), 'Replace is the answer that removes');
-    assert.ok(markup.includes('kit-sheet-footer fx-dialog-actions kit-confirm-danger'), 'and its footer gives it the solid danger fill');
+    assert.ok(markup.includes('class="kit-button kit-button-danger-solid" value="replace"'), 'Replace, the answer that removes, is on the solid danger fill');
+    assert.equal(/kit-confirm/.test(markup), false, 'and borrows nothing of the confirm prompt');
     assert.ok(markup.includes('aria-label="Close this question"'), 'the close button has a name');
     // Escape is answered at keydown, so the browser raises no close request of its own.
     let stopped = false;

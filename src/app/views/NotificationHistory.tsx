@@ -808,7 +808,6 @@ export function NotificationHistory({
                 </Button>
                 {bulkConfirm.armed && confirmation && (
                     <ConfirmPrompt
-                        kit
                         action={bulkConfirm}
                         question={`Clear ${count(confirmation.snapshot.length)} on ${confirmation.name}?`}
                         consequence="They are removed from the iPhone and cannot be brought back there. They stay here, marked as read."
@@ -872,7 +871,6 @@ export function NotificationHistory({
                             </Button>
                             {phoneConfirm.armed === menuItem.key && (
                                 <ConfirmPrompt
-                                    kit
                                     action={phoneConfirm}
                                     question={`${menuItem.negativeActionLabel} on ${source?.name || 'the iPhone'}?`}
                                     consequence={`This runs on the iPhone for “${menuItem.title || menuItem.appName || 'this notification'}” and cannot be undone from here.`}

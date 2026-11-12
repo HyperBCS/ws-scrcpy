@@ -126,11 +126,11 @@ const ICON_BUTTON_OUTLINED = iconButtonClass({ size: 'compact' });
 /** The check of a menu item that is on or off. The kit hides it while the item is off. */
 const CHECK = iconSvg('check', 20);
 const ROW_MENU_ICON = iconSvg('more', 20);
-// The answers of a dialog are full size at every width. The one that removes something takes
-// the solid fill of the kit's confirm prompt, inside a footer marked `kit-confirm-danger`.
+// The answers of a dialog are full size at every width. The one that removes something is on
+// the solid danger fill.
 const ANSWER = buttonClass();
 const ANSWER_PRIMARY = buttonClass({ variant: 'primary' });
-const ANSWER_REMOVES = `${buttonClass()} kit-confirm-go`;
+const ANSWER_REMOVES = buttonClass({ variant: 'danger-solid' });
 const MENU_SEPARATOR = '<div class="kit-menu-separator" role="separator"></div>';
 
 /** The icon of each toolbar button, by its command. */
@@ -2055,15 +2055,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /**
      * The kit's sheet as markup (`style/kit/Sheet.css`): the backdrop, then the panel with the
      * title, the body and the actions. The panel is the form, so Enter in a field answers.
-     * `close` names the close button; `danger` gives the answer marked `kit-confirm-go` the
-     * solid fill that a removal is confirmed on.
+     * `close` names the close button.
      */
     private sheetMarkup(parts: {
         title: string;
         close: string;
         body: string;
         actions: string;
-        danger?: boolean;
         className?: string;
     }): string {
         return `<div class="kit-sheet-backdrop" data-dialog="close"></div>
@@ -2080,9 +2078,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     )}">${iconSvg('close', 24)}</button>
                 </header>
                 <div class="kit-sheet-body">${parts.body}</div>
-                <footer class="kit-sheet-footer fx-dialog-actions${parts.danger ? ' kit-confirm-danger' : ''}">${
-                    parts.actions
-                }</footer>
+                <footer class="kit-sheet-footer fx-dialog-actions">${parts.actions}</footer>
             </form>`;
     }
 
@@ -2148,7 +2144,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             title: options.title,
             close: 'Close this question',
             body: `<p class="fx-dialog-message">${esc(options.message)}</p>`,
-            danger: options.danger,
             actions: `<button type="button" class="${ANSWER}" data-dialog="cancel">${esc(
                 options.cancel || 'Cancel',
             )}</button>
@@ -2212,7 +2207,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                         ? `<label class="fx-dialog-check"><input type="checkbox" name="all" /><span>Do the same for ${others}</span></label>`
                         : ''
                 }`,
-            danger: canReplace,
             actions: `<button type="submit" class="${ANSWER}" value="skip">Skip</button>
                 <button type="submit" class="${ANSWER}" value="keep">Keep both</button>
                 ${canReplace ? `<button type="submit" class="${ANSWER_REMOVES}" value="replace">Replace</button>` : ''}`,

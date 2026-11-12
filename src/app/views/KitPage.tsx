@@ -772,7 +772,6 @@ function SheetsAndMenu() {
                     </Button>
                     {erase.armed && (
                         <ConfirmPrompt
-                            kit
                             danger
                             action={erase}
                             question="Erase the example?"

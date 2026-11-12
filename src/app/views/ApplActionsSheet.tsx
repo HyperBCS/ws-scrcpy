@@ -469,7 +469,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 </SheetGroup>
                 {confirm.armed === 'reboot' && (
                     <ConfirmPrompt
-                        kit
                         action={confirm}
                         question={`Reboot ${phoneName}?`}
                         consequence="It reconnects after restarting. If a passcode is set, it has to be entered on the phone."
@@ -480,7 +479,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                 )}
                 {confirm.armed === 'shutdown' && (
                     <ConfirmPrompt
-                        kit
                         action={confirm}
                         question={`Shut down ${phoneName}?`}
                         consequence="You cannot turn it back on from here."
@@ -558,7 +556,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     </SheetRow>
                     {confirm.armed === 'restart' && (
                         <ConfirmPrompt
-                            kit
                             action={confirm}
                             question={`Restart services on ${phoneName}?`}
                             consequence="The phone session ends for every viewer. The next viewer gets a new one."
@@ -575,7 +572,6 @@ export function ApplActionsSheet({ client, descriptor }: ApplActionsSheetProps) 
                     )}
                     {confirm.armed === 'remount' && (
                         <ConfirmPrompt
-                            kit
                             action={confirm}
                             question={`Remount the developer image on ${phoneName}?`}
                             consequence="The phone session ends for every viewer while the image is reloaded."

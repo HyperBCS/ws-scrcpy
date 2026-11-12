@@ -342,7 +342,6 @@ function GoogDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                             </TroubleRow>
                             {confirm.armed && hasPid && (
                                 <ConfirmPrompt
-                                    kit
                                     action={confirm}
                                     question={`Stop the stream service on ${deviceName(entry)}?`}
                                     consequence="The stream ends for every viewer until the service is started again."
@@ -453,7 +452,6 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
     const unread = notificationSummary.value.unreadBySource[descriptor.udid] || 0;
     const restartPrompt = (
         <ConfirmPrompt
-            kit
             action={confirm}
             question={`Restart services on ${name}?`}
             consequence="The phone session ends for every viewer. The next viewer gets a new one."
@@ -516,7 +514,6 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
             )}
             {confirm.armed === 'developer-mode' && isActive && developerMode === false && (
                 <ConfirmPrompt
-                    kit
                     action={confirm}
                     question={`Enable Developer Mode on ${name}?`}
                     consequence="The phone restarts, then asks you to confirm on its screen."
@@ -699,7 +696,6 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         {feedbackAt('remount')}
                         {confirm.armed === 'stop' && canStop && (
                             <ConfirmPrompt
-                                kit
                                 action={confirm}
                                 question={`Stop the stream service on ${name}?`}
                                 consequence="The screen stream ends for every viewer. Open the screen to start it again."
@@ -716,7 +712,6 @@ function ApplDeviceCard({ entry, descriptor }: { entry: DeviceEntry; descriptor:
                         {confirm.armed === 'restart' && !restartFromError && canRecover && restartPrompt}
                         {confirm.armed === 'remount' && canRecover && (
                             <ConfirmPrompt
-                                kit
                                 action={confirm}
                                 question={`Remount the developer image on ${name}?`}
                                 consequence="The phone session ends for every viewer while the image is reloaded."

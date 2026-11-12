@@ -2,8 +2,8 @@
 
 @layer components {
 /* The one button (`ui/Button.tsx`). It works on a plain `<button>` or `<a>` with these classes:
-   kit-button, plus kit-button-primary, -quiet or -danger, plus kit-button-compact and -full.
-   Secondary is the class alone. */
+   kit-button, plus kit-button-primary, -quiet, -danger or -danger-solid, plus kit-button-compact
+   and -full. Secondary is the class alone. */
 .kit-button {
     display: inline-flex;
     align-items: center;
@@ -42,6 +42,12 @@
 .kit-button-danger {
     color: var(--danger-text);
 }
+/* The answer that confirms a removal. It keeps its fill under the pointer and when pressed. */
+.kit-button-danger-solid {
+    border-color: var(--danger-fill);
+    background: var(--danger-fill);
+    color: var(--on-accent);
+}
 /* 32px is for dense rows under a mouse. A finger gets the full height. */
 .kit-button-compact {
     height: var(--control-height-compact);
@@ -74,6 +80,9 @@
         border-color: var(--accent-pressed);
         background: var(--accent-pressed);
     }
+    .kit-button-danger-solid:hover:not(:disabled, [aria-disabled='true']) {
+        background: var(--danger-fill);
+    }
 }
 .kit-button:active:not(:disabled, [aria-disabled='true']) {
     background: var(--surface-sunken);
@@ -83,6 +92,9 @@
 .kit-button[aria-pressed='true']:active:not(:disabled, [aria-disabled='true']) {
     border-color: var(--accent-pressed);
     background: var(--accent-pressed);
+}
+.kit-button-danger-solid:active:not(:disabled, [aria-disabled='true']) {
+    background: var(--danger-fill);
 }
 
 .kit-button:focus-visible {

@@ -95,7 +95,6 @@ function SourceSettings({
             <div class="notification-details-content">
                 {confirm.armed === 'erase-text' && (
                     <ConfirmPrompt
-                        kit
                         action={confirm}
                         question={`Stop storing notification text from ${source.name}?`}
                         consequence={`The text of its ${count} is erased from the server and cannot be restored.`}
@@ -143,7 +142,6 @@ function SourceSettings({
                     </Button>
                     {confirm.armed === 'remove' && (
                         <ConfirmPrompt
-                            kit
                             action={confirm}
                             question={
                                 stored

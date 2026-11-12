@@ -239,7 +239,7 @@ async function powerActions(browser, mobile) {
             await dialog.waitFor();
             assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Cancel');
             await page.keyboard.press('Shift+Tab');
-            assert.equal(await page.evaluate(() => document.activeElement?.className), 'kit-button kit-confirm-go');
+            assert.equal(await page.evaluate(() => document.activeElement?.className), 'kit-button kit-button-danger-solid kit-confirm-go');
             assert.equal(await page.evaluate(() => !!document.activeElement?.closest('.kit-confirm-danger')), true, 'the confirm button of a danger prompt');
             await page.keyboard.press('Enter');
             assert.equal(power(), 0, 'Enter on the confirm button inside the guard sends nothing');

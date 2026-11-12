@@ -392,7 +392,7 @@ test('the list, its cards, the switcher and the notices take their controls, ico
     }
     // The header of the list is the kit bar, with the bell and Reload as icon buttons.
     const list = read('src/app/views/DeviceList.tsx');
-    assert.match(list, /<AppBar\s+kit\s+root\s+title=\{LIST_PAGE_NAME\}/);
+    assert.match(list, /<AppBar\s+root\s+title=\{LIST_PAGE_NAME\}/);
     assert.match(list, /<IconButton icon="refresh" label="Reload"/);
     // Messages: a banner for a condition, a status line under the control for an outcome.
     assert.match(read('src/app/ui/AsleepBanner.tsx'), /<Banner tone="info" action=/);
@@ -403,5 +403,6 @@ test('the list, its cards, the switcher and the notices take their controls, ico
     for (const place of ['developer-mode', 'restart-problem', 'refresh', 'restart', 'remount']) {
         assert.match(card, new RegExp(`\\{feedbackAt\\('${place}'\\)\\}`), `the outcome of ${place} shows under its control`);
     }
-    assert.equal((card.match(/<ConfirmPrompt\b/g) || []).length, (card.match(/<ConfirmPrompt\s+kit\b/g) || []).length, 'every prompt on a card is the kit prompt');
+    assert.ok((card.match(/<ConfirmPrompt\b/g) || []).length > 0, 'a card asks with the confirm prompt');
+    assert.doesNotMatch(card, /<ConfirmPrompt\s[^>]*\bkit\b/, 'which takes no kit prop: its look is the only one');
 });

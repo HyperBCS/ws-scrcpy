@@ -1,6 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { buttonClass } from './Button';
-import '../../style/ui/ConfirmAction.css';
 import '../../style/kit/ConfirmPrompt.css';
 
 /** An armed action disarms by itself after this long without a confirming press. */
@@ -106,8 +105,6 @@ interface ConfirmPromptProps {
      * `stack`: full-width buttons with Cancel last, for sheets that grow from the bottom edge.
      */
     layout?: 'row' | 'stack';
-    /** The kit look: other class names, the same behaviour. Without it nothing changes. */
-    kit?: boolean;
     onConfirm: () => void;
 }
 
@@ -119,7 +116,6 @@ export function ConfirmPrompt({
     confirmLabel,
     danger = false,
     layout = 'row',
-    kit = false,
     onConfirm,
 }: ConfirmPromptProps) {
     const root = useRef<HTMLDivElement>(null);
@@ -216,34 +212,23 @@ export function ConfirmPrompt({
         // A different question is a different request: the guard starts again.
     }, [question]);
 
-    // The kit look has class names of its own (`style/kit/ConfirmPrompt.css`) and the kit's
-    // buttons. The prompt behaves the same in both.
-    const names = kit
-        ? {
-              root: [
-                  'kit-confirm',
-                  layout === 'stack' && 'kit-confirm-stack',
-                  danger && 'kit-confirm-danger',
-                  swapped && 'kit-confirm-swapped',
-              ]
-                  .filter(Boolean)
-                  .join(' '),
-              question: 'kit-confirm-question',
-              consequence: 'kit-confirm-consequence',
-              actions: 'kit-confirm-actions',
-              confirm: danger
-                  ? `${buttonClass({ full: layout === 'stack' })} kit-confirm-go`
-                  : `${buttonClass({ variant: 'primary', full: layout === 'stack' })} kit-confirm-go`,
-              cancel: `${buttonClass({ full: layout === 'stack' })} kit-confirm-cancel`,
-          }
-        : {
-              root: `confirm-prompt ${layout} ${danger ? 'danger' : ''} ${swapped ? 'swapped' : ''}`,
-              question: 'confirm-prompt-question',
-              consequence: 'confirm-prompt-consequence',
-              actions: 'confirm-prompt-actions',
-              confirm: `confirm-prompt-button ${danger ? 'danger' : 'primary'}`,
-              cancel: 'confirm-prompt-button',
-          };
+    // The class names are those of `style/kit/ConfirmPrompt.css`, with the kit's buttons.
+    const full = layout === 'stack';
+    const names = {
+        root: [
+            'kit-confirm',
+            layout === 'stack' && 'kit-confirm-stack',
+            danger && 'kit-confirm-danger',
+            swapped && 'kit-confirm-swapped',
+        ]
+            .filter(Boolean)
+            .join(' '),
+        question: 'kit-confirm-question',
+        consequence: 'kit-confirm-consequence',
+        actions: 'kit-confirm-actions',
+        confirm: `${buttonClass({ variant: danger ? 'danger-solid' : 'primary', full })} kit-confirm-go`,
+        cancel: `${buttonClass({ full })} kit-confirm-cancel`,
+    };
     return (
         <div
             ref={root}

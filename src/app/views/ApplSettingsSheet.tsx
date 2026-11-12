@@ -616,7 +616,6 @@ export function ApplSettingsSheet() {
                 </SheetGroup>
                 {confirmRemove.armed && removable && (
                     <ConfirmPrompt
-                        kit
                         action={confirmRemove}
                         question={`Remove the stored passcode for ${entry ? deviceName(entry) : 'this iPhone'}?`}
                         consequence={
