@@ -924,6 +924,18 @@ function StatefulSheetChild() {
     );
 }
 
+function StatefulHeightChild() {
+    const [grown, setGrown] = useState(false);
+    return (
+        <>
+            <Button onClick={() => setGrown(!grown)}>{grown ? 'Shrink child rows' : 'Grow child rows'}</Button>
+            <SheetRow title="First child row" />
+            {grown && <SheetRow title="Second child row" />}
+            {grown && <SheetRow title="Third child row" />}
+        </>
+    );
+}
+
 function SheetLifecycle() {
     const [open, setOpen] = useState(false);
     const [added, setAdded] = useState(false);
@@ -943,6 +955,12 @@ function SheetLifecycle() {
                             <SheetRow title="First row" />
                             {grown && <SheetRow title="Second row" />}
                             {grown && <SheetRow title="Third row" />}
+                        </AutoHeight>
+                        <AutoHeight className="kit-card kit-list lifecycle-child-height">
+                            <StatefulHeightChild />
+                        </AutoHeight>
+                        <AutoHeight className="kit-card kit-list lifecycle-external-height">
+                            <div class="lifecycle-external">External content</div>
                         </AutoHeight>
                         <Button onClick={(event) => action.arm('example', event.currentTarget)}>
                             Arm lifecycle prompt

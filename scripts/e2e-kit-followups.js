@@ -54,9 +54,9 @@ async function lifecycle(browser) {
         await ids(page);
         // Hold the first scheduled resize frame for 50ms. Sample painted frames throughout:
         // growth/shrink must stay monotonic, including when a callback is delivered late.
-        for (const growing of [true, false, true]) {
-            const samples = await page.evaluate(async (growing) => {
-                const card = document.querySelector('.lifecycle-height');
+        for (const source of ['parent', 'child', 'external']) for (const growing of [true, false, true]) {
+            const samples = await page.evaluate(async ({ growing, source }) => {
+                const card = document.querySelector(source === 'parent' ? '.lifecycle-height' : source === 'child' ? '.lifecycle-child-height' : '.lifecycle-external-height');
                 const original = window.requestAnimationFrame;
                 const cancel = window.cancelAnimationFrame;
                 const pending = new Map();
@@ -76,8 +76,13 @@ async function lifecycle(browser) {
                     if (record) { clearTimeout(record.timer); cancel(record.frame); pending.delete(id); }
                     else cancel(id);
                 };
-                const button = Array.from(document.querySelectorAll('dialog[open] button')).find(node => node.textContent === (growing ? 'Grow rows' : 'Shrink rows'));
-                button.click();
+                if (source === 'external') {
+                    // No Preact render: model an externally loaded image/font changing size.
+                    document.querySelector('.lifecycle-external').style.height = growing ? '120px' : '40px';
+                } else {
+                    const label = source === 'parent' ? (growing ? 'Grow rows' : 'Shrink rows') : (growing ? 'Grow child rows' : 'Shrink child rows');
+                    Array.from(document.querySelectorAll('dialog[open] button')).find(node => node.textContent === label).click();
+                }
                 for (let index = 0; index < 24; index++) {
                     await new Promise(resolve => original(() => setTimeout(resolve, 0)));
                     values.push(card.getBoundingClientRect().height);
@@ -86,14 +91,14 @@ async function lifecycle(browser) {
                 window.requestAnimationFrame = original;
                 window.cancelAnimationFrame = cancel;
                 return values;
-            }, growing);
-            console.log('HEIGHT_FRAMES', growing, JSON.stringify(samples));
+            }, { growing, source });
+            console.log('HEIGHT_FRAMES', source, growing, JSON.stringify(samples));
             for (let index = 1; index < samples.length; index++) {
                 assert(growing ? samples[index] >= samples[index - 1] - 0.6 : samples[index] <= samples[index - 1] + 0.6,
                     `height moves in one direction through delayed resize: ${JSON.stringify(samples)}`);
             }
             await settleMotion(page);
-            await natural(dialog.locator('.lifecycle-height'));
+            await natural(dialog.locator(source === 'parent' ? '.lifecycle-height' : source === 'child' ? '.lifecycle-child-height' : '.lifecycle-external-height'));
         }
         const interrupted = await page.evaluate(async () => {
             const card = document.querySelector('.lifecycle-height');
@@ -225,7 +230,7 @@ async function settings(browser) {
             });
             await page.goto(BASE);
             const open = async () => {
-                await page.locator('.device-card').first().getByRole('button', { name: /Settings/ }).click();
+                await page.locator(`[data-device-key$=":${UDID}"]`).first().getByRole('button', { name: /Settings/ }).click();
                 const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
                 await dialog.getByText('Loading settings…', { exact: true }).waitFor();
                 return dialog;
