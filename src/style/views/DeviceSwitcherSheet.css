@@ -77,7 +77,6 @@
 }
 .device-switcher-row {
     flex: 1 1 auto;
-    width: 100%;
 }
 .device-switcher-item:has(.device-switcher-reconnecting) {
     flex-direction: column;
