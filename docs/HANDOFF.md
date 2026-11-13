@@ -5582,7 +5582,7 @@ rows. Primary 440x956 is included for both themes/platforms, with 320/390, 956x4
 landscape, centered desktop and dock retained. The independent base-product negative
 failed Model's real lane geometry, not a missing selector; separate fixture controls
 proved clipping and whole-label assertions. Focused review and all four About flows
-passed; fresh main npm check/default39 and raw atlas results are pending below.
+passed; main check and raw atlas results follow below.
 
 The first main npm check passed at `e309bff`. The first default39 stopped normally
 with exit 1 after 205.676 s: Settings still looked for Serial in the old description
@@ -5590,8 +5590,41 @@ element. The audit found one other stale Model lookup in ios-settings. Root appr
 two one-line adaptations to the existing value helper, retaining exact Serial/Model
 equality, committed separately at `13c522c`. All 98 browser descendants and the
 supervisor/launcher were gone; source and 24 artifacts matched the first check. Raw
-failure evidence is preserved. Fresh review and a new frozen full check/default39
-are required; the first browser run is not a passing result.
+failure evidence is preserved. A fresh read-only second pass accepted the two-line
+seam unchanged. The first browser run remains a failed result.
+
+At frozen `c109f773c052be78b4ae32403c4ebf48e4cbba7d`, the replacement `npm run check`
+passed in 75.876 s: all 819 Node tests, Python 43 + 32 (two existing stock-helper
+skips) + 4, type checks and both builds. Lint retained 26 warnings and no errors;
+the client build retained three performance warnings. Then one uninterrupted
+all-default39 runner invocation passed in 1944.629 s, including the strict Serial
+and Model assertions. There was no focused or WebKit repeat.
+
+About passed all four flows: 34 contexts, 98 geometry records, 232 PNGs, 48 fixture
+commands and 17 guarded early actions. List contexts had zero stream sockets (27);
+dock contexts retained one socket and left the screen (7), with zero stream messages.
+Offline bounds checks covered 1,120 rows and 233 cards with no scroll overflow or
+card-height mismatch. I opened 18 fresh About PNGs: primary and desktop both themes/
+platforms, 320px long metadata both themes/platforms, lower iOS facts and landscape.
+Labels stayed whole, values shared their right edge and long values wrapped fully.
+Services retained their separate description/control layout.
+
+The raw atlas retained all 158 PNG/JSON pairs. All PNG bytes match the current f3
+baseline (b1 differs from f3 only in HANDOFF). Of 28 changed JSONs, 16 contain 140
+edit groups wholly within Phone facts: scoped lane/wrap/whole-label styles and the
+Model/Serial value elements. Twelve Notifications JSONs each lose one hidden USB
+select option and change nothing else. Setup stays mounted and that list derives
+from phone/status state; timing is a possible cause, not proven by the hash-only
+capture. No notification source changed. No raw capture was normalized or rerun.
+
+All 1,373 recorded PID/start identities across both attempts and their launchers/
+supervisors were gone. All 35 original evidence hashes remain unchanged. Replacement
+source and all 24 normal artifacts (18 public) matched their successful build;
+override remained exact. The final results commit changes HANDOFF only, with all
+539 other tracked inputs and all 24 artifact hashes preserved. Owner AGENTS/.claude
+were left intact. Raw logs, classifications, 1,308 per-suite PNGs and exact checked/
+final heads are in `/tmp/ws-scrcpy-about-facts-20261113/integration.md.result` and
+its linked manifests. No further tests were run for this prose.
 
 This correction is not deployed by this integration. Last confirmed live remains
 source `33bc04f`, image `8086`, from the separate deployment above. A 440px Chromium
