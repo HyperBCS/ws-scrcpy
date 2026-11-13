@@ -10,6 +10,7 @@ const { fileURLToPath } = require('node:url');
 const fixtures = new Set([
     'test-android-server.js', 'test-android-owners.js', 'test-coredevice.js', 'test-crash-paths.js',
     'test-ios-settings-store.js', 'test-ios-unlock.js', 'test-notification-service.js',
+    'test-notification-collector.js', 'test-notification-routes.js',
     'test-notifications.js', 'test-review-fixes.js', 'test-server-regressions.js',
     'test-settings.js', 'test-web-security.js',
 ]);

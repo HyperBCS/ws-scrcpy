@@ -7,12 +7,14 @@ const vm = require('node:vm');
 const express = require('express');
 const webpush = require('web-push');
 require('ts-node').register({ transpileOnly: true });
-const { resetSettingsForTests } = require('../src/server/Settings');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-notifications-'));
 process.env.WS_NOTIFICATION_DATA = temporary;
 process.env.WS_DATA_DIR = temporary;
 process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
 process.env.WS_PUBLIC_URL = 'https://phone.example';
+delete process.env.WS_IOS_SETTINGS_KEY;
+delete process.env.WS_IOS_SETTINGS_KEY_FILE;
+const { resetSettingsForTests } = require('../src/server/Settings');
 const { NotificationService, validateSubscription, shouldRelay } = require('../src/server/notifications/NotificationService');
 const originalSend = webpush.sendNotification;
 after(() => { webpush.sendNotification = originalSend; fs.rmSync(temporary, { recursive: true, force: true }); });
@@ -120,7 +122,7 @@ test('Open API, settings persistence, delivery deduplication and expired endpoin
         await api('/sources', { ...source, preview: false });
         service.receive({ ...event, session: 'next', uid: 3, body: 'Private', date: '20261025T120002' }); await tick();
         assert.equal(delivered.at(-1).title, 'iPhone: new notification');
-        assert.equal(delivered.at(-1).body, 'Open the device to view it.');
+        assert.equal(delivered.at(-1).body, 'Open the phone to view it.');
         const status = await (await api('/status')).json();
         const history = await (await api('/history')).json();
         assert.equal(history.notifications.length, 3);
@@ -738,7 +740,7 @@ test('phone bulk dismissal stops after an uncertain failure and reports partial 
         assert.equal(service.feed.get(all[0].key).read, true);
         assert.equal(service.feed.get(all[1].key).read, false);
         assert.equal(service.feed.get(all[2].key).read, false);
-        assert.equal(service.bulkSources.size, 0);
+        assert.equal(service.routes.bulkSources.size, 0);
     });
 });
 
@@ -764,7 +766,7 @@ test('phone bulk dismissal prevents concurrent same-device actions and bounds to
             assert.equal(reply.ok, false);
             assert.deepEqual(reply.accepted, [all[0].key]);
             assert.deepEqual(reply.unprocessed, [all[1].key]);
-            assert.equal(service.bulkSources.size, 0);
+            assert.equal(service.routes.bulkSources.size, 0);
         } finally { Date.now = originalNow; }
     });
 });
@@ -824,7 +826,7 @@ test('Bluetooth disconnection stops bulk dismissal with the remaining confirmed 
         assert.deepEqual(reply.accepted, [all[0].key]);
         assert.match(reply.failed[0].error, /disconnected/);
         assert.deepEqual(reply.unprocessed, [all[2].key]);
-        assert.equal(service.bulkSources.size, 0);
+        assert.equal(service.routes.bulkSources.size, 0);
         assert.equal(service.actions.size, 0);
     });
 });
@@ -943,7 +945,7 @@ test('queued pushes use current preview policy without disrupting another receiv
         service.store.subscriptions = service.store.subscriptions.filter(item => item.id !== 'other-receiver');
         finishes.forEach(finish => finish()); await tick();
         assert.equal(sent.length, 3, 'the remaining receiver still receives its queued event');
-        assert.equal(sent[2].title, 'iPhone: new notification'); assert.equal(sent[2].body, 'Open the device to view it.');
+        assert.equal(sent[2].title, 'iPhone: new notification'); assert.equal(sent[2].body, 'Open the phone to view it.');
         assert.equal(JSON.stringify(sent[2]).includes('Private second message'), false);
     });
 });

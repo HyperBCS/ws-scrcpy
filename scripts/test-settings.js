@@ -358,7 +358,8 @@ test('server fixture setup cannot inherit an exported canonical data directory',
     const before = fs.statSync(marker);
     const probe = path.join(__dirname, 'fixtures', 'data-dir-probe.js');
     for (const fixture of ['android-server', 'android-owners', 'coredevice', 'crash-paths', 'ios-settings-store',
-        'ios-unlock', 'notification-service', 'notifications', 'review-fixes', 'server-regressions',
+        'ios-unlock', 'notification-service', 'notification-collector', 'notification-routes',
+        'notifications', 'review-fixes', 'server-regressions',
         'settings', 'web-security']) {
         // No inherited settings, key paths or tool overrides can enter the subprocess.
         // The probe blocks child tools, sockets and every access to this controlled poison path.
