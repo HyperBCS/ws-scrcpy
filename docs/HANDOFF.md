@@ -5220,7 +5220,8 @@ The owner asked for compact Scheduled unlock Time, outlined phone controls, cons
 icon/caption spacing, and a pass over About and troubleshooting. The exact large Time
 gap on the owner's browser remains unconfirmed; the optional browser question is
 unanswered. Physical Android rotation, USB replug and an owner-operated stream-setting
-restart remain DEFERRED. This step authorizes no hardware action or deployment.
+restart remain DEFERRED. This integration role authorizes no hardware action or
+deployment. A separate deploy role may act under its own written brief.
 
 The separate UI reviewer accepted `9ff2f908e657d6b8af4fa2bbf5a167f230ecf2a4` from
 base `6adf768fe0a5716e7b67bedf4eb9dd0804cd2479`. The separate About reviewer accepted
@@ -5231,7 +5232,7 @@ Only the reviewed UI/test paths changed. No server, common, configuration, build
 public source, tokens, dependency or lockfile changed. The integrator registered the
 six new tracker-command unit tests and ui-consistency/about-ui immediately before
 atlas in the existing browser defaults. Fresh main checks and raw atlas review are
-pending; their observed results will follow in this dated section.
+complete; their observed results follow below.
 
 Phone action tiles use outlined kit surfaces, aligned icons/captions and separated
 mouse rail rows. Mouse rails compact absent slots and choose columns from intrinsic
@@ -5248,7 +5249,7 @@ quietly expires at 30 seconds, separate from the unchanged eight-second Starting
 fallback; matching descriptor completion wins over late replies. Android requires no
 success acknowledgment. Old actions/openings/other phones cannot alter a new action.
 iPhone Stop acknowledgment makes no claim of completed physical shutdown and Stop
-stays off on its own screen. Exact initial <NoModel>/<NoVersion> read Unknown; known
+stays off on its own screen. Exact initial `<NoModel>`/`<NoVersion>` read Unknown; known
 metadata stays while offline, stale or unauthorized. System values wrap with readable
 labels. Only Restart services uses the narrow/docked pair layout; centered desktop
 stays inline. Busy active buttons retain native focus and reject repeats, with peers
@@ -5275,5 +5276,147 @@ deployed at 03:59:56.7329781Z on 2026-11-13, as recorded above. This UI work is 
 and NOT DEPLOYED. Owner choices on dark focus ring, mute-drop, 50% idle opacity and
 mouse rail attachment remain unchanged. Safari, Firefox, installed app, native phone
 keyboard, real input/audio/delivery and actual physical service outcomes remain
-unverified. The final results entry will retain one hardware checklist and exact
-checked/final heads without repeating passed checks solely for prose.
+unverified. The results below retain one hardware checklist and the checked head.
+The exact final HANDOFF-only head and identity proof are in the external report.
+Passed checks were not repeated solely for prose.
+
+
+**Fresh combined main checks.** All phases ran serially at clean checked head
+`f3e55f6af30263e06a567756dc2272ee731fae92`. Root read and ACKed the actual external
+short launcher, detached supervisor, phase specs and input manifests before launch.
+PID/startTicks/PGID, command/CWD, fsynced polling and exact exits remain in
+/tmp/ws-scrcpy-ui-audit-20261113/integration/prepared/. No outer timeout, fallback,
+integrator signal, unexpected termination or repeated check occurred.
+
+- `npm run check`: exit 0 in 87.916 s. Type check passed; lint 0 errors/26 existing
+  warnings. Node 819 passed/0 failed/0 cancelled/0 skipped. Python 43 OK, 32 OK with
+  two existing stock-helper comparison skips, and 4 OK. Normal client/server builds
+  passed; the client retained three performance warnings.
+- Installed WebKit Time-only through `node scripts/test-browser.js ui-consistency`,
+  BROWSER=webkit and SCENARIO=time: exit 0 in 18.251 s; 44 states/eight contexts,
+  88 PNGs, native height 44px and field-top motion exactly 0px. This is fresh merged
+  source. Historical HEAD31a/saved-later4cc evidence had 22 matching non-HTML assets
+  and a differing index.html; no blanket identity or real Safari result is claimed.
+- ONE uninterrupted `node scripts/test-browser.js`: all 39 registered defaults in
+  order, exit 0 in 1933.556 s. Chromium was explicit. About/UI/Scenario/atlas/kit
+  selectors, inherited NODE_OPTIONS and private key/UDID/helper values were cleared.
+  Only the output-only capture preload was supplied, SHA256
+  `3d3ba323e64f8bbffb9e13cb364b2fcd3f199841c7cb909374575525c0ed9282`.
+  Normal BASE stayed production; demo KIT_BASE was runner-isolated. No ATLAS_COMPARE,
+  filters or style-column override was set.
+
+Full39 retained 1297 suite artifacts (1292 PNG/five JSON), plus 158 raw atlas PNG/JSON
+pairs. WebKit has a separate 89 files (88 PNG/one JSON). UI consistency records are
+80 controls, 48 intrinsic heights, 10 decoded width states and 44 Time states/eight
+contexts (0px movement), plus 20 notification contexts/378 PNGs. All four About flows
+passed: layout, metadata, androidActions and iosActions. About has 30 contexts,
+86 measurements, 216 PNGs, 46 commands and 17 guarded probes. Independent raw reading
+verified all 988 rows (overflow 0), 203 natural cards (height difference 0/no inline
+height) and 230 targets (44px coarse/32px fine minimums). Commands total 16 list_encoders,
+10 start_server, six kill_server, 10 refresh_device, two restart_session and two
+remount_ddi. All 23 list contexts opened zero stream sockets; seven dock contexts
+retained one mount/socket and left by Phones. Actual About stream messages total 0.
+No physical phone/service/input result follows from fake fixtures.
+
+**Raw atlas.** All 316 canonical hashes captured at `79312da` were independently
+verified; 793-to-6ad changes HANDOFF only. Main has 184 identical files, 132 changed
+(32 PNG/100 JSON), zero added/removed, 316 total. Complete raw hashes, pixel bounds,
+style edits and filenames remain in integration/raw-atlas-comparison.json,
+raw-atlas-style-differences.json, atlas-state-groups.json, atlas-row-classification.json
+and atlas-changed-files.txt. No file was normalized. Every changed state family:
+
+| State family | PNG | JSON |
+| --- | ---: | ---: |
+| android-actions | 2 | 4 |
+| android-asleep | 2 | 4 |
+| android-controls | 2 | 2 |
+| android-screen | 2 | 4 |
+| android-settings | 2 | 4 |
+| android-switcher | 2 | 4 |
+| android-type-text | 2 | 4 |
+| android-unlock | 2 | 4 |
+| iphone-actions | 2 | 4 |
+| iphone-controls | 2 | 2 |
+| iphone-screen | 2 | 4 |
+| iphone-settings | 2 | 4 |
+| iphone-switcher | 2 | 4 |
+| iphone-type-text | 2 | 4 |
+| iphone-unlock | 2 | 4 |
+| list-android-settings | 0 | 4 |
+| list-iphone-settings | 0 | 4 |
+| notifications-all | 0 | 4 |
+| notifications-card-actions | 0 | 4 |
+| notifications-confirm | 0 | 4 |
+| notifications-filters | 0 | 4 |
+| notifications-inbox | 0 | 4 |
+| notifications-page-actions | 0 | 4 |
+| notifications-search | 0 | 4 |
+| notifications-toast | 0 | 4 |
+| switcher-reconnecting | 2 | 4 |
+
+The 32 PNG changes are four open touch-control panels and 28 desktop rail pictures.
+All 158 current atlas PNGs match the accepted UI0 full38 images byte for byte. Every
+one of 1186 row edits is classified: 60 header descriptor classes with identical style
+hashes; 84 rail/caption/layout; 694 outlined controls; 116 About System/pair/natural
+size; four Actions hover hashes; 216 notification wrapping/source bounds; six hidden
+option deletions and six insertions. About's 116 rows exactly match the isolated
+fresh9ff-to0ce reference: three System children per context, Restart's pair descriptor
+and six row/child plus five containing-node natural-size changes where stacked.
+Dedicated About pictures show lower content outside the normal atlas's painted area.
+
+All 32 Notifications PNGs match baseline. Twelve light JSONs (card-actions, confirm,
+filters, page-actions, search, toast) add one hidden option on phone/remove one on
+desktop, hash d7aa64a6. Other aligned rows change only wrapping/source styles. Against
+accepted About full39, all PNGs and 310 total files match; six dark JSONs add one
+hidden option, hash 9e2c5061. The retained hidden Setup USB selector and independently
+arriving fixture tracker/status data support timing as an inference; raw hashes do
+not identify option text or reply order. Actual baseline/current Actions images show
+Refresh/Rotate Right hovered. The click point moves with rail compaction; pointer
+coordinates were not recorded, so that explanation remains an inference.
+
+The integrator opened 41 distinct actual PNGs, including Time in both engines,
+320px headers, controls/audio/rail history, long notifications, About metadata,
+Services/refusals/busy/session reason, changed atlas phone/desktop light/dark and both
+baseline Actions themes. Exact paths/hashes: viewed-images.json and
+viewed-image-hashes.json. The matrices contain more images than were opened. No
+clipping or lost action was seen; short viewport scroll edges are normal boundaries.
+
+**Cleanup and final documentation.** All 1098 observed process records, including
+three launchers/supervisors and their children, are absent. Before this outcomes edit,
+all 540 checked tracked inputs and 24 normal dist hashes (18 public) matched completed
+checks. Selected demo
+markers are absent, override is exactly 7b7d0a, and no run-created kit directory remains.
+The unrelated stream-config artifact was hashed only and preserved. Server/common
+source has no diff from the last confirmed live source. The final HANDOFF-only commit
+and proof of identical other tracked/runtime/compiled inputs are recorded with exact
+checked/final heads in final-source-audit.json and the report named below.
+
+Two external prose/audit guards stopped before final writing. One incorrectly assumed
+all /tmp/ws-scrcpy-kit-* directories were absent; older ws-scrcpy-kit-4MVabD predates
+this run by mtime/ctime and was preserved. Root accepted auditing this run's new-mkdtemp
+cleanup instead. The other caught an unmatched sentinel-formatting replacement before
+writing HANDOFF. Their raw errors/corrections are in offline-audit-assumption.json and
+documentation-guard-correction.json. Corrected offline audits passed. No product/test
+source, raw evidence or completed check changed or reran.
+
+**Remaining hardware checklist, outside this integration.**
+
+1. A separate deploy role uses its own rollback/window/one-session procedure, never
+   retries a failed iPhone start, and waits for clean shutdown. This role did not deploy.
+2. Physical Android rotation, USB replug and one owner-operated stream-setting restart
+   remain DEFERRED. Do not ask again, perform them or mark them passed.
+3. Real picture/input aim, lock/Wake/unlock, holds, capture/paste/wheel/pinch/drag and
+   physical service outcomes remain unverified beyond earlier dated observations.
+   An iPhone unlock always needs separate owner authorization.
+4. Real collector recovery/pairing/receipt/muting/old allow-list/Web Push/taps and
+   matching phone-action acknowledgment remain unverified beyond startup/status.
+5. Safari, Firefox, native picker/keyboard/notch/safe areas, audible capture, large real
+   Files folders and installed app remain unverified. The owner's exact Time symptom
+   and optional browser question remain unconfirmed/unanswered. Pending owner choices
+   stay unchanged.
+
+Whole findings/evidence and the exact final HANDOFF-only head:
+/tmp/ws-scrcpy-ui-audit-20261113/reports/ui-consistency-integration.md. Local UI changes
+remain NOT DEPLOYED. No live-server/Docker/phone/helper/unlock/settings-save/data-export/
+secret-file operation, install, dependency change or push occurred. Review worktrees
+and branches remain for root's verified cleanup and a separately assigned deploy.
