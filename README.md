@@ -1,666 +1,358 @@
-# ws scrcpy
+# ws-scrcpy
 
-Web client for [Genymobile/scrcpy][scrcpy] and more.
+This is one owner's app for viewing and controlling their Android phones and iPhones
+from a browser. It also keeps an iPhone notification inbox and can relay notifications
+through Web Push. Phone browsers, the installed web app and desktop browsers count equally.
+There is no login. Run it only where access is trusted.
 
-## Requirements
+Android uses the stock [scrcpy 4.1 server](vendor/Genymobile/scrcpy/scrcpy-server.jar)
+over adb. iPhone screen and input use CoreDevice through
+[pymobiledevice3](https://github.com/doronz88/pymobiledevice3), with no app, signing or
+Apple developer account on the phone. This fork's behavior differs from upstream ws-scrcpy.
+[HANDOFF](docs/HANDOFF.md) describes the architecture and dated checks.
 
-Browser must support the following technologies:
-* WebSockets
-* Media Source Extensions and h264 decoding;
-* WebWorkers
-* WebAssembly
+## Phones and browsers
 
-Server:
-* Node.js v10+
-* node-gyp ([installation](https://github.com/nodejs/node-gyp#installation))
-* `adb` executable must be available in the PATH environment variable
-* A running adb server on the host (`adb start-server`). The server never starts
-  one: in a container it would have no USB access and would hold port 5037, so
-  the host's own adb server could not start. Until one answers, no Android
-  device is listed and the log says the adb server is not running.
-* For [iOS](#ios): Python 3.10+ and `usbmuxd` running on the host
-  (`apt install usbmuxd` on Debian/Ubuntu); `pymobiledevice3` talks to it over
-  `/var/run/usbmuxd` and fails outright without it.
+- Android needs USB debugging enabled and the host authorised on the phone. The host's
+  adb server must already be running. Screen, Files and Shell use that connection.
+  Native keyboard (UHID) and audio need Android 11 or later; older phones can use
+  injected keycodes. Phone or app restrictions can prevent audio capture.
+- iPhone screen and touch need iOS 27, a trusted USB connection, Developer Mode and a
+  mounted Developer Disk Image. The server can mount the image when starting a session;
+  an image mount does not survive a phone restart. After a restart the owner must enter
+  the passcode on the phone before host services work. The latest bounded deploy check
+  used an iPhone 13 Pro Max on iOS 27.2.1. This is not a promise for every iPhone or iOS release.
+- Browsers need WebSockets and a video decoder supported by the chosen player. Android
+  defaults to H.264 with WebCodecs, with an MSE player available. iPhone sends HEVC,
+  without server video transcoding. WebCodecs needs a secure context; the iPhone MSE
+  fallback can run over HTTP if that browser can decode HEVC. Codec support depends on
+  the browser, OS and hardware. Headless Chromium used in checks cannot show the iPhone
+  picture. A ready session can still offer commands and Type text with **No picture**;
+  new touches need a usable picture.
+- Audio is enabled in the normal build. Android defaults to raw 48 kHz stereo PCM;
+  optional Opus needs browser AudioDecoder support. iPhone AAC-ELD is decoded by ffmpeg
+  on the server into PCM. Each browser starts muted: press Listen to permit playback.
+  There is no browser microphone forwarding. Call audio is subject to phone restrictions.
+- iPhone has Screen only, without Files, Shell, Back or Overview. It has Home, Lock,
+  Siri and volume controls. The input path supports up to five touch contacts; the mouse
+  can emulate a two-finger pinch. Real input and picture checks have limits described below.
 
-Device:
-* Android 5.0+ (API 21+)
-* Enabled [adb debugging](https://developer.android.com/studio/command-line/adb.html#Enabling)
-* On some devices, you also need to enable
-[an additional option](https://github.com/Genymobile/scrcpy/issues/70#issuecomment-373286323)
-to control it using keyboard and mouse.
+## Build and run
 
-## Build and Start
+The production Docker image uses Node.js 22 (`node:22-bookworm-slim`).
+A host build needs the C/C++ and Python build tools used by node-gyp for node-pty.
+A host iPhone installation also needs Python with venv support, usbmuxd and ffmpeg.
+The pinned toolchain is in [python/requirements.txt](python/requirements.txt).
+`npm run setup:ios` creates `python/venv` and applies the four repository patches.
+`npm run patch:ios` applies them to an existing venv after patch changes.
 
-Make sure you have installed [Node.js 22 or newer](https://nodejs.org/en/download/),
-[node-gyp](https://github.com/nodejs/node-gyp) and
-[build tools](https://github.com/nodejs/node-gyp#installation)
-```shell
-git clone https://github.com/NetrisTV/ws-scrcpy.git
+The repository's configured project remote is:
+
+```sh
+git clone https://github.com/HyperBCS/ws-scrcpy.git
 cd ws-scrcpy
-
-## For stable version find latest tag and switch to it:
-# git tag -l
-# git checkout vX.Y.Z
-
-npm ci
-npm start
 ```
 
-## Supported features
+On a fresh host, install the locked dependencies with `npm ci`. In the owner's existing
+checkout, use the installed dependencies; do not install or change them during a check.
+The normal commands, from the repository root, are:
 
-### Android
-
-#### Screen casting
-The stock [Genymobile/scrcpy][scrcpy] 3.1 server streams H264 video, which is
-then decoded in the browser by one of the included players:
-
-##### Mse Player
-
-Based on [xevokk/h264-converter][xevokk/h264-converter].
-HTML5 Video.<br>
-Requires [Media Source API][MSE] and `video/mp4; codecs="avc1.42E01E"`
-[support][isTypeSupported]. Creates mp4 containers from NALU, received from a
-device, then feeds them to [MediaSource][MediaSource]. In theory, it can use
-hardware acceleration.
-
-##### WebCodecs Player
-
-Decoding is done by the browser's built-in (software/hardware) media decoder.
-Requires [WebCodecs][webcodecs] support, available in Chrome/Edge 94+,
-Safari 16.4+ and Firefox 130+. This is the default and recommended player.
-
-#### Remote control
-* Touch events (including multi-touch)
-* Multi-touch emulation: <kbd>CTRL</kbd> to start with center at the center of
-the screen, <kbd>SHIFT</kbd> + <kbd>CTRL</kbd> to start with center at the
-current point
-* Mouse wheel and touchpad vertical/horizontal scrolling
-* Capturing keyboard events
-* Injecting text (ASCII only)
-* Copy to/from device clipboard
-* Device "rotation"
-
-#### File push
-Drag & drop an APK file to push it to the `/data/local/tmp` directory. You can
-install it manually from the included [xtermjs/xterm.js][xterm.js] terminal
-emulator (see below).
-
-#### Remote shell
-Control your device from `adb shell` in your browser.
-
-#### File listing
-A file explorer for the device: breadcrumb navigation with back/forward
-history, quick-access folders, details/list/tile views, sorting, filtering,
-multi-select, upload (picker or drag & drop), download, new folder, rename,
-delete and properties.
-
-### iOS
-
-Device control goes through Apple's own **CoreDevice** developer services, driven by
-[doronz88/pymobiledevice3][pymobiledevice3]. Nothing is installed on the phone: no
-WebDriverAgent, no signing, no Apple developer account. The trade-off is the iOS
-version -- the display stream and the touch surface only exist on **iOS 27** (the
-phone rejects them on iOS 18 and earlier).
-
-> `INCLUDE_APPL` is **on** by default. Verified end to end on an iPhone 13 Pro Max
-> running iOS 27.0; background in
-> [docs/IOS-CONTROL-INVESTIGATION.md](/docs/IOS-CONTROL-INVESTIGATION.md) and the
-> handoff notes.
-
-#### Setup (Linux server)
-
-```shell
-npm run setup:ios            # creates python/venv with pymobiledevice3
-sudo systemctl start usbmuxd # if it is not running already
+```sh
+npm run dist                      # production client and server in dist/
+npm run check                     # types, lint, Node/Python tests and production build
+node scripts/test-browser.js       # every default browser suite, with fixture servers
+node scripts/test-browser.js home  # one fixture suite
 ```
 
-Then, on the phone, once:
+Build options come from [the default build configuration](webpack/default.build.config.json),
+with optional values in [build.config.override.json](build.config.override.json). The
+normal override is `{}` plus a newline. `INCLUDE_GOOG`, `INCLUDE_APPL`,
+`INCLUDE_ADB_SHELL`, `INCLUDE_FILE_LISTING`, `USE_WEBCODECS`, `USE_H264_CONVERTER`
+and `USE_AUDIO` all default to true. `PATHNAME` defaults to `/`. Normal production
+builds exclude the kit demo regardless of an override; fixture demo assets stay outside dist.
 
-1. Plug it in over USB and tap **Trust** on the "Trust This Computer?" prompt.
-2. Turn on **Developer Mode** (Settings → Privacy & Security → Developer Mode; the
-   device card offers an **Enable** button that triggers the prompt). The phone
-   reboots and asks to confirm.
+Run only one `npm test` or `npm run check` at a time: unit tests bind fixed ports.
+Run browser suites through `scripts/test-browser.js`. Running `scripts/e2e-*.js` or
+older `test:*` shortcuts directly can target the live server. Tests use fake phone
+services. The six refreshed hardware-only scripts have not had their bodies run.
 
-The server mounts Apple's Developer Disk Image itself (downloaded and personalised
-for your device the first time) whenever a screen session starts. It does not
-survive a reboot, and it is not an app.
+For a fresh host with no other app server, `npm start` builds and starts the server
+from `dist/`, normally on port 8000. `npm run dev` watches and rebuilds it. Neither is
+safe alongside the owner's Android-enabled server. A permitted second test server must
+be built without Android and use isolated fixture data, as the current brief specifies.
 
-#### What works
+### Docker
 
-* Screen: HEVC pushed by the phone (`com.apple.coredevice.displayservice`),
-  decoded in the browser with WebCodecs, or remuxed to fragmented MP4 for Media
-  Source Extensions where WebCodecs is unavailable (Chrome/Edge over plain http).
-  Chrome needs hardware HEVC decoding; Safari always has it.
-* Touch: tap, drag, swipe, and up to five simultaneous fingers through the touchscreen
-  HID surface. Touchscreen browsers can pinch and use multiple fingers; a mouse sends
-  one contact. Contacts are released on blur, cancellation, rotation, and disconnect.
-  One viewer owns a phone's active gesture at a time.
-  Multi-touch is not available on this path yet.
-* Hardware buttons: Home, Lock, Siri, volume up/down, mute.
-* App switcher: iOS has no button for it, so the server performs what opens it on
-  that model -- a swipe up from the bottom edge that pauses midway on Face ID
-  devices, a Home double press on Home-button devices (decided from the product
-  type; `IOS_APP_SWITCHER=home|gesture` overrides). The gesture is the standard
-  one; its timing has not yet been confirmed on an unlocked phone.
-* Screen and lock state, like Android's Asleep/Locked badges. The display backlight is
-  read from the phone's IORegistry over lockdown (0 while the screen is off), polled
-  every 4 s while streaming and every 15 s idle. On **iOS 27.2 and newer**, lock state
-  comes directly from SpringBoard's `com.apple.springboard.lockstate`: 0 unlocked,
-  1 locked. Notification events update it immediately; a direct read over the developer
-  tunnel initializes it and refreshes it alongside the screen poll to recover missed events.
-  This works independently of the phone's language and does not use accessibility.
-  Failed reads or unexpected values report unknown. Verified on an iPhone 13 Pro Max
-  running iOS 27.2 through an unlock/lock cycle, with matching query and event values.
-  On older iOS versions, `python/probes/lockstate.py` asks accessibility what is on screen
-  (the lock screen's padlock reads "Locked"/"Unlocked", the keypad "Enter Passcode").
-  That probe **never runs on a timer**: only when SpringBoard reports a lock change or
-  the screen blanking, when a button or passcode goes through the stream, or when you
-  ask (the Unlock button), and never while the phone is known to be awake and unlocked.
-  It also turns the accessibility inspector's on-device overlay off first, so the phone
-  does not draw a highlight box around what it reads. `IOS_LOCK_PROBE=0` turns the lock
-  detection off entirely (including notification-state reads) and leaves sleep detection working.
-  The stream page shows the same sleep overlay (tap to wake) and lock notice as Android.
-  The older probe's captions are English; add
-  your phone's with `IOS_LOCKED_CAPTIONS` (a lock screen in another language reads as
-  unknown, never as unlocked). Verified on iOS 27 for screen on/off and the locked and
-  passcode screens; the unlocked reading follows from the absence of those.
-* Keyboard: your computer's keys become a virtual HID keyboard on the phone.
-  The Type text sheet (also in the Actions sheet) types as you enter text, so it
-  works from a phone browser as well, with Enter, Delete and cursor keys. Smart
-  punctuation from an iPhone keyboard (’ “ ” — …) is typed as the plain key; a
-  character with no US-layout key (é, emoji) is reported instead of dropped.
-  Done, backgrounding the viewer, and disconnecting remove the virtual keyboard
-  after pending text finishes, so the phone's own keyboard can appear again.
-  Touch and mirroring keep their connections. `npm run patch:ios` installs the
-  keyboard lifecycle support alongside the audio and multitouch patches.
-* Sound: the phone's system audio (what it plays through its speaker) streams to the
-  browser. The phone sends AAC-ELD; the server decodes it with `ffmpeg` (any build with
-  the native AAC decoder) into the same PCM path Android uses, so the Sound button,
-  Listen unlock, mute, the volume slider in the Actions sheet (the mirrored audio
-  arrives at full scale whatever the phone's own volume) and Silent-switch handling are
-  shared. Needs `npm run setup:ios`,
-  which patches the bundled pymobiledevice3 to hand out the raw frames on Linux (upstream
-  only decodes on macOS). Set `IOS_AUDIO=0` to turn it off on the server.
-* Clipboard both ways, rotation, screenshots. The phone's own clipboard daemon
-  sometimes stops answering, which used to make reads fail until the phone was
-  rebooted; the server now notices, restarts that daemon and reads again, so the
-  read still returns -- it just takes about ten seconds instead of 50 ms.
-* Device power: Reboot and Shut down (each needs a second press to confirm). A
-  reboot also clears a phone whose screen capture has stopped responding.
-* Lock screen: **Unlock** opens the unlock panel directly. For an iPhone the
-  server types the passcode stored for the scheduled unlock (see below) and
-  leaves the phone unlocked; while a scheduled run or **Run now** is in progress
-  it is refused until that run ends. The browser never holds an iPhone passcode. For Android you type the PIN or
-  password, and it is kept in this browser only if you tick **Remember in this
-  browser**, as plain text in local storage, and only after the device confirms
-  the unlock. Clearing the box forgets it. Passcodes saved by earlier versions
-  are deleted when the page loads.
+The supplied [Compose file](docker-compose.yml) is for this Linux host. It uses host
+networking for the host adb TCP forward and the iPhone helper's loopback listener.
+It mounts usbmuxd's socket and the system D-Bus socket for BlueZ. The host owns USB
+access and pairing; the container needs no privileged mode, USB bus mount or adb key mount.
+The image includes adb, Python, ffmpeg and the patched pymobiledevice3 venv.
 
-**A passcode changes one thing.** After a reboot, a passcode-protected iPhone
-exposes no USB data connection until it is unlocked by hand on the device -- it
-will not appear in the device list at all until then (verified: no USB
-enumeration whatsoever for 143 s after a reboot, versus 38 s to reappear with no
-passcode). Once it has been unlocked once, everything works, including locking
-the screen again and unlocking it remotely with the Actions sheet. Also enable
-Developer Mode *before* setting a passcode: a passcode blocks the toggle.
+Bluetooth notification collection needs the host BlueZ daemon, an adapter with LE
+advertising, and `python3-dbus` / `python3-gi` for the collector's system interpreter.
+Load the supplied AppArmor profile on this AppArmor host before a new installation:
 
-#### Scheduled unlock
-
-An iPhone with a passcode stops accepting new connections 24 hours after the
-passcode was last entered (inferred from one event on iOS 27.2). After that
-nothing remote works, the unlock included, until the passcode is entered on the
-phone. iOS also restarts a phone that has not been unlocked for 72 hours; the
-24-hour limit comes first. The server can
-enter the passcode twice a day instead. Open **Settings** on the iPhone card,
-store the passcode (entered twice), pick a time (default 03:00) and turn
-**Unlock twice a day** on. The phone is unlocked at that time and 12 hours
-later. The time is in the time zone of the browser that saved it, which the
-panel names next to the time; a schedule saved before zones were stored stays in
-server time until it is saved again. On the two days a year the clocks change,
-the second run is halfway between the two set times, so no gap is longer than
-12 and a half hours.
-
-At each of the two times the server opens a screen session, presses Home,
-swipes up, reads the lock state again, types the passcode only if the phone is
-locked, confirms the phone is unlocked, presses Lock and closes the session.
-Runs start on the minute. A run is skipped only when the server itself typed
-the passcode less than 11 hours before that time; an unlock the server only saw
-does not count, because it may have been Face ID. If the phone is in use
-(unlocked) at that time, nothing is started; the run happens when the phone is
-next locked, any time before the following run. A run the server was down for
-happens when the server is back.
-
-If the phone is not reachable, or the run fails before the passcode is typed,
-**Last run** in the panel says so and the server tries again ten minutes later,
-then once an hour, until a run works or the next of the two times arrives. Push
-subscribers receive a notification for a failed scheduled run or an unreachable
-phone; a retry that fails the same way is not pushed again. For an unreachable
-phone it reads "Phone not reachable. Not connected over USB. If the phone
-restarted, unlock it once on the phone." **Run now** starts the same sequence by
-hand, ignores the 11-hour rule and is never retried. It is refused for two
-minutes after a run that opened a screen session, and a second press while a
-run is in progress joins that run.
-
-When the phone answers that it is password protected, the 24 hours are over.
-The run ends at once, without a retry, and the panel, the device card, a push
-and the stream page say: "The iPhone stopped accepting connections. Enter the
-passcode on the phone." The stored passcode is not marked as rejected. The next
-of the two times tries again. While the notice is up, the server checks every
-five minutes with a new connection, without a screen session, and the notice
-goes away as soon as the phone answers or a run reaches it. With the schedule on, a push is also sent when
-the passcode was last entered 20 hours ago, with the hours left.
-
-A run that typed the passcode is never retried. If the phone is still locked
-after the digits, the stored passcode is treated as rejected: the schedule is
-paused, nothing types it again, and the panel, the device card and a push say
-so until the passcode is saved again. Repeated wrong passcodes disable an
-iPhone, so the server allows one. A schedule whose last run under an earlier
-version ended "Failed: the phone is still locked" after typing is paused the
-same way. If the phone was unlocked and does not read
-as locked after Lock was pressed twice, the run ends as "Unlocked, but the phone
-did not lock again" and is pushed.
-
-The passcode is sent to the server once, over the device-list WebSocket, and is
-never sent back to a browser. It is stored AES-256-GCM encrypted in
-`ios-settings.json` in the server's data directory, with the key in
-`ios-settings.key` next to it. The data directory is `data/` under the directory
-the server runs in (`dist/data` with `npm start`, so `npm run clean` deletes it)
-or the path in `WS_NOTIFICATION_DATA`; the notification relay keeps its files
-there too. Both files are written with mode 0600 and the directory is set to
-0700; they belong to the user the server runs as. When the server runs as root
-they are root-owned, and moving the server to another user means entering the
-passcode again.
-
-With the key file next to the settings file, the encryption only stops a casual
-read of `ios-settings.json`. Anything that can read the data directory has both:
-a backup, `docker cp`, a copy of the `ws-scrcpy-data` volume. To keep the key
-out of the data directory, set `WS_IOS_SETTINGS_KEY_FILE` to a path elsewhere,
-for example a Docker secret (`/run/secrets/ios_settings_key`). The file holds 32
-random bytes or the same key as 64 hex characters; the server creates it on the
-first save if it does not exist and the location is writable. Or set
-`WS_IOS_SETTINGS_KEY` to 64 hex characters to supply the key from the
-environment. The server reads that variable once and removes it from its own
-environment, so the `pymobiledevice3`, ffmpeg and Bluetooth collector processes
-it starts do not inherit it. If the key file is missing, the panel shows the stored
-passcode as unreadable and no run starts until the passcode is entered again; a
-push says so when the server starts and at each scheduled time. A settings file
-that cannot be read is kept as `ios-settings.json.bad` and reported the same way.
-
-Two things to keep in mind:
-
-* Over plain http the passcode crosses your network once in clear text, when it
-  is saved. Use `npm run start:https` if other people share that network.
-* `WS_SCRCPY_DEBUG` relays every `pymobiledevice3` line, and the lines for the
-  passcode step name the HID key usages, which identify the digits. Do not run with
-  `WS_SCRCPY_DEBUG` while a passcode is stored, or treat that log as sensitive.
-
-If touch or the keyboard stop responding while the picture is still live, that session
-has lost the separate connection behind them. A moving picture is not evidence that
-input is getting through -- it travels over a different connection to the phone. (The
-clipboard is a third connection again, to a daemon on the phone that no restart on this
-side can reach, which is why it recovers itself instead of appearing here.)
-
-Every device card and the stream page's Actions sheet carry a **Debug** group for
-this, in increasing order of how much it restarts:
-
-| Action | Restarts | Use it when |
-| --- | --- | --- |
-| Refresh picture | asks for a new keyframe | the picture smears |
-| Restart video | the video, inside the same session | the picture is frozen or broken |
-| Restart services | the whole phone session (a fresh helper process) | touch or the keyboard stopped responding |
-| Remount developer image | the developer image the screen/touch services live in | the screen will not start at all |
-| Reboot phone | the phone | nothing else helped |
-
-The Debug group on the device card works without a stream, which matters because the
-failures it recovers from are the ones that leave no working stream page. Capture keeps
-running while the phone is locked, but the encoder throttles to a few frames per
-second until it is unlocked.
-
-Known limits: the phone's encoder emits a slightly non-conformant HEVC stream
-that smears under fast motion in every non-Apple decoder (the Refresh picture
-action asks for a new keyframe); no audio yet; no shell and no root filesystem
-on iOS.
-
-#### HTTPS
-
-Chrome and Edge expose WebCodecs on secure origins only (`https://` or
-`localhost`). Over plain http the client falls back to Media Source Extensions,
-which costs a frame or two of latency; for the lowest-latency WebCodecs path on a
-desktop, generate a self-signed certificate for this machine once and run with both
-listeners:
-
-```shell
-npm run setup:https   # certs/ws-scrcpy.{key,crt} with the host's IPs as SANs, config.https.yaml
-npm run start:https   # http://…:8000 as before, plus https://…:8443
-```
-
-Open `https://<server-ip>:8443/` and accept the certificate warning once per browser.
-Everything (WebSockets included) then runs on that origin. If 8443 is taken on your
-machine the setup script says so; pick another with
-`WS_SCRCPY_HTTPS_PORT=8444 npm run setup:https` (`WS_SCRCPY_HTTP_PORT` likewise).
-
-#### iOS configuration (environment variables)
-
-| Variable | Purpose |
-| --- | --- |
-| `IOS_PYMOBILEDEVICE3` | Path to the `pymobiledevice3` executable (default: `python/venv/bin/pymobiledevice3`, then `PATH`) |
-| `IOS_TUNNEL` | How the iOS 17+ tunnel is reached: `userspace` (default, in-process, no root) or `tunneld` (use a running `sudo pymobiledevice3 remote tunneld`) |
-| `IOS_APP_SWITCHER` | How the App switcher button opens it: `gesture` (Face ID swipe-and-hold) or `home` (Home double press). Default: by product type |
-| `IOS_PATCH_CHECK` | `0` turns off the check that the installed `pymobiledevice3` has every patch from `python/patches` |
-| `IOS_STATE_PROBE` | `0` turns the screen/lock state monitor off (the badges and the sleep overlay stay silent) |
-| `IOS_LOCK_PROBE` | `0` disables lock detection (direct state on iOS 27.2+, accessibility on older versions) and keeps screen detection |
-| `IOS_STATE_NOTIFICATIONS` | `0` disables the per-device `notification observe` process; state then changes only at the poll interval (15 s idle, 4 s while streaming). With the observer running, the timers only recover a missed event: the screen every 5 minutes when idle, the lock every 3 minutes |
-| `IOS_USBMUX_LISTEN` | `0` stops the tracker listening to usbmuxd for attach and detach events; it then runs `usbmux list` every 3 s, as it does where the socket is not available |
-| `IOS_USBMUXD_SOCKET` | Path of usbmuxd's socket for those events (default `/var/run/usbmuxd`) |
-| `IOS_LOCKED_CAPTIONS` | Comma-separated lock-screen captions for the older accessibility probe (e.g. `Gesperrt,Code eingeben`); not needed on iOS 27.2+ |
-| `WS_IOS_SETTINGS_KEY` | 64 hex characters: the key for the stored unlock passcode, instead of `ios-settings.key` in the data directory. Read once at startup and not passed to child processes |
-| `WS_IOS_SETTINGS_KEY_FILE` | Path of the key file, to keep it outside the data directory (a Docker secret, for example). 32 bytes or 64 hex characters |
-| `IOS_UNLOCK_FAST` | `1` shortens every pause in the scheduled unlock sequence to 5 ms; for the fixture tests only |
-| `IOS_SERVE_WEB_BASE_PORT` | First loopback port tried for each phone's `serve-web` (default 18100). `scripts/test-ios-unlock.js` sets it so it does not share ports with `scripts/test-coredevice.js` |
-| `IOS_SESSION_START_LIMIT` | How many screen sessions may be started for one iPhone per window (default 3). Further starts are refused with the time to wait. `0` turns the limit off |
-| `IOS_SESSION_START_WINDOW_MS` | The length of that window in milliseconds (default 300000, five minutes) |
-| `IOS_SESSION_COOLDOWN_MS` | How long a new start is held off after a screen session failed (default 30000). `0` turns the wait off |
-| `WS_SCRCPY_DEBUG` | Verbose logs, including every `pymobiledevice3` child's output. Reveals the digits of a stored unlock passcode; see [Scheduled unlock](#scheduled-unlock) |
-
-[pymobiledevice3]: https://github.com/doronz88/pymobiledevice3
-
-## Custom Build
-
-You can customize project before build by overriding the
-[default configuration](/webpack/default.build.config.json) in
-[build.config.override.json](/build.config.override.json):
-* `INCLUDE_APPL` - include code for iOS device tracking and control
-* `INCLUDE_GOOG` - include code for Android device tracking and control
-* `INCLUDE_ADB_SHELL` - [remote shell](#remote-shell) for android devices
-([xtermjs/xterm.js][xterm.js], [Tyriar/node-pty][node-pty])
-* `INCLUDE_FILE_LISTING` - [file management](#file-listing)
-* `USE_H264_CONVERTER` - include [Mse Player](#mse-player)
-* `USE_WEBCODECS` - include [WebCodecs Player](#webcodecs-player)
-* `USE_AUDIO` - forward the device's audio (scrcpy audio stream, Opus, decoded
-in the browser via WebCodecs). **Off by default**: it requires Android 11+, and
-enabling it changes how many sockets scrcpy opens, so treat it as experimental.
-Audio must also be enabled per-device in the stream settings sheet.
-
-## Run configuration
-
-You can specify a path to a configuration file in `WS_SCRCPY_CONFIG`
-environment variable.
-
-If you want to have another pathname than "/" you can specify it in the
-`WS_SCRCPY_PATHNAME` environment variable.
-
-Configuration file format: [Configuration.d.ts](/src/types/Configuration.d.ts).
-
-Configuration file example: [config.example.yaml](/config.example.yaml).
-
-## Known issues
-
-* MsePlayer reports too many dropped frames in quality statistics: needs
-further investigation.
-* On Safari file upload does not show progress (it works in one piece).
-* iOS screen and control need iOS 27; older phones show up in the device list
-but cannot start a session. Verified on an iPhone 13 Pro Max (iPhone14,3) on
-iOS 27.0 over USB: stream, touch, keyboard, hardware buttons, clipboard, rotate.
-* The browser must decode HEVC itself (the stream is never re-encoded). Safari
-does; Chrome/Edge need a GPU with hardware HEVC decode (Chromium builds without
-proprietary codecs, such as Playwright's, show "This browser cannot decode the
-phone's HEVC stream"). WebCodecs is used where available (Safari, or Chrome/Edge on
-a secure origin -- see [HTTPS](#https)); otherwise the same access units are remuxed
-into fragmented MP4 and played through Media Source Extensions, which also works
-over plain `http://`. Add `&player=mse` or `&player=hevc` to the stream URL to force
-one decoder.
-* If the device list stops noticing an iPhone being plugged in, `usbmuxd` has
-wedged: `sudo systemctl restart usbmuxd`.
-* Dropping a file on an Android stream does not push it to the phone. The page
-shows a notice instead; upload through **Files**, which uses adb.
-* Changing anything in the stream settings sheet's *Stream quality* group
-restarts the scrcpy server on the device, which briefly disconnects every viewer
-of that device (they reconnect automatically).
-
-## Security warning
-Be advised and keep in mind:
-* There is no encryption between browser and node.js server (you can [configure](#run-configuration) HTTPS).
-* There is no authorization on any level.
-* Every Android connection goes through the node.js server, which reaches the
-phone over adb. The stock scrcpy server on the phone does not listen on the network.
-
-## Related projects
-* [Genymobile/scrcpy][scrcpy]
-* [xevokk/h264-converter][xevokk/h264-converter]
-* [DeviceFarmer/adbkit][adbkit]
-* [xtermjs/xterm.js][xterm.js]
-
-## scrcpy server
-
-This fork ships the stock **scrcpy 3.1** server (see `SERVER_VERSION` in
-`src/common/Constants.ts`). Video and control are fanned out to multiple
-browser viewers by the server-side broadcast layer in `src/common/`, rather
-than by the WebSocket patch the older NetrisTV v1.19 fork used.
-* [Prebuilt package](/vendor/Genymobile/scrcpy/scrcpy-server.jar)
-
-
-[scrcpy]: https://github.com/Genymobile/scrcpy
-[xevokk/h264-converter]: https://github.com/xevokk/h264-converter
-[adbkit]: https://github.com/DeviceFarmer/adbkit
-[xterm.js]: https://github.com/xtermjs/xterm.js
-[node-pty]: https://github.com/Tyriar/node-pty
-
-[MSE]: https://developer.mozilla.org/en-US/docs/Web/API/Media_Source_Extensions_API
-[isTypeSupported]: https://developer.mozilla.org/en-US/docs/Web/API/MediaSource/isTypeSupported
-[MediaSource]: https://developer.mozilla.org/en-US/docs/Web/API/MediaSource
-[webcodecs]: https://w3c.github.io/webcodecs/
-
-### Bluetooth notifications and Safari PWA
-
-The Linux server captures notifications that an iPhone exposes through Apple's
-[ANCS Bluetooth service](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleNotificationCenterServiceSpecification/Specification/Specification.html)
-and relays them using Web Push. Capture continues without an open screen stream.
-This collector is for iPhones; Android notification capture is not included.
-
-The server uses the host BlueZ daemon and an adapter supporting LE advertising.
-For a host installation, install `bluez python3-dbus python3-gi`, enable Bluetooth
-with `sudo systemctl enable --now bluetooth`, then start the app. The collector
-uses `/usr/bin/python3`, independently of the CoreDevice virtual environment.
-`WS_BLUETOOTH_PYTHON` overrides that interpreter. `WS_NOTIFICATIONS_COLLECTOR=0`
-disables Bluetooth collection for development without hardware.
-
-For Docker on an AppArmor host, load the supplied profile before starting:
-
-```shell
+```sh
 sudo install -m 644 config/apparmor-ws-scrcpy /etc/apparmor.d/ws-scrcpy-bluetooth
 sudo apparmor_parser -r /etc/apparmor.d/ws-scrcpy-bluetooth
-sudo systemctl enable --now bluetooth
-docker compose up -d --build ws-scrcpy
 ```
 
-The profile retains Docker's default filesystem restrictions and permits the
-BlueZ D-Bus calls and callbacks needed for pairing and notifications. The compose
-file mounts the system bus socket and persists settings in `ws-scrcpy-data`.
-On a host without AppArmor, omit the compose `security_opt` entries. Do not run
-another Bluetooth daemon for this container or remove existing device bonds.
+Compose adds the host's Bluetooth group, default GID 111; `BLUETOOTH_GID` selects that
+group if the host uses another number. The entrypoint hands the data directory to
+`node`, then runs the server as uid 1000. `WS_SCRCPY_USER` is the entrypoint's optional
+user override. The loopback health check reads a static file. The 80-second stop grace
+allows the server and iPhone helper to shut down cleanly. Preserve it.
 
-The server in the container runs as the unprivileged `node` user (uid 1000). The
-entrypoint, `config/docker-entrypoint.sh`, starts as root only to hand the data
-volume over to that user, then drops root. Compose adds the host's bluetooth
-group for hosts whose D-Bus policy lets only that group talk to BlueZ: check the
-number with `getent group bluetooth` and set `BLUETOOTH_GID` in `.env` if it is
-not 111. `docker ps` shows the result of a loopback health check, and
-`docker stop` waits 80 seconds so the iPhone screen sessions can be returned.
-The image built before this change still reads the same volume.
+For this running installation, follow the current handoff's deploy brief before any
+Docker build or restart. Record the old image and add a rollback tag first. Do not
+restart near a scheduled unlock or while an iPhone screen helper runs. This README
+is not leave to deploy. A documentation-only update needs no container restart.
 
-Safari on iOS/iPadOS 16.4+ requires a trusted HTTPS origin and installation using
-**Share → Add to Home Screen** for background push. A certificate warning or the
-plain LAN URL is insufficient. The configured private address for this server is
-`https://mini-nuc.tailea1801.ts.net/`. Connect the receiving phone to the same
-Tailscale network before opening it. The host's Tailscale container serves it with:
+### HTTPS and configuration
 
-```shell
-docker exec tailscale tailscale serve --bg --yes http://127.0.0.1:8000
-```
+The default listener is HTTP on port 8000. Use the existing trusted private HTTPS
+address for Web Push and sensitive settings. `npm run setup:https` generates local
+certificate files and `config.https.yaml`; `npm run start:https` builds and uses that
+configuration. Its default HTTPS port is 8443. The setup script alone reads
+`WS_SCRCPY_HTTP_PORT` and `WS_SCRCPY_HTTPS_PORT`. A self-signed certificate is not enough
+for iPhone background push; the receiving app needs a trusted HTTPS origin.
 
-Serve manages certificate renewal and persists its configuration. This is private
-Serve, not public Funnel. On another server, update `WS_PUBLIC_URL` in compose and
-use that server's Tailscale DNS name.
+[config.example.yaml](config.example.yaml) and
+[Configuration.d.ts](src/types/Configuration.d.ts) describe listeners, TLS, tracker
+announcements, allowed host names and configured remote servers. Supply YAML or JSON
+through `WS_SCRCPY_CONFIG`; a `.js` suffix is also parsed as JSON, never executed.
+Settings and configuration are validated before services start. Invalid values fail
+with the field name and omit its value. The startup summary contains only selected
+non-secret fields.
 
-If an older iPhone Home Screen installation has blurred headers or a gray strip
-at the bottom, delete that Home Screen app and add it again from Safari, then
-enable notifications again. iOS can retain the former translucent status-bar
-mode in the installed app even after a reload. The current app omits that legacy
-setting and sizes every view from the shared viewport. Bluetooth pairing and
-source mappings on the server survive reinstalling the receiving app. See the
-[WebKit explanation](https://www2.webkit.org/show_bug.cgi?id=317153#c2).
+## Using the app
 
-The push sender uses `WS_PUBLIC_URL` as its VAPID contact address. To override it,
-set `WS_PUSH_SUBJECT` to a real HTTPS URL or `mailto:` address. Placeholder local
-addresses can cause Apple to reject delivery with `403 BadJwtToken`. Changing
-this contact address preserves the existing keys and receiver subscriptions.
+**Phones** is the root page. Cards show one status and offer Settings in every state.
+Android cards also link to Files and Shell. The header bell opens Notifications;
+a linked iPhone's bell opens its inbox. Switch changes the current phone without
+stacking another visit in history. Back closes the current sheet before leaving a page.
+Old stream and notification push links still open.
 
-1. Open **Notifications** on the iPhone’s device card.
-2. Open **Setup & delivery**. Under **Send from an iPhone**, choose **Start Bluetooth pairing**, open that
-   iPhone's Bluetooth settings, select **ws-scrcpy**, and
-   confirm the matching numeric code on both sides. Allow notification sharing;
-   **Settings → Bluetooth → ws-scrcpy → Share System Notifications** must remain on.
-3. Match that iPhone's USB and Bluetooth connections, then choose **Use this iPhone**.
-   The phone's expandable settings contain message previews and optional app filters.
-4. On the receiving device, open the installed PWA and use **Receive on this device**.
-   Choose the sending phones and identify whether this is one of those same phones,
-   then tap **Enable on this device**. Otherwise keep **A different phone, tablet or
-   computer**. Then use **Send test notification**. The receiver/source choice prevents
-   loops. Later changes use **Save changes** without another permission prompt.
+Android has Screen, Files and Shell tabs. Leaving Screen closes its browser stream
+at once. The phone-side service remains for a quick return: 30 seconds on Android,
+15 seconds on iPhone after the last viewer leaves. Files and Shell keep their view
+while switching tabs within the phone page. Files supports navigation, upload,
+download and folder operations; upload through Files rather than dropping on the picture.
+Shell has extra keys on a touch browser and keeps text size in that browser.
 
-Keys, source mappings, subscriptions, and notification history persist across
-restarts; keep the data volume when updating. **Inbox** shows the selected
-iPhone’s notifications, with **All**, **Unread**, and **Archive** views. Beside the
-iPhone’s name it shows whether its Bluetooth link is **Connected**,
-**Reconnecting** or needs action, and when the last notification arrived, with a
-notice when nothing new can arrive. **Open screen** there opens that iPhone’s screen,
-and is off while the iPhone is not connected by USB. The card of a linked iPhone
-links directly to that iPhone’s inbox. **Notifications** in the page header, on
-Devices, the screen and the tool pages, opens the inbox with the unread count; on
-a linked iPhone’s screen it opens that iPhone’s inbox. The NUC keeps up to 500 alerts per phone for 30 days in its private data directory. History starts with alerts collected by this
-relay, including those iOS shares when connecting; it cannot recover alerts the
-phone no longer exposes. Turning message previews off also removes saved message
-text for that phone. Removing a source deletes its history and cached icons.
+Screen, Files and Shell share a phone header. Mouse controls stand against the picture;
+touch browsers get a movable edge button, at 50% opacity when idle. From 1024 px,
+Actions, Settings and Type text open beside the picture. Actions and Settings remain
+modal. **Type text** is modeless: committed typing and paste send at once, its field
+stays empty, and the picture remains usable to select another phone field. iPhone
+HID typing reports characters without a US-layout key; it cannot type every character.
 
-Original app icons are read over the trusted USB connection and cached on the
-NUC. If an app icon is unavailable, the history shows a letter placeholder. Icons
-are looked up only while the phone is on USB, and when the phone has no icon for an
-app it is not asked again for an hour. This does not change iOS's system-managed
-PWA notification icon or attribution.
+There is one **Settings** sheet, from a card or screen. Sections are Stream, Sound,
+Keyboard, Unlock, About and troubleshooting; iPhone omits Stream. Controls apply when
+changed. Android quality/audio changes restart the shared stream for every viewer;
+a change while nobody watches starts no stream. Quality arrows/Home/End browse choices;
+Enter or Space applies once. Pointer selection applies at once. There is no Apply bar.
+Rows that need a phone or its open screen explain why they are unavailable.
 
-**Mark read** and **Mark all read** update shared app unread counts; they do not
-mark messages read inside the original iPhone app. **Archive** moves a notification
-out of the inbox into **Archive**; it changes nothing on the iPhone. Where iOS offers
-a phone action, the card’s **⋯** menu shows its actual label, such as **Clear on
-iPhone**. A negative ANCS action is not always dismissal (it can decline a call),
-so its label is checked again before sending. Actions require a current Bluetooth
-session. Acceptance of an action does not claim the iPhone has removed the
-notification. The card menu also starts with **Open iPhone screen**; Enter on a
-focused card, or a double-click with a mouse, does the same.
+Actions groups are Clipboard, Screen, Lock and Power where supported, followed by
+Settings. Clipboard Read and Copy here bring phone text to this browser. Android
+Paste sends text to the phone's focused field; iPhone Send to phone writes its clipboard.
+Direct Ctrl+V / Cmd+V while keyboard capture is active pastes on both platforms.
+iPhone waits for the clipboard write before sending Cmd+V. Local fields keep normal
+paste. Clipboard text is limited to 262130 UTF-8 bytes (the UI calls this 256 KB).
 
-**Mark all read**, **Archive all** and **Clear all on iPhone** live in the inbox
-toolbar’s **⋯** menu. They act on that exact list of search/filter matches,
-including older results beyond the current page; notifications arriving afterward
-are left alone. **Mark all read** and **Archive all** act at once and offer
-**Undo**. **Clear all on iPhone** asks for confirmation first, includes only
-explicit Clear/Dismiss actions, excludes actions such as Decline or Delete, and
-stops if the iPhone disconnects or cannot confirm an action. Partial results show
-how many requests were accepted and how many remain. A failed action is reported at
-the bottom of the screen, with **Retry** where no confirmation is needed. Cards show
-a compact preview with **Show more** for longer messages.
+Capture starts enabled. On a mouse browser the chip says **Keyboard: phone** or
+**Keyboard: this page**. The chip and Settings > Keyboard use one capture state.
+Local fields and every open sheet keep their own keys. Ctrl+Alt+K releases or
+recaptures the keyboard; on a Mac use Ctrl+Option+K. With capture released,
+Ctrl+K / Cmd+K opens Switch phone when another control has not used the key.
 
-Web previews make HTTP/HTTPS links in the shared title and message clickable.
-Direct HTTPS image links (including GIFs), video links, and audio links offer
-**Load image**, **Load video**, or **Load audio** inside the card. Media loads
-from the displayed host only after a tap; video and audio use the browser's
-playback controls without autoplay. **Hide** stops playback and removes the
-preview. Unavailable files and unsupported formats retain an **Open** link.
-Up to four distinct media links appear per notification, and turning message
-previews off hides both text and media.
+While the screen owns the keys, the reserved Ctrl+Alt chords are:
 
-This works with URLs included in notification text. The current Bluetooth
-[ANCS protocol](https://developer.apple.com/library/archive/documentation/CoreBluetooth/Reference/AppleNotificationCenterServiceSpecification/Appendix/Appendix.html)
-does not expose photo, video, or audio attachments. An alert saying “sent a photo”
-without a media URL therefore remains text. Ordinary webpage links open in a new
-tab; page metadata and third-party embeds are not fetched. Direct media links
-must end in a supported file extension before any query string; the browser must
-support the file's codec and the host must permit embedding.
+| Letter | Action |
+| --- | --- |
+| K | Release or recapture keyboard |
+| S | Switch phone |
+| H | Home |
+| B | Back (Android) |
+| O | Overview (Android) |
+| T | Type text |
+| P | Screenshot |
+| C | Copy from phone |
 
-Search matches app names, titles, and full message text, ignoring case and accents.
-**Filters** limits results to one app; **All**, **Unread**, and **Archive**
-remain directly accessible. Opening a notification from a push clears any filters
-that would hide it, scrolls it into view and outlines it for a few seconds. Search
-and filters are scoped to the selected iPhone.
+A drag continues along the picture edge when it leaves the picture. Android's wheel
+scrolls and right-click sends Back. iPhone's wheel makes a short swipe and right-click
+does nothing. Ctrl+drag pinches around the picture centre; Shift+Ctrl+drag uses the
+pressed point. Mac Ctrl+drag has not been tried on hardware.
 
-On a touch screen, swipe right to toggle read/unread or left to archive.
-Vertical scrolling, short drags, cancelled touches, and multitouch do not trigger
-actions. Both gestures have a short-lived **Undo** control that restores the app
-state; they never perform an action on the iPhone. Card menus offer the same
-controls for keyboard/mouse use, plus **Move to inbox** for archived notifications.
+## Notifications
 
-Unread badges show each phone’s count on its device card and notification page.
-The installed PWA icon shows the combined count where supported and permitted
-in OS settings. Pushes and app opening refresh the Home Screen badge. Reading an alert closes its matching
-banner on this receiving device where supported. Other closed installations
-refresh their badges on the next push or app opening; Safari does not permit
-silent pushes just to synchronise state.
+The Linux Bluetooth collector receives iPhone ANCS notifications without an open
+screen stream. Android notification collection is not included. The header has
+Switch iPhone, Search and Setup. Without a chosen source the inbox combines linked
+iPhones; source-specific links stay scoped. Inbox and Unread show counts, with Archive
+alongside them. Search and app filters stay in the address. Already delivered push
+links reveal and highlight their notification.
 
-Existing alerts on reconnect are shown in history but not pushed again.
-Modifications/removals update history without silent pushes. Expired subscriptions
-are removed automatically, as is one the push service refuses (400 or 403) three
-times in a row. The app sends this device's subscription to the server again each
-time it opens, and **Delivery details** list each receiving device. Focus, app notification settings, preview permissions,
-connectivity, and the push provider can affect which alerts appear and when.
-Notifications cannot bypass those iOS settings. No private content is cached by
-the service worker.
+Cards have day headings and can group adjacent notifications from the same conversation.
+Click or Space expands and marks one read; opening its screen also marks it read.
+These are app read counts, not read state in the original phone app. Touch swipes change
+read state or archive, with Undo. Mouse cards have quick actions and a menu. J/K or
+arrows move between cards; E archives, U changes read state, / opens search, Z undoes.
+Mark all read is on the toolbar. Bulk archive offers Undo. Clear all on iPhone requires
+one source and confirmation; phone actions recheck the current session and offered label.
+An accepted request does not prove the phone applied it.
 
-The iOS toolchain is pinned in `python/requirements.txt`. `npm run setup:ios`
-installs it and applies the patches in `python/patches`; `npm run patch:ios`
-applies them to an existing virtual environment, and `npm run dev` runs it first.
-Run it after pulling a change to `python/patches`. Before it starts an iPhone
-screen session the server checks that the installed helper has every patch
-(`python/patches/check_patches.py`). If one is missing, the session is refused
-with the names of the missing patches and the command to run. `npm test` fails
-for the same reason. `npm test` includes ANCS fragmentation, touch lifecycle,
-notification policy, persistence, and service-worker regression tests.
+In **Setup**, use **Send from an iPhone** to pair over Bluetooth, confirm the matching
+code on the phone, allow notification sharing and match the Bluetooth source to its
+USB phone with **Use this iPhone**. Keep Share System Notifications enabled on the phone.
+On the receiving browser device, **Receive on this device** chooses sending phones and
+identifies whether it is one of those phones, to avoid sending its own alerts back.
+**Enable on this device** requests permission; **Send test notification** tests delivery.
+Existing receiver choices and source settings apply as changed, with no Save changes bar.
 
+**Settings for … > Apps** is a mute list. An older allow-list stays active as
+**Only these apps** until cleared. **Mute this app** on a card and Undo use the same
+source settings. New muted-app notifications are dropped by the server and are not
+stored or pushed; older history stays. Undo cannot recover events dropped meanwhile.
+This drop policy is still an owner decision to confirm. Turning notification text off
+also erases stored text after confirmation. History retains up to 500 notifications
+per source for 30 days. Icons are cached from the trusted USB phone. ANCS supplies no
+photo/video/audio attachments; direct media links in text load only after a press.
 
-### Access
+Background push requires a supported browser, permission and trusted HTTPS. An iPhone
+receiving push must use the Home Screen app; Focus and OS notification settings still
+apply. Delivery details lists receivers and errors. Existing reconnect alerts enter
+history without being pushed again. The service worker caches no private content.
+The installed app and real delivery paths still have the check limits below.
 
-Open `http://10.10.10.5:8000` on the LAN or the configured private Tailscale URL.
-The app has no login, setup key, session cookie, trusted-network setting or API
-credential. Device connections, notifications and downloads open directly.
-The server listens on port 8000 on the host network.
+## Unlock and iPhone session safety
 
-Browser requests retain same-origin validation. The server also checks the
-`Host` header of every request and WebSocket upgrade, so a page on another site
-cannot reach it through a DNS name that was pointed at its address. It answers to
-IP addresses, `localhost`, the machine's own name (also with `.local`) and the
-`WS_PUBLIC_URL` host (also its first label, the MagicDNS short name). Any other
-name gets `403 Host not allowed`: add it to
-`allowedHosts` in the configuration file, or to the comma-separated
-`WS_ALLOWED_HOSTS` environment variable. Every response forbids framing by other
-sites and limits the page's connections to this server and the hosts in
-`remoteHostList`. A stream link cannot name another host for its socket.
+Settings > Unlock holds the iPhone server passcode and twice-daily schedule. Android's
+optional **Remember in this browser** stores plain text in local storage only after
+confirmed unlock; Forget removes it. The server never sends an iPhone passcode back.
+The iPhone schedule runs at the saved time and halfway to the next day's saved time,
+normally 12 hours later, using its saved zone. This splits a daylight-saving change
+evenly. Older schedules without a zone use server time. A server-typed unlock less
+than 11 hours before a slot counts for the skip rule; Face ID or an observed unlock
+does not. A rejected passcode pauses the schedule instead of retyping it. A run that
+typed the passcode is never retried. **Run now** and one-tap Unlock use the same server
+safeguards, including the two-minute cooldown after a run that opened a session.
+They are real phone actions.
 
-Remote WebSocket and download
-proxies connect only to hosts listed in `remoteHostList`; no per-host access key
-is needed. Existing notification sources, receiver subscriptions and Web Push
-keys survive updates. Keep the data volume when rebuilding.
+A burst of short iPhone screen sessions can wedge its display service until reboot.
+The default start budget is three starts per phone in five minutes, persisted across
+server restarts, with 30 seconds after a failed session. Reuse one permitted session.
+Agents must never retry a failed start, start a session outside the deploy brief, or
+run an unlock without the owner's permission. Signal only owned processes by PID with
+SIGTERM and wait for shutdown; never use `kill -9` or `pkill -f`. If a command says
+**password protected**, stop and tell the owner. A previous iOS 27.2 observation suggests
+a host connection lockout around 24 hours after passcode entry; it is not a universal
+verified iOS rule.
 
-Large file downloads use the browser's download manager and stream directly from
-ADB. Small downloads retain in-app progress; at most two 16 MiB buffers or pending
-Blob URLs are held by the file browser. Cancelling a download closes its ADB pull.
+The live schedule is 03:00 and 15:00 UTC. Do not restart within 15 minutes of either
+slot, or during a screen session; a deploy brief may set a wider exclusion window.
+Do not save live settings during checks or copy live data out of the container.
+Never inspect, print or enter a passcode or dump its settings/key files during a check.
 
-### Verification
+## Environment and storage
 
-`npm run check` runs TypeScript, lint, unit tests, and the production build.
-`npm run test:browser` then serves the built assets on an isolated ephemeral
-loopback port and runs the browser fixtures. It does not connect to attached
-phones or send push notifications. Install browser dependencies once with
-`npx playwright install --with-deps chromium webkit`. For the WebKit checks, run
-`BROWSER=webkit npm run test:browser -- review-polish notifications motion`.
-The same workflow runs in GitHub Actions.
+[Settings.ts](src/server/Settings.ts) owns the server environment snapshot. Empty values
+use the fallback. Booleans accept `0`, `1`, `false`, `true`; durations below are
+milliseconds. Keep real-phone safety defaults. Fixture overrides are for fixtures.
+The key is consumed separately and excluded from child environments.
 
-See [review fixes and validation](docs/REVIEW-FIXES-2026-10-26.md) for the changes
-and remaining upstream dependency advisory.
+| Variable | Default or alias | Purpose |
+| --- | --- | --- |
+| `WS_SCRCPY_CONFIG` | unset | YAML/JSON run configuration path |
+| `WS_SCRCPY_PATHNAME` | build `PATHNAME`, normally `/` | Server URL path; keep client build path aligned |
+| `WS_DATA_DIR` | app-root `data/` | Private data directory; relative paths resolve from cwd |
+| `WS_NOTIFICATION_DATA` | legacy alias | Used only if `WS_DATA_DIR` is empty/unset |
+| `WS_SCRCPY_STREAM_CONFIG_PATH` | data directory `stream-config.json` | Android stream configuration path |
+| `WS_PUBLIC_URL` | unset | Public app URL; trusted proxy origin and accepted host name |
+| `WS_ALLOWED_HOSTS` | empty | Comma-separated host names added to config `allowedHosts` |
+| `WS_PUSH_SUBJECT` | `WS_PUBLIC_URL` | VAPID contact: HTTPS URL or mailto address |
+| `WS_NOTIFICATIONS_COLLECTOR` | `true` | Run the Bluetooth collector |
+| `WS_BLUETOOTH_PYTHON` | `/usr/bin/python3` | Collector interpreter with D-Bus/GI modules |
+| `ADB_HOST` | `127.0.0.1` | Already-running adb server |
+| `ADB_PORT` | `5037` | adb server TCP port |
+| `IOS_PYMOBILEDEVICE3` | project venv, then PATH | pymobiledevice3 executable |
+| `IOS_TUNNEL` | `userspace` | Userspace tunnel, or an existing `tunneld` |
+| `IOS_PATCH_CHECK` | `true` | Check installed helper patches before a session |
+| `IOS_PROBE_CMD` | venv Python, then `python3` | Probe interpreter override for fixtures |
+| `IOS_PROBE_ARGS` | `[]` | JSON string-array arguments before the probe name |
+| `WS_SCRCPY_DEBUG` | `false` | Verbose child logs; sensitive during passcode typing |
+| `IOS_AUDIO` | `true` | iPhone audio forwarding |
+| `IOS_AUDIO_DECODER` | `ffmpeg` | Decoder command; override receives fragmented MP4 and writes PCM |
+| `IOS_USBMUX_LISTEN` | `true` | Listen for USB attach/detach events |
+| `IOS_USBMUXD_SOCKET` | `/var/run/usbmuxd` | usbmuxd event socket |
+| `IOS_STATE_PROBE` | `true` | Screen/lock state monitoring |
+| `IOS_LOCK_PROBE` | `true` | Lock-state reads in addition to screen state |
+| `IOS_STATE_NOTIFICATIONS` | `true` | State observer; polling recovers missed events |
+| `IOS_LOCKED_CAPTIONS` | empty | Additional captions for the older accessibility lock probe |
+| `IOS_UNLOCK_FAST` | `false` | Short unlock pauses, fixtures only |
+| `IOS_SERVE_WEB_BASE_PORT` | `18100` | First helper loopback port |
+| `IOS_DISPLAY_WEDGED_TIMEOUT_MS` | `25000` | Wait for initial video before reporting failure |
+| `IOS_SIGNAL_READY_TIMEOUT_MS` | `35000` | Preflight wait before helper signal handling |
+| `IOS_SESSION_COOLDOWN_MS` | `30000` | Holdoff after a failed screen session |
+| `IOS_SESSION_START_LIMIT` | `3` | Starts allowed in one window per phone |
+| `IOS_SESSION_START_WINDOW_MS` | `300000` | Persisted start-budget window |
+| `IOS_CLIPBOARD_TIMEOUT_MS` | unset: 8000 ms per attempt | Clipboard timeout override; fixtures also shorten recovery settle |
+| `WS_IOS_SETTINGS_KEY_FILE` | data directory `ios-settings.key` | External key file path if configured |
+| `WS_IOS_SETTINGS_KEY` | unset | 64-hex-character key instead of a key file; never log its value |
+
+The bundled server defaults to `data/` beside `dist/`, even when `npm start` runs
+inside dist. A nonempty former `dist/data` blocks startup until explicitly selected or
+moved. Without an explicit stream path, an older cwd `stream-config.json` is read if
+the new file is absent; the next save writes the data-directory file. Reads do not migrate it.
+Compose defaults both data aliases to `/app/data` and preserves the `ws-scrcpy-data` volume.
+
+| Path within the data directory | Contents |
+| --- | --- |
+| `stream-config.json` | Saved Android quality/audio values |
+| `scrcpy-instance.json` | This server instance's scrcpy identity by port |
+| `ios-session-starts.json` | iPhone start-budget timestamps |
+| `ios-settings.json` | Schedule/status and AES-256-GCM-encrypted iPhone passcode |
+| `ios-settings.key` | Default local encryption key |
+| `ios-settings.json.bad` | Preserved unreadable iPhone settings, if encountered |
+| `notifications.json` | Sources, receiver subscriptions and private Web Push keys |
+| `notification-history.json` | Notification history |
+| `notification-icons/` | USB-fetched icon cache |
+
+The iPhone store uses directory mode 0700 and settings/key mode 0600. Keeping the key
+beside the encrypted settings protects only against a casual read of that settings file.
+Anyone who can read both can recover the passcode. An external key file keeps it outside
+the data directory; preserve it privately and never put its value in command examples.
+Missing or unreadable keys block unlock until repaired or the passcode is stored again.
+Use trusted HTTPS to store a passcode. Debug child output can identify typed digits;
+keep debug off when a passcode is stored and treat existing debug logs as sensitive.
+
+## Security and remaining checks
+
+There is no login, API credential or access-control account. Anyone who can reach this
+service can control its phones and read its files/notifications. Keep access on the
+owner's trusted network or existing private proxy. HTTPS protects transport; it does
+not add a login. The configured `WS_PUBLIC_URL` must describe that trusted origin.
+
+Every HTTP request and WebSocket upgrade checks Host. IP literals, localhost, this
+machine's names, the public URL host/short name and explicitly allowed names are accepted.
+Other names get 403. WebSocket upgrades, notification API requests and file downloads
+also check Origin when supplied, accepting the local origin or configured public origin.
+Requests without Origin are allowed. These are browser protections, not authentication.
+CSP forbids framing and limits fetch/WebSocket connections to self and configured direct
+remote servers. Remote WebSocket/download proxies require an exact configured remote
+origin/path and reject arbitrary destinations. A phone link cannot choose an unrelated
+stream server. Do not disable these checks to fix an access problem; configure the
+actual trusted host names.
+
+The 2026-11-13 deploy confirmed one bounded iPhone session and an asleep Android stream,
+clean grace stops, tracked phones, collector startup/status and production kit fallback.
+It did not prove an awake Android picture, physical input, notification delivery, or
+settings application. Physical Android rotation, USB replug and one owner-operated stream
+setting restart are explicitly deferred; do not ask again or label them passed.
+Real iPhone picture/aim/unlock/Wake, keyboard/paste/touch/wheel/drag/pinch, Safari/Firefox,
+phone keyboard/notch/safe areas, large real Files folders, installed app and notification
+pairing/push/mute/actions/recovery remain unverified beyond recorded observations.
+The dark focus ring's 2.74:1 contrast on the sunken track remains the owner's open decision,
+as do mute-drop policy, idle controls opacity and rail attachment at every mouse width.

@@ -1,112 +1,132 @@
 # ws-scrcpy fork — handoff
 
-Context for an AI agent picking this repo up cold. Sections 1–6 describe the current architecture;
-§7 preserves the original hardware observations, and §9 records the September 2026 review and
-audio/mobile follow-up, including the scope and limits of current hardware validation.
+Sections 1–6 describe the current implementation on `redesign`, updated 2026-11-13.
+Sections 7 and 9 preserve dated observations, old UI names, checks and reasons. Their
+"not deployed", pending-work and command descriptions apply to their own date; they
+are not current instructions. Use the current brief and sections below before acting.
+The [step 6c record](#redesign-step-6c-current-documentation-2026-11-13) identifies the
+latest confirmed deployment and its limits. [README](../README.md) covers operation,
+all server environment names and storage. The owner alone merges and pushes upstream.
 
 ---
 
 ## 1. What this is
 
-A fork of [NetrisTV/ws-scrcpy](https://github.com/NetrisTV/ws-scrcpy): a Node server that talks to
-Android devices over adb (and iOS over pymobiledevice3), and a browser client that mirrors and controls
-them.
+One owner's app for viewing and controlling their Android phones and iPhones, with an
+iPhone notification inbox and Web Push relay. A phone browser, the installed web app and
+a desktop browser count equally. The root page is **Phones**. Android has Screen, Files
+and Shell; iPhone has Screen only. Settings is one sheet available from cards and screens.
+The branch is `redesign`; upstream ws-scrcpy instructions do not describe this app.
 
-**The primary use case is driving a remote device from a phone browser.** Not a desktop. When
-weighing a trade-off — bundle size, touch target size, layout — the phone wins. Several bugs in
-this codebase existed precisely because desktop-shaped code was left in place.
+This fork runs the stock **scrcpy 4.1** server, without the older WebSocket patch.
+`src/common/Broadcast.ts` parses its streams and fans them out to browser viewers.
+`WebsocketProxy` synthesises `scrcpy_initial` for the client. There is no phone control
+message that changes quality in place: changing Android capture settings restarts the
+shared scrcpy process when watched. An unwatched change saves without starting it.
 
-Branch: `new_scrcpy`. Upstream `master` is far behind; do not assume upstream docs apply.
-
-### The most important structural fact
-
-This fork runs the **stock scrcpy server**, not NetrisTV's patched one. The original project
-depended on a forked scrcpy with a WebSocket server and extra control messages baked in. This fork
-dropped that, so:
-
-- There is **no "change stream parameters" control message**. Changing bitrate/codec/size means
-  killing and relaunching the scrcpy server process (see §5).
-- The server-side `src/common/Broadcast.ts` parses the raw scrcpy stream itself and fans it out to
-  multiple browser viewers.
-- `WebsocketProxy` **synthesises** the `scrcpy_initial` packet the client expects, because stock
-  scrcpy never sends one.
-
-Anything in upstream ws-scrcpy docs about live video-setting changes is false here.
-
----
+The iPhone uses CoreDevice through the pinned/patched pymobiledevice3 helper. It requires
+iOS 27 screen/input services, USB trust, Developer Mode and a Developer Disk Image.
+Nothing is signed or installed on the phone. HEVC decoding is the browser's job; a ready
+session and a usable picture are separate states. No picture still allows commands and
+Type text, while new contacts require a usable picture.
 
 ## 2. Architecture
 
-```
-Android device                     Node server                        Browser
-──────────────                     ───────────                        ───────
-scrcpy-server.jar  ──unix socket──▶ Broadcast (parses stream)
-  (v4.1, vendored)                    │  fans out frames
-                                      ▼
-                                  WebsocketProxy  ──WebSocket──▶  StreamReceiver
-                                      ▲                                │
-                                      └──── control messages ──────────┘
+```text
+Android phone -> host adb daemon -> loopback TCP forward -> Broadcast
+  stock scrcpy 4.1 localabstract socket                   -> WebsocketProxy
+                                                         -> browser StreamReceiver
 
-iOS device  ──usbmuxd──▶ pymobiledevice3 `serve-web` ──loopback HTTP──▶ CoreDeviceProxy
-  (iOS 27,     (RSD tunnel, CoreDevice display + HID)      ──WebSocket──▶  CoreDeviceReceiver
-   no signing)                                                             ──▶ WebCodecsHevcPlayer
+ iPhone -> host usbmuxd -> pymobiledevice3 serve-web on loopback HTTP
+                       -> CoreDeviceProxy -> browser CoreDeviceReceiver -> HEVC player
 ```
+
+Node opens TCP connections to `127.0.0.1:<forwarded port>`, not Unix sockets. The adb
+forward reaches scrcpy's localabstract socket on Android. Video, optional audio and
+control use separate connections through that one forward, in that order. Host
+networking in Compose keeps the app in the host adb forward's network namespace.
 
 ### Server (`src/server/`)
 
 | Path | Role |
 | --- | --- |
-| `goog-device/Device.ts` | Per-device state, adb shell helpers, `startServer()`, runtime-state poll |
-| `goog-device/ScrcpyServer.ts` | Pushes + launches the jar, `list_encoders` |
-| `goog-device/StreamConfig.ts` | Per-device `ScrcpyServerConfig`, JSON-persisted |
-| `goog-device/LockState.ts` | Filtered keyguard/trust diagnostics; current-user lock state with explicit unknown values |
-| `goog-device/services/ControlCenter.ts` | Device tracking (adb), command dispatch |
-| `goog-device/mw/WebsocketProxyOverAdb.ts` | **Ensures the scrcpy server is running on connect** |
-| `goog-device/mw/FileListing.ts` | Files channel: adb sync listing/transfer plus validated mkdir/move/copy/delete |
-| `mw/WebsocketProxy.ts` | Platform-agnostic stream proxy; synthesises `scrcpy_initial` |
-| `appl-device/services/PyMobileDevice.ts` | Locates and spawns the `pymobiledevice3` CLI (venv → PATH); one-shot JSON calls |
-| `appl-device/services/CoreDeviceRunner.ts` | One `serve-web` process per iPhone: DDI mount, readiness poll, viewer holds, 15 s grace |
-| `appl-device/services/ControlCenter.ts` (appl) | `usbmux list` polling, `lockdown info`, Developer Mode status/enable |
-| `appl-device/mw/CoreDeviceProxy.ts` | `?action=proxy-coredevice`: HEVC frames → binary ws, JSON commands → loopback POSTs |
+| `Settings.ts`, `Config.ts`, `EnvName.ts`, `dataDir.ts` | Frozen startup settings, safe parsing/validation/reporting, run config and canonical data directory with legacy alias |
+| `goog-device/Device.ts` | Thin phone facade: descriptor, events and update throttle |
+| `goog-device/AdbShell.ts` | Configured adbkit shell/Files reads and uploads, cancellation and timeouts |
+| `goog-device/DeviceStatePoller.ts` | One due-time scheduler for info, runtime, lock and PID; rejects stale results |
+| `goog-device/ScrcpySession.ts` | Viewers, 30 s grace, serial start/stop/settings queue and per-launch resources |
+| `goog-device/AdbUtils.ts`, `ScrcpyServer.ts`, `adb/index.ts` | Forward leases, completed jar uploads, own-scid process handling and owned adbkit connections |
+| `goog-device/StreamConfig.ts`, `ScrcpyInstance.ts`, `LockState.ts` | Stored stream values, per-port scrcpy identity and lock diagnostics |
+| `goog-device/services/ControlCenter.ts` | adb tracking and command dispatch |
+| `goog-device/mw/WebsocketProxyOverAdb.ts` | Starts/reuses scrcpy for a viewer and releases that viewer |
+| `goog-device/mw/FileListing.ts`, `filePush/HttpDownload.ts` | Files channel and streamed HTTP downloads |
+| `mw/WebsocketProxy.ts` | scrcpy bootstrap, packet fanout and per-viewer held-input/UHID cleanup |
+| `appl-device/services/PyMobileDevice.ts` | Resolves the patched venv/PATH CLI, probes and filtered child environments |
+| `appl-device/services/CoreDeviceRunner.ts` | One helper per iPhone, readiness, holds, 15 s grace and orderly shutdown |
+| `appl-device/services/StartBudget.ts` | Persistent per-phone display-start limit |
+| `appl-device/services/ControlCenter.ts` | USB tracking, phone info and Developer Mode |
+| `appl-device/services/IosSettingsStore.ts`, `UnlockScheduler.ts`, `UnlockDriver.ts` | Encrypted passcode store, twice-daily schedule and guarded unlock sequence |
+| `appl-device/mw/CoreDeviceProxy.ts` | Helper framing and JSON input/clipboard commands over loopback HTTP |
+| `notifications/NotificationService.ts` | Domain state and notification coordination |
+| `notifications/CollectorProcess.ts` | Collector process, bounded line framing, writes, generation checks and restart backoff |
+| `notifications/NotificationRoutes.ts`, `NotificationSchema.ts` | 18 ordered notification routes and request validation |
+| `notifications/NotificationFeed.ts`, `NotificationStorage.ts`, `PushDelivery.ts` | Feed/filter/counts, private persistence and push delivery |
+| `requestOrigin.ts`, `mw/RemoteWebsocketProxy.ts` | Host/Origin/CSP checks and configured remote proxy boundary |
+
+The Android diagnostic and stream shell paths use adbkit, rather than spawning the adb
+CLI. RemoteShell still uses the adb executable for the interactive terminal. The host
+adb server must already answer; this app must not start another daemon or server.
 
 ### Shared (`src/common/`)
 
-- `Broadcast.ts` — **the critical file.** Parses separate scrcpy video/audio streams, caches video
-  config plus a bounded sequence from the latest keyframe and audio metadata/config, reads device
-  messages off the control socket,
-  and fans everything out. Audio capture/parser failures leave video and control running.
-- `BroadcastManager.ts` — opens the unix sockets in scrcpy's expected order.
-- `Constants.ts` — `SERVER_VERSION`, `ScrcpyServerConfig`, `buildScrcpyArgs()`.
-- `AudioProtocol.ts` — shared browser audio envelope, codec/source types, and fixed capture profile.
+- `Broadcast.ts` parses video/audio separately, caches a bounded decodable video sequence
+  and audio config/metadata, and reads phone messages from control. Audio errors leave
+  video/control running. Session packets update the picture size mid-stream (section 3).
+- `BroadcastManager.ts` owns the ordered TCP connections and exact Broadcast identity.
+  Startup cancellation closes pending connections without affecting a replacement.
+- `Constants.ts` holds `SERVER_VERSION`, defaults and `buildScrcpyArgs()`.
+- `AudioProtocol.ts` defines the common browser audio envelope and capture profile.
+- `CoreDeviceProtocol.ts` defines the iPhone browser framing and command types.
 
 ### Client (`src/app/`)
 
-Preact + `@preact/signals`. **View layer only** — the protocol/transport classes are original and
-should generally be left alone.
+Preact and signals draw the UI. Stream clients and players retain their own transport
+and decoder lifetimes. Do not rewrite those lifetimes to restyle the page.
 
 | Path | Role |
 | --- | --- |
-| `state/` | `router.ts` (the only writer of history), `routes.ts` (page addresses), `devices.ts` (merged device store), `stream.ts`, `deviceStatus.ts`, `settingsSheet.ts`, `audio.ts` (active playback session/status) |
-| `views/` | `App`, `DeviceList`, `DeviceCard`, `StreamView`, `ToolView`, `FloatingToolbar`, `SettingsSheet`, `ActionsSheet`, `DeviceSwitcherSheet`, `SleepOverlay`, `LiveTextOverlay` |
-| `googDevice/client/StreamClientScrcpy.ts` | Owns the stream lifecycle; builds some DOM imperatively |
-| `googDevice/UhidKeyboard.ts` | Virtual HID keyboard |
-| `googDevice/client/FileListingClient.ts` | The file explorer: navigation, views, selection, transfers, folder operations |
-| `googDevice/client/fileTypes.ts` | File kind/icon/size/permission formatting for the explorer |
-| `player/AudioPlayer.ts` | PCM Web Audio playback, optional Opus WebCodecs decode, buffering and browser unlock |
-| `ui/` | The design kit (`Sheet`, `Menu`, `Button`, `AppBar`, ...; styles in `style/kit/`), `dialogFocus.ts` and `viewport.ts`: shared dialog focus and viewport behaviour and remote-control PWA gesture handling |
-| `controlMessage/` | Wire formats — **be extremely careful here, see §4** |
-| `interactionHandler/` | Touch/mouse → control messages. Multi-touch already works; don't rewrite |
+| `state/router.ts`, `state/routes.ts`, `ui/overlayHistory.ts` | Route/history ownership, old-link conversion and Back closing overlays |
+| `state/phoneStatus.ts`, `copy.ts`, `state/capabilities.ts` | One phone-status model, its words and platform capabilities |
+| `views/DevicePage.tsx`, `ScreenView.tsx`, `screen/android.tsx`, `screen/iphone.tsx` | Tab hosting, one screen layout and per-platform stream effects |
+| `views/PhoneHeader.tsx` | Shared Screen/Files/Shell header; tool connection stays in the tab strip |
+| `controls/` | Data-defined controls, held buttons, mouse rail and touch panel |
+| `views/SettingsSheet.tsx`, `views/settings/` | One sheet and its ordered sections |
+| `views/actions/PhoneActionsSheet.tsx` | Shared Actions groups; platform wrappers supply adapters |
+| `views/UnlockSheet.tsx`, `state/unlockDevice.ts` | Shared Unlock flow with platform adapters |
+| `views/LiveTextOverlay.tsx` | Modeless live text/paste/IME field and typing lifecycle |
+| `state/keyboardCapture.ts`, `ui/KeyboardChip.tsx` | One capture target, reserved chords and guarded clipboard work |
+| `googDevice/client/StreamClientScrcpy.ts`, `applDevice/client/StreamClientCoreDevice.ts` | Android and iPhone stream lifetimes |
+| `client/audioPacket.ts`, `input/pointMapper.ts`, `input/mouseContract.ts` | Shared audio framing and picture input contract |
+| `googDevice/client/FileListingClient.ts`, `googDevice/files/` | Kept Files view and extracted service/render helpers |
+| `googDevice/client/ShellClient.ts`, `views/shell/` | Terminal and touch extra-key row |
+| `views/NotificationsView.tsx`, `NotificationHistory.tsx`, `views/notifications/` | Inbox, combined/source scope and Setup |
+| `ui/`, `src/style/kit/`, `src/style/tokens.css` | Shared kit, role tokens, motion, sheets and focus rules |
 
-Do **not** reintroduce a framework-free DOM layer; and do not rewrite `InteractionHandler`,
-`Multiplexer`, `StreamReceiver`, or the players without a specific reason.
+Production builds exclude the kit demo route. Dedicated browser-fixture builds put demo
+assets in runner-owned temporary directories, outside dist. Normal requests to
+`#!action=kit` show Phones and start no stream.
 
 ---
 
-## 3. scrcpy 4.1 protocol — hard-won details
+## 3. scrcpy 4.1 protocol
 
 The vendored jar is **scrcpy v4.1** (`vendor/Genymobile/scrcpy/scrcpy-server.jar`,
 `SERVER_VERSION = '4.1'`). Upgrading from 3.1 required two breaking changes. If you ever bump the
 version again, **re-verify both**.
+
+The framing below follows Broadcast and the control-message writers. The table's
+"works" entries retain earlier observations; they are not fresh hardware checks of the
+redesign. Current deployment limits are in section 6 and the dated step 6c record.
 
 ### Video stream header: codec id, then session packets
 
@@ -154,10 +174,9 @@ boundary in the MSE adapter. This is a decoder framing issue, not evidence the d
 4.x:  CONFIG = bit 62,  KEY_FRAME = bit 61
 ```
 
-**This one is nasty.** With only the header fixed, framing parses perfectly and everything looks
-healthy — but the config packet (SPS/PPS) is never recognised, `lastConfigframe` stays null, newly
-attached clients are never primed, and **every decoder shows a black screen with no error**. Source
-of truth: `app/src/demuxer.c` in the scrcpy repo.
+Fixing only the header leaves config packets (SPS/PPS) unrecognised. `lastConfigframe` stays
+null, so newly attached clients receive no decoder configuration and show a black screen
+without an error. Verify the flag positions against `app/src/demuxer.c` in the scrcpy repo.
 
 ### Control messages (client → device)
 
@@ -233,190 +252,175 @@ input silently goes nowhere.
 
 ---
 
-## 4. Landmines
+## 4. Rules for current work
 
-Ordered by how much time they cost.
+Read the current external brief and repository AGENTS.md before commands. They control
+what may be tested or deployed. Dated examples below do not authorise hardware actions.
 
-1. **scrcpy runs only while someone has the screen open.** Attaching a phone starts nothing.
-   The first viewer starts it (`WebsocketProxyOverAdb.connect()` calls `Device.ensureServer()`),
-   and it stops 30 s after the last viewer leaves (`STREAM_IDLE_GRACE_MS`). The owner's Stop
-   closes viewers with code 4012, which they do not reconnect from. Each ws-scrcpy server
-   launches with its own `scid`, kept per port in `data/scrcpy-instance.json`, and counts or stops
-   only processes that carry it; desktop scrcpy and a test server on another port are left
-   alone. If you see "nothing works", **check `adb shell pidof app_process` and the `scid=` in
-   `/proc/<pid>/cmdline` before debugging anything else.** A dead server is indistinguishable
-   from a dead feature, and it invalidated an entire round of my conclusions.
-2. **MIUI wipes `/data/local/tmp`.** The jar disappears mid-session; `CLASSPATH` then points at
-   nothing and you get `ClassNotFoundException`, which looks like a renamed class. ws-scrcpy
-   re-pushes on start so it self-heals in normal use, but manual testing needs a re-push.
-3. **nodemon does not reliably restart on server-bundle changes.** `dist/index.js` updates on disk
-   while the running process keeps stale code. If a server change seems not to apply, restart
-   `npm run dev`.
-4. **`Util.parseBoolean(params, name, required)`** — the third argument is `required`, **not** a
-   default. Passing `true` makes the parameter mandatory and throws on every URL lacking it.
-5. **`pkill -f <pattern>`** in a shell whose own command line contains the pattern kills the shell.
-6. Don't conclude "the device doesn't support X" from one failed test. Of the commands I first
-   declared inert, most were a dead server or a malformed message.
+1. **Keep one mount per screen open.** ScreenView's mount node and each adapter's effect
+   must not move or gain a new key. Sheets, notices, headers and resizing must retain the
+   same element and stream socket. A second iPhone mount can start another phone session.
+2. **Protect the iPhone.** No failed-start retry or burst of short sessions. Never
+   `kill -9` or `pkill -f`; signal only owned PIDs with SIGTERM and await shutdown.
+   A real screen visit requires the current deploy procedure and one owner of the phone.
+   Tests use the fake helper. An unlock needs the owner's permission. A command answering
+   password protected means stop and tell the owner; do not try more phone commands.
+3. **Protect the live server.** A restart/build follows the deploy brief with a rollback
+   tag first, outside the scheduled-unlock exclusion window, with no helper running.
+   Never save live settings during checks or copy live data out. Never print passcodes,
+   settings ciphertext or key files. No second Android-enabled server.
+4. **Preserve resource ownership.** ScrcpySession serialises start/stop/settings work;
+   old callbacks cannot act on a successor. Each launch owns its shell, forward lease,
+   Broadcast and deadline. Uncertain/lost-ACK forwards are left alone. The phone-side
+   jar is pushed before launching; MIUI may clear its temporary location.
+5. **Preserve input isolation.** `localKeyboardTarget.ts` must match
+   `dialog.kit-sheet[open]`, including docked and modeless sheets, rather than only
+   `:modal`. Do not replay input from an outage. Release held contacts/keys on departure.
+6. **Keep the two reconnect policies.** Android retries all closes except owner Stop
+   4012 and stop(), at 1 s × 1.5^n capped at 8 s, reset by scrcpy_initial. iPhone uses
+   1 s × 2^n capped at 60 s, stops on 4011 or three failed-start 4009 closes, and does not
+   count 4010 as a start failure. Codec/Retry resets its delay/count. These are deliberate.
+7. **Use the kit and shared facts.** Build with src/app/ui, style/kit and tokens. Status
+   comes from phoneStatus.ts, words from copy.ts and platform rows from capabilities.ts.
+   The phone and desktop layouts need equal care. UI text says phone.
+8. **Keep the work bounded.** No push or dependency install/change. Workers use assigned
+   worktrees; one main writer and one build/Node/browser reservation at a time. The
+   tracked build override is exactly `{}` plus newline and must be restored after builds.
 
----
+## 5. Current behavior and reasons
 
-## 5. Notable behaviours
+**Navigation and list.** The router owns history. List-to-phone opens a visit; tabs,
+phone switching and inbox filters replace it. Back closes the top overlay, then leaves
+the phone page. Files/Shell keep their local view on tab changes; leaving Screen stops
+its browser stream immediately. Cards keep last reported status during a reconnect,
+with unavailable phone actions disabled. Stale entries expire after 30 s unless updated;
+fresh individual reports remain. With multiple servers, only the affected group warns.
+Switcher stale rows keep their status and Viewing marker and say Reconnecting….
 
-- **Stream quality changes restart the scrcpy server.** `UPDATE_STREAM_CONFIG` kills the pid,
-  stops the broadcast, relaunches with new args. Every viewer of that device reconnects
-  (`StreamReceiver` has backoff). Starts, stops, and restarts share one per-device queue, so
-  reconnects and simultaneous Applies cannot launch competing servers.
-- **`video_encoder` defaults to unset** so scrcpy picks hardware. It used to be hardcoded to
-  `OMX.google.h264.encoder` — a *software* encoder — on every device.
-- **Keyboard capture is on by default**, using UHID: the device sees a real keyboard, applies its
-  own layout, and stops raising its on-screen keyboard. Settings offers keycode injection for
-  older devices (Android &lt; 11 can't open `/dev/uhid`). Capture leaves the app's own controls and
-  dialogs alone. Each active proxy owns a distinct ID in 1–65535; its release destroys only its
-  own keyboard. Reconnecting recreates the keyboard after `scrcpy_initial` supplies the new ID.
-- **Connected means the scrcpy handshake completed**, not merely that the WebSocket opened.
-  Initial setup waits for `scrcpy_initial`; user input during an outage is not replayed later.
-- **Sleep detection** polls `dumpsys` every 10s while a device list is open, 60s idle. On Android
-  16 `Display Power: state=` does not exist — `mScreenState=` from `dumpsys display` is primary.
-  `mWakefulness` is authoritative for awake/asleep and only reports "not awake" on positive
-  evidence, so a parse miss degrades to "awake" rather than a stuck badge.
-- **The client is code-split.** `tsconfig` sets `module: commonjs` for the server, which would
-  downlevel `import()` to `require()` and defeat splitting, so the frontend webpack config
-  overrides ts-loader with `module: esnext`. Initial JS is ~65 KiB gzipped after the UX review;
-  the terminal and file-explorer chunks are fetched only on their own routes.
-- **Sheets are mutually exclusive** via `openSheet()`. They used to stack, and an open sheet's
-  panel covered the toolbar so every button under it was dead. Opening a sheet now collapses the
-  FAB panel. Shared sheets contain keyboard focus, close on Escape, restore focus, and follow the
-  visual viewport when a phone keyboard appears.
-- **Android controls follow the input device.** `FloatingToolbar.tsx` uses a draggable FAB for
-  `(hover: none) and (pointer: coarse)` browsers, including tablets. Mouse/trackpad browsers get a
-  persistent sidebar, including narrow desktop windows. Both layouts adopt the same protocol
-  toolbox and show labeled controls. Mobile FAB position persists in `localStorage`, clamps to
-  safe areas and the visual viewport, and opens a scrollable grid when space is limited. A media
-  query change updates layout and stream sizing. The stream header keeps device identity,
-  connection status, return navigation, and switching accessible. iOS streaming shares the
-  same chrome through `ToolbarClient.getControlButtonsElement()`. (Step 6a: the touch button is
-  now a tab on the left or right edge of the stage and the desktop rail stands against the
-  picture; see the step 6a section.)
-- **The remote-control PWA keeps its shell fixed.** The device list and sheet bodies scroll
-  internally; opening a sheet preserves the list position and locks its background scroller.
-  Browser pinch zoom is suppressed so multi-touch belongs to the remote screen. Safari gesture
-  cancellation does not stop propagation to the remote input handler. Safe-area padding, dynamic
-  viewport sizing, and 16px form inputs protect phone layouts and text entry.
-- **Settings loads the device's current configuration** from `LIST_ENCODERS`, with quality
-  presets and advanced options. Apply sends only changed fields; request IDs prevent stale replies
-  from updating another request. Source/format changes also require a stream restart.
-- **Audio is enabled in the build and defaults** (`USE_AUDIO: true`, `audio: true`,
-  `audioCodec: 'raw'`, `audioSource: 'output'`). An explicitly saved `audio: false` stays off.
-  Each browser starts muted; Sound/Listen must run in a user gesture to unlock playback. PCM uses
-  Web Audio directly, including browsers on insecure LAN HTTP. Optional Opus needs `AudioDecoder`
-  support in a secure context. Mute, backgrounding, disconnect, and decoder resets discard queued
-  sound; playback buffering is bounded near live instead of accumulating old conversation.
-- **Device media and incoming call audio are separate sources.** `output` captures device media
-  such as videos/games; `voice-call-downlink` requests only the far side of a phone call. There is
-  no browser microphone forwarding and no uplink capture. Android 11 needs the screen unlocked
-  at capture startup; audio requires Android 11 or later. Call capture can be rejected or silent
-  under device/Android restrictions. `output` uses REMOTE_SUBMIX and excludes notification,
-  alarm, and ringtone streams; it also redirects captured playback away from the device speaker.
-  Source support comes from [scrcpy audio documentation](https://github.com/Genymobile/scrcpy/blob/v4.1/doc/audio.md)
-  and [Android AudioSource](https://developer.android.com/reference/android/media/MediaRecorder.AudioSource#VOICE_DOWNLINK).
-- **Audio failure recovery does not overwrite desired settings.** Audio socket/parser failures
-  publish disabled/error status while video/control continue. If stock scrcpy exits fatally after
-  an audio startup error, the next normal reconnect launches video-only using a runtime override.
-  Saved audio/source/format remain unchanged; an explicit Apply or Retry clears the override.
-  Generation checks prevent shutdown errors from an old launch disabling its replacement.
+**Android service.** Attachment starts nothing. First viewer starts/reuses scrcpy;
+last departure keeps 30 s grace. A return within grace reuses it. Owner Stop closes
+viewers with 4012 and they wait for Start again. Instance scid limits process ownership.
+Watched settings changes restart through the same queue; unwatched changes start no
+stream. Wake on an idle card also starts no stream. Connected means the scrcpy handshake
+completed, rather than only a WebSocket open.
 
----
+**iPhone service.** A ready helper is held for viewers and unlock work, with 15 s viewer
+grace. The three-start/five-minute budget persists across server restarts. A failed
+session holds off new starts for 30 s. Keep the patches and orderly stop budget. HEVC picture failure does not erase
+session readiness or disable commands/Type text; new touches remain blocked without a
+picture. This difference is why No picture is a valid header in headless checks.
 
-## 6. Testing
+**Header and controls.** PhoneHeader draws identity, service/status, bell and Switch on
+Screen, Files and Shell. Only Screen owns the fine-pointer keyboard chip; tools retain
+local keyboard targets and their connection in the tab strip. A data definition supplies
+ControlRail/ControlPanel, without toolbox classes or label matching. Mouse rail follows
+the picture at every width. Touch controls use an edge tab, stored per browser and half
+opaque while idle. Successful migration removes the old position key after writing the
+new one; blocked storage does not discard the remembered place.
 
-`npm test` runs deterministic regressions without hardware: 38 server tests in
-`scripts/test-server-regressions.js`, seven stream/UHID tests in `scripts/test-stream-lifecycle.js`,
-tracker lifecycle checks in `scripts/test-client-lifecycle.js`, nine backend audio tests in
-`scripts/test-audio-protocol.js`, and browser-audio checks in `scripts/test-audio-player.js`.
-`scripts/test-video-bootstrap.js` covers complete late-join replay, config invalidation, and both
-byte/frame-count cache overflow paths without device input, and since the 2026-11-10 review also
-session packets and the release of keys a departed viewer held.
-`scripts/test-stream-clients.js` runs the browser-side stream code against mocked browser APIs:
-scroll encoding, decoder recovery, touches beside the picture, player statistics, held keys and
-buttons, and the stream settings target. `node scripts/test-browser.js android-stream` drives the
-Android stream page in Chromium with mocked sockets (a real decoder error, rotation, an edge swipe,
-the wheel).
-Audio coverage includes fragmented headers, timestamp flags, late-join codec config, capture
-failure isolation and fallback, PCM conversion, unlock/mute/background/reconnect, bounded
-buffering, and stale decoder output cleanup. The player tests mock browser APIs; they do not
-prove audible playback on hardware.
-`scripts/test-passcode.js` covers input framing, fresh lock checks, source binding, cancellation,
-timeouts, and refusal to send credentials to an unknown, unlocked, or occluded screen.
+**Sheets and focus.** One Settings sheet is mounted in App and opens for either platform
+from a card or screen. Stream, Sound, Keyboard, Unlock, About and troubleshooting stay
+in that order; iPhone omits Stream. Disabled rows explain their requirement. From 1024 px
+Actions, Settings and Type text dock beside a mounted ScreenView. From the list or tool
+pages Settings is a centred dialog. Docked panels slide horizontally; picture and rail
+stay clear even though the stage deliberately contains the dock host. Actions/Settings
+remain modal. Type text is modeless, sends each committed text/paste once and keeps the
+picture active to choose another phone field. Closed retained panels may be inert; the
+open Type text input/stage must not be. Sheet gives children a component boundary without
+another DOM box; confirmation labels use stable IDs across render roots.
 
-`npm run test:ux` runs `scripts/e2e-ux.js` in Playwright against a running server and an attached
-device. It covers the device list, sheets, keyboard focus, stream startup, touch-target sizes,
-viewport changes, and return navigation. **Keep browser and device-state checks** — they catch
-bugs that typecheck and lint cleanly. The older focused hardware scripts below remain useful,
-but some assume the previous DOM; reopen the mobile FAB after closing a sheet and check selectors.
+**Settings apply at once.** StreamConfigSession sends only changed values and shows the
+result by the group. Quality arrows/Home/End move focus without applying; Enter/Space
+applies once, pointer choice immediately. A watched capture change restarts all viewers;
+a screen reporting other viewers asks first. No Apply bar remains. The sheet stays open
+while applying. AutoHeight returns to natural layout after motion rather than keeping a
+stale measured gap. Audio/source/format are Android capture settings; Listen and volume
+are this browser's playback choices.
 
-`npm run test:pwa` checks the fixed mobile shell, internal scrolling, sheet scroll/focus behavior,
-zoom suppression, and outgoing remote multi-touch using intercepted stream sockets. It reads
-device list/settings from a running server; it does not send its simulated remote gestures to
-hardware. `npm run test:audio` is the hardware media fixture/output-meter check. Serve
-`scripts/fixtures/audio.html` over HTTP to the Android device and set `TONE_URL` to its URL;
-`SERIAL` is required and `AUDIO_CODEC` defaults to `raw` (use `opus` with a suitable browser
-origin). The test opens the fixture, plays its 440 Hz tone, and verifies actual browser output,
-mute/unmute, late viewers, and reloads. `DESKTOP=1` checks that Sound is visible in a 1280×600
-mouse sidebar. The output check also measures sine-wave continuity over 30 analyser windows
-and asserts incoming buffers have no scheduling gaps or overlaps. Its result and the limits of
-that evidence belong in §9.
-Neither synthetic playback tests nor an accepted call source prove incoming-call audibility.
+**Keyboard and clipboard.** Capture defaults on. One KeyboardCapture owns preference,
+actual target, deferred modifiers and cancellation. The fine-pointer chip shows phone
+or this page; focusing a local control/sheet keeps the capture preference but directs keys
+locally. Chip and Settings > Keyboard change the same state. Ctrl+Alt+K releases or
+recaptures (Ctrl+Option+K on Mac); Ctrl+Alt plus S/H/B/O/T/P/C means Switch/Home/Back/
+Overview/Type text/Screenshot/Copy from phone, omitting Back/Overview on iPhone. Chords
+send no modifiers to the phone. Ctrl/Cmd+K opens Switch after release when unconsumed.
+Native Ctrl/Cmd+V while captured pastes through Android clipboard-and-paste or iPhone
+clipboard-write acknowledgment followed by Cmd+V. Local fields keep native paste.
+Clipboard work is limited, rejects overlap and is cancelled on target change/drop.
+Keyboard capture respects every open dialog.kit-sheet, including Type text and docks.
+Android UHID is attached on physical input; touch/local controls let it go so the phone
+keyboard can return. iPhone Type text ends its temporary keyboard after pending text.
 
-`npm run test:sheets` uses mocked sockets and native touch gestures to cover mobile header
-drag/dismiss/snapback, the larger Close action, background scrolling/focus restoration, and
-the Apply dismissal lock. It also protects the imperative video canvas while notices appear
-and disappear, and verifies that popup gestures cannot become remote device touches.
-`npm run test:audio-availability` checks usable Sound recovery controls when Web Audio or the
-audio module is unavailable and when the device's Android version is not yet known.
-`npm run test:switcher` exercises native scrolling, searching, and selecting devices below the
-fold with 28 mocked devices. `npm run test:unlock` uses only fixture credentials and intercepted
-sockets to verify masked local typing, one explicit submission, confirmed unlock/relock,
-cancellation, disconnected/unknown states, and no automatic retry or credential persistence.
+**Input.** Both use the same point mapper. A drag starts on the picture and continues
+clamped to its edge; blur/page departure lifts held input. Android wheel scrolls and
+right-click is Back; iPhone wheel is a short swipe and right-click does nothing.
+Ctrl+drag pinches around the picture centre; Shift+Ctrl uses the pressed point. Physical
+input, Mac Ctrl+drag and actual picture alignment remain subject to hardware limits.
 
-```bash
-npm test                         # deterministic lifecycle and audio regressions
-npm run dev                      # webpack --watch + nodemon, serves :8000
-BASE=http://127.0.0.1:8000 SERIAL=<udid> E2E_OUT=/tmp/ws-scrcpy-ux npm run test:ux
-BASE=http://127.0.0.1:8000 SERIAL=<udid> npm run test:pwa
-BASE=http://127.0.0.1:8000 npm run test:files           # explorer UI against socket fixtures
-BASE=http://127.0.0.1:8000 SERIAL=<udid> npm run test:files-device  # real listings + scratch folder
-BASE=http://127.0.0.1:8000 SERIAL=<udid> TONE_URL=http://<host>:8099/audio.html npm run test:audio
-./scripts/serve-testpage.sh &    # test page on :8099 (tap target + text field)
-SERIAL=<udid> node scripts/e2e-touch.js          # targets ≥44px, hit-test, touch msgs
-SERIAL=<udid> node scripts/e2e-touch-device.js   # tap in browser → device tap counter
-BASE=http://127.0.0.1:8000 SERIAL=<udid> node scripts/e2e-reconnect-keyboard.js # typing after restart / viewer close
-SERIAL=<udid> node scripts/e2e-toolbar.js        # every toolbar button opens its sheet
-SERIAL=<udid> node scripts/e2e-actions.js        # Actions buttons change device state
-SERIAL=<udid> node scripts/e2e-keyboard.js       # UHID typing lands in a device field
-SERIAL=<udid> node scripts/e2e-typetext.js       # Type-text overlay
-BASE=http://127.0.0.1:8000 npm run test:ios-typing  # iOS Type text overlay against fixture sockets
-SERIAL=<udid> node scripts/e2e-deeplink.js       # reload a stream URL directly
-node scripts/e2e-decode-touch.js                 # decode outgoing touch bytes
+**Audio.** USE_AUDIO and Android capture default on, raw 48 kHz stereo PCM, output source;
+Opus is optional. Each browser begins muted and Listen needs a user gesture. iPhone sends
+AAC-ELD, decoded with ffmpeg to the same PCM browser path. No browser microphone uplink.
+Capture failures leave desired settings intact and video/control usable; a fatal Android
+audio-start error can fall back to video-only on reconnect. Sound source support and call
+audibility depend on phone restrictions. Tests do not prove real audible playback.
+
+**Notifications.** Unscoped inbox combines linked iPhones; old/source push links stay
+scoped. Switch, Search and Setup share the header. Inbox/Unread have counts, Archive is
+alongside them and Mark all read is direct. Cards have day groups, conversation stacks,
+mouse quick actions/menu and touch swipes/Undo. Expand/click or opening the phone marks
+one read; an expanded unread item stays until collapsed. Bulk archive snapshots keys per
+source and can undo partial success. Clear all on iPhone needs a chosen source and a
+frozen confirmation set; an accepted command is not a phone result. Setup changes apply
+at once. Apps is a mute list; old allow-lists keep working as Only these apps. New muted
+notifications are dropped before storage/push; history stays and Undo cannot recover a
+dropped event. NotificationFeed is the single filtering policy; CollectorProcess owns
+supervision and line protocol, Routes/Schema own 18 endpoints. This extraction changes
+no stored format. A current pipe write does not establish phone action acceptance.
+
+**Data and access.** Settings.ts parses startup env once; old names remain aliases.
+WS_DATA_DIR wins over WS_NOTIFICATION_DATA. Bundled default data is outside dist;
+nonempty old dist/data requires an explicit choice before startup. Stream config can
+read its former cwd path; next save uses the new path without changing the former file.
+Compose supplies both data aliases for rollback. The iPhone encryption key is consumed
+separately, omitted from the general snapshot/log and removed from child environments.
+No login exists. Host checks apply to every request/upgrade; Origin checks cover socket
+upgrades, notification API and downloads, while absent Origin is permitted. Configured
+public origin supports the existing trusted proxy. CSP forbids framing and limits page
+connections. Remote proxies require configured origin/path. These do not replace trusted
+network access. The README has the complete environment, key/storage and HTTPS guidance.
+
+## 6. Current checks and limits
+
+Before a merge, the assigned integrator runs these serially from the repository root:
+
+```sh
+npm run check
+node scripts/test-browser.js
 ```
 
-Testing principles that mattered here:
+The first runs typecheck, lint, deterministic Node tests, Python suites and the normal
+production build. The second runs all registered default suites on isolated fixture
+servers, including the atlas. Pass suite names to run a focused fixture suite. Do not
+run e2e scripts directly or use the older test:* browser shortcuts: they can target live.
+Unit tests bind fixed ports; never overlap npm test/check or replace dist during browsers.
+No new test is needed for prose. New unit/default browser registration belongs to the
+integrator; docs changes require no dependency or script registration edit.
 
-- **Assert on device state, not on messages sent.** "A control message left the page" is not
-  "the device did something".
-- **Use a deterministic target.** Tapping a system app and checking whether the foreground
-  activity changed produces false failures that look exactly like product bugs. The test page has
-  a big button and a counter for this reason.
-- **Check `document.elementFromPoint`** to find what is actually on top of the video. That is how
-  the overlay-swallowing-touches bug was found.
-- **Wake and unlock first** (`keyevent 224`, then `82`): a woken-but-locked device shows systemui
-  and nothing works.
-- **Scope to a `SERIAL`.** With several devices attached, `.first()` may open a sleeping one.
-- `scripts/e2e-*.js` hook `WebSocket.prototype.send` globally, so the tracker's multiplexer frames
-  appear too. A 9-byte frame starting with `4` is `MessageType.CreateChannel`, **not**
-  `BACK_OR_SCREEN_ON`.
+Keep assertions for one stream socket per requested open, the same mount through sheets,
+no stream from list/Back and instant close on leaving Screen. Use fake pymobiledevice3
+and isolated data selected before imports. Fixture text/key values must not come from
+host secrets. Atlas comparisons retain raw files and explain every difference. They do
+not establish hardware, decoded-picture or browser-platform results.
 
-Also run: `npx tsc --noEmit -p tsconfig.json`, `npm run lint` (0 errors; ~46 pre-existing
-`no-explicit-any` warnings are the baseline), `npm run dist:prod`.
+The latest implementation integration and its check counts remain in the dated followup
+section. The current deployment's bounded real observations and skipped work are recorded
+in the final step 6c section below. Historical scripts/checklists here record what was
+asked or seen at that date. They are not a reason to start another phone session.
+Physical Android rotation, USB replug and one owner-operated stream-setting restart are
+explicitly DEFERRED; do not ask again or claim pass. Other picture/input/browser/notification
+limits remain. The dark focus-ring contrast decision (2.74:1 against the sunken track),
+server mute-drop policy, 50% idle controls and rail attachment at every mouse width remain
+open owner points.
 
 ---
 
@@ -465,6 +469,11 @@ sites too. When you discover something the hard way, leave it in the code.
 ---
 
 ## 9. September 2026 review
+
+The entries below continue through November 2026. They are dated history. Old toolbox,
+Stream settings, Scheduled unlock sheet and Apply descriptions record the UI then;
+sections 1–6 describe their current replacements. Old commands and checklists are not
+current authorisation to run them.
 
 ### Bugs fixed
 
@@ -5077,3 +5086,68 @@ The 677 suite artifacts and raw 316 atlas files remain unique to this integratio
 No new integration defect remains. The ancestor-only ID cause is still unproven,
 known hardware limits remain, and the owner's pending choices are unchanged. Nothing
 in this section deploys code or begins p6-docs.
+
+
+### Redesign step 6c: current documentation (2026-11-13)
+
+C-server-core-11: README now describes the owner's app, Node 22, stock scrcpy 4.1,
+enabled audio, supported input paths and their limits. It covers the one Settings sheet,
+instant capture changes, shared phone header/controls, modeless/docked Type text,
+keyboard capture/paste/chords, combined inbox, current Setup and the mute-drop policy.
+One environment table follows Settings.ts, including defaults, all accepted server
+names and the legacy data alias. Storage, key handling, HTTPS and Host/Origin/CSP/proxy
+boundaries follow current source. The clone URL comes from the configured project remote,
+with credentials excluded. No credentials or live data were read for documentation.
+
+Sections 1–6 above now describe TCP forwarding, session packet framing, Android's shell/
+poller/session split and the notification collector/routes split. Dated history stays as
+it was, with a scope note for superseded UI and "not deployed" entries. The obsolete
+upstream scheme/debug documents are deleted after a repository link search; the plan's
+plain deletion record remains. No source, settings, dependencies or test registrations
+change. No further deployment is needed for this documentation-only step.
+
+**Confirmed implementation deployment, before this docs branch.** The final deploy report
+`/tmp/ws-scrcpy-redesign/briefs/deploy-followups-report.md` records `3b15a40` live on
+2026-11-13 at 03:59:56.7329781Z, image
+`cd5ba7160f56f2903057d1cd2289502de6dfda1cf26b899868fea634dc934ff6`.
+Its final 04:06:33 audit reports healthy, zero restarts and no live serve-web. Rollback
+`before-redesign-followups-20261113` preserves image
+`531d61843b11fd0f72721027899d8a2ee24a82a0c34a03f77868d7bfd7f3bc71`.
+This later deploy supersedes the preceding integration's historically correct
+NOT DEPLOYED status. The old before-6a notification backup stayed inside the container.
+This docs worker did not recheck live state or run Docker/phone commands.
+
+The deployment made one permitted iPhone visit: one helper/socket/start, about two idle
+minutes with 64.1 MB received, No picture in headless Chromium, retained mount through
+sheets, clean shutdown 15.589 s after leave and sessions empty on two later reads. It
+ran no unlock, input or settings save. The scheduled 03:00 unlock predated deployment;
+approved named fields stayed unchanged afterward. Android was asleep and never woken:
+one initial and one return socket reused the same scrcpy process within grace, with a
+29.997 s final idle stop. Dock/Quality structure and production kit fallback were seen;
+physical picture/input/settings application were not. Files header was observed; no
+separate Shell-header capture result is claimed. Collector startup/status stayed healthy
+with the same child and zero restarts, without testing arbitrary delivery or actions.
+
+**Checks.** The implementation integration's source/check/atlas evidence remains in its
+preceding dated section and final report
+`/tmp/ws-scrcpy-redesign/briefs/integrate-followups-report.md`. It checked `cd82074`;
+`3b15a40` changes only HANDOFF, with the same implementation and accepted main build.
+Before editing, the documentation worker ran one normal `npm run dist` at exact base
+`3b15a40000d3287270c015058af61b80efa2937a`; it passed, retaining override bytes `7b7d0a`.
+Raw worktree build evidence is outside the repository at
+`/tmp/ws-scrcpy-redesign/logs/p6-docs-worker-20261113/`. This was a fresh worktree build,
+not a claim that its context-dependent chunk filenames match the main build. The worker
+ran no full Node/browser check. Fresh review and the documentation integrator own the
+required full-check outcomes before merge and record them in their dated integration entry.
+
+**Still deferred or unverified.** The owner deferred physical Android rotation, USB
+replug and one owner-operated stream-setting restart. Do not ask again or call them
+passed. Awake Android picture, new owned-forward removal on hardware, owner Stop/Start,
+real keyboard/paste/touch/wheel/drag/right-click/pinch, iPhone picture/aim/unlock/Wake,
+phone keyboard/notch/safe areas, large real Files folders, Safari, Firefox and installed
+app remain unverified beyond dated observations. Notification receipt/mute/old allow-list,
+pairing, Web Push/taps, phone action acknowledgment and collector recovery also remain
+unverified beyond startup/status. Refreshed hardware-only script bodies were not run.
+The focus-ring, mute-drop, idle-opacity and rail-width owner choices remain unchanged.
+The owner should reload browser tabs and reopen the installed app once after the recorded
+implementation deployment; this documentation step creates no new reload/restart need.
