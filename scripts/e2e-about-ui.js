@@ -535,9 +535,11 @@ async function iosActions(browser) {
             await test.waitCommand('refresh_device', 1);
             assert.equal(await refresh.getAttribute('aria-busy'), 'true');
             assert.equal(await refresh.getAttribute('aria-disabled'), 'true');
-            assert.equal(await refresh.isDisabled(), false);
+            assert.equal(await refresh.evaluate(button => button.disabled), false, 'busy is ARIA-disabled, not natively disabled');
             assert.equal(await refresh.evaluate(button => button === document.activeElement && button === window.__aboutFocusedButton), true);
-            for (const id of ['stream-service', 'restart-services', 'remount']) assert.equal(await test.button(id).isDisabled(), true);
+            for (const id of ['stream-service', 'restart-services', 'remount']) {
+                assert.equal(await test.button(id).evaluate(button => button.disabled), true, 'peer action is natively disabled');
+            }
             await refresh.evaluate(button => { button.click(); button.click(); });
             await test.page.keyboard.press('Enter');
             await test.page.keyboard.press('Space');

@@ -792,12 +792,12 @@ async function streamSheetsFlow(browser) {
             await services.getByText('Remounting the developer image…').waitFor();
             // Busy retains the active button's focus and blocks repeat activation; the other
             // service actions remain natively disabled until this request has an outcome.
-            assert.equal(await remount.isDisabled(), false);
+            assert.equal(await remount.evaluate((button) => button.disabled), false);
             assert.equal(await remount.getAttribute('aria-busy'), 'true');
             assert.equal(await remount.getAttribute('aria-disabled'), 'true');
             assert.equal(await remount.evaluate((button) => button === document.activeElement), true);
             for (const id of ['stream-service', 'restart-services', 'refresh']) {
-                assert.equal(await services.locator(`[data-service="${id}"] button`).isDisabled(), true);
+                assert.equal(await services.locator(`[data-service="${id}"] button`).evaluate((button) => button.disabled), true);
             }
             await remount.evaluate((button) => { button.click(); button.click(); });
             assert.equal(ofType(commands, 'remount_ddi').length, 1);
