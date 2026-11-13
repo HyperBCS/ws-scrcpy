@@ -12,7 +12,7 @@ const VERSION = '16 (vendor preview 2026.11.13-r20261113.0810)';
 const TOKEN = '27.2.1+syntheticbuild0123456789abcdefghijklmnopqrstuvwxyz0123456789';
 const REASON = 'Synthetic session failure: fixture/' + 'long_reason_segment_'.repeat(10);
 const ALLOWED = new Set(['list_encoders', 'start_server', 'kill_server', 'refresh_device', 'restart_session', 'remount_ddi']);
-const records = { cases: [], geometry: [], pictures: [], commands: [], streams: [], failures: [] };
+const records = { cases: [], geometry: [], pictures: [], commands: [], streams: [], probes: [], failures: [] };
 let base;
 
 function safeBase() {
@@ -77,6 +77,9 @@ async function fixture(browser, platform, view, theme, label, extra = {}) {
     const streamMessages = [];
     let trackerReply;
     let trackerSocket;
+    let holdLists = false;
+    let trackerReady = 0;
+    let droppedAtReady;
     let onCommand;
     page.on('pageerror', error => errors.push(error.message));
     await context.route('**/*', async route => {
@@ -118,14 +121,15 @@ async function fixture(browser, platform, view, theme, label, extra = {}) {
         socket.onMessage(data => {
             const frame = Buffer.from(data);
             if (frame.length < 5) return;
-            const id = frame.readUInt32LE(1);
-            const reply = message => socket.send(channel(id, message));
+            const channelId = frame.readUInt32LE(1);
+            const reply = message => socket.send(channel(channelId, message));
             if (frame[0] === 4) {
                 const code = frame.subarray(5).toString();
                 if (code === 'HSTS') reply({ id: -1, type: 'hosts', data: { local: [{ type: platform === 'ios' ? 'ios' : 'android' }] } });
                 if (code === (platform === 'ios' ? 'ATRC' : 'GTRC')) {
                     trackerReply = reply;
-                    reply({ id: -1, type: 'devicelist', data: { id: 'about-fixture', name: 'About fixture', list: [item] } });
+                    trackerReady++;
+                    if (!holdLists) reply({ id: -1, type: 'devicelist', data: { id: 'about-fixture', name: 'About fixture', list: [item] } });
                 }
             } else if (frame[0] === 32) {
                 const command = JSON.parse(frame.subarray(5).toString());
@@ -160,7 +164,18 @@ async function fixture(browser, platform, view, theme, label, extra = {}) {
         },
         reply: (command, answer, overrides = {}) => trackerReply({ id: overrides.id ?? command.id,
             type: overrides.type ?? command.type, data: { udid: overrides.udid ?? item.udid, ...answer } }),
-        drop: () => trackerSocket.close(),
+        drop: () => {
+            holdLists = true;
+            droppedAtReady = trackerReady;
+            trackerSocket.close();
+        },
+        recover: async () => {
+            const until = Date.now() + 10000;
+            while (trackerReady <= droppedAtReady && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 10));
+            assert(trackerReady > droppedAtReady, 'a NEW tracker channel is ready before recovery');
+            holdLists = false;
+            trackerReply({ id: -1, type: 'devicelist', data: { id: 'about-fixture', name: 'About fixture', list: [item] } });
+        },
         open: async () => {
             if (view.dock) await page.getByRole('button', { name: 'Settings', exact: true }).click();
             else await page.locator(`[data-device-key$=":${item.udid}"]`).getByRole('button', { name: /^Settings for / }).click();
@@ -193,9 +208,17 @@ async function fixture(browser, platform, view, theme, label, extra = {}) {
                 assert.equal(await page.locator('.stream-mount').evaluate(node => node === window.__aboutMount), true,
                     id + ': metadata and Settings retain the stream mount');
             }
+            await test.closeSheet();
+            if (view.dock) {
+                await page.getByRole('button', { name: 'Phones', exact: true }).click();
+                await page.locator('.stream-mount').waitFor({ state: 'detached' });
+                await settled(page);
+                assert.equal(streamCount, 1, 'leaving the fake screen starts no additional socket');
+            }
             assert(streamMessages.every(message => message.detach || ['pli', 'keyboard-detach'].includes(message.type)),
                 id + ': only benign stream protocol messages, no keys, touches, paste or restart');
-            records.streams.push({ case: id, count: streamCount, messages: streamMessages });
+            records.streams.push({ case: id, count: streamCount, messages: streamMessages,
+                trackerReady, heldList: holdLists, leftScreen: !!view.dock });
             assert.deepEqual(errors, []);
         },
     };
@@ -331,9 +354,15 @@ async function confirm(test, id, type, { cancel = false } = {}) {
     const previous = await outcome.count() ? await outcome.textContent() : undefined;
     await test.button(id).click();
     const prompt = test.about.getByRole('alertdialog');
-    await prompt.waitFor();
+    await prompt.waitFor({ state: 'attached' });
     assert.equal(test.count(type), before, 'arming sends no command');
-    await prompt.locator('.kit-confirm-go').evaluate(button => button.click());
+    const earlyProbe = await prompt.locator('.kit-confirm-go').evaluate(button => {
+        const guarded = button.getAttribute('aria-disabled') === 'true';
+        button.click();
+        return { guarded };
+    });
+    records.probes.push({ case: test.id, service: id, requestCount: before, cancel, ...earlyProbe });
+    assert.equal(earlyProbe.guarded, true, 'the early probe actually ran while the confirmation guard was present');
     assert.equal(test.count(type), before, 'early confirmation is blocked by the existing guard');
     if (previous !== undefined) assert.equal(await outcome.textContent(), previous, 'arming keeps the prior command outcome');
     await pictures(test, `${id}-${cancel ? 'cancel' : 'confirm'}-${before}-armed`, '.kit-confirm');
@@ -435,14 +464,16 @@ async function metadata(browser) {
     for (const view of [VIEWS[0], VIEWS[5]]) {
         const test = await fixture(browser, 'ios', view, view.dock ? 'dark' : 'light', 'metadata');
         try {
-            test.send({ state: 'unauthorized', model: '<NoModel>', version: '<NoVersion>', session: 'stopped' });
+            test.send({ state: 'unauthorized', model: '<NoModel>', version: '<NoVersion>', session: 'stopped',
+                paired: false, developerMode: 'unknown' });
             await test.about.locator('[data-fact="status"] .kit-row-value', { hasText: 'Unauthorized' }).waitFor();
             assert.equal(await test.about.locator('[data-fact="model"] .kit-row-desc').textContent(), 'Unknown');
             assert.equal(await test.about.locator('[data-fact="system"] .kit-row-value').textContent(), 'Unknown');
             await geometry(test, 'unread-metadata');
             await pictures(test, 'unread-metadata', '.settings-facts');
-            for (const state of ['offline', 'unauthorized', 'Connected']) {
-                test.send({ state, model: 'Known <NoModel> suffix', version: 'Known <NoVersion> suffix', session: 'stopped' });
+            for (const state of ['disconnected', 'unauthorized', 'Connected']) {
+                test.send({ state, model: 'Known <NoModel> suffix', version: 'Known <NoVersion> suffix',
+                    session: 'stopped', paired: true, developerMode: true });
                 await test.about.getByText('Known <NoVersion> suffix', { exact: true }).waitFor();
                 assert.equal(await test.about.locator('[data-fact="model"] .kit-row-desc').textContent(), 'Known <NoModel> suffix');
             }
@@ -564,6 +595,7 @@ async function iosActions(browser) {
             await test.services.locator('.kit-group-hint').waitFor();
             assert.equal(await refresh.isDisabled(), true, 'availability loss may natively disable the focused action');
             await pictures(test, 'tracker-drop', '.settings-services');
+            await test.recover();
             await test.page.waitForFunction(() => !document.querySelector('.settings-services .kit-group-hint'));
             await test.services.getByRole('alert').filter({ hasText: 'The connection to the server dropped before it answered.' }).waitFor();
             assert.equal(await refresh.isDisabled(), false, 'recovery enables actions while retaining the last outcome');
