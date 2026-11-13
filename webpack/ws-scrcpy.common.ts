@@ -26,7 +26,7 @@ const buildConfigDefinePlugin = new webpack.DefinePlugin({
  * cannot split them out and every player, the xterm terminal and the file browser end up in the
  * initial bundle. This client is loaded over a phone connection, so that matters.
  */
-export const common = (esModules = false) => {
+export const common = (esModules = false, includeKit = false) => {
     return {
         module: {
             rules: [
@@ -43,7 +43,7 @@ export const common = (esModules = false) => {
                         },
                         {
                             loader: 'ifdef-loader',
-                            options: buildConfigOptions,
+                            options: { ...buildConfigOptions, INCLUDE_KIT: includeKit },
                         },
                     ],
                     exclude: /node_modules/,
@@ -147,8 +147,28 @@ const front: webpack.Configuration = {
     },
 };
 
-export const frontend = () => {
-    return Object.assign({}, common(true), front);
+export const frontend = (includeKit = false, outputPath = CLIENT_DIST_PATH) => {
+    const config = Object.assign({}, common(true, includeKit), front);
+    // Fixture assets live separately. Their explicit build must never overwrite deployed assets.
+    config.output = { ...front.output, path: outputPath };
+    config.plugins = front.plugins?.map((plugin) =>
+        plugin instanceof CopyWebpackPlugin
+            ? new CopyWebpackPlugin({
+                  patterns: [
+                      { from: path.resolve(PROJECT_ROOT, 'src/public/sw.js'), to: path.join(outputPath, 'sw.js') },
+                      {
+                          from: path.resolve(PROJECT_ROOT, 'src/public/manifest.json'),
+                          to: path.join(outputPath, 'manifest.json'),
+                      },
+                      {
+                          from: path.resolve(PROJECT_ROOT, 'src/public/icon-*.png'),
+                          to: path.join(outputPath, '[name][ext]'),
+                      },
+                  ],
+              })
+            : plugin,
+    );
+    return config;
 };
 
 const packageJson = JSON.parse(fs.readFileSync(PACKAGE_JSON).toString());

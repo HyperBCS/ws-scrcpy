@@ -21,3 +21,13 @@ export function writeStorage(key: string, value: string): boolean {
         return false;
     }
 }
+
+/** Returns false when blocked site storage prevents removal. */
+export function removeStorage(key: string): boolean {
+    try {
+        localStorage.removeItem(key);
+        return true;
+    } catch {
+        return false;
+    }
+}
