@@ -633,6 +633,9 @@ test('the list, its cards, the switcher and the notices take their controls, ico
 
 
 test('Screen and tools share header actions while keeping their connection placement', () => {
+    // Header actions import the router; no navigation or browser lifecycle runs in this render.
+    global.window = { location: global.location, addEventListener() {} };
+    global.history = { state: { nav: { index: 0, below: -1 } } };
     const { PhoneHeader } = require('../src/app/views/PhoneHeader');
     const { connectionStatus } = require('../src/app/state/phoneStatus');
     const screen = elements(PhoneHeader({ name: 'Bench iPhone', connection: connectionStatus('connected'), inbox: 'IPHONE', keyboard: true, switchDisabled: true }));
@@ -643,9 +646,10 @@ test('Screen and tools share header actions while keeping their connection place
     assert.equal(screen.filter((node) => node.props.class?.includes('kit-keyboard-chip')).length, 1);
     assert.equal(tool.filter((node) => node.props.class?.includes('kit-keyboard-chip')).length, 0, 'Tools do not inherit screen keyboard capture');
     assert.equal(tool.filter((node) => node.props.class === 'kit-bar-status').length, 0, 'Tool connection stays in the tab strip');
+    const textOf = (node) => Array.isArray(node) ? node.map(textOf).join('') : node && typeof node === 'object' ? textOf(node.props?.children) : typeof node === 'string' ? node : '';
     for (const nodes of [screen, tool]) {
         assert.equal(nodes.filter((node) => node.props.class?.includes('notifications-link')).length, 1);
-        assert.equal(nodes.find((node) => node.type === 'button' && node.props.children === 'Switch').props.disabled, nodes === screen ? true : undefined);
+        assert.equal(nodes.find((node) => node.type === 'button' && textOf(node) === 'Switch').props.disabled, nodes === screen);
         assert.equal(nodes.find((node) => node.props.class === 'kit-bar-back').props['aria-label'], 'Phones');
     }
 });
