@@ -224,8 +224,11 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
     useLayoutEffect(() => {
         const area = buttonArea(stage());
         const saved = parsePlace(readStorage(PLACE_KEY));
-        chosen.current = saved ?? placeFromPosition(readStorage(OLD_POSITION_KEY), area, buttonSize(), OLD_SIZE);
-        if (!saved && chosen.current && writeStorage(PLACE_KEY, JSON.stringify(chosen.current))) {
+        const old = readStorage(OLD_POSITION_KEY);
+        chosen.current = saved ?? placeFromPosition(old, area, buttonSize(), OLD_SIZE);
+        // Earlier versions kept both keys after conversion. Keep the current place, and only
+        // discard the old corner after this browser confirms it can save that place again.
+        if (old !== null && chosen.current && writeStorage(PLACE_KEY, JSON.stringify(chosen.current))) {
             removeStorage(OLD_POSITION_KEY);
         }
         layout();

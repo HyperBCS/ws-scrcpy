@@ -303,33 +303,41 @@ async function settings(browser) {
     }
 }
 async function storage(browser) {
-    for (const fail of [false, true]) {
+    for (const existing of [false, true]) for (const mode of ['success', 'write-fail', 'remove-fail']) {
         const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
         try {
-            await context.addInitScript((fail) => {
+            await context.addInitScript(({ existing, mode }) => {
                 localStorage.setItem('floating_toolbar_position', '{"x":12,"y":300}');
+                if (existing) localStorage.setItem('controls_button_place', '{"side":"right","fraction":0.75}');
                 const write = window.Storage.prototype.setItem;
+                const remove = window.Storage.prototype.removeItem;
                 window.Storage.prototype.setItem = function(key, value) {
-                    if (fail && key === 'controls_button_place') throw Error('blocked write');
+                    if (mode === 'write-fail' && key === 'controls_button_place') throw Error('blocked write');
                     return write.call(this, key, value);
                 };
-            }, fail);
+                window.Storage.prototype.removeItem = function(key) {
+                    if (mode === 'remove-fail' && key === 'floating_toolbar_position') throw Error('blocked removal');
+                    return remove.call(this, key);
+                };
+            }, { existing, mode });
             const page = await context.newPage();
+            const errors = [];
+            page.on('pageerror', error => errors.push(error.message));
             await fixture(page);
             await page.goto(`${BASE}#!action=device&udid=${UDID}&view=screen`);
             await page.getByRole('button', { name: 'Phone controls', exact: true }).waitFor();
             const kept = await page.evaluate(() => ({ old: localStorage.getItem('floating_toolbar_position'), next: localStorage.getItem('controls_button_place') }));
-            if (fail) {
-                assert.equal(kept.old, '{"x":12,"y":300}');
-                assert.equal(kept.next, null);
-            } else {
-                assert.equal(kept.old, null);
-                assert.equal(JSON.parse(kept.next).side, 'left');
-            }
+            assert.equal(kept.old, mode === 'success' ? null : '{"x":12,"y":300}', `${existing} ${mode}: discard the old corner only after a successful write and removal`);
+            if (!existing && mode === 'write-fail') assert.equal(kept.next, null);
+            else if (existing) assert.deepEqual(JSON.parse(kept.next), { side: 'right', fraction: 0.75 }, 'the current remembered place takes precedence');
+            else assert.equal(JSON.parse(kept.next).side, 'left', 'the old corner converts to the same side');
+            assert.equal(await page.locator('.floating-toolbar.mobile').getAttribute('data-side'), existing ? 'right' : 'left', 'the chosen place still works when storage is blocked');
+            assert.deepEqual(errors, [], 'blocked storage never breaks controls');
         } finally { await context.close(); }
     }
-    console.log('PASS controls placement conversion and failed-write preservation');
+    console.log('PASS controls conversion, both stored keys, write failure and removal failure');
 }
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch();
