@@ -5420,3 +5420,145 @@ Whole findings/evidence and the exact final HANDOFF-only head:
 remain NOT DEPLOYED. No live-server/Docker/phone/helper/unlock/settings-save/data-export/
 secret-file operation, install, dependency change or push occurred. Review worktrees
 and branches remain for root's verified cleanup and a separately assigned deploy.
+
+
+### UI consistency and About deployment (2026-11-13)
+
+The separate deployment role deployed source
+`33bc04f927089e9da59197ef40c225fa96f428e9` from `redesign`. Its checked implementation
+was `f3e55f6af30263e06a567756dc2272ee731fae92`; the difference was HANDOFF only.
+Image `sha256:8086f74b79d68260d48ba1abcc8172eda2249a30b532760c5c75f5265fcd6faa`
+started at `2026-11-13T14:05:11.684179175Z`; Compose recreation took 0.398 s.
+The first Docker mutation created rollback tag
+`ws-scrcpy:before-ui-consistency-20261113`.
+The tag was verified before build/restart at the actual prior image
+`sha256:cd5ba7160f56f2903057d1cd2289502de6dfda1cf26b899868fea634dc934ff6`.
+No rollback trigger was observed and no rollback was needed. This later deployment
+supersedes the preceding integration's NOT DEPLOYED status; that earlier role did
+not deploy and its dated record remains unchanged.
+
+**Accepted evidence.** Root read the whole FINAL deployment report and accepted its
+source/artifact/session/health/cleanup proofs. The report is
+`/tmp/ws-scrcpy-ui-audit-20261113/reports/ui-consistency-deploy.md`, SHA256
+`484877cc2e5a12033f99980bbeac4bf93c1f160e063141d16062d5dc8a4b19e2`.
+Raw records remain under `/tmp/ws-scrcpy-ui-audit-20261113/deploy/`; accepted-deploy.json and
+deploy/root-final-deploy-audit.json record root's independent acceptance. All 376
+recorded host PID/start identities were inactive, with no zombies or PID reuse.
+All 540 tracked hashes and 24 normal HOST artifact hashes matched accepted main;
+owner AGENTS.md and .claude were preserved. Server/common/Python/config/Docker/build/
+dependency diffs were empty; package.json changed only its reviewed test registration.
+No stored-file format changed; the old notification backup stayed in the container.
+
+**One isolated iPhone visit.** Health before the visit found iOS 27.2.1/build 24B156,
+the developer image already mounted, CoreDevice answering and media sessions empty.
+No command reported password protected; no mount, unlock or retry occurred. The
+fresh 13:35 baseline differed from older unlock history: lastRun was unlocked at
+04:32:21.698Z and lastTypedUnlockAt/lastUnlockedAt were 04:32:31.358Z. That earlier
+change has an unconfirmed cause and was not attributed to this task. All subsequent
+named-field comparisons used and matched the fresh baseline.
+
+The isolated 8010 server excluded Android, used both data aliases and stream config
+under data/test, disabled the collector and had no enabled schedule/stored passcode.
+The four patches and the 32 Python patch tests passed, with two existing stock-helper
+comparison skips. The temporary build passed and override bytes were restored at once.
+The original sampler read global process arguments; root caught this before display.
+It was replaced by stat-only monitor 36145. During that replacement, only own sampler
+34951 received SIGTERM; Node 34954 and waiting parent 34952 stayed. This was a logger replacement,
+not an unexplained server termination or phone restart.
+
+The sole Screen click was 13:58:10.605Z: one socket, helper PID 39009/startTicks
+1921552765, and one new budget timestamp at 13:58:11.421Z. All 17 observations passed,
+with child exit 0 and no harm, exception, browser error or mutating HTTP request.
+Time was native 44px high; System/Services were visibly reached; Restart used its
+pair layout and own-screen Stop stayed disabled. The 11 outlined controls, modal
+Switch/Actions/Settings and empty modeless Type text kept the same stage/mount/socket/
+navigation through 320/390/1280 widths. No phone input, service action, unlock or
+settings save was sent. Headless Chromium showed No picture: HEVC bytes are not proof
+of a decoded picture, touch aim, native phone keyboard or audible playback.
+
+During two idle minutes, received bytes grew from 6,570,784 to 71,162,988. Phones leave
+was 14:00:25.800Z; the helper was first observed gone at 14:00:41.214Z, 15.414 s later,
+with shutdown complete. Two media reads 30 s apart showed running false/sessions[].
+There was no second iPhone context, failed-start retry, live iPhone visit or unlock.
+Own Node 34954 then received SIGTERM and exited 0; parent/monitor/helper were gone and
+8010 was free. The normal build restored all 24 HOST hashes exactly, public 18/demo
+off/override 7b7d0a. No test server/viewer/helper remained.
+
+**Live health and look-only checks.** Immediate 14:05:37, 90-second 14:06:42 and
+six-minute 14:11:12 snapshots passed: healthy/running/zero restarts, Node uid/gid 1000
+and supplementary group 111, both phones tracked, trusted hosts 200 and unknown Host
+403, unchanged data paths, no serve-web or unrequested unlock. Collector PID 48503
+stayed unchanged across 35 observations, Bluetooth connected/Receiving notifications,
+zero restarts and empty errors. This proves startup/link/status, not actual delivery,
+pairing, muting, push or recovery. Whitelisted unlock fields stayed equal to the fresh
+baseline through the final 14:14:24 audit; absent zone/lockedOutAt/retryAt stayed absent.
+No `ios-settings.json`, key or ciphertext was printed, copied or hashed.
+
+The live Android look used one context: all 20 local predicates passed, two planned
+sockets both closed and zero iPhone sockets. The phone stayed asleep; no Wake, input,
+typing or settings save occurred. Files closed the first stream after 47 ms; Shell
+connected without typing. Screen return after 405 ms reused app_process 6611/scid
+7f0b9c97 within grace. Phones/Back added no extra stream. After the last close at
+14:06:34.772Z, polls bracketed final process stop between 28.823 and 30.819 s; this is
+not an exact shutdown timestamp. The process and wrapper were gone. Existing forwards
+stayed unchanged; newly owned-forward removal was not established on hardware.
+
+Header reflows retained mount/navigation/socket; Actions/Settings docked and Type text
+was empty/modeless. System/Services fitted. Quality's natural outer/inner heights were
+121.1875/119.1875px, with 2px borders and no retained inline height; no preset was
+pressed. Dock motion and picture/rail clearance matched the fixture design. Five
+permitted Android/list pictures were inspected. The initial list Settings capture was
+still Loading settings; later screen Settings had the recorded geometry. Narrow
+headers and lower About were measured without separate screenshots.
+
+Notifications were inspected by structural counts only: one header/toolbar, three
+filters and 18 cards. Setup opened/closed locally with one Apps section and two app
+rows. No content dump/screenshot/read/archive/mute/pair/push/action/save occurred.
+A separate non-phone production Kit visit at 14:08:14.852Z returned the Phones
+fallback with demo absent and zero mount/screen/phone stream/browser error.
+
+**Qualifications and retained failures.** The Android context captured one pageerror:
+sessionStorage Access is denied for this document. Production storage calls catch
+denial; the injected guard reads storage before its document marker, and Back reset
+the document. Root classified an injected-guard/opaque-document cause as likely.
+Exact source/time remain unproven because no stack/time was captured. The look was
+not error-free and was not repeated; no defined rollback trigger was observed.
+
+HOST normal artifacts remain byte-identical across all 24 files, including 18 public.
+Docker has the same 18-file public inventory, with 17 of 18 public files byte-identical
+to HOST. Only
+index.html differs: bundle.js/main.css cache queries are f56c09203ecc23a147b8 on HOST
+and df7c9e4cc4bf0d57b29c in Docker. Root proved those two replacements are the whole
+raw HTML difference; HtmlWebpackPlugin uses hash:true. The reason the compilation
+hash differs across contexts remains unproven. All JS/CSS and the remaining static
+files match.
+The overly broad optional public-identity assertion exited 1 and was retained. No
+normalization, rebuild, phone rerun or blanket Docker 18/24-file byte claim followed.
+
+Temporary, normal and Docker client builds each retained three performance warnings.
+A final combined-channel log audit read 16 stdout and three stderr lines: no selected
+operational/session/unlock errors, with the Files DEP0180 fs.Stats deprecation warning
+at 14:06:34.222963201Z retained. Earlier external package-comparison and readiness-state
+guards stopped before display and were corrected; root's readiness-parser key error
+also predated ACK/phone action. Pre-visit visibility/cleanup/ACK/attempt/result guards
+were corrected before the one visit. Original failures and the sampler replacement
+remain in the deployment evidence. No successful check or phone visit was repeated.
+
+**Documentation-only continuation and limits.** This later writer appended only this
+entry and made no test/build/format/browser/phone/helper/Docker/live/test-server/
+settings/data/key/install/push/redeploy action. Checks already passed at f3; source
+33bc was deployed. The new documentation-only final head and before/after proof are
+in `/tmp/ws-scrcpy-ui-audit-20261113/reports/ui-deploy-notes.md`. All 539 other tracked
+inputs and all 24 HOST normal hashes remain identical; the existing stream-config
+artifact was hashed only. This prose commit needs no tests, deployment or iPhone visit.
+
+Physical Android rotation, USB replug and an owner-operated stream-setting restart
+remain DEFERRED; do not ask again, perform them or mark them passed. No standing
+iPhone unlock permission exists. Real iPhone picture/aim/Wake/unlock, phone input/
+holds/paste/wheel/pinch/drag, audible capture, physical service outcomes, Safari/
+Firefox/native picker/keyboard/notch, large real Files folders, installed app,
+collector recovery/pairing/real delivery/muting/old allow-list/push/action acknowledgment
+remain unverified beyond dated evidence. The exact owner Time gap/browser remains
+unconfirmed/unanswered. Focus-ring, mute-drop, idle-opacity and rail-attachment owner
+choices remain unchanged. Reload every browser tab and reopen the installed app once
+after this deployment.
