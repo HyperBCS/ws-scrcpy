@@ -25,7 +25,7 @@ async function production(browser) {
         const page = await context.newPage();
         let streams = 0;
         await page.routeWebSocket('**', socket => {
-            if (/proxy-adb|stream-coredevice/.test(socket.url())) streams++;
+            if (/proxy-adb|proxy-coredevice|stream-coredevice/.test(socket.url())) streams++;
         });
         for (const suffix of ['#!action=kit', '?kit=1&development=1#!action=kit']) {
             await page.goto(BASE + suffix);
