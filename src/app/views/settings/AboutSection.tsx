@@ -99,8 +99,7 @@ function androidServices(entry: DeviceEntry, name: string, connected: boolean): 
                         signal,
                         () => {
                             const next = entry.tracker.getDescriptorByUdid(descriptor.udid) as
-                                | GoogDeviceDescriptor
-                                | undefined;
+                                GoogDeviceDescriptor | undefined;
                             return (
                                 !!next &&
                                 next !== descriptor &&
@@ -307,9 +306,14 @@ export function AboutSection({ platform, udid, entry, name, opening, screenOpen,
     const ios = entry?.params.type === 'ios' ? (entry.descriptor as ApplDeviceDescriptor) : undefined;
     const model = android
         ? [android['ro.product.manufacturer'], android['ro.product.model']].filter(Boolean).join(' ')
-        : ios?.model === '<NoModel>' ? undefined : ios?.model;
-    const version = android ? android['ro.build.version.release']
-        : ios?.version === '<NoVersion>' ? undefined : ios?.version;
+        : ios?.model === '<NoModel>'
+          ? undefined
+          : ios?.model;
+    const version = android
+        ? android['ro.build.version.release']
+        : ios?.version === '<NoVersion>'
+          ? undefined
+          : ios?.version;
     // The phone as last listed in this opening of the sheet. The list is empty for a moment when
     // its socket drops: the service rows stay, off until the phone is listed again, so the outcome
     // of a command that was out when the socket dropped is still shown under them.

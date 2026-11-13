@@ -99,9 +99,7 @@ export function ServiceRows({ rows, opening, unavailable }: ServiceRowsProps) {
         };
         active.current = action;
         const current = () =>
-            active.current === action &&
-            !action.controller.signal.aborted &&
-            latestOpening.current === action.opening;
+            active.current === action && !action.controller.signal.aborted && latestOpening.current === action.opening;
         const result = row.run(action.controller.signal);
         if (!result) {
             setFeedback(undefined);
