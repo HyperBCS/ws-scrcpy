@@ -1,7 +1,7 @@
 // node scripts/test-browser.js controls      (E2E_OUT=/tmp/ws-scrcpy-controls for screenshots)
 // The controls of a phone's screen, on an Android phone and an iPhone, against socket fixtures:
-//   - one slot map: the same control in the same cell of the panel (390x844) and the same place
-//     in the rail (1280x800), an empty cell where a phone lacks the control, light and dark;
+//   - the same touch grid on both phones (390x844), with empty cells for absent controls;
+//     the mouse rail (1280x800) uses consecutive slots, light and dark;
 //   - what each control sends or opens, found by its icon, not its name;
 //   - a key of the phone is disabled while there is no connection, and only the keys;
 //   - holding Lock sends one down and one up, and a key held when the panel closes or the
@@ -273,7 +273,7 @@ async function slotMap(browser) {
                     found[platform] = await cells(page);
                     const columns = viewport.mobile ? 3 : Number(await page.locator('.floating-toolbar.desktop').getAttribute('data-columns'));
                     const wanted = Object.fromEntries(Object.entries(SLOTS[platform]).map(([name, [row, column]]) => {
-                        const index = (row - 1) * 3 + column - 1;
+                        const index = viewport.mobile ? (row - 1) * 3 + column - 1 : Object.keys(SLOTS[platform]).indexOf(name);
                         return [name, [Math.floor(index / columns) + 1, index % columns + 1]];
                     }));
                     assert.deepEqual(found[platform], wanted, `${label}: each control in its slot`);
@@ -294,16 +294,16 @@ async function slotMap(browser) {
                     await test.context.close();
                 }
             }
-            for (const name of Object.keys(SHARED).concat('Home')) {
-                assert.deepEqual(found.ios[name], found.android[name], `${viewport.name}-${colorScheme}: ${name} has one place on both kinds of phone`);
+            if (viewport.mobile) {
+                for (const name of Object.keys(SHARED).concat('Home')) {
+                    assert.deepEqual(found.ios[name], found.android[name], `${viewport.name}-${colorScheme}: ${name} has one touch cell on both kinds of phone`);
+                }
+                const taken = (cell) => Object.values(found.ios).some((other) => other.join() === cell.join());
+                assert.deepEqual([[1, 1], [1, 3]].filter(taken), [], `${viewport.name}-${colorScheme}: iPhone touch cells of Back and Overview stay empty`);
             }
-            const taken = (cell) => Object.values(found.ios).some((other) => other.join() === cell.join());
-            const columns = viewport.mobile ? 3 : found.ios.Home[1] === 2 ? 2 : 1;
-            const empty = [0, 2].map(index => [Math.floor(index / columns) + 1, index % columns + 1]);
-            assert.deepEqual(empty.filter(taken), [], `${viewport.name}-${colorScheme}: the iPhone leaves the cells of Back and Overview empty`);
         }
     }
-    console.log('PASS one slot map on both kinds of phone, with empty cells, in the panel and the rail, light and dark');
+    console.log('PASS shared touch cells with iPhone blanks and consecutive mouse rail slots, light and dark');
 }
 
 /** While there is no connection the keys of the phone are disabled, and only they. */
