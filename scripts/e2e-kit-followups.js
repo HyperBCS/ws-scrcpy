@@ -29,8 +29,9 @@ async function production(browser) {
         });
         for (const suffix of ['#!action=kit', '?kit=1&development=1#!action=kit']) {
             await page.goto(BASE + suffix);
+            await page.waitForFunction(() => document.querySelector('#devices') || document.querySelector('.kit-page'));
+            assert.equal(await page.locator('.kit-page').count(), 0, 'normal production never renders the demo');
             await page.locator('#devices').waitFor();
-            assert.equal(await page.locator('.kit-page').count(), 0);
             assert.equal(await page.locator('.stream-mount').count(), 0);
         }
         assert.equal(streams, 0, 'a production kit address opens no phone stream');
