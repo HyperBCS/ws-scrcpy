@@ -408,14 +408,14 @@ export function ScheduledUnlock({ udid, entry, opening, name }: ScheduledUnlockP
         !!lastRun &&
         (isUnlockProblem(lastRun.outcome) ||
             (lastRun.outcome === 'needs-manual-unlock' && !!schedule.needsManualUnlock));
-    const timeDescription =
+    const timeFeedback =
         pending === 'time'
             ? 'Saving…'
             : timeDraft !== undefined && timeDraft !== schedule.time
               ? 'Not saved yet. Press Enter or leave the field to save.'
               : timeSaved
-                ? `${zoneLabel} · saved${schedule.nextRunAt ? `, next run ${moment(schedule.nextRunAt)}` : ''}`
-                : zoneLabel;
+                ? `Saved${schedule.nextRunAt ? `, next run ${moment(schedule.nextRunAt)}` : ''}`
+                : undefined;
     const stopKeys = (event: KeyboardEvent) => event.stopPropagation();
 
     return (
@@ -560,7 +560,7 @@ export function ScheduledUnlock({ udid, entry, opening, name }: ScheduledUnlockP
                     disabled={locked || (!schedule.hasPasscode && !schedule.enabled)}
                     onChange={onToggle}
                 />
-                <SheetRow title="Time" description={timeDescription} attributes={{ 'data-unlock-time': '' }}>
+                <SheetRow title="Time" description={zoneLabel} attributes={{ 'data-unlock-time': '' }}>
                     {/* Written with the kit's class: the field is read through its ref. */}
                     <input
                         ref={timeInput}
@@ -591,6 +591,11 @@ export function ScheduledUnlock({ udid, entry, opening, name }: ScheduledUnlockP
                         onKeyUp={stopKeys}
                     />
                 </SheetRow>
+                {timeFeedback && (
+                    <div class="settings-time-feedback">
+                        <SheetStatus>{timeFeedback}</SheetStatus>
+                    </div>
+                )}
                 {browserZone && schedule.timeZone !== browserZone && (
                     <SheetRow
                         title="Time zone"

@@ -1,7 +1,7 @@
 // node scripts/test-browser.js controls      (E2E_OUT=/tmp/ws-scrcpy-controls for screenshots)
 // The controls of a phone's screen, on an Android phone and an iPhone, against socket fixtures:
-//   - one slot map: the same control in the same cell of the panel (390x844) and the same place
-//     in the rail (1280x800), an empty cell where a phone lacks the control, light and dark;
+//   - the same touch grid on both phones (390x844), with empty cells for absent controls;
+//     the mouse rail (1280x800) uses consecutive slots, light and dark;
 //   - what each control sends or opens, found by its icon, not its name;
 //   - a key of the phone is disabled while there is no connection, and only the keys;
 //   - holding Lock sends one down and one up, and a key held when the panel closes or the
@@ -234,20 +234,29 @@ async function sends(browser, platform) {
     console.log(`PASS ${platform}: each control sends and opens what it did before`);
 }
 
-/** Each control's cell: row and column in the panel, or row of the one column in the rail. */
-async function cells(page, mobile) {
-    return page.locator('.control-buttons-list').evaluate((list, mobile) => {
+/** Read actual grid tracks: wrapped captions can grow a row, and rail gaps can require two columns. */
+async function cells(page) {
+    return page.locator('.control-buttons-list').evaluate((list) => {
         const box = list.getBoundingClientRect();
         const buttons = [...list.querySelectorAll(':scope > button')];
-        const height = buttons[0].getBoundingClientRect().height + (parseFloat(getComputedStyle(list).rowGap) || 0);
-        const width = box.width / (mobile ? 3 : 1);
+        const style = getComputedStyle(list);
+        const trackAt = (offset, sizes, gap) => {
+            let edge = 0;
+            for (let i = 0; i < sizes.length; i++) {
+                edge += sizes[i];
+                if (offset < edge) return i + 1;
+                edge += gap;
+            }
+            throw Error('button is outside the rendered grid tracks');
+        };
+        const rows = style.gridTemplateRows.split(' ').map(parseFloat), columns = style.gridTemplateColumns.split(' ').map(parseFloat);
         return Object.fromEntries(buttons.map((button) => {
             const rect = button.getBoundingClientRect();
-            const row = Math.floor((rect.top + rect.height / 2 - box.top) / height) + 1;
-            const column = Math.floor((rect.left + rect.width / 2 - box.left) / width) + 1;
-            return [button.getAttribute('aria-label'), mobile ? [row, column] : [row, 1]];
+            const row = trackAt(rect.top + rect.height / 2 - box.top, rows, parseFloat(style.rowGap));
+            const column = trackAt(rect.left + rect.width / 2 - box.left, columns, parseFloat(style.columnGap));
+            return [button.getAttribute('aria-label'), [row, column]];
         }));
-    }, mobile);
+    });
 }
 
 /** One slot map on both kinds of phone, in the panel and in the rail, light and dark. */
@@ -261,8 +270,12 @@ async function slotMap(browser) {
                 const { page } = test;
                 try {
                     await openPanel(test);
-                    found[platform] = await cells(page, viewport.mobile);
-                    const wanted = Object.fromEntries(Object.entries(SLOTS[platform]).map(([name, [row, column]]) => [name, viewport.mobile ? [row, column] : [(row - 1) * 3 + column, 1]]));
+                    found[platform] = await cells(page);
+                    const columns = viewport.mobile ? 3 : Number(await page.locator('.floating-toolbar.desktop').getAttribute('data-columns'));
+                    const wanted = Object.fromEntries(Object.entries(SLOTS[platform]).map(([name, [row, column]]) => {
+                        const index = viewport.mobile ? (row - 1) * 3 + column - 1 : Object.keys(SLOTS[platform]).indexOf(name);
+                        return [name, [Math.floor(index / columns) + 1, index % columns + 1]];
+                    }));
                     assert.deepEqual(found[platform], wanted, `${label}: each control in its slot`);
                     const group = page.getByRole('group', { name: 'Phone controls', exact: true });
                     assert.equal(await group.count(), 1, `${label}: the controls are one group named Phone controls`);
@@ -281,15 +294,16 @@ async function slotMap(browser) {
                     await test.context.close();
                 }
             }
-            for (const name of Object.keys(SHARED).concat('Home')) {
-                assert.deepEqual(found.ios[name], found.android[name], `${viewport.name}-${colorScheme}: ${name} has one place on both kinds of phone`);
+            if (viewport.mobile) {
+                for (const name of Object.keys(SHARED).concat('Home')) {
+                    assert.deepEqual(found.ios[name], found.android[name], `${viewport.name}-${colorScheme}: ${name} has one touch cell on both kinds of phone`);
+                }
+                const taken = (cell) => Object.values(found.ios).some((other) => other.join() === cell.join());
+                assert.deepEqual([[1, 1], [1, 3]].filter(taken), [], `${viewport.name}-${colorScheme}: iPhone touch cells of Back and Overview stay empty`);
             }
-            const taken = (cell) => Object.values(found.ios).some((other) => other.join() === cell.join());
-            const empty = viewport.mobile ? [[1, 1], [1, 3]] : [[1, 1], [3, 1]];
-            assert.deepEqual(empty.filter(taken), [], `${viewport.name}-${colorScheme}: the iPhone leaves the cells of Back and Overview empty`);
         }
     }
-    console.log('PASS one slot map on both kinds of phone, with empty cells, in the panel and the rail, light and dark');
+    console.log('PASS shared touch cells with iPhone blanks and consecutive mouse rail slots, light and dark');
 }
 
 /** While there is no connection the keys of the phone are disabled, and only they. */
@@ -876,7 +890,8 @@ async function main() {
     }
 }
 
-main().catch((error) => {
+module.exports = { start, openPanel };
+if (require.main === module) main().catch((error) => {
     console.error(error);
     process.exit(1);
 });

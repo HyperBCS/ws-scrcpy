@@ -115,8 +115,7 @@
     width: 100%;
     height: 100%;
     max-height: none;
-    /* No room at the sides: a caption of two words stays on one line in an 88px column. */
-    padding: var(--space-4) 0;
+    padding: var(--space-4);
     border: 1px solid var(--border);
     border-left: 0;
     border-radius: 0 var(--radius-md) var(--radius-md) 0;
@@ -124,14 +123,14 @@
     scrollbar-width: thin;
 }
 
-/* One column without gaps, in the middle of the picture's height, or two columns when the
-   picture is too short for one (`controls/ControlRail.tsx`). A slot a phone has no control for
-   keeps the height of a control. The auto margins centre the list and become 0 when it does not
-   fit, so the rail then scrolls from its first row. */
+/* One column of separated buttons, in the middle of the picture's height, or two columns when the
+   picture is too short for one (`controls/ControlRail.tsx`). Only offered controls take a slot.
+   The auto margins centre the list and become 0 when it does not fit, so the rail then scrolls
+   from its first row. */
 .floating-toolbar.desktop .control-buttons-list.floating {
     grid-template-columns: minmax(0, 1fr);
     grid-auto-rows: minmax(56px, auto);
-    gap: 0;
+    gap: var(--space-4);
     margin: auto 0;
 }
 

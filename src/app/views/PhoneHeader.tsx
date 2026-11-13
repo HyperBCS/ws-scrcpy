@@ -21,6 +21,7 @@ interface PhoneHeaderProps {
 export function PhoneHeader({ name, connection, service, inbox, switchDisabled, keyboard }: PhoneHeaderProps) {
     return (
         <AppBar
+            class={keyboard ? 'phone-header-keyboard' : undefined}
             title={name}
             status={
                 <>

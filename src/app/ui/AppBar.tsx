@@ -6,6 +6,7 @@ import type { ChipTone } from './Chip';
 import '../../style/kit/AppBar.css';
 
 interface AppBarProps {
+    class?: string;
     title: string;
     /** One line under the title: the connection, a service state. */
     status?: ComponentChildren;
@@ -34,9 +35,10 @@ export function AppBar({
     root,
     onTitle,
     titleLabel,
+    class: className,
 }: AppBarProps) {
     return (
-        <header class={`kit-bar ${root ? 'kit-bar-root' : ''}`.trim()}>
+        <header class={`kit-bar ${root ? 'kit-bar-root' : ''} ${className || ''}`.trim()}>
             {!root && (
                 <button
                     type="button"

@@ -78,4 +78,18 @@
 .settings [data-store='server'].kit-row-stack > .kit-row-control > .kit-field-group {
     flex: 1 1 112px;
 }
+/* Keep the native field beside the short zone, with edit feedback using the width below. */
+.settings-time-feedback {
+    padding: 0 var(--space-16) var(--space-8);
+}
+.settings-time-feedback > .kit-status {
+    margin: 0;
+}
+/* Native WebKit time text otherwise sits at the top of the 44px field. Chromium keeps its
+   native segment/picker layout with the same value height. */
+.settings [data-unlock-time] input[type='time']::-webkit-date-and-time-value {
+    min-height: calc(var(--control-height) - var(--space-4));
+    display: inline-flex;
+    align-items: center;
+}
 }
