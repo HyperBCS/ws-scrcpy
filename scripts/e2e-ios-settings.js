@@ -344,6 +344,7 @@ async function timeTypingFlow(browser) {
         const dialog = await openPanel(page);
         const time = dialog.getByLabel('Unlock time');
         const description = dialog.locator('[data-unlock-time] .kit-row-desc');
+        const feedback = dialog.locator('.settings-time-feedback');
         const isFocused = () => time.evaluate((el) => document.activeElement === el);
         assert.equal(await description.textContent(), 'Europe/Berlin');
         // The schedule was saved from another zone: both are named, and nothing changes unasked.
@@ -360,7 +361,8 @@ async function timeTypingFlow(browser) {
         assert.equal(await time.inputValue(), '04:30', 'every digit lands in the field');
         assert.equal(ofType(commands, 'update_unlock_schedule').length, 0, 'typing sends nothing');
         assert.equal(await isFocused(), true, 'the field keeps focus between segments');
-        assert.equal(await description.textContent(), 'Not saved yet. Press Enter or leave the field to save.');
+        assert.equal(await description.textContent(), 'Europe/Berlin', 'the compact row keeps its zone while feedback grows below');
+        assert.equal(await feedback.textContent(), 'Not saved yet. Press Enter or leave the field to save.');
 
         await page.keyboard.press('Enter');
         await dialog.getByText('Saving…', { exact: true }).waitFor();
@@ -369,9 +371,11 @@ async function timeTypingFlow(browser) {
         assert.equal(await isFocused(), true);
         assert.equal(await time.inputValue(), '04:30', 'and it does not jump back to the old time while saving');
         release({ result: JSON.stringify({ ...status, time: '04:30', timeZone: ZONE, nextRunAt: Date.UTC(2026, 10, 11, 9, 30) }) });
-        await page.waitForFunction(() => document.querySelector('[data-unlock-time] .kit-row-desc')?.textContent.includes('· saved'));
-        assert.equal(await description.textContent(), `${ZONE} · saved, next run Wed 11 Nov, 04:30`, 'confirmed in the row, with the next run');
-        assert.equal(await dialog.locator('.kit-status').count(), 0, 'no separate line for a saved time');
+        await page.waitForFunction(() => document.querySelector('.settings-time-feedback')?.textContent.includes('· saved'));
+        assert.equal(await description.textContent(), ZONE, 'the saved zone stays beside the native field');
+        assert.equal(await feedback.textContent(), `${ZONE} · saved, next run Wed 11 Nov, 04:30`, 'full-width feedback keeps the result and next run below the stable field');
+        assert.equal(await feedback.getByRole('status').count(), 1, 'one result announcement, without a duplicate saved line');
+        assert.equal(await dialog.locator('.kit-status').count(), 1, 'only that result line announces the saved time');
 
         // Arrow keys step a segment; leaving the field saves the result once.
         handlers.onCommand = (command) => (command.type === 'update_unlock_schedule' ? { result: JSON.stringify({ ...status, time: command.data.schedule.time, timeZone: ZONE }) } : undefined);
@@ -382,7 +386,7 @@ async function timeTypingFlow(browser) {
         assert.notEqual(stepped, '04:30');
         // Tab alone stops on the field's own picker button; leaving the field is what saves.
         await time.evaluate((el) => el.blur());
-        await page.waitForFunction(() => document.querySelector('[data-unlock-time] .kit-row-desc')?.textContent.includes('· saved'));
+        await page.waitForFunction(() => document.querySelector('.settings-time-feedback')?.textContent.includes('· saved'));
         assert.deepEqual(ofType(commands, 'update_unlock_schedule').map((command) => command.data.schedule.time), ['04:30', stepped]);
         assert.equal(await time.inputValue(), stepped);
 
@@ -1030,7 +1034,7 @@ async function lockoutFlow(browser) {
     console.log('PASS iOS unlock by hand: card, panel, Run now and stream page at 390 and 1280, light and dark; cleared state and waiting for lock');
 }
 
-(async () => {
+async function main() {
     const browser = await chromium.launch({ headless: true });
     try {
         const flows = [panelFlow, timeTypingFlow, narrowFlow, themeFlow, lockoutFlow, streamUnlockFlow, disconnectedFlow, lostRunReplyFlow, streamSheetsFlow, sectionsFlow];
@@ -1038,7 +1042,9 @@ async function lockoutFlow(browser) {
     } finally {
         await browser.close();
     }
-})().catch((error) => {
+}
+module.exports = { start, openPanel, ZONE };
+if (require.main === module) main().catch((error) => {
     console.error(error);
     process.exitCode = 1;
 });
