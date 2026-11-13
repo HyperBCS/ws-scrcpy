@@ -131,8 +131,9 @@ async function lifecycle(browser) {
             assert.equal(await dialog.isVisible(), true, 'Escape cancels the prompt first');
         }
         await dialog.getByRole('button', { name: 'Arm floating prompt', exact: true }).click();
-        await page.getByRole('alertdialog', { name: 'Change floating example?', exact: true }).waitFor();
+        await page.locator('.kit-sheet-above .kit-confirm').filter({ hasText: 'Change floating example?' }).waitFor();
         await ids(page);
+        await page.getByRole('alertdialog', { name: 'Change floating example?', exact: true }).waitFor();
         await page.keyboard.press('Escape');
         assert.equal(await dialog.isVisible(), true, 'a prompt in the separate AboveSheet root cancels before the sheet');
         const before = await page.evaluate(() => history.state.nav.index);
