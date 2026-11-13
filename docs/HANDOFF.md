@@ -4806,3 +4806,274 @@ clipping was found. There is no intended layout/control change.
 
 No hardware result above is claimed. The separate Android hardware/deploy step remains,
 as do p6-docs and the previously assigned follow-ups. No new integration defect is known.
+
+
+### Redesign followups: sheets, lists, phone header and notification service (2026-11-13, tested without a phone)
+
+The three reviewed packages are merged on `redesign`. **NOT DEPLOYED.** No phone,
+adb, real pymobiledevice3, Bluetooth collector, Docker, live server, port 8010,
+unlock, live settings save, dependency install or push was used. The live version
+remains the separately deployed `7f5c52f` / image `531d` recorded by the deploy step.
+This integration does not verify live state again. Worktrees and branches remain
+for the orchestrator to inspect and clean up. p6-docs has not started.
+
+Base: `7f5c52feaf41ca637116824ffc15997181dfac65`. Each exact review head was checked
+against its clean review tree and merged with `--no-ff`, in this order:
+
+| Package | Reviewed head | Merge |
+| --- | --- | --- |
+| Kit | `8920645f8e552b23e17d8d916c0a28d8093e6682` | `81491cf0ac35cff935fd53b00cb1b561631cf59b` |
+| Client | `4623c4961fd4612631aad663db854b0729854bec` | `eb7caddfb4012b2cf9ff073acd6c8b14694f327a` |
+| Notification service | `2a8d3d74dbae1064ae7840d2a0be81164bfdfc1c` | `df0918eed3828912a5a1fe06fd67796ca51512db` |
+
+There were no conflicts or source seam fixes. Registration commit and checked code
+head: `cd820748ea4687763551e1d939695f88208d1c31`. It adds only
+`scripts/test-notification-collector.js` and `scripts/test-notification-routes.js`
+to the existing test command and `kit-followups` to the default browser list.
+Dependencies and every other package field stay unchanged. All 58 reviewed paths
+retain the reviewed bytes, apart from that required default-list addition. The
+commit containing this section changes only HANDOFF after the checked code head;
+its exact final hash and the source/build-input identity check are recorded in
+`/tmp/ws-scrcpy-redesign/briefs/integrate-followups-report.md`.
+
+Evidence below is under
+`/tmp/ws-scrcpy-redesign/logs/integrate-followups-20261113-8so_nwig/`, unless a
+separate path is named. `preflight.json`, `merges.json`, `frozen-source.json`,
+`checked-assets.json` and `post-browser-verification.json` retain exact identities.
+The main checkout began clean except the owner's untracked AGENTS.md. Neither it
+nor .claude was staged, removed or changed.
+
+**Finding status.**
+
+| Finding | Status, reason and evidence |
+| --- | --- |
+| Sheet child boundary | Done. One component boundary adds no DOM wrapper or required prop. Late children, state/useId, retained exit/reopen, multiple sheets, history and focus pass. The original ancestor-only duplicate-ID cause remains UNREPRODUCED. |
+| Confirmation IDs | Done for a reproduced separate-root failure. Exact original ConfirmAction duplicates P0-0/P0-1 through public AboveSheet and can alter the accessible question. Stable module-wide kit-confirm IDs pass. This does not establish the ancestor-only cause. |
+| Docked motion and overlap | Done. Docked entry/exit slides horizontally with existing timings and reduced motion. Centred and bottom motion remain. The stage deliberately contains the dock host; the picture and rail stay clear. No mount or fit change. |
+| Quality preset keys | Done. Only Quality uses manual activation. Arrows/Home/End move focus with zero requests; Enter and Space apply once each, pointer choice applies immediately, and refused selection stays current. The hint explains the keys. Other segmented controls retain native behavior. |
+| AutoHeight initialization and resizing | Done. Layout is natural at rest, measurements include fractional layout size/padding/borders, independent inner changes begin before paint, and reversals retain actual animated height. The final light/dark fixture measures ready outer 121.1875/inner 119.1875/borders 2 with empty inline height. Held observations, 0/16/80 ms replies, parent/child/external/image/font changes, widths and reopen pass. |
+| Production KitPage | Done. Normal builds force the route out, even with a build-option attempt. Its conditional import stays LAST after the ordinary views/adapters. Dedicated demo builds use a runner-owned mkdtemp outside all dist, served only as KIT_BASE. Ordinary BASE serves actual production assets. Production kit addresses fall back to Phones with zero mounts and zero streams, including the actual proxy-coredevice action. |
+| Old controls-position storage | Done. Old-only and both-key browsers keep their remembered/current place. The old key is removed only after a successful current-key write. Blocked write/removal does not break controls; six browser combinations and guarded removeStorage pass. 50% idle opacity is unchanged. |
+| Stale phones and multiple servers | Done. Fresh individual reports survive older expiry while unchanged stale siblings expire at their original 30 s deadline. Full/empty lists, owner/tracker replacement, repeated close/release and queued callbacks stay authoritative. Mixed lists warn only within the affected host. A recovered host regains focus while another is stale, without taking focus moved elsewhere. |
+| Stale switcher and atlas gaps | Done. Disabled rows retain last status/Viewing and say Reconnecting…. Twelve new loading/list-reconnect/switcher-reconnect atlas states cover both widths/themes, preserving one exact mount and socket. |
+| One phone header and dead registry | Done. Screen, Files and Shell share PhoneHeader with prior actions and placement. The screen stage/mount/ref/effects and stream lookup are unchanged. Tool connection stays in its tab strip and tools keep local keyboard targets. Only the unused registry/wrappers/coreDeviceTool and approved unused Tool declarations/interface were removed; ToolEntry/deviceTools navigation remains. |
+| Six hardware-only scripts | Partial by design. Current selectors/capture handling are refreshed and all six pass syntax checks in review. Their bodies were not run on hardware. |
+| C-notifications-9 remainder | Done in fixtures. CollectorProcess owns supervision/framing/writes/backoff; NotificationRoutes owns the same 18 ordered routes; the 32-line schema preserves old bounds/payloads. Service retains domain state. Feed, Storage and PushDelivery stay unchanged. Hardware remains unverified. |
+| Focus-ring and other owner choices | Untouched. Dark focus-ring colour, server mute-drop policy, 50% idle opacity and rail attachment at every mouse width remain the owner's pending choices. No new owner decision is needed here. |
+
+**Visible and behavior changes, one per line.**
+
+- Docked panels slide horizontally on entry and exit.
+- Quality arrows browse; Enter/Space apply, with visible and accessible help.
+- AutoHeight returns to natural layout after motion and avoids the independently reproduced stale gap.
+- Prompts use stable IDs across render roots; their painted style stays the same.
+- Sheet children get one component boundary without another DOM box.
+- Old controls-position keys are removed after a successful migration write, preserving the current place.
+- Production kit addresses return to Phones without a stream.
+- Fresh phone reports survive older stale-list expiry; unchanged stale entries still expire.
+- Reconnect notices sit with the affected host in mixed lists.
+- Focus returns when that host recovers, while respecting focus the owner moved elsewhere.
+- Stale switcher rows retain status and add Reconnecting… while disabled.
+- Screen, Files and Shell use one header with the same controls and status placement.
+- Unused list-tool registration and wrappers are removed.
+- Notification collector ownership prevents old child/retry/write callbacks affecting a successor.
+- Pair continuation rechecks the actual collector generation after the write.
+- Pending pipe errors reject without counting a pipe write as phone acceptance.
+- Owned notification source-phone text says phone; browser receiver-device text and protocol devices remain.
+
+**Prior action inventory.** No prior action was found missing. The unchanged action,
+router, status and capability modules have exact base/hash evidence in
+`action-source-preservation.json`; the changed headers and lists were checked in
+the passing rendered suites. The existing action groups stay at these locations:
+
+| Screen/group | Actions and current location |
+| --- | --- |
+| Phones cards | Open screen, Wake, Files, Shell, per-phone Notifications and Settings remain. Enable and restart, Restart services and Open settings remain in the relevant problem rows. Stale cards keep Settings/notification access and disable unavailable phone actions. |
+| Switcher | Search, current Viewing row, last status and available phone selection remain. Disabled stale rows now explain Reconnecting…. Switch replaces the route; it does not stack another phone visit. |
+| Screen header/tabs | Phones, name, connection/service, keyboard chip, bell/inbox/count and Switch remain. Switch waits for mount. Android keeps Screen/Files/Shell; iPhone keeps Screen. |
+| Files/Shell header/tabs | Phones, name, service, bell and Switch remain in PhoneHeader; connection stays in the tab strip. Tools keep their own keyboard target, client lifetime and tabs. |
+| Stage and controls | Wake, Unlock, Retry, Start again, Phones and Reload stay on state cards. Back/Home/Overview, volume down/mute/up, Lock, Listen, Screenshot, Type text, Actions, Settings and iPhone Siri retain their capability-based rail/touch controls. |
+| Actions | Read phone clipboard, Copy here and fallback remain. Android Paste and iPhone Send to phone/Type text remain. Android Notifications/Quick settings/Collapse; iPhone Rotate/Refresh picture/Restart video/Reconnect; mouse help; Unlock/Lock; iPhone Reboot/Shut down; Open Settings remain in the existing groups. |
+| Settings | Stream quality/advanced/player/stats; Sound capture/source/format/listen/volume; Keyboard capture/UHID/shortcuts; Unlock store/Forget/Replace/Remove/schedule/time zone/Run now; facts and service Start/Stop/Restart/Remount/Refresh/player choices remain in their sections. Only Quality opts into manual keyboard activation. |
+| Type text and Unlock | Text/paste, cursor left/right, Backspace and Enter remain. Android PIN/password/Remember, iPhone server-passcode flow, confirmations and one-tap notice remain. Modeless picture interaction and dialog.kit-sheet[open] keyboard blocking remain. No real unlock ran. |
+| Files | Back/Forward/Up/root/places/path, Refresh, filter, selection, Upload/Cancel, New folder, Download, Rename, Delete, Cut/Copy/Move/Paste/Copy path, Properties, view/sort/hidden items and menus remain. Only the dead static list-entry wrapper changed in its client. |
+| Shell | Terminal, Esc/Tab/Ctrl/arrows, Paste/Copy and text size remain. Only the dead static list-entry wrapper changed in its client. |
+| Inbox | Search/app filter/Clear filters, Inbox/Unread/Archive, source switch, Show older, media/link actions, stacks, expand/read, Open screen, read/unread, Archive/Move to inbox, guarded phone actions, Mute/Undo and next-card focus remain. |
+| Inbox bulk/Setup/push | Mark all read, per-source Archive all/Undo, scoped Clear all on iPhone and confirmations remain. Linking, receiver choices, permissions/repair, mutes/old allow-list, previews, removal/Undo, old delivered links/highlight/read and push cleanup remain. |
+
+**Measured mount/socket contracts in this combined run.** These are Chromium
+fixture results, not physical sessions. The exact assertions remain in the named
+browser scripts; `browser.log` records their passing execution.
+
+| Fixture path | Passing result |
+| --- | --- |
+| Home/mixed-host activity and list Settings | 0 stream sockets. |
+| Production kit fallback | 0 stream mounts and 0 proxy-adb/proxy-coredevice/stream-coredevice sockets. |
+| Navigation/cold/old links, both platforms | 1 socket per requested Screen open; late list arrival and Back/list/overlays add 0. A three-phone navigation scenario has 3 total before and after Back to the list. |
+| Android Screen/Files/Shell | Initial Screen 1; Files closes it once; Shell adds 0; return to Screen 2 total; Shell closes the second; Back to list stays 2. Files and Shell clients stay mounted behind their tabs. D3 holds. |
+| Phone switch replacement | The rendered sequence is Pixel, Pixel2, Pixel, iPhone: one socket for each requested open; Back/Forward add no unintended stream. |
+| Shared header/stale switcher/atlas | Exactly the same connected mount element and 1 Android socket through header and stale-switcher renders/open/drop/close. Home's corresponding four contexts also remain at 1. |
+| Desktop input/layout/controls, both platforms | Same stage and mount, 1 socket through capture, local fields, paste, sheets/docks, Switch and width changes. Picture/rail stay clear of the panel. |
+| Android lifecycle | Open 1; owner Stop 4012 adds 0; Start again 2 total; deliberate 4007 restart 3 total. List Wake 0; watched Wake stays 1 in its own fixture. |
+| iPhone reconnect | Three refused-start attempts then no extra; Retry adds 1. The separate no-picture case has 3 after two deliberate drops and stays 3 through decoder failure/sheets. 4011 stops; 4010 retries; 4009 retains its limit. |
+
+Both client reconnect policies, gesture/input code and stream adapter dependencies
+remain unchanged. No stage key/ref or mount node was moved or re-keyed. The stage's
+intentional dock-host overlap is not picture/rail overlap.
+
+**Notification server boundary.** Only these four paths under src/server/src/common
+changed: notifications/NotificationService.ts, CollectorProcess.ts,
+NotificationRoutes.ts and NotificationSchema.ts. There is no src/common change.
+The actual final server diff matches the root-approved SHA256
+`d7d2b0bbabaf4075ee88efb9580188ffbcb3867977bdeed5ca4a88f3c033593b`.
+The service is a coordinator; all 18 method/path pairs and their order remain.
+The collector retains pending 131072/stderr 16384 bounds, 3 s exponential backoff,
+60 s cap/stable reset and expected-exit policy. Startup-write failure only reports;
+completed idle stdin error is still ignored. Late callbacks and released pending
+writes cannot affect a successor. A pipe write is not phone acceptance. Pairing
+continuations recheck actual generation. Source/session/uid/label/snapshot checks,
+15 s per-action/30 s bulk budgets and accepted/skipped/failed/unprocessed distinctions
+remain. No filtering, push, phone-action, stored-file, settings/key or protocol
+format changed. No new backup or migration is required.
+
+**Checks and proof.** One agent held the exclusive build/Node/browser lease. No
+build or check overlapped another. Both inherited iPhone key env names were removed.
+ATLAS_COMPARE, ATLAS_STYLES, ATLAS_ONLY, KIT_FOLLOWUP_ONLY and KIT_FOLLOWUP_THEME
+were unset. No assertion, timing or UI changed to collect screenshots.
+
+- `npm run check`: exit 0, 74.942 s at cd82074. Typecheck passes; lint 0 errors/26 warnings;
+  Node 813 pass/0 fail/0 cancelled/0 skipped; Python 43 OK, 32 OK with 2 existing skips, 4 OK; normal
+  client/server builds pass. The client retains 3 webpack performance warnings.
+  The two skips compare stock helpers after the installed screen_stream helper
+  was already patched; they are not hardware/platform skips. Log: check.log;
+  machine result: check-result.json. The 813 equals 787 base + 1 KIT + 1 CLIENT + 24 reported
+  new notification cases (22 top-level, including 2 pair subtests).
+- `node scripts/test-browser.js`: all 37 defaults in exact order, one uninterrupted
+  invocation, exit 0, 1764.167 s at cd82074. Log: browser.log; result: browser-result.json.
+  No suite was omitted, restarted or run directly. browser-artifacts.json lists
+  all 37 output directories, 677 files/674 PNGs, plus the 316 raw atlas files separately.
+  The unchanged output-only preload copies only fresh known fixed outputs; actual
+  counts are review-polish 3, tools 8, notification-inbox 4, with before/after manifests.
+- Offline `python3 .../compare-raw-atlas.py .../atlas`: exit 0. It compares untouched
+  raw files only, after browser PASS. No recapture or normalization. atlas-compare.log,
+  raw-atlas-comparison.json, raw-atlas-style-differences.json and atlas-groups.json
+  record all files, hashes, rows and causes.
+- Independent review evidence remains authoritative, not rerun here: KIT 8 intended
+  behavioral negatives with exact restoration; CLIENT 4 public exact-base tracker
+  failures, queued-callback/focus bounds, scope/switcher failures and 3 feature builds
+  with actual rendered paths; NOTIF 22 fresh bounded negatives/0 cancelled plus 2 canonical
+  data-isolation negatives with measured 0 poison accesses and unchanged marker/times.
+  Full worker/review reports remain in /tmp/ws-scrcpy-redesign/briefs/.
+
+The notification review did not run a fresh browser/atlas pass. Its accepted reuse
+verified 272 client/build inputs through the browser-tested Android source chain,
+18 fresh non-HTML files byte-identical to the retained browser-tested worktree, and
+raw HTML differing only in two build-hash queries. It made no main-context 19-file
+identity claim. The combined fresh 37-suite run above now covers the merged client.
+
+Existing assertion changes were bounded: Quality now browses without a request and
+presses Enter before the same restart assertion; Tools counts one visible instruction
+while retained closed dialogs contain two invisible stale labels; the old phone-status
+source guard follows the exact expression into PhoneHeader. Notification private mock
+accesses follow collector/routes owners, three interpreter fixtures use in-memory
+children, and exactly two push-body literals change device to phone. Both data-guard
+lists add only the two new fixtures. No old behavior assertion was removed or relaxed.
+The KIT reviewer corrected its new production observer to include actual proxy-coredevice.
+
+Historical failures remain recorded in the six reports. The worker's ancestor-only ID
+bound passed and remains unproven; its exact separate-root bound fails. Early AutoHeight
+frame/selector/accessible-name test failures and client header-harness/source-guard/focus
+issues were corrected before accepted review results. Integration's check and browser
+run had no failure. A post-check audit initially assumed 19 public files; actual 18 was
+explained from the raw 305-byte removed coreDeviceStreamTool chunk, without rebuilding.
+
+Historical harness incident: the notification worker used Python subprocess.run(timeout=25),
+which automatically SIGKILLed its OWN fake Node runner on a pending-write mutation.
+No phone or collector was involved. The PID was not recorded; the subsequent process
+check found none alive. The first 10 per-case names were overwritten by corrected copies;
+the original timeout traceback remains. Root paused and audited the harnesses. Fresh
+review produced 22 unique negative logs/0 cancelled and 2 instrumented isolation failures with
+no termination. Do not treat overwritten worker logs as untouched originals. This
+integrator's driver has no subprocess timeout, automatic signal or escalation; every
+command ended normally and its owned PIDs were awaited. The existing browser runner's
+SIGTERM suite ceiling was not reached. No KILL fallback was added or used.
+
+**Production/fixture asset boundary.** Premerge 19 normal public files were preserved
+outside the repo. Final combined normal public has 18 files; main-context filenames
+are retained in checked-assets.json. The removed 305-byte 89 lazy chunk contains only
+coreDeviceStreamTool.createEntryForDeviceList, whose reviewed source/registry were
+deleted. The combined production build also excludes KitPage. No demo marker or
+fixture artifact exists in public/dist. Existing unrelated dist/stream-config.json
+was read only for its hash and was not changed. All 24 normal dist hashes and tracked
+source bytes stayed identical through the browser run. The override remains exactly
+three bytes 7b7d0a. Each separate review had 19 public files in its own build context;
+that count is not forced on the combined main build.
+
+The fixture compiler outputs outside all dist before any browser child. Only demo
+cases use KIT_BASE; ordinary suites and atlas use production BASE. Both origins are
+static fixtures without production phone middleware. The temporary fixture was removed
+and no build/browser/test process remained. Accepted independent CSS proof removes
+only 26 demo rules from 611, preserving all 585 ordinary declarations, ancestry and order.
+LAST KitPage import/cascade order remains. The source/build-input identity after the
+HANDOFF-only commit is recorded with both heads in the final report.
+
+**Raw atlas and screenshots.** All 292 baseline hashes were verified against the retained
+Android headSHA256 manifest, and 675d25b→7f changes only HANDOFF. The base was not
+recaptured. New atlas: 158 states/316 files, 41 phone states and 38 desktop states per theme,
+at 390x844 and 1440x900. Raw directory: atlas/. All changed/added/removed filenames and
+SHA256 values remain in raw-atlas-comparison.json and raw-atlas-changed-files.txt.
+
+| Raw group | Count and cause |
+| --- | --- |
+| Added loading | 8 files: list-loading PNG/JSON at both widths/themes; no cards or stream. |
+| Added list reconnect | 8 files: list-reconnecting at both widths/themes; five dimmed last-status cards, disabled phone actions, retained Settings/notifications; no stream. |
+| Added switcher reconnect | 8 files: switcher-reconnecting at both widths/themes; five stale disabled rows/explanations, last chips/Viewing and exact single stream mount retained. |
+| Settings PNGs | 8 changed: android-settings and list-android-settings at both widths/themes, for the longer activation hint and wrapping/row shift. Centred desktop list Settings changes text pixels only. |
+| Settings JSONs | 6 changed: android-settings all 4 contexts, list-android-settings phone light/dark. Exactly settings/section/quality-group/hint hashes change. AutoHeight card hashes are unchanged. |
+| Confirmation JSONs | 8 changed: notifications-confirm and notifications-setup-confirm all 4 contexts. Question/consequence labels gain stable IDs; style hashes/prompt pixels remain identical. |
+| Hidden USB option | 6 changed desktop-light pre-Setup JSONs: notifications-card-actions,confirm,filters,page-actions,search,toast. One inserted option with hash d7aa64a6; every other aligned row matches apart from the overlapping confirm IDs. |
+| Totals | 24 added, 0 removed, 27 changed, 265 shared files byte-identical. The 27 are 8 PNGs/19 JSONs; one confirmation file belongs to two JSON groups. All 138 other shared PNGs match base. |
+
+All 20 changed/added PNGs match the accepted KIT/CLIENT review pictures byte for byte.
+The 8 Settings PNG differences are not proof of 40px gap removal: this exact base already
+has natural Quality height. The exact old outer 161.1875/inner 119.1875/borders 2 gap was
+independently reproduced by bounded original AutoHeight; the fixed final fixture is
+121.1875/119.1875/borders 2, no inline height. Original retained evidence stays intact.
+
+The hidden-option facts are raw insertion/unchanged rows/unchanged pixels. The timing
+explanation is a SOURCE-BACKED INFERENCE: NotificationsView 100–105 derives unlinked
+phones from trackers; 699–714 builds the retained USB selector; 554 keeps hidden Setup;
+Presence retains initial children while hidden and refreshes when shown. Fixture Bench
+is linked, Spare unlinked. HTTP-status/ATRC arrival order can retain placeholder-only
+versus Spare before Setup is shown. All shown Setup captures match. Earlier 6b/Android
+and client-review-proofs/raw-option-difference-context.json document the same variation.
+No capture was normalized or repeated to hide it; no product fix is claimed for timing.
+
+I inspected all 8 changed and 12 added pictures via the five atlas contact sheets, plus
+all 4 multi-host Home screenshots via home-multi-host-contact.png. No clipping or missing
+action was found. Raw changed screens cover both widths/themes. Supplemental natural
+Settings/lifecycle images are in screens/kit-followups; multi-host and stale-switcher
+captures are in screens/home; ordinary stage/rail/dock captures are in screens/desktop-layout.
+The 677 suite artifacts and raw 316 atlas files remain unique to this integration.
+
+**One remaining hardware checklist, separate from this integration.**
+
+1. Follow a separately delegated deploy brief with rollback tag, allowed restart window,
+   one iPhone session at most, no failed-start retry, and named-field/phone health checks.
+   This section authorizes no deploy, unlock, live settings save or phone session.
+2. The owner explicitly DEFERRED physical Android rotation, USB replug and one watched
+   stream-setting restart. Do not ask again, wait for them, save settings yourself or
+   label those three checks passed. Retain the prior first/last-viewer/30 s/Wake/Stop and
+   acknowledged-forward checks for the separately authorized hardware pass.
+3. Real iPhone picture/input aim, lock notice, owner-authorized unlock, Wake, Type text,
+   wheel/pinch, actual keyboard capture/paste and physical reconnect/drag departure remain
+   unverified. Fixture no-HEVC and simulated viewport/rotation results do not prove them.
+4. Verify real collector startup/recovery/BlueZ, pairing, notification receipt, mute/old
+   allow-list behavior, real Web Push/taps and an explicitly authorized phone action with
+   its matching acknowledgment. Fixtures do not prove those hardware/delivery outcomes.
+5. Safari, Firefox, phone keyboard/notch/safe areas, large real Files folders and the installed
+   app remain unverified. The six refreshed hardware script bodies were not executed.
+
+No new integration defect remains. The ancestor-only ID cause is still unproven,
+known hardware limits remain, and the owner's pending choices are unchanged. Nothing
+in this section deploys code or begins p6-docs.
