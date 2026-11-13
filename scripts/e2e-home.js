@@ -925,7 +925,8 @@ async function reconnectingSwitcher(browser, size) {
         test.holdLists = true;
         test.dropList();
         const stale = sheet.locator('.device-switcher-item:not(.current)');
-        await stale.locator('.device-switcher-reconnecting').waitFor();
+        await stale.locator('.phone-row-stale').waitFor();
+        assert.equal(await stale.locator('.device-switcher-reconnecting').count(), 1, 'A stale switcher phone explains that its list is reconnecting');
         assert.equal((await stale.locator('.device-switcher-reconnecting').textContent()).trim(), 'Reconnecting…');
         assert.equal(await stale.isDisabled(), true);
         assert.equal(await stale.locator('.kit-chip').textContent(), 'Asleep', 'The last phone status is retained');
