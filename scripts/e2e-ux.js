@@ -44,7 +44,7 @@ async function main() {
             () =>
                 !document
                     .querySelector('dialog.kit-sheet[open]')
-                    ?.textContent.includes('Loading phone settings'),
+                    ?.textContent.includes('Loading settings…'),
         );
         await screenshot(page, 'phone-settings');
         await noOverflow(page, 'phone settings');
