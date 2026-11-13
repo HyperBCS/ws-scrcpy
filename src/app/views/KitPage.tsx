@@ -18,7 +18,7 @@ import { IconName, ICONS, iconSvg } from '../ui/icons';
 import { InlineStatus } from '../ui/InlineStatus';
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu';
 import { SegmentedControl } from '../ui/SegmentedControl';
-import { Sheet, useSheetDock } from '../ui/Sheet';
+import { AboveSheet, Sheet, useSheetDock } from '../ui/Sheet';
 import {
     SheetGroup,
     SheetMessageRow,
@@ -941,6 +941,7 @@ function SheetLifecycle() {
     const [added, setAdded] = useState(false);
     const [grown, setGrown] = useState(false);
     const action = useArmedAction<'example'>(open);
+    const floating = useArmedAction<'example'>(open);
     return (
         <Section title="Sheet lifecycle">
             <Demo name="retained children">
@@ -977,6 +978,9 @@ function SheetLifecycle() {
                         <AutoHeight className="kit-card kit-list lifecycle-font-height">
                             <div class="lifecycle-font">Resizing text</div>
                         </AutoHeight>
+                        <Button onClick={(event) => floating.arm('example', event.currentTarget)}>
+                            Arm floating prompt
+                        </Button>
                         <Button onClick={(event) => action.arm('example', event.currentTarget)}>
                             Arm lifecycle prompt
                         </Button>
@@ -991,6 +995,17 @@ function SheetLifecycle() {
                         )}
                     </div>
                 </Sheet>
+                <AboveSheet>
+                    {floating.armed && (
+                        <ConfirmPrompt
+                            action={floating}
+                            question="Change floating example?"
+                            consequence="This prompt has its own render root."
+                            confirmLabel="Change"
+                            onConfirm={() => {}}
+                        />
+                    )}
+                </AboveSheet>
                 <Sheet open={false} onClose={() => {}} title="Retained neighbour">
                     <TextField label="Neighbour child" />
                 </Sheet>

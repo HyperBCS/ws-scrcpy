@@ -130,6 +130,11 @@ async function lifecycle(browser) {
             await page.keyboard.press('Escape');
             assert.equal(await dialog.isVisible(), true, 'Escape cancels the prompt first');
         }
+        await dialog.getByRole('button', { name: 'Arm floating prompt', exact: true }).click();
+        await page.getByRole('alertdialog', { name: 'Change floating example?', exact: true }).waitFor();
+        await ids(page);
+        await page.keyboard.press('Escape');
+        assert.equal(await dialog.isVisible(), true, 'a prompt in the separate AboveSheet root cancels before the sheet');
         const before = await page.evaluate(() => history.state.nav.index);
         await dialog.getByRole('button', { name: 'Close Lifecycle', exact: true }).click();
         // Reverse an exit without remounting the child.
@@ -198,7 +203,8 @@ async function natural(card) {
     return size;
 }
 async function settings(browser) {
-    for (const colorScheme of ['light', 'dark']) {
+    for (const colorScheme of (process.env.KIT_FOLLOWUP_THEME ? [process.env.KIT_FOLLOWUP_THEME] : ['light', 'dark'])) {
+        assert(['light', 'dark'].includes(colorScheme), 'known fixture theme');
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme, reducedMotion: colorScheme === 'dark' ? 'reduce' : 'no-preference', serviceWorkers: 'block' });
         try {
             await context.addInitScript(() => {
