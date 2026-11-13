@@ -5212,3 +5212,68 @@ unverified beyond startup/status. Refreshed hardware-only script bodies were not
 The focus-ring, mute-drop, idle-opacity and rail-width owner choices remain unchanged.
 The owner should reload browser tabs and reopen the installed app once after the recorded
 implementation deployment; this documentation step creates no new reload/restart need.
+
+
+### UI consistency and About integration (2026-11-13, fixtures only)
+
+The owner asked for compact Scheduled unlock Time, outlined phone controls, consistent
+icon/caption spacing, and a pass over About and troubleshooting. The exact large Time
+gap on the owner's browser remains unconfirmed; the optional browser question is
+unanswered. Physical Android rotation, USB replug and an owner-operated stream-setting
+restart remain DEFERRED. This step authorizes no hardware action or deployment.
+
+The separate UI reviewer accepted `9ff2f908e657d6b8af4fa2bbf5a167f230ecf2a4` from
+base `6adf768fe0a5716e7b67bedf4eb9dd0804cd2479`. The separate About reviewer accepted
+its descendant `0ce4a7b3d63e62380f467a0fdefd4f1081f0441e`. Main merged those exact
+heads with --no-ff, UI first, at `be1cbff2a863a8ba60fe34be1ef1cd64bf38037b` and
+`29b2181e959be2afa4c800a1dbd9999e55934112`, with no conflicts or source seam fix.
+Only the reviewed UI/test paths changed. No server, common, configuration, build,
+public source, tokens, dependency or lockfile changed. The integrator registered the
+six new tracker-command unit tests and ui-consistency/about-ui immediately before
+atlas in the existing browser defaults. Fresh main checks and raw atlas review are
+pending; their observed results will follow in this dated section.
+
+Phone action tiles use outlined kit surfaces, aligned icons/captions and separated
+mouse rail rows. Mouse rails compact absent slots and choose columns from intrinsic
+caption height and one-column picture geometry, independent of width history. Touch
+keeps its three-column grid, centered Home, iPhone Back/Overview blanks and Siri last.
+Narrow fine-pointer headers put keyboard capture on a second row without replacing
+the stream mount. Scheduled unlock keeps the native 44px Time field and zone beside
+it, with full-width draft/saving/saved feedback below and one saved-zone label. Native
+Linux headless WebKit text is centered. Long notification text wraps; source names
+stay bounded; fine-pointer cards below 600px use the existing menu.
+
+About shows keyed Android Start/Stop and iPhone Stop refusals. Its additive observer
+quietly expires at 30 seconds, separate from the unchanged eight-second Starting
+fallback; matching descriptor completion wins over late replies. Android requires no
+success acknowledgment. Old actions/openings/other phones cannot alter a new action.
+iPhone Stop acknowledgment makes no claim of completed physical shutdown and Stop
+stays off on its own screen. Exact initial <NoModel>/<NoVersion> read Unknown; known
+metadata stays while offline, stale or unauthorized. System values wrap with readable
+labels. Only Restart services uses the narrow/docked pair layout; centered desktop
+stays inline. Busy active buttons retain native focus and reject repeats, with peers
+disabled. Refresh still grows by 24px while busy and a dock row can grow naturally from
+56 to 73.375px. Shared session problems appear beside Stream service. Commands,
+payloads, counts, confirmations, schedule/timezone/save semantics, input hold/release,
+launcher storage/drag/snap, keyboard gate and both reconnect policies remain intact.
+
+Earlier evidence remains separate. The UI worker's optional Kit/Notifications run
+ended at status 143 with UNKNOWN cause and missing initial PID evidence. The first UI
+review full38 printed all suites but lost supervisor/result/session evidence after a
+monitoring gap; cause UNKNOWN, with 341 observed records later absent. Neither is a
+passed mandatory check. The replacement full38 completed independently. The About
+worker fixed its initial prefer-const lint errors, then corrected a test's native
+versus ARIA disabled assertion after its first partial browser run; the V3 run passed.
+The About review's external parser typo changed evidence parsing only. Historical
+WebKit ran at HEAD31a with saved work later4cc, not at HEAD4cc; fresh main WebKit is
+required for current source. Accepted reports and raw evidence remain under
+/tmp/ws-scrcpy-ui-audit-20261113/; integration evidence is in its integration/ directory.
+
+No live state was rechecked here. The last confirmed live implementation remains
+`3b15a40`, image `cd5ba7160f56f2903057d1cd2289502de6dfda1cf26b899868fea634dc934ff6`,
+deployed at 03:59:56.7329781Z on 2026-11-13, as recorded above. This UI work is local
+and NOT DEPLOYED. Owner choices on dark focus ring, mute-drop, 50% idle opacity and
+mouse rail attachment remain unchanged. Safari, Firefox, installed app, native phone
+keyboard, real input/audio/delivery and actual physical service outcomes remain
+unverified. The final results entry will retain one hardware checklist and exact
+checked/final heads without repeating passed checks solely for prose.

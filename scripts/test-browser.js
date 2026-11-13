@@ -12,7 +12,7 @@ async function main() {
     app.get('/api/files/download', (req, res) => res.attachment(path.posix.basename(String(req.query.path))).send(Buffer.from(`fixture download ${req.query.udid} ${req.query.path}`)));
     const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
     const suites = process.argv.slice(2);
-    const defaults = ['review-polish', 'notifications', 'motion', 'settings', 'sheets', 'switcher', 'unlock', 'tools', 'files', 'files-flows', 'files-kit', 'ios-typing', 'ios-settings', 'ios-reconnect', 'ios-input', 'audio-availability', 'confirm', 'sheet-chrome', 'home', 'android-stream', 'android-lifecycle', 'web-security', 'navigation', 'overlay-back', 'device-page', 'history-walk', 'kit', 'kit-sheet', 'kit-followups', 'phone-status', 'actions-sheet', 'controls', 'desktop-layout', 'screen-states', 'desktop-input', 'notification-inbox', 'atlas'];
+    const defaults = ['review-polish', 'notifications', 'motion', 'settings', 'sheets', 'switcher', 'unlock', 'tools', 'files', 'files-flows', 'files-kit', 'ios-typing', 'ios-settings', 'ios-reconnect', 'ios-input', 'audio-availability', 'confirm', 'sheet-chrome', 'home', 'android-stream', 'android-lifecycle', 'web-security', 'navigation', 'overlay-back', 'device-page', 'history-walk', 'kit', 'kit-sheet', 'kit-followups', 'phone-status', 'actions-sheet', 'controls', 'desktop-layout', 'screen-states', 'desktop-input', 'notification-inbox', 'ui-consistency', 'about-ui', 'atlas'];
     let kitServer;
     let kitAssets;
     try {
