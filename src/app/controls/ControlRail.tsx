@@ -34,7 +34,17 @@ export function ControlRail({ controls }: { controls: PhoneControls }) {
         const wanted = () => {
             const style = getComputedStyle(panel);
             const room = panel.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-            return room >= slots * SLOT_HEIGHT ? 1 : 2;
+            const list = panel.querySelector<HTMLElement>('.control-buttons-list');
+            const gap = list ? parseFloat(getComputedStyle(list).rowGap) : 0;
+            // Wrapped captions can grow a slot. Include them even in a two-column rail when
+            // deciding whether the same slots could fit in one column.
+            const extra = list
+                ? Array.from(list.children).reduce(
+                      (sum, button) => sum + Math.max(0, button.getBoundingClientRect().height - SLOT_HEIGHT),
+                      0,
+                  )
+                : 0;
+            return room >= slots * SLOT_HEIGHT + Math.max(0, slots - 1) * gap + extra ? 1 : 2;
         };
         setColumns(wanted());
         let frame = 0;
@@ -45,6 +55,9 @@ export function ControlRail({ controls }: { controls: PhoneControls }) {
             frame = requestAnimationFrame(() => setColumns(wanted()));
         });
         resize.observe(panel);
+        if (panel.firstElementChild) {
+            resize.observe(panel.firstElementChild);
+        }
         return () => {
             cancelAnimationFrame(frame);
             resize.disconnect();

@@ -63,7 +63,7 @@ export function ControlButton({ definition, action, held, style }: ControlButton
     return (
         <button
             type="button"
-            class={`${iconButtonClass({ variant: 'bare' })} control-button kit-icon-button-captioned`}
+            class={`${iconButtonClass()} control-button kit-icon-button-captioned`}
             title={label}
             aria-label={label}
             aria-description={listen ? listen.description : definition.description}

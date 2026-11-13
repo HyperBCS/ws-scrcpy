@@ -196,7 +196,7 @@ function IconButtons() {
                         <button
                             key={title}
                             type="button"
-                            class={`${iconButtonClass({ variant: 'bare' })} kit-icon-button-captioned`}
+                            class={`${iconButtonClass()} kit-icon-button-captioned`}
                             aria-label={title}
                             title={title}
                             aria-pressed={pressed}
