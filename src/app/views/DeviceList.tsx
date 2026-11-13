@@ -60,6 +60,9 @@ function cardControl(target: EventTarget | null): CardControl | undefined {
     return control && key ? { key, control: controlName(control) } : undefined;
 }
 
+// The key is `<tracker id>:<serial>`. The id has no colon; a serial can (`host:port`).
+const serialOf = (value = '') => value.slice(value.indexOf(':') + 1);
+
 /**
  * Focuses that control again, or the first control of its card that can take focus. A server
  * that restarted lists its phones under a new tracker id, so the card is found by its key, else
@@ -67,8 +70,6 @@ function cardControl(target: EventTarget | null): CardControl | undefined {
  */
 function focusCardControl(root: HTMLElement, { key, control }: CardControl): void {
     const cards = Array.from(root.querySelectorAll<HTMLElement>('article.device'));
-    // The key is `<tracker id>:<serial>`. The id has no colon; a serial can (`host:port`).
-    const serialOf = (value = '') => value.slice(value.indexOf(':') + 1);
     const card =
         cards.find((item) => item.dataset.deviceKey === key) ??
         cards.find((item) => serialOf(item.dataset.deviceKey) === serialOf(key));
@@ -97,7 +98,8 @@ export function DeviceList() {
         }
     }, []);
 
-    const entries = Array.from(devices.value.values());
+    const reports = devices.value;
+    const entries = Array.from(reports.values());
     const state = listState(entries, listReceived.value, hostsStatus.value);
     const stale = state === 'stale';
     const available = entries.filter(isDeviceAvailable).length;
@@ -120,19 +122,31 @@ export function DeviceList() {
     // drop stays where it is.
     const staleFocus = useRef<CardControl>();
     const wasStale = useRef(false);
-    if (stale && !wasStale.current) {
-        staleFocus.current = cardControl(document.activeElement);
+    if (stale) {
+        const focused = cardControl(document.activeElement);
+        if (focused) {
+            staleFocus.current = focused;
+        }
     }
     wasStale.current = stale;
     useEffect(() => {
-        if (stale) {
+        const pending = staleFocus.current;
+        const report =
+            pending &&
+            (entries.find((entry) => entry.key === pending.key) ??
+                entries.find((entry) => serialOf(entry.key) === serialOf(pending.key)));
+        // One server can return while another is still stale. Restore a card as soon as its
+        // own report is live; the rest of the page's reconnect state must not hold its focus.
+        if (stale && (!report || report.stale)) {
             return;
         }
-        if (staleFocus.current && scroller.current && focusLost()) {
-            focusCardControl(scroller.current, staleFocus.current);
+        if (pending && scroller.current && focusLost()) {
+            focusCardControl(scroller.current, pending);
         }
-        staleFocus.current = undefined;
-    }, [stale]);
+        if (!stale) {
+            staleFocus.current = undefined;
+        }
+    }, [stale, reports]);
 
     // A plain press on a link of a card leaves the list for that page.
     const onClickCapture = (event: MouseEvent) => {

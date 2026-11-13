@@ -886,6 +886,27 @@ async function reconnectingOneServer(browser, size) {
         const after = await local.boundingBox();
         assert.equal(after.width, localBox.width, 'The card grid keeps its even widths');
         await page.screenshot({ path: path.join(OUT, `one-server-reconnecting-${size.width}-${size.colorScheme}.png`), fullPage: true });
+        // A second host can drop and recover while the first is still stale. Its card must
+        // regain focus as soon as it is live, without waiting for the other host to return.
+        test.holdLists = true;
+        test.dropList();
+        await local.locator('.phone-row-stale').waitFor();
+        test.releaseLists();
+        await local.getByRole('link', { name: 'Open screen', exact: true }).waitFor();
+        assert.equal(await localOpen.evaluate((node) => node === document.activeElement), true, 'A recovered host regains focus while another host remains stale');
+        assert.equal(await remote.locator('.phone-row-stale').count(), 1);
+        test.holdRemote = false;
+        test.remoteSend('devicelist', { list: [android('HOME-REMOTE', 'Remote phone')] });
+        await remote.locator('.phone-row-stale').waitFor({ state: 'detached' });
+        assert.equal(await localOpen.evaluate((node) => node === document.activeElement), true, 'Another host recovering never steals healthy-card focus');
+        test.holdRemote = true;
+        test.remoteSocket.close({ code: 1006, reason: 'Focus moved outside the cards' });
+        await remote.locator('.phone-row-stale').waitFor();
+        const reload = page.locator(HEADER).getByRole('button', { name: 'Reload', exact: true });
+        await reload.focus();
+        test.holdRemote = false;
+        await remote.locator('.phone-row-stale').waitFor({ state: 'detached' });
+        assert.equal(await reload.evaluate((node) => node === document.activeElement), true, 'A recovering host never steals focus the user moved outside the cards');
         assert.equal(test.streams, 0);
         assert.deepEqual(test.errors, []);
     } finally { await test.context.close(); }

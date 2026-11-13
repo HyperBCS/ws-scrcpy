@@ -124,6 +124,24 @@ try {
     restarted.destroy();
     timers.clear();
 
+    // A first connection can fail before it has listed anything. A later empty list is still
+    // authoritative, even if the cancelled expiry callback was already queued for execution.
+    const empty = new TestTracker(params, 'ws://localhost:8000/?action=empty');
+    empty.onSocketClose({ reason: 'No first list' });
+    assert.deepEqual([listed(), listReceived.value], [[], false]);
+    const [, noListLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    empty.onSocketMessage(listMessage('empty-list'));
+    noListLimit();
+    assert.deepEqual([listed(), listReceived.value], [[], true], 'A queued startup expiry cannot invalidate an empty full list');
+    empty.onSocketMessage(listMessage('empty-list', 'previous-phone'));
+    empty.onSocketClose({ reason: 'Before empty replacement' });
+    const [, replacedLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    empty.onSocketMessage(listMessage('empty-list'));
+    replacedLimit();
+    assert.deepEqual([listed(), listReceived.value], [[], true], 'A queued stale expiry cannot invalidate an authoritative empty replacement');
+    empty.destroy();
+    timers.clear();
+
     // An individual update ends only that phone's stale generation. Its siblings retain their
     // original deadline, even when the tracker closes again before the first deadline fires.
     const partial = new TestTracker(params, 'ws://localhost:8000/?action=partial');
@@ -174,6 +192,19 @@ try {
     assert.equal(devices.value.size, 1, 'Destroying a duplicate URL must preserve the surviving tracker cards');
     survivor.destroy();
     assert.equal(devices.value.size, 0);
+
+    const oldOwner = new TestTracker(params, 'ws://localhost:8000/?action=old-owner');
+    oldOwner.onSocketMessage(listMessage('shared-id', 'replaced-phone'));
+    oldOwner.onSocketClose({ reason: 'Owner replacement' });
+    const [, oldOwnerLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    const newOwner = new TestTracker(params, 'ws://localhost:8000/?action=new-owner');
+    newOwner.onSocketMessage(listMessage('shared-id', 'replaced-phone'));
+    oldOwnerLimit();
+    oldOwner.destroy();
+    assert.equal(findDeviceByUdid('replaced-phone')?.tracker, newOwner, 'An old owner expiry and release preserve the replacement owner');
+    assert.equal(listReceived.value, true);
+    newOwner.destroy();
+    timers.clear();
 
     // A server that tracks no phones sends no list: the Phones list is empty, not loading.
     assert.equal(listReceived.value, false);

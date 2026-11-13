@@ -144,8 +144,9 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         if (stale.size || this.staleTimers.size === 0) {
             const trackerId = this.id;
             const timer = setTimeout(() => {
-                this.staleTimers.delete(timer);
-                if (!this.destroyed) {
+                // A full list may cancel an interval after its callback was already queued.
+                // In particular, an authoritative empty list must still count as received.
+                if (this.staleTimers.delete(timer) && !this.destroyed) {
                     expireTrackerDevices(trackerId, this, stale);
                 }
             }, STALE_LIST_LIMIT_MS);
