@@ -237,16 +237,21 @@ async function settings(browser) {
             const errors = [];
             page.on('pageerror', error => errors.push(error.message));
             let answer;
+            let instant = false;
             let updates = 0;
             await fixture(page, {
-                onEncoders: (command, reply) => { answer = () => reply({ id: command.id, type: command.type, data: { udid: UDID, encoders: [], config } }); },
+                onEncoders: (command, reply) => {
+                    answer = () => reply({ id: command.id, type: command.type, data: { udid: UDID, encoders: [], config } });
+                    if (instant) answer();
+                },
                 onApply: (command, reply) => { updates++; reply({ id: command.id, type: command.type, data: { udid: UDID, error: 'fixture refused' } }); },
             });
             await page.goto(BASE);
-            const open = async () => {
+            const open = async (waitForLoading = true) => {
                 await page.locator(`[data-device-key$=":${UDID}"]`).first().getByRole('button', { name: /Settings/ }).click();
                 const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
-                await dialog.getByText('Loading settings…', { exact: true }).waitFor();
+                await dialog.waitFor();
+                if (waitForLoading) await dialog.getByText('Loading settings…', { exact: true }).waitFor();
                 return dialog;
             };
             let dialog = await open();
@@ -290,12 +295,22 @@ async function settings(browser) {
             for (const delay of [0, 16, 80]) {
                 await page.keyboard.press('Escape');
                 await dialog.waitFor({ state: 'hidden' });
-                dialog = await open();
-                if (delay) await page.waitForTimeout(delay);
-                answer();
+                instant = delay === 0;
+                if (instant) await page.evaluate(() => { window.__holdHeights = true; });
+                dialog = await open(!instant);
+                if (!instant) {
+                    await page.waitForTimeout(delay);
+                    answer();
+                }
+                await page.waitForFunction(() => document.querySelector('dialog[open] input[value="Balanced"]')?.checked);
                 await dialog.getByText('Loading settings…', { exact: true }).waitFor({ state: 'hidden' });
                 await settleMotion(page);
                 await natural(dialog.locator('.settings-quality .auto-height'));
+                if (instant) {
+                    await page.evaluate(() => window.__releaseHeights());
+                    await settleMotion(page);
+                    await natural(dialog.locator('.settings-quality .auto-height'));
+                }
             }
             assert.deepEqual(errors, [], 'no runtime or ResizeObserver loop errors');
             console.log(`PASS ${colorScheme} loading/ready, held observer, widths/reopens and explicit presets`);
