@@ -5562,3 +5562,32 @@ remain unverified beyond dated evidence. The exact owner Time gap/browser remain
 unconfirmed/unanswered. Focus-ring, mute-drop, idle-opacity and rail-attachment owner
 choices remain unchanged. Reload every browser tab and reopen the installed app once
 after this deployment.
+
+
+### About Phone fact alignment correction (2026-11-13, fixtures only)
+
+The owner pointed out a missed inconsistency after the previous About pass: Model and
+Serial still appeared under their labels while other Phone facts used right-aligned
+values. All Phone facts now use the same kit value element, with whole labels on the
+left and selectable, complete values wrapping in the right lane. Only AboutSection,
+the scoped About fact CSS and the existing about-ui suite changed. Services keep
+their control/description layout and all command, focus, confirmation and stream rules.
+No shared kit, token, breakpoint, arbitrary size, server or configuration changed.
+
+Root accepted the fresh review at `145df66acdc66e5f3c1a73ae88ef2c59fbb46574` from base
+`b1a25757812efe2f7dadb3af560f494614b19cab`. Main merged it with --no-ff at `b5a69ff4865463a73f148aa18bd33deace4e982f`,
+without conflicts, seam fixes or test registration. The new geometry checks cover
+all fact lanes, reading size, full content, selection, clipping and ordinary compact
+rows. Primary 440x956 is included for both themes/platforms, with 320/390, 956x440
+landscape, centered desktop and dock retained. The independent base-product negative
+failed Model's real lane geometry, not a missing selector; separate fixture controls
+proved clipping and whole-label assertions. Focused review and all four About flows
+passed; fresh main npm check/default39 and raw atlas results are pending below.
+
+This correction is not deployed by this integration. Last confirmed live remains
+source `33bc04f`, image `8086`, from the separate deployment above. A 440px Chromium
+fixture is not a real iPhone 17 Pro Max or Safari result. Physical Android rotation,
+USB replug and owner-operated stream-setting restart remain DEFERRED; do not ask,
+perform or mark them passed. Real browser/phone selection handles, Safari/Firefox,
+installed app, keyboard/notch/safe areas and physical input/service behavior remain
+unverified. Pending focus-ring/mute-drop/idle-opacity/rail-attachment choices stay.
