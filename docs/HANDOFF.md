@@ -5633,3 +5633,66 @@ USB replug and owner-operated stream-setting restart remain DEFERRED; do not ask
 perform or mark them passed. Real browser/phone selection handles, Safari/Firefox,
 installed app, keyboard/notch/safe areas and physical input/service behavior remain
 unverified. Pending focus-ring/mute-drop/idle-opacity/rail-attachment choices stay.
+
+
+### About Phone fact alignment deployment (2026-11-13)
+
+The separate deployment role deployed source `6915c36d7452eab1c22d14282a45ee64097937a7`,
+checked at `c109f773c052be78b4ae32403c4ebf48e4cbba7d`. All Phone facts, including
+Model and Serial, now share label-left/value-right lanes; long values wrap fully.
+The failed first default39 and reviewed two-selector adaptation remain recorded
+above. This later documentation role did not repeat checks or deploy anything.
+
+Image `sha256:73504e796884545aafc9af5d454ee72cb80c18663e94a72f84f012c5df8b4afd`
+started at `2026-11-13T18:05:10.566183867Z`. The rollback tag
+`ws-scrcpy:before-about-facts-20261113` was created and verified FIRST at prior
+image `8086`. Immediate, 90-second and six-minute checks passed: healthy, zero
+restarts, UID1000/group111, both phones, trusted Hosts200/unknown403. Collector
+53394 stayed stable and receiving; named unlock fields stayed unchanged. No
+rollback was needed. Root accepted the final report and cleanup proof.
+
+Exactly one isolated test-server iPhone visit passed all nine required results.
+It used one helper/socket/new timestamp, retained two-minute byte growth, left by
+Phones, closed its context and waited for helper shutdown. Two post-close media
+reads were empty at least 30 seconds apart. Headless “No picture” was expected;
+decoded video was not proved. Own Node received SIGTERM and exited 0; its parent/
+supervisor exited, port 8010 was free and all normal artifacts were restored
+before Docker. No extra visit, retry, unlock, input or settings save occurred.
+
+One live Android look-only context passed ten results. Both list-card Phone facts
+and Android screen facts passed primary 440px portrait, both themes, landscape
+and desktop captures. Two planned Android sockets reused the same grace process;
+Files and Shell were visited without typing. Phones then Back added no stream;
+final grace cleanup completed. No Wake/input/settings save or browser/guard error
+was captured. The optional separate live Kit context was omitted.
+
+Preparation had a retained failure: the first temporary-server supervisor used
+the Node log filename and exited 1 before Node Popen. A premature metadata probe
+was refused; a readiness launcher also hit a label guard. No helper/stream/attempt
+claim existed. Reviewed naming and external harness safety fixes used the actual
+server8010 phase and verified PID/monitor/HTTP before later probes. Offline smoke
+checks passed. Root's first ACK writer had a parse typo before any write; its
+correction caused no helper change or extra phone attempt. Raw ledgers remain.
+
+All 17 non-HTML public files match approved HOST bytes, including JS/CSS. Only
+index.html differs: exactly two cache-query values changed from HOST
+`ca03f508578ed78cbc52` to Docker `986071cece29fd2d2bdb`; all other bytes match.
+Root retained the complete raw-difference proof. HtmlWebpackPlugin uses hash:true;
+the underlying compilation-hash cause remains unproven. There is no blanket
+18/24-file cross-context identity claim. Builds retained three performance warnings;
+final runtime logs retained one DEP0180 fs.Stats warning during Android Files.
+
+Final deployment audit passed; all 360 recorded host identities were absent and
+named fields unchanged. Accepted deployment evidence is
+`/tmp/ws-scrcpy-about-facts-20261113/deploy-report.md`, with raw evidence in its
+linked run directory. This HANDOFF-only continuation preserved all 539 other
+tracked inputs, all 24 normal HOST hashes (18 public), exact override and owner
+AGENTS/.claude. stream-config was hash-only; no ios-settings.json, key or ciphertext
+was printed/copied/hashed. Exact deployed versus new docs-only heads and proofs
+are under `/tmp/ws-scrcpy-about-facts-20261113/deploy-notes/`.
+
+CSS 440x956 is not real iPhone 17 Pro Max or Safari validation. Real Safari/Firefox/
+PWA, decoded HEVC, native phone input/audio and actual notification delivery remain
+unverified. Physical Android rotation, USB replug and owner stream-setting restart
+remain DEFERRED. Owner focus-ring/mute-drop/idle-opacity/rail choices are unchanged.
+Reload each browser tab and reopen the installed app once after this deployment.
