@@ -118,7 +118,7 @@ assets in runner-owned temporary directories, outside dist. Normal requests to
 
 ---
 
-## 3. scrcpy 4.1 protocol — hard-won details
+## 3. scrcpy 4.1 protocol
 
 The vendored jar is **scrcpy v4.1** (`vendor/Genymobile/scrcpy/scrcpy-server.jar`,
 `SERVER_VERSION = '4.1'`). Upgrading from 3.1 required two breaking changes. If you ever bump the
@@ -174,10 +174,9 @@ boundary in the MSE adapter. This is a decoder framing issue, not evidence the d
 4.x:  CONFIG = bit 62,  KEY_FRAME = bit 61
 ```
 
-**This one is nasty.** With only the header fixed, framing parses perfectly and everything looks
-healthy — but the config packet (SPS/PPS) is never recognised, `lastConfigframe` stays null, newly
-attached clients are never primed, and **every decoder shows a black screen with no error**. Source
-of truth: `app/src/demuxer.c` in the scrcpy repo.
+Fixing only the header leaves config packets (SPS/PPS) unrecognised. `lastConfigframe` stays
+null, so newly attached clients receive no decoder configuration and show a black screen
+without an error. Verify the flag positions against `app/src/demuxer.c` in the scrcpy repo.
 
 ### Control messages (client → device)
 

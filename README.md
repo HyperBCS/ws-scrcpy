@@ -212,7 +212,7 @@ identifies whether it is one of those phones, to avoid sending its own alerts ba
 **Enable on this device** requests permission; **Send test notification** tests delivery.
 Existing receiver choices and source settings apply as changed, with no Save changes bar.
 
-**Settings for <phone> > Apps** is a mute list. An older allow-list stays active as
+**Settings for … > Apps** is a mute list. An older allow-list stays active as
 **Only these apps** until cleared. **Mute this app** on a card and Undo use the same
 source settings. New muted-app notifications are dropped by the server and are not
 stored or pushed; older history stays. Undo cannot recover events dropped meanwhile.
