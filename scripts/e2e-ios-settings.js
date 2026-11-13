@@ -42,7 +42,7 @@ const android = {
 
 // `refusal` makes the stream socket answer every start with that error and close with that code,
 // the way the server does for a phone it cannot start a session on.
-async function start(browser, { width = 390, height = 844, mobile = true, colorScheme = 'light', status = BASE_STATUS, device = {}, stream = false, storage = {}, refusal } = {}) {
+async function start(browser, { width = 390, height = 844, mobile = true, colorScheme = 'light', status = BASE_STATUS, device = {}, stream = false, storage = {}, refusal, now } = {}) {
     const context = await browser.newContext({
         viewport: { width, height }, isMobile: mobile, hasTouch: mobile, colorScheme,
         // A 24-hour time field, so typed digits are the time, and a known zone for the patches.
@@ -54,6 +54,7 @@ async function start(browser, { width = 390, height = 844, mobile = true, colorS
         }, storage);
     }
     const page = await context.newPage();
+    if (now !== undefined) await page.clock.setFixedTime(now);
     const errors = [];
     const commands = [];
     // Everything the page sends to the phone's stream socket: must stay free of keys and touches.
@@ -371,9 +372,9 @@ async function timeTypingFlow(browser) {
         assert.equal(await isFocused(), true);
         assert.equal(await time.inputValue(), '04:30', 'and it does not jump back to the old time while saving');
         release({ result: JSON.stringify({ ...status, time: '04:30', timeZone: ZONE, nextRunAt: Date.UTC(2026, 10, 11, 9, 30) }) });
-        await page.waitForFunction(() => document.querySelector('.settings-time-feedback')?.textContent.includes('· saved'));
+        await page.waitForFunction(() => document.querySelector('.settings-time-feedback')?.textContent.startsWith('Saved'));
         assert.equal(await description.textContent(), ZONE, 'the saved zone stays beside the native field');
-        assert.equal(await feedback.textContent(), `${ZONE} · saved, next run Wed 11 Nov, 04:30`, 'full-width feedback keeps the result and next run below the stable field');
+        assert.equal(await feedback.textContent(), 'Saved, next run Wed 11 Nov, 04:30', 'full-width feedback keeps the result and next run below the stable field');
         assert.equal(await feedback.getByRole('status').count(), 1, 'one result announcement, without a duplicate saved line');
         assert.equal(await dialog.locator('.kit-status').count(), 1, 'only that result line announces the saved time');
 
@@ -386,7 +387,7 @@ async function timeTypingFlow(browser) {
         assert.notEqual(stepped, '04:30');
         // Tab alone stops on the field's own picker button; leaving the field is what saves.
         await time.evaluate((el) => el.blur());
-        await page.waitForFunction(() => document.querySelector('.settings-time-feedback')?.textContent.includes('· saved'));
+        await page.waitForFunction(() => document.querySelector('.settings-time-feedback')?.textContent.startsWith('Saved'));
         assert.deepEqual(ofType(commands, 'update_unlock_schedule').map((command) => command.data.schedule.time), ['04:30', stepped]);
         assert.equal(await time.inputValue(), stepped);
 

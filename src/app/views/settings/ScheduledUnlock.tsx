@@ -414,7 +414,7 @@ export function ScheduledUnlock({ udid, entry, opening, name }: ScheduledUnlockP
             : timeDraft !== undefined && timeDraft !== schedule.time
               ? 'Not saved yet. Press Enter or leave the field to save.'
               : timeSaved
-                ? `${zoneLabel} · saved${schedule.nextRunAt ? `, next run ${moment(schedule.nextRunAt)}` : ''}`
+                ? `Saved${schedule.nextRunAt ? `, next run ${moment(schedule.nextRunAt)}` : ''}`
                 : undefined;
     const stopKeys = (event: KeyboardEvent) => event.stopPropagation();
 

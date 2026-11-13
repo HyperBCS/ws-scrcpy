@@ -21,7 +21,7 @@ async function tileGeometry(page) {
     return page.locator('.control-buttons-list button').evaluateAll(buttons => buttons.map(button => {
         const b = button.getBoundingClientRect(), icon = button.querySelector('svg').getBoundingClientRect(), caption = button.querySelector('.kit-icon-button-caption').getBoundingClientRect();
         const s = getComputedStyle(button);
-        return { name: button.title, width: b.width, height: b.height, iconTop: icon.top - b.top, iconWidth: icon.width, iconHeight: icon.height, captionTop: caption.top - b.top, gap: caption.top - icon.bottom, color: s.borderTopColor, background: s.backgroundColor, border: s.borderTopWidth };
+        return { name: button.title, x: b.x, y: b.y, width: b.width, height: b.height, iconTop: icon.top - b.top, iconWidth: icon.width, iconHeight: icon.height, captionTop: caption.top - b.top, gap: caption.top - icon.bottom, color: s.borderTopColor, background: s.backgroundColor, border: s.borderTopWidth };
     }));
 }
 async function controls(browser) {
@@ -45,6 +45,22 @@ async function controls(browser) {
                     assert.ok(Math.abs(b.captionTop - data[0].captionTop) < 1, `${id}: captions start at the same inset, including wrapped audio`);
                     assert.equal(b.gap, 4);
                 }
+                const order = platform === 'android'
+                    ? ['Back', 'Home', 'Overview', 'Volume down', 'Mute phone', 'Volume up', 'Lock', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings']
+                    : ['Home', 'Volume down', 'Mute phone', 'Volume up', 'Lock', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings', 'Siri'];
+                assert.deepEqual(data.map(b => b.name), order, 'every platform action keeps its logical order, with Siri last');
+                if (!viewport.mobile) {
+                    const columns = Number(await page.locator('.floating-toolbar.desktop').getAttribute('data-columns'));
+                    for (let i = 1; i < data.length; i++) {
+                        const previous = data[i - 1], current = data[i];
+                        if (i % columns) assert.ok(Math.abs(current.x - previous.x - previous.width - 4) < 1, 'rail columns have one gutter without absent slots');
+                        else {
+                            const precedingRow = data.slice(i - columns, i);
+                            const bottom = Math.max(...precedingRow.map(b => b.y + b.height));
+                            assert.ok(Math.abs(current.y - bottom - 4) < 1, 'consecutive rail rows have one gutter without absent slots');
+                        }
+                    }
+                }
                 metrics.push({ id, state, data });
                 await shot(page, `${id}-${state}`);
             };
@@ -66,13 +82,13 @@ async function controls(browser) {
             await verify('listening');
             await listen.click();
             await page.evaluate(() => {
-                window.__consistencyResume = AudioContext.prototype.resume;
-                AudioContext.prototype.resume = () => Promise.reject(new Error('Fixture playback denied'));
+                window.__consistencyResume = window.AudioContext.prototype.resume;
+                window.AudioContext.prototype.resume = () => Promise.reject(new Error('Fixture playback denied'));
             });
             await listen.click();
             await page.waitForFunction(() => document.querySelector('[data-control="audio"]')?.getAttribute('data-audio-state') === 'blocked');
             await verify('blocked');
-            await page.evaluate(() => { AudioContext.prototype.resume = window.__consistencyResume; delete window.__consistencyResume; });
+            await page.evaluate(() => { window.AudioContext.prototype.resume = window.__consistencyResume; delete window.__consistencyResume; });
             sendAudio(2, Buffer.from(JSON.stringify({ status: 'disabled', sampleRate: 48000, channels: 2 })));
             await page.waitForFunction(() => document.querySelector('[data-control="audio"]')?.getAttribute('data-audio-state') === 'disabled');
             await verify('unavailable');
@@ -93,10 +109,68 @@ async function controls(browser) {
     }
     console.log('PASS outlined controls, common icon/caption starts across waiting/listening/blocked/unavailable states, narrow touch and one/two-column rails in both themes');
 }
+// Read the height of the actual tall one-column rail, then approach that measured boundary
+// from both directions. This oracle does not sum stretched two-column neighbor rectangles.
+async function railFit(browser) {
+    for (const platform of ['android', 'ios']) for (const colorScheme of ['light', 'dark']) {
+        const t = await startControls(browser, platform, { viewport: { width: 1280, height: 1200, mobile: false }, colorScheme, reducedMotion: 'reduce' });
+        try {
+            const { page } = t;
+            await page.locator('.stream-mount').evaluate(node => { window.__railFitMount = node; });
+            const rail = page.locator('.floating-toolbar.desktop');
+            const settleRail = () => rail.evaluate(async node => {
+                let previous, stable = 0;
+                for (let frame = 0; frame < 32; frame++) {
+                    await new Promise(resolve => requestAnimationFrame(resolve));
+                    const panel = node.querySelector('.floating-toolbar-panel');
+                    const signature = [node.dataset.columns, panel.getBoundingClientRect().height, panel.scrollHeight].join();
+                    stable = signature === previous ? stable + 1 : 0;
+                    if (stable === 3) return;
+                    previous = signature;
+                }
+                throw Error('rail geometry did not settle');
+            });
+            const geometry = () => rail.evaluate(node => {
+                const panel = node.querySelector('.floating-toolbar-panel'), list = node.querySelector('.control-buttons-list');
+                const s = getComputedStyle(panel);
+                return { columns: Number(node.dataset.columns), height: panel.getBoundingClientRect().height, room: panel.clientHeight - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom), needed: list.getBoundingClientRect().height };
+            });
+            for (const state of ['normal', 'waiting', 'normal-again']) {
+                if (state !== 'normal') {
+                    await page.locator('[data-control="audio"]').click();
+                    await settleRail();
+                    assert.equal((await geometry()).columns, state === 'waiting' ? 2 : 1, 'caption changes reflow the rail in place at the measured boundary');
+                }
+                await page.waitForFunction(waiting => document.querySelector('[data-control="audio"]')?.textContent.includes(waiting ? 'Waiting for audio' : 'Listen'), state === 'waiting');
+                await page.setViewportSize({ width: 1280, height: 1200 }); await settleRail();
+                assert.equal((await geometry()).columns, 1, 'tall rail fits one column');
+                const tall = await geometry();
+                const boundary = Math.ceil(1200 - tall.room + tall.needed);
+                for (const delta of [-2, 2, -2, 2]) {
+                    await page.setViewportSize({ width: 1280, height: boundary + delta }); await settleRail();
+                    const found = await geometry();
+                    metrics.push({ id: `rail-fit-${platform}-${colorScheme}`, state, delta, boundary, tall, ...found });
+                    assert.equal(found.columns, delta < 0 ? 2 : 1, `${platform} ${state}: intrinsic one-column fit at boundary ${delta}: ${JSON.stringify({ tall, found })}`);
+                    if (found.columns === 1) assert.ok(found.needed <= found.room, 'one column fits without scrolling');
+                }
+                await shot(page, `rail-fit-${platform}-${colorScheme}-${state}`);
+            }
+            // Reflow across the existing narrow-header breakpoint without changing the stream.
+            for (const width of [599, 600, 601, 600, 599]) {
+                await page.setViewportSize({ width, height: 1000 }); await settleMotion(page);
+                assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+            }
+            assert.equal(await page.evaluate(() => window.__railFitMount === document.querySelector('.stream-mount')), true);
+            assert.equal(t.streams, 1); assert.deepEqual(t.errors, []);
+        } finally { await t.context.close(); }
+    }
+    console.log('PASS intrinsic rail fit at the wrapped-caption boundary in both resize directions and across 600px; mount and socket retained');
+}
 async function time(browser, engine) {
     for (const { width, docked } of [{ width: 320 }, { width: 390 }, { width: 1280 }, { width: 1280, docked: true }]) for (const colorScheme of ['light', 'dark']) {
-        const status = { enabled: true, time: '03:00', timeZone: ZONE, hasPasscode: true, nextRunAt: Date.UTC(2026, 10, 11, 8) };
-        const t = await startSettings(browser, { width, height: 844, mobile: width < 600, colorScheme, status, stream: !!docked });
+        const now = Date.UTC(2026, 10, 16, 5); // Midnight in the fixture zone; both runs are in the future.
+        const status = { enabled: true, time: '03:00', timeZone: ZONE, hasPasscode: true, nextRunAt: Date.UTC(2026, 10, 16, 8) };
+        const t = await startSettings(browser, { width, height: 844, mobile: width < 600, colorScheme, status, now, stream: !!docked });
         const id = `time-${engine}-${width}${docked ? '-dock' : ''}-${colorScheme}`;
         let release;
         try {
@@ -147,8 +221,13 @@ async function time(browser, engine) {
             assert.equal(commands.length, 1); assert.equal(commands[0].type, 'update_unlock_schedule');
             assert.equal(await field.evaluate(node => node === document.activeElement), true);
             assert.equal(await field.isDisabled(), false);
-            release({ result: JSON.stringify({ ...status, time: '04:30' }) }); release = undefined;
-            await dialog.locator('.settings-time-feedback').filter({ hasText: '· saved' }).waitFor(); await observe('saved');
+            release({ result: JSON.stringify({ ...status, time: '04:30', nextRunAt: Date.UTC(2026, 10, 16, 9, 30) }) }); release = undefined;
+            await page.waitForFunction(() => /saved/i.test(document.querySelector('.settings-time-feedback')?.textContent || '')); await observe('saved');
+            assert.equal(await dialog.locator('[data-unlock-time] .kit-row-desc').textContent(), ZONE, 'zone is shown once beside the field');
+            const nextRun = engine === 'webkit' ? 'Mon, 16 Nov, 04:30' : 'Mon 16 Nov, 04:30';
+            assert.equal(await dialog.locator('.settings-time-feedback').textContent(), `Saved, next run ${nextRun}`);
+            assert.equal(await dialog.locator('[data-unlock-summary] .kit-row-desc').textContent(), `Next run ${nextRun} · No run yet`);
+            assert.equal(await dialog.locator('.settings-schedule').getByRole('status').count(), 1, 'one committed result announcement');
             assert.equal(await field.evaluate(node => node === document.activeElement), true);
             await field.evaluate(node => node.blur()); await settleMotion(page); assert.equal(commands.length, 1, 'blur after Enter does not duplicate the edit');
             // A picker change on a coarse pointer commits once; a refused edit restores short feedback.
@@ -230,7 +309,7 @@ async function main() {
     assert.ok(['chromium', 'webkit'].includes(engine));
     const browser = await ({ chromium, webkit }[engine]).launch({ headless: true });
     try {
-        const cases = engine === 'webkit' ? [time] : [controls, time, notifications];
+        const cases = engine === 'webkit' ? [time] : [controls, railFit, time, notifications];
         const selected = cases.filter(run => !process.env.SCENARIO || process.env.SCENARIO === run.name);
         assert.ok(selected.length, 'SCENARIO must name an existing consistency case');
         for (const run of selected) await run(browser, engine);
