@@ -1,5 +1,5 @@
 /** Exercises the Actions sheet against a real device: each button must change device state. */
-const { chromium } = require('/home/brandon/ws-scrcpy/node_modules/playwright');
+const { chromium } = require('playwright');
 
 // The controls live behind the floating action button now; expand it before looking for them.
 async function openFab(page) {
@@ -14,6 +14,7 @@ async function openFab(page) {
     return true;
 }
 const { execSync } = require('child_process');
+const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const SERIAL = process.env.SERIAL || 'WC7HFMPJGY7PUCGQ';
 const adb = (c) => execSync(`adb -s ${SERIAL} ${c}`, { encoding: 'utf8' }).trim();
 // `dumpsys window` prints several mCurrentFocus lines and the first is usually `null`; take the
@@ -36,31 +37,22 @@ const focus = () => {
     const b = await chromium.launch({ headless: true });
     const c = await b.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     const p = await c.newPage();
-    await p.goto('http://127.0.0.1:8000/', { waitUntil: 'networkidle' });
+    await p.goto(BASE, { waitUntil: 'networkidle' });
     await p.waitForTimeout(2500);
-    await p.locator(`.device[data-device-key$=":${SERIAL}"]`).locator('a.desc-block.stream').first().click();
+    await p.locator(`.device[data-device-key$=":${SERIAL}"]`).getByRole('link', { name: 'Open screen', exact: true }).first().click();
     await p.waitForTimeout(11000);
     await openFab(p);
 
     const openActions = async () => {
-        const pos = await p.evaluate(() => {
-            const el = Array.from(document.querySelectorAll('.control-buttons-list [title]')).find((e) => e.getAttribute('title') === 'Actions');
-            const r = el.getBoundingClientRect();
-            return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
-        });
-        await p.touchscreen.tap(pos.x, pos.y);
-        await p.waitForTimeout(800);
+        await openFab(p);
+        await p.getByRole('button', { name: 'Actions', exact: true }).click();
+        await p.getByRole('dialog', { name: 'Actions', exact: true }).waitFor();
     };
-    const clickInSheet = async (label) => {
-        const found = await p.evaluate((t) => {
-            const all = Array.from(document.querySelectorAll('dialog.kit-sheet[open] .kit-button')).map((e) => e.textContent.trim());
-            return { all, hit: all.includes(t) };
-        }, label);
-        console.log(`   [debug] sheet buttons=${JSON.stringify(found.all)} hit=${found.hit}`);
-        await p.evaluate((t) => {
-            const el = Array.from(document.querySelectorAll('dialog.kit-sheet[open] .kit-button')).find((e) => e.textContent.trim() === t);
-            if (el) el.click();
-        }, label);
+    const clickInSheet = async (title, label) => {
+        const sheet = p.getByRole('dialog', { name: 'Actions', exact: true });
+        const row = sheet.locator('.kit-row').filter({ has: p.getByText(title, { exact: true }) });
+        await row.getByRole('button', { name: label, exact: true }).click();
+        await sheet.waitFor({ state: 'hidden' });
         await p.waitForTimeout(1600);
     };
 
@@ -69,11 +61,12 @@ const focus = () => {
     console.log('scrcpy pid at click time:', JSON.stringify((() => { try { return adb('shell pidof app_process').trim(); } catch (e) { return '(none)'; } })()));
     await openActions();
     const before = focus();
-    await clickInSheet('Notifications');
+    await clickInSheet('Notifications', 'Open');
     const afterNotif = focus();
     console.log(`Notifications : ${before} -> ${afterNotif}  ${afterNotif !== before ? 'OK' : '*** NO EFFECT ***'}`);
 
-    await clickInSheet('Collapse');
+    await openActions();
+    await clickInSheet('Collapse panels', 'Collapse');
     const afterCollapse = focus();
     console.log(`Collapse      : ${afterNotif} -> ${afterCollapse}  ${afterCollapse !== afterNotif ? 'OK' : '*** NO EFFECT ***'}`);
 

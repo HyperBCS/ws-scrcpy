@@ -127,7 +127,7 @@ async function start(browser, viewport, theme, holdLists = false) {
     const page = await context.newPage();
     const test = { context, page, mobile: viewport.mobile, label: `${viewport.name}--${theme}`, errors: [], shots: 0 };
     // p6-client-followups: controlled list delivery for loading and stale captures.
-    Object.assign(test, { holdLists, heldLists: [], listSocket: undefined, releaseLists() { test.holdLists = false; test.heldLists.splice(0).forEach((send) => send()); } });
+    Object.assign(test, { streams: 0, holdLists, heldLists: [], listSocket: undefined, releaseLists() { test.holdLists = false; test.heldLists.splice(0).forEach((send) => send()); } });
     const deliverList = (send) => test.holdLists ? test.heldLists.push(send) : send();
     page.on('pageerror', (error) => test.errors.push(error.message));
     await page.clock.setFixedTime(NOW);
@@ -146,7 +146,11 @@ async function start(browser, viewport, theme, holdLists = false) {
     await page.routeWebSocket('**', (socket) => {
         const url = new URL(socket.url());
         const action = url.searchParams.get('action');
-        if (action === 'proxy-adb') return void setTimeout(() => socket.send(initialStreamPacket()), 40);
+        if (action === 'proxy-adb') {
+            // p6-client-followups: a header/switcher render must keep the one stream.
+            test.streams++;
+            return void setTimeout(() => socket.send(initialStreamPacket()), 40);
+        }
         if (action === 'proxy-coredevice') return void setTimeout(() => socket.send(JSON.stringify({ type: 'status', state: 'ready' })), 40);
         // p6-client-followups: the stream sockets above remain independent of list drops.
         test.listSocket = socket;
@@ -350,13 +354,17 @@ async function clientFollowupStates(browser, viewport, theme) {
         await card(page, `android:${PIXEL}`).waitFor();
         await page.goto(BASE + screenOf(PIXEL));
         await connected(page);
+        await page.evaluate(() => { window.__clientFollowupMount = document.querySelector('.stream-mount'); });
         await press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }));
         await sheetTitled(page, /Switch/).waitFor();
         test.holdLists = true;
         test.listSocket.close({ code: 1006, reason: 'Atlas fixture reconnect' });
         await page.locator('.device-switcher-reconnecting').first().waitFor();
         await shoot(test, 'switcher-reconnecting');
+        assert.equal(await page.evaluate(() => window.__clientFollowupMount === document.querySelector('.stream-mount') && window.__clientFollowupMount.isConnected), true, 'The header and stale switcher keep the exact stream mount');
+        assert.equal(test.streams, 1, 'One screen open creates one socket through header/switcher renders');
         await dismiss(test, sheet(page));
+        assert.equal(test.streams, 1);
         await press(test, page.getByRole('button', { name: 'Phones', exact: true }));
         await page.locator('.devices-reconnecting').waitFor();
         await shoot(test, 'list-reconnecting');

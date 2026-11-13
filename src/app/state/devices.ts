@@ -172,7 +172,7 @@ export function setTrackerDevices(
 /**
  * Marks the phones of one tracker stale when its socket closes. They stay on the list as they
  * were last reported; the tracker's next list replaces them (`setTrackerDevices`), and a tracker
- * that stays closed removes them (`removeTrackerDevices`).
+ * that stays closed expires each unchanged stale report (`expireTrackerDevices`).
  */
 export function markTrackerDevicesStale(trackerId: string, owner: DeviceEntry['tracker']): ReadonlySet<DeviceEntry> {
     const stale = new Set<DeviceEntry>();

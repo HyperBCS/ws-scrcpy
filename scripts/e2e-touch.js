@@ -11,7 +11,7 @@ const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 
-const BASE = process.argv[2] || 'http://127.0.0.1:8000/';
+const BASE = process.env.BASE || process.argv[2] || 'http://127.0.0.1:8000/';
 const OUT = process.env.E2E_OUT || path.join(process.env.HOME, '.cache', 'wsshot');
 
 async function main() {
@@ -68,7 +68,7 @@ async function main() {
     // check, measured rather than eyeballed.
     const targets = await page.evaluate(() => {
         const out = [];
-        document.querySelectorAll('#devices .desc-block, #devices .device-wake').forEach((el) => {
+        document.querySelectorAll('#devices .device-primary-actions a[href], #devices .device-primary-actions button, #devices .device-wake').forEach((el) => {
             const r = el.getBoundingClientRect();
             out.push({ text: (el.innerText || '').trim().slice(0, 28), w: Math.round(r.width), h: Math.round(r.height) });
         });
@@ -82,7 +82,7 @@ async function main() {
     // asleep or has no server running, and the failure looks like a product bug.
     const SERIAL = process.env.SERIAL;
     const scope = SERIAL ? page.locator(`.device[data-device-key$=":${SERIAL}"]`) : page;
-    const streamLink = scope.locator('a.desc-block.stream').first();
+    const streamLink = scope.getByRole('link', { name: 'Open screen', exact: true }).first();
     if ((await streamLink.count()) === 0) {
         console.log('[2] NO STREAM LINK — is a device connected and the scrcpy server running?');
         await browser.close();
@@ -120,11 +120,11 @@ async function main() {
         await page.touchscreen.tap(cx, cy);
         await page.waitForTimeout(1200);
     }
-    const after = await page.evaluate(() => window.__sent.slice(-8));
-    console.log(`[4] ws frames sent by tap: ${after.length - 0} (total grew from ${before})`);
+    const after = await page.evaluate((start) => window.__sent.slice(start), before);
+    console.log(`[4] ws frames sent by tap: ${after.length} (total grew from ${before})`);
     console.log('[4] last frames:', JSON.stringify(after));
     // TYPE_TOUCH === 2 in src/app/controlMessage/ControlMessage.ts
-    const touchMsgs = after.filter((f) => f.type === 2);
+    const touchMsgs = after.filter((f) => f.type === 2 && f.len === 32);
     console.log(touchMsgs.length ? `[4] OK touch control messages sent: ${touchMsgs.length}` : '[4] FAIL no touch control message produced by the tap');
 
     if (errors.length) {

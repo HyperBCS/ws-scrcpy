@@ -3,7 +3,7 @@
  * device list is what used to start the host tracker, so a direct load left the device store
  * empty and every udid lookup (stream settings, device switcher, sleep overlay) silently no-op'd.
  */
-const { chromium } = require('/home/brandon/ws-scrcpy/node_modules/playwright');
+const { chromium } = require('playwright');
 
 // The controls live behind the floating action button now; expand it before looking for them.
 async function openFab(page) {
@@ -17,6 +17,7 @@ async function openFab(page) {
     }
     return true;
 }
+const BASE = process.env.BASE || 'http://127.0.0.1:8000/';
 const SERIAL = process.env.SERIAL || 'WC7HFMPJGY7PUCGQ';
 (async () => {
     const b = await chromium.launch({ headless: true });
@@ -26,9 +27,9 @@ const SERIAL = process.env.SERIAL || 'WC7HFMPJGY7PUCGQ';
     p.on('pageerror', (e) => errs.push(e.message));
 
     // 1. Navigate from the list, capture the resulting deep link.
-    await p.goto('http://127.0.0.1:8000/', { waitUntil: 'networkidle' });
+    await p.goto(BASE, { waitUntil: 'networkidle' });
     await p.waitForTimeout(2500);
-    await p.locator(`.device[data-device-key$=":${SERIAL}"]`).locator('a.desc-block.stream').first().click();
+    await p.locator(`.device[data-device-key$=":${SERIAL}"]`).getByRole('link', { name: 'Open screen', exact: true }).first().click();
     await p.waitForTimeout(9000);
     const url = p.url();
     console.log('deep link:', url.slice(0, 90) + '…');
@@ -39,18 +40,11 @@ const SERIAL = process.env.SERIAL || 'WC7HFMPJGY7PUCGQ';
     await openFab(p);
 
     const open = () => p.evaluate(() => Array.from(document.querySelectorAll('dialog.kit-sheet[open]')).map((e) => e.querySelector('.kit-sheet-title')?.textContent).join(',') || '(none)');
-    const btn = (title) => p.evaluate((t) => {
-        const el = Array.from(document.querySelectorAll('.control-buttons-list [title]')).find((e) => e.getAttribute('title') === t);
-        if (!el) return null;
-        const r = el.getBoundingClientRect();
-        return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
-    }, title);
-
     console.log('devices known after reload:', await p.evaluate(() => document.querySelectorAll('.device').length), '(list not rendered on stream route, store is what matters)');
-    for (const title of ['Settings', 'Switch device', 'Actions']) {
-        const pos = await btn(title);
-        if (!pos) { console.log(`  ${title}: BUTTON NOT FOUND`); continue; }
-        await p.touchscreen.tap(pos.x, pos.y);
+    for (const title of ['Settings', 'Switch', 'Actions']) {
+        if (title !== 'Switch') await openFab(p);
+        await p.getByRole('button', { name: title, exact: true }).click();
+        await p.getByRole('dialog', { name: title === 'Switch' ? 'Switch phone' : title, exact: true }).waitFor();
         await p.waitForTimeout(1200);
         const o = await open();
         const hasContent = await p.evaluate(() => {
