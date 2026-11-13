@@ -5090,7 +5090,7 @@ in this section deploys code or begins p6-docs.
 
 ### Redesign step 6c: current documentation (2026-11-13)
 
-C-server-core-11: README now describes the owner's app, Node 22, stock scrcpy 4.1,
+C-server-core-11: README now describes the owner's app, Docker's Node 22, stock scrcpy 4.1,
 enabled audio, supported input paths and their limits. It covers the one Settings sheet,
 instant capture changes, shared phone header/controls, modeless/docked Type text,
 keyboard capture/paste/chords, combined inbox, current Setup and the mute-drop policy.
@@ -5137,8 +5137,69 @@ Before editing, the documentation worker ran one normal `npm run dist` at exact 
 Raw worktree build evidence is outside the repository at
 `/tmp/ws-scrcpy-redesign/logs/p6-docs-worker-20261113/`. This was a fresh worktree build,
 not a claim that its context-dependent chunk filenames match the main build. The worker
-ran no full Node/browser check. Fresh review and the documentation integrator own the
-required full-check outcomes before merge and record them in their dated integration entry.
+ran no full Node/browser check. The fresh review and main integration results below
+complete the required checks.
+
+**Final documentation integration, 2026-11-13.** Main began clean on `redesign` at
+`3b15a40000d3287270c015058af61b80efa2937a`, apart from owner-untracked AGENTS.md;
+AGENTS.md and .claude were preserved. The fresh review checked
+`d605dacd9e31f459dac1baf8205e8539c6399288`: full check passed with 813 Node tests,
+then all 37 default browser suites passed in one uninterrupted run. Its later
+`8ea37bb3556c32fc410ed5251981d76de838e182` commit changes only README's Node sentence:
+Docker uses Node 22; the actual host is v24.17.0. Review proved all other tracked
+inputs and all 23 review-worktree compiled files unchanged. The separate main integrator
+merged that exact accepted head with `--no-ff`, without conflicts or source edits.
+
+Both fresh main checks ran at merge head
+`79312da9f5ad4abf20369debacda9ec3cbca3530`, serially under one exclusive reservation:
+
+- `npm run check`: exit 0 in 75.002 s. Type check passed; lint had 0 errors and 26
+  warnings. All 813 Node tests passed, with 0 failed, cancelled or skipped. Python
+  groups passed 43, 32 with 2 existing stock-helper comparison skips, and 4 tests.
+  The skips reflect the already patched installed helper, not hardware coverage.
+  Normal client/server builds passed; the client retained 3 performance warnings.
+- `node scripts/test-browser.js`: all 37 registered defaults passed in order in ONE
+  uninterrupted invocation, exit 0 in 1758.707 s. BROWSER was chromium; inherited
+  atlas selectors, kit followup selectors, NODE_OPTIONS and iPhone key/UDID variables
+  were cleared. The unchanged output-only wrapper retained 677 per-suite artifacts,
+  including 674 PNGs. Production BASE stayed separate from the temporary demo KIT_BASE.
+  No assertion, timeout, mock, registration or dependency changed; no suite was retried.
+- Offline raw atlas comparison: all 316 accepted baseline hashes were verified first.
+  Fresh output has 158 PNG/JSON pairs with the default four hash columns. All 158 PNGs
+  match byte for byte. There are 310 identical files, 6 changed JSONs, 0 added and 0
+  removed. Each changed desktop-dark Notifications file (card-actions, confirm, filters,
+  page-actions, search and toast) has exactly one extra `option` row with hash `9e2c5061`;
+  every other aligned row matches. NotificationsView's retained hidden Setup USB selector
+  and independently arriving status/tracker fixtures support a timing explanation.
+  This is an inference; raw hashes do not identify the option's text or prove reply order.
+  No raw file was normalised, no base recapture or extra browser check ran.
+
+All 535 tracked paths outside this four-document package match the implementation base.
+Main's 24 normal dist files, including 18 public files and its pre-existing unrelated
+stream-config file, are byte-identical before and after both checks. This is a
+within-main comparison; the 23-file review worktree is a separate build context.
+No selected demo markers remain in production public, temporary demo output is gone,
+and build override bytes are exactly `7b7d0a` (`{}` plus newline). All owned check/browser
+roots and observed descendants ended; no other check process remains. No unexpected
+termination or signal occurred. The earlier fake-Node timeout incident stays in the
+preceding dated record and was not repeated.
+
+The integrator inspected fresh Settings desktop-light/phone-dark and inbox
+desktop-dark/phone-light pictures, plus the desktop-dark atlas search state. No new
+clipping or missing action was seen. The atlas's synthetic pushManager warning is also
+pixel-identical to baseline; it is not a real notification-delivery observation.
+Environment inventory (36 names), all 11 local links and preserved dated history passed
+offline audits. Only README/HANDOFF changed and obsolete debug/scheme docs were deleted;
+no implementation behavior changed and no new test or registration was needed.
+
+Evidence is retained at
+`/tmp/ws-scrcpy-redesign/logs/integrate-docs-20261113-vgl0v25z/`. The final HANDOFF-only
+outcomes commit follows these checks. Its exact final head and proof that all 536 other
+tracked inputs and all 24 compiled files still match the checked head are recorded in
+`/tmp/ws-scrcpy-redesign/briefs/integrate-docs-report.md`. Passed checks were not repeated
+solely for this outcome prose. These newer documentation commits are not another live
+image. The existing implementation deployment above remains the latest confirmed live
+state; this integration ran no Docker, live-server, phone, unlock or settings-save action.
 
 **Still deferred or unverified.** The owner deferred physical Android rotation, USB
 replug and one owner-operated stream-setting restart. Do not ask again or call them
