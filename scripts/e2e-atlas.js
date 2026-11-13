@@ -119,13 +119,16 @@ function dent(name, mode) {
 }
 
 /** One browser context for a viewport and a theme, with every request answered by a fixture. */
-async function start(browser, viewport, theme) {
+async function start(browser, viewport, theme, holdLists = false) {
     const context = await browser.newContext({
         viewport: { width: viewport.width, height: viewport.height }, isMobile: viewport.mobile, hasTouch: viewport.mobile,
         colorScheme: theme, reducedMotion: 'reduce', locale: 'en-GB', timezoneId: 'UTC', serviceWorkers: 'block',
     });
     const page = await context.newPage();
     const test = { context, page, mobile: viewport.mobile, label: `${viewport.name}--${theme}`, errors: [], shots: 0 };
+    // p6-client-followups: controlled list delivery for loading and stale captures.
+    Object.assign(test, { streams: 0, holdLists, heldLists: [], listSocket: undefined, releaseLists() { test.holdLists = false; test.heldLists.splice(0).forEach((send) => send()); } });
+    const deliverList = (send) => test.holdLists ? test.heldLists.push(send) : send();
     page.on('pageerror', (error) => test.errors.push(error.message));
     await page.clock.setFixedTime(NOW);
     await page.route('**/api/notifications/**', (route) => {
@@ -143,8 +146,14 @@ async function start(browser, viewport, theme) {
     await page.routeWebSocket('**', (socket) => {
         const url = new URL(socket.url());
         const action = url.searchParams.get('action');
-        if (action === 'proxy-adb') return void setTimeout(() => socket.send(initialStreamPacket()), 40);
+        if (action === 'proxy-adb') {
+            // p6-client-followups: a header/switcher render must keep the one stream.
+            test.streams++;
+            return void setTimeout(() => socket.send(initialStreamPacket()), 40);
+        }
         if (action === 'proxy-coredevice') return void setTimeout(() => socket.send(JSON.stringify({ type: 'status', state: 'ready' })), 40);
+        // p6-client-followups: the stream sockets above remain independent of list drops.
+        test.listSocket = socket;
         const channels = new Map();
         socket.onMessage((data) => {
             const packet = Buffer.from(data);
@@ -155,8 +164,8 @@ async function start(browser, viewport, theme) {
                 const code = body.slice(0, 4);
                 channels.set(id, code);
                 if (code === 'HSTS') send({ id: -1, type: 'hosts', data: { local: [{ type: 'android' }, { type: 'ios' }] } });
-                if (code === 'GTRC') send({ id: -1, type: 'devicelist', data: { id: 'android', name: 'Fixture host', list: ANDROIDS } });
-                if (code === 'ATRC') send({ id: -1, type: 'devicelist', data: { id: 'ios', name: 'Fixture host', list: IPHONES } });
+                if (code === 'GTRC') deliverList(() => send({ id: -1, type: 'devicelist', data: { id: 'android', name: 'Fixture host', list: ANDROIDS } }));
+                if (code === 'ATRC') deliverList(() => send({ id: -1, type: 'devicelist', data: { id: 'ios', name: 'Fixture host', list: IPHONES } }));
             } else if (type === 32 && channels.get(id) === 'SHEL' && body.startsWith('{')) {
                 if (JSON.parse(body).data?.type === 'start') socket.send(frame(32, id, 'Fixture terminal ready\r\n$ '));
             } else if (type === 32 && channels.get(id) === 'GTRC' && body.startsWith('{')) {
@@ -332,6 +341,38 @@ async function listStates(test) {
     await shoot(test, 'list-iphone-settings');
     await dismiss(test, sheet(page));
 }
+
+// p6-client-followups: loading, reconnecting list and switcher at every atlas width/theme.
+async function clientFollowupStates(browser, viewport, theme) {
+    const test = await start(browser, viewport, theme, true);
+    const { page } = test;
+    try {
+        await page.goto(BASE);
+        await page.locator('.device-list-loading').waitFor();
+        await shoot(test, 'list-loading');
+        test.releaseLists();
+        await card(page, `android:${PIXEL}`).waitFor();
+        await page.goto(BASE + screenOf(PIXEL));
+        await connected(page);
+        await page.evaluate(() => { window.__clientFollowupMount = document.querySelector('.stream-mount'); });
+        await press(test, page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }));
+        await sheetTitled(page, /Switch/).waitFor();
+        test.holdLists = true;
+        test.listSocket.close({ code: 1006, reason: 'Atlas fixture reconnect' });
+        await page.locator('.device-switcher-reconnecting').first().waitFor();
+        await shoot(test, 'switcher-reconnecting');
+        assert.equal(await page.evaluate(() => window.__clientFollowupMount === document.querySelector('.stream-mount') && window.__clientFollowupMount.isConnected), true, 'The header and stale switcher keep the exact stream mount');
+        assert.equal(test.streams, 1, 'One screen open creates one socket through header/switcher renders');
+        await dismiss(test, sheet(page));
+        assert.equal(test.streams, 1);
+        await press(test, page.getByRole('button', { name: 'Phones', exact: true }));
+        await page.locator('.devices-reconnecting').waitFor();
+        await shoot(test, 'list-reconnecting');
+        assert.deepEqual(test.errors, [], `${test.label}: no loading/reconnecting error`);
+        console.log(`PASS ${test.label}: ${test.shots} client followup states written to ${OUT}`);
+    } finally { await test.context.close(); }
+}
+// End p6-client-followups.
 
 /** The sheets and overlays of a phone's screen. They are the same components for both kinds. */
 async function screenOverlays(test, kind) {
@@ -617,6 +658,8 @@ async function main() {
         try {
             for (const viewport of VIEWPORTS) {
                 for (const theme of THEMES) {
+                    // p6-client-followups: isolated state so the main atlas fixtures stay live.
+                    await clientFollowupStates(browser, viewport, theme);
                     const test = await start(browser, viewport, theme);
                     try {
                         await listStates(test);

@@ -54,6 +54,9 @@ body.sheet-open #devices {
 .tracker-block {
     margin-bottom: var(--space-12);
 }
+.tracker-reconnecting {
+    margin-bottom: var(--space-12);
+}
 .tracker-name {
     display: flex;
     justify-content: space-between;

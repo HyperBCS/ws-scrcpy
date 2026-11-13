@@ -10,6 +10,7 @@ import {
     takeOpenedCard,
 } from '../state/deviceListView';
 import { hostsError, hostsStatus } from '../state/hosts';
+import { CLIENT_FOLLOWUPS } from '../copy';
 import { LIST_PAGE_NAME } from '../state/routes';
 import { DeviceCard } from './DeviceCard';
 import { DeviceIcon } from '../ui/DeviceIcon';
@@ -59,6 +60,9 @@ function cardControl(target: EventTarget | null): CardControl | undefined {
     return control && key ? { key, control: controlName(control) } : undefined;
 }
 
+// The key is `<tracker id>:<serial>`. The id has no colon; a serial can (`host:port`).
+const serialOf = (value = '') => value.slice(value.indexOf(':') + 1);
+
 /**
  * Focuses that control again, or the first control of its card that can take focus. A server
  * that restarted lists its phones under a new tracker id, so the card is found by its key, else
@@ -66,8 +70,6 @@ function cardControl(target: EventTarget | null): CardControl | undefined {
  */
 function focusCardControl(root: HTMLElement, { key, control }: CardControl): void {
     const cards = Array.from(root.querySelectorAll<HTMLElement>('article.device'));
-    // The key is `<tracker id>:<serial>`. The id has no colon; a serial can (`host:port`).
-    const serialOf = (value = '') => value.slice(value.indexOf(':') + 1);
     const card =
         cards.find((item) => item.dataset.deviceKey === key) ??
         cards.find((item) => serialOf(item.dataset.deviceKey) === serialOf(key));
@@ -96,7 +98,8 @@ export function DeviceList() {
         }
     }, []);
 
-    const entries = Array.from(devices.value.values());
+    const reports = devices.value;
+    const entries = Array.from(reports.values());
     const state = listState(entries, listReceived.value, hostsStatus.value);
     const stale = state === 'stale';
     const available = entries.filter(isDeviceAvailable).length;
@@ -109,6 +112,8 @@ export function DeviceList() {
     );
     const groups = groupByHost(entries);
     const reconnecting = connectionStatus('reconnecting').label;
+    const allStale = stale && entries.every((entry) => entry.stale);
+    const pageNotice = allStale && groups.length === 1;
 
     // A stale card turns its links off, and a link that is off cannot keep the focus. When the
     // next list turns them on, the control that had the focus gets it back. It is read when the
@@ -117,19 +122,31 @@ export function DeviceList() {
     // drop stays where it is.
     const staleFocus = useRef<CardControl>();
     const wasStale = useRef(false);
-    if (stale && !wasStale.current) {
-        staleFocus.current = cardControl(document.activeElement);
+    if (stale) {
+        const focused = cardControl(document.activeElement);
+        if (focused) {
+            staleFocus.current = focused;
+        }
     }
     wasStale.current = stale;
     useEffect(() => {
-        if (stale) {
+        const pending = staleFocus.current;
+        const report =
+            pending &&
+            (entries.find((entry) => entry.key === pending.key) ??
+                entries.find((entry) => serialOf(entry.key) === serialOf(pending.key)));
+        // One server can return while another is still stale. Restore a card as soon as its
+        // own report is live; the rest of the page's reconnect state must not hold its focus.
+        if (stale && (!report || report.stale)) {
             return;
         }
-        if (staleFocus.current && scroller.current && focusLost()) {
-            focusCardControl(scroller.current, staleFocus.current);
+        if (pending && scroller.current && focusLost()) {
+            focusCardControl(scroller.current, pending);
         }
-        staleFocus.current = undefined;
-    }, [stale]);
+        if (!stale) {
+            staleFocus.current = undefined;
+        }
+    }, [stale, reports]);
 
     // A plain press on a link of a card leaves the list for that page.
     const onClickCapture = (event: MouseEvent) => {
@@ -147,7 +164,7 @@ export function DeviceList() {
                 title={LIST_PAGE_NAME}
                 status={
                     <AppBarStatus>
-                        {stale || state === 'disconnected'
+                        {allStale || state === 'disconnected'
                             ? reconnecting
                             : listSummary(entries.length, available, attention)}
                     </AppBarStatus>
@@ -158,10 +175,10 @@ export function DeviceList() {
                 <IconButton icon="refresh" label="Reload" onClick={() => location.reload()} />
             </AppBar>
             {/* Outside the scrolling list, so it does not move the cards and stays in view. */}
-            {stale && (
+            {pageNotice && (
                 <div class="devices-reconnecting">
                     <Banner>
-                        <strong>{reconnecting}</strong> The phones are shown as last reported.
+                        <strong>{reconnecting}</strong> {CLIENT_FOLLOWUPS.stalePhones}
                     </Banner>
                 </div>
             )}
@@ -211,6 +228,13 @@ export function DeviceList() {
                                     <span>
                                         {group.entries.length} phone{group.entries.length === 1 ? '' : 's'}
                                     </span>
+                                </div>
+                            )}
+                            {!pageNotice && group.entries.some((entry) => entry.stale) && (
+                                <div class="tracker-reconnecting">
+                                    <Banner>
+                                        <strong>{reconnecting}</strong> {CLIENT_FOLLOWUPS.staleSomePhones}
+                                    </Banner>
                                 </div>
                             )}
                             <div class="device-list">

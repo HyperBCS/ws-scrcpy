@@ -13,10 +13,8 @@ import '../../../style/kit/InlineStatus.css';
 import '../../../style/filelisting.css';
 import { ParamsFileListing } from '../../../types/ParamsFileListing';
 import { ManagerClient } from '../../client/ManagerClient';
-import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import { ACTION } from '../../../common/Action';
 import Util from '../../Util';
-import { ToolEntry } from '../../client/Tool';
 import { Entry } from '../Entry';
 import { html } from '../../ui/HtmlTag';
 import * as path from 'path';
@@ -34,7 +32,7 @@ import {
     Resolution,
     resolveNameConflicts,
 } from '../filePush/nameConflicts';
-import { DEFAULT_FILES_PATH, fileListingTool } from './deviceTools';
+import { DEFAULT_FILES_PATH } from './deviceTools';
 import { clearLeaveGuard, LeaveGuard, OverlayEntry, pushRoute, replaceRoute, setLeaveGuard } from '../../state/router';
 import { deviceRoute, parseRoute } from '../../state/routes';
 import { openOverlay } from '../../ui/overlayHistory';
@@ -214,10 +212,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     public static start(params: ParamsFileListing, mount: HTMLElement): FileListingClient {
         return new FileListingClient(params, mount);
     }
-    public static createEntryForDeviceList(descriptor: GoogDeviceDescriptor): ToolEntry | undefined {
-        return fileListingTool.createEntryForDeviceList(descriptor);
-    }
-
     private readonly serial: string;
     private readonly wrapper: HTMLElement;
     private readonly tableHead: HTMLElement;

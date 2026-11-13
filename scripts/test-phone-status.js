@@ -317,7 +317,9 @@ test('the connection has one word per state, a red failure, a grey missing phone
 test('the header and the card over the picture print the same connection value', () => {
     // One screen view for both kinds of phone; each platform's adapter derives the value once.
     const view = read('src/app/views/ScreenView.tsx');
-    assert.match(view, /<AppBarStatus tone=\{connection\.tone\}>\{connection\.label\}<\/AppBarStatus>/, 'ScreenView: the header prints it');
+    const header = read('src/app/views/PhoneHeader.tsx');
+    assert.match(view, /<PhoneHeader[^>]*connection=\{connection\}/, 'ScreenView: the header receives the same connection');
+    assert.match(header, /<AppBarStatus tone=\{connection\.tone\}>\{connection\.label\}<\/AppBarStatus>/, 'PhoneHeader: the header prints it');
     assert.match(view, /<StateCard[^>]*connection=\{connection\}/, 'ScreenView: the card on the stage prints it');
     const adapters = ['src/app/views/screen/android.tsx', 'src/app/views/screen/iphone.tsx'];
     for (const file of adapters) {
@@ -325,7 +327,7 @@ test('the header and the card over the picture print the same connection value',
     }
     // The screen fact comes from the model on the card and on the screen alike. No view reads the
     // screen's descriptor fields to decide that a phone is asleep.
-    for (const file of [view, ...adapters, 'src/app/views/screen/StateCard.tsx', 'src/app/views/DeviceCard.tsx', 'src/app/views/DeviceSwitcherSheet.tsx']) {
+    for (const file of [view, 'src/app/views/PhoneHeader.tsx', ...adapters, 'src/app/views/screen/StateCard.tsx', 'src/app/views/DeviceCard.tsx', 'src/app/views/DeviceSwitcherSheet.tsx']) {
         const source = file === view ? view : read(file);
         assert.doesNotMatch(source, /\['screen\.power'\]|\['device\.awake'\]/, `${file === view ? 'ScreenView' : file} reads the screen from the model`);
     }

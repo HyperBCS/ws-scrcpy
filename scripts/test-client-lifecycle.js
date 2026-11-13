@@ -45,6 +45,7 @@ class TestTracker extends BaseDeviceTracker {
 }
 const params = { hostname: 'localhost', port: 8000, pathname: '/', secure: false, type: 'android', action: 'test' };
 const listMessage = (id, ...udids) => ({ data: JSON.stringify({ id: -1, type: 'devicelist', data: { id, name: 'Test host', list: udids.map((udid) => ({ udid, state: 'device' })) } }) });
+const deviceMessage = (id, udid) => ({ data: JSON.stringify({ id: -1, type: 'device', data: { id, name: 'Test host', device: { udid, state: 'device' } } }) });
 const listed = () => [...devices.value.values()].map((entry) => `${entry.descriptor.udid}${entry.stale ? ' (stale)' : ''}`).sort();
 
 try {
@@ -123,6 +124,66 @@ try {
     restarted.destroy();
     timers.clear();
 
+    // A first connection can fail before it has listed anything. A later empty list is still
+    // authoritative, even if the cancelled expiry callback was already queued for execution.
+    const empty = new TestTracker(params, 'ws://localhost:8000/?action=empty');
+    empty.onSocketClose({ reason: 'No first list' });
+    assert.deepEqual([listed(), listReceived.value], [[], false]);
+    const [, noListLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    empty.onSocketMessage(listMessage('empty-list'));
+    noListLimit();
+    assert.deepEqual([listed(), listReceived.value], [[], true], 'A queued startup expiry cannot invalidate an empty full list');
+    empty.onSocketMessage(listMessage('empty-list', 'previous-phone'));
+    empty.onSocketClose({ reason: 'Before empty replacement' });
+    const [, replacedLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    empty.onSocketMessage(listMessage('empty-list'));
+    replacedLimit();
+    assert.deepEqual([listed(), listReceived.value], [[], true], 'A queued stale expiry cannot invalidate an authoritative empty replacement');
+    empty.destroy();
+    timers.clear();
+
+    // An individual update ends only that phone's stale generation. Its siblings retain their
+    // original deadline, even when the tracker closes again before the first deadline fires.
+    const partial = new TestTracker(params, 'ws://localhost:8000/?action=partial');
+    partial.onSocketMessage(listMessage('partial-old', 'fresh-phone', 'stale-sibling'));
+    partial.onSocketClose({ reason: 'First drop' });
+    const [, olderLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    partial.onSocketMessage(deviceMessage('partial-old', 'fresh-phone'));
+    assert.deepEqual(listed(), ['fresh-phone', 'stale-sibling (stale)']);
+    assert.equal(findDeviceByUdid('fresh-phone')?.tracker, partial);
+    olderLimit();
+    assert.deepEqual(listed(), ['fresh-phone'], 'A fresh individual update survives the older limit; stale siblings expire');
+    assert.equal(listReceived.value, true, 'The individual update is still a current list report');
+    partial.onSocketMessage(listMessage('partial-old', 'fresh-phone', 'stale-sibling'));
+    partial.onSocketClose({ reason: 'Another drop' });
+    const [, siblingLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    partial.onSocketMessage(deviceMessage('partial-old', 'fresh-phone'));
+    partial.onSocketClose({ reason: 'Fresh phone dropped later' });
+    assert.equal([...timers.values()].filter((timer) => timer.delay === STALE_LIST_LIMIT_MS).length, 2);
+    siblingLimit();
+    assert.deepEqual(listed(), ['fresh-phone (stale)'], 'An older close cannot expire a newer stale generation');
+    const [newLimitId, newLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    partial.onSocketClose({ reason: 'Repeated failure' });
+    assert.equal(timerFor(STALE_LIST_LIMIT_MS)[0], newLimitId, 'Repeated close keeps the newer generation bounded');
+    newLimit();
+    assert.deepEqual([listed(), listReceived.value], [[], false], 'The newer stale generation also expires');
+    partial.onSocketMessage(listMessage('partial-old', 'old-phone'));
+    partial.onSocketClose({ reason: 'Server restart' });
+    const [, oldIdLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    partial.onSocketMessage(deviceMessage('partial-new', 'new-phone'));
+    oldIdLimit();
+    assert.deepEqual([listed(), listReceived.value], [['new-phone'], true], 'A tracker-id change and fresh individual report survive the old timer');
+    partial.onSocketMessage(listMessage('partial-new'));
+    assert.deepEqual(listed(), [], 'A full list remains authoritative over individual updates');
+    partial.onSocketMessage(listMessage('partial-new', 'release-phone'));
+    partial.onSocketClose({ reason: 'Release' });
+    const queued = [...timers.values()];
+    partial.destroy();
+    partial.destroy();
+    assert.equal(timers.size, 0, 'Release clears every reconnect and stale-generation timer');
+    queued.forEach((callback) => callback());
+    assert.deepEqual([listed(), listReceived.value], [[], false], 'Callbacks queued before release cannot publish or remove phones');
+
     const survivor = new TestTracker(params, 'ws://localhost:8000/?action=survivor');
     survivor.onSocketMessage(listMessage('shared-id', 'surviving-phone'));
     const duplicate = new TestTracker(params, 'ws://localhost:8000/?action=duplicate');
@@ -131,6 +192,19 @@ try {
     assert.equal(devices.value.size, 1, 'Destroying a duplicate URL must preserve the surviving tracker cards');
     survivor.destroy();
     assert.equal(devices.value.size, 0);
+
+    const oldOwner = new TestTracker(params, 'ws://localhost:8000/?action=old-owner');
+    oldOwner.onSocketMessage(listMessage('shared-id', 'replaced-phone'));
+    oldOwner.onSocketClose({ reason: 'Owner replacement' });
+    const [, oldOwnerLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    const newOwner = new TestTracker(params, 'ws://localhost:8000/?action=new-owner');
+    newOwner.onSocketMessage(listMessage('shared-id', 'replaced-phone'));
+    oldOwnerLimit();
+    oldOwner.destroy();
+    assert.equal(findDeviceByUdid('replaced-phone')?.tracker, newOwner, 'An old owner expiry and release preserve the replacement owner');
+    assert.equal(listReceived.value, true);
+    newOwner.destroy();
+    timers.clear();
 
     // A server that tracks no phones sends no list: the Phones list is empty, not loading.
     assert.equal(listReceived.value, false);

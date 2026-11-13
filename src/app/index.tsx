@@ -3,10 +3,8 @@ import '../style/tokens.css';
 import '../style/app.css';
 import { render } from 'preact';
 import { StreamClientScrcpy } from './googDevice/client/StreamClientScrcpy';
-import { Tool } from './client/Tool';
 import { App } from './views/App';
 import { ScreenFailed } from './ui/ErrorBoundary';
-import { shellTool, fileListingTool } from './googDevice/client/deviceTools';
 // Type-only -- erased at compile time, so importing it unconditionally does not pull `AudioPlayer`
 // (or anything else) into a `USE_AUDIO=false` build.
 import type { AudioFrame } from './client/audioPacket';
@@ -101,31 +99,6 @@ async function start(): Promise<void> {
         }
     }
     /// #endif
-
-    /// #if INCLUDE_APPL
-    {
-        const { DeviceTracker } = await import('./applDevice/client/DeviceTracker');
-        const { coreDeviceStreamTool } = await import('./applDevice/client/coreDeviceTool');
-        DeviceTracker.registerTool(coreDeviceStreamTool);
-    }
-    /// #endif
-
-    const tools: Tool[] = [];
-
-    /// #if INCLUDE_ADB_SHELL
-    tools.push(shellTool);
-    /// #endif
-
-    /// #if INCLUDE_FILE_LISTING
-    tools.push(fileListingTool);
-    /// #endif
-
-    if (tools.length) {
-        const { DeviceTracker } = await import('./googDevice/client/DeviceTracker');
-        tools.forEach((tool) => {
-            DeviceTracker.registerTool(tool);
-        });
-    }
 
     render(<App />, document.getElementById('root') as HTMLElement);
 }

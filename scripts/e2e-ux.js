@@ -44,7 +44,7 @@ async function main() {
             () =>
                 !document
                     .querySelector('dialog.kit-sheet[open]')
-                    ?.textContent.includes('Loading current device settings'),
+                    ?.textContent.includes('Loading settings…'),
         );
         await screenshot(page, 'phone-settings');
         await noOverflow(page, 'phone settings');
@@ -61,7 +61,7 @@ async function main() {
             await card.getByRole('button', { name: /^Settings for / }).evaluate((el) => el === document.activeElement),
             'close restores focus',
         );
-        await card.locator('a.desc-block.stream').first().click();
+        await card.getByRole('link', { name: 'Open screen', exact: true }).first().click();
         await page.waitForFunction(
             () => document.querySelector('.kit-bar-status')?.textContent.includes('Connected'),
             undefined,
@@ -101,6 +101,7 @@ async function main() {
         );
         await screenshot(page, 'phone-keyboard');
         await page.getByRole('button', { name: 'Close Type text', exact: true }).click();
+        await page.getByRole('dialog', { name: 'Type text', exact: true }).waitFor({ state: 'hidden' });
         for (const [label, width, height] of [
             ['iphone17pm-landscape', 956, 440],
             ['small-phone', 320, 568],
@@ -142,10 +143,10 @@ async function main() {
         await desktop.locator('.floating-toolbar.desktop .control-button').first().waitFor();
         assert.equal(await desktop.locator('.floating-toolbar-fab').count(), 0, 'desktop has no mobile FAB');
         const sidebar = await desktop.locator('.stream-controls-slot').boundingBox();
-        const video = await desktop.locator('.stream-mount').boundingBox();
+        const video = await desktop.locator('.touch-layer').boundingBox();
         assert(
-            sidebar.width >= 80 && video.x + video.width <= sidebar.x + 1,
-            'desktop sidebar reserves space beside the video',
+            sidebar.width >= 44 && Math.abs(video.x + video.width - sidebar.x) <= 2 && Math.abs(video.height - sidebar.height) <= 2,
+            'desktop rail is attached to the picture and follows its height',
         );
         const centeredBack = await desktop.locator('.kit-bar-back').evaluate((button) => {
             const outer = button.getBoundingClientRect();

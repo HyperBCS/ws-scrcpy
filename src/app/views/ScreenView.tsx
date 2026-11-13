@@ -2,14 +2,11 @@ import { ComponentChildren, RefObject } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { openSheet, streamNotice } from '../state/stream';
 import type { ConnectionStatus } from '../state/phoneStatus';
-import { KeyboardChip } from '../ui/KeyboardChip';
-import { NotificationsLink } from '../ui/NotificationsLink';
-import { AppBar, AppBarStatus } from '../ui/AppBar';
-import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
 import { IconButton } from '../ui/IconButton';
 import { Presence } from '../ui/Presence';
 import { useSheetDock } from '../ui/Sheet';
+import { PhoneHeader } from './PhoneHeader';
 import { LockScreenNotice } from './LockScreenNotice';
 import { ScreenProblem, StateCard } from './screen/StateCard';
 import '../../style/kit/Banner.css';
@@ -127,21 +124,14 @@ export function ScreenView<P extends { udid: string }>({ params, useScreen, tabs
 
     return (
         <div class="stream-view">
-            <AppBar
-                title={screen.name}
-                status={
-                    <>
-                        <AppBarStatus tone={connection.tone}>{connection.label}</AppBarStatus>
-                        {screen.service}
-                    </>
-                }
-            >
-                <KeyboardChip />
-                <NotificationsLink compact udid={screen.inbox} />
-                <Button size="compact" onClick={() => openSheet('devices')} disabled={!screen.mounted}>
-                    Switch
-                </Button>
-            </AppBar>
+            <PhoneHeader
+                name={screen.name}
+                connection={connection}
+                service={screen.service}
+                inbox={screen.inbox}
+                switchDisabled={!screen.mounted}
+                keyboard
+            />
             {tabs}
             {/* The one place for messages about the screen, in this order: the lock notice, the
                 progress of a first start and the stream notice. It is part of the layout, so a

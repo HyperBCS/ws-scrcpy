@@ -5,11 +5,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { MessageXtermClient } from '../../../types/MessageXtermClient';
 import { ACTION } from '../../../common/Action';
 import { ParamsShell } from '../../../types/ParamsShell';
-import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import Util from '../../Util';
 import { ChannelCode } from '../../../common/ChannelCode';
-import { ToolEntry } from '../../client/Tool';
-import { shellTool } from './deviceTools';
 import {
     applyControl,
     keyInput,
@@ -321,10 +318,6 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         this.destroy();
         this.term.dispose();
         this.container.remove();
-    }
-
-    public static createEntryForDeviceList(descriptor: GoogDeviceDescriptor): ToolEntry | undefined {
-        return shellTool.createEntryForDeviceList(descriptor);
     }
 
     protected getChannelInitData(): Buffer {
