@@ -962,6 +962,21 @@ function SheetLifecycle() {
                         <AutoHeight className="kit-card kit-list lifecycle-external-height">
                             <div class="lifecycle-external">External content</div>
                         </AutoHeight>
+                        <AutoHeight className="kit-card kit-list lifecycle-image-height">
+                            <img
+                                class="lifecycle-image"
+                                alt=""
+                                src={
+                                    'data:image/svg+xml,' +
+                                    encodeURIComponent(
+                                        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="40"/>',
+                                    )
+                                }
+                            />
+                        </AutoHeight>
+                        <AutoHeight className="kit-card kit-list lifecycle-font-height">
+                            <div class="lifecycle-font">Resizing text</div>
+                        </AutoHeight>
                         <Button onClick={(event) => action.arm('example', event.currentTarget)}>
                             Arm lifecycle prompt
                         </Button>

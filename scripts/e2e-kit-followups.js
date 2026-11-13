@@ -54,9 +54,9 @@ async function lifecycle(browser) {
         await ids(page);
         // Hold the first scheduled resize frame for 50ms. Sample painted frames throughout:
         // growth/shrink must stay monotonic, including when a callback is delivered late.
-        for (const source of ['parent', 'child', 'external']) for (const growing of [true, false, true]) {
+        for (const source of ['parent', 'child', 'external', 'image', 'font']) for (const growing of [true, false, true]) {
             const samples = await page.evaluate(async ({ growing, source }) => {
-                const card = document.querySelector(source === 'parent' ? '.lifecycle-height' : source === 'child' ? '.lifecycle-child-height' : '.lifecycle-external-height');
+                const card = document.querySelector(source === 'parent' ? '.lifecycle-height' : source === 'child' ? '.lifecycle-child-height' : `.lifecycle-${source}-height`);
                 const original = window.requestAnimationFrame;
                 const cancel = window.cancelAnimationFrame;
                 const pending = new Map();
@@ -76,7 +76,11 @@ async function lifecycle(browser) {
                     if (record) { clearTimeout(record.timer); cancel(record.frame); pending.delete(id); }
                     else cancel(id);
                 };
-                if (source === 'external') {
+                if (source === 'image') {
+                    document.querySelector('.lifecycle-image').src = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="${growing ? 120 : 40}"/>`);
+                } else if (source === 'font') {
+                    document.querySelector('.lifecycle-font').style.fontSize = growing ? 'var(--font-size-24)' : 'var(--font-size-13)';
+                } else if (source === 'external') {
                     // No Preact render: model an externally loaded image/font changing size.
                     document.querySelector('.lifecycle-external').style.height = growing ? '120px' : '40px';
                 } else {
@@ -98,24 +102,26 @@ async function lifecycle(browser) {
                     `height moves in one direction through delayed resize: ${JSON.stringify(samples)}`);
             }
             await settleMotion(page);
-            await natural(dialog.locator(source === 'parent' ? '.lifecycle-height' : source === 'child' ? '.lifecycle-child-height' : '.lifecycle-external-height'));
+            await natural(dialog.locator(source === 'parent' ? '.lifecycle-height' : source === 'child' ? '.lifecycle-child-height' : `.lifecycle-${source}-height`));
         }
-        const interrupted = await page.evaluate(async () => {
-            const card = document.querySelector('.lifecycle-height');
+        for (const source of ['parent', 'child']) {
+        const interrupted = await page.evaluate(async (source) => {
+            const card = document.querySelector(source === 'parent' ? '.lifecycle-height' : '.lifecycle-child-height');
             const click = text => Array.from(document.querySelectorAll('dialog[open] button')).find(node => node.textContent === text).click();
             const start = card.getBoundingClientRect().height;
-            click('Shrink rows');
+            click(source === 'parent' ? 'Shrink rows' : 'Shrink child rows');
             await new Promise(resolve => setTimeout(resolve, 80));
             const before = card.getBoundingClientRect().height;
-            click('Grow rows');
+            click(source === 'parent' ? 'Grow rows' : 'Grow child rows');
             await Promise.resolve(); await Promise.resolve();
             return { start, before, after: card.getBoundingClientRect().height };
-        });
-        console.log('HEIGHT_INTERRUPTED', JSON.stringify(interrupted));
+        }, source);
+        console.log('HEIGHT_INTERRUPTED', source, JSON.stringify(interrupted));
         assert(interrupted.before < interrupted.start - 1, 'shrink reached an intermediate frame');
         assert(Math.abs(interrupted.after - interrupted.before) < 1, 'reversed growth starts at the actual intermediate height');
         await settleMotion(page);
-        await natural(dialog.locator('.lifecycle-height'));
+        await natural(dialog.locator(source === 'parent' ? '.lifecycle-height' : '.lifecycle-child-height'));
+        }
         for (let index = 0; index < 3; index++) {
             await dialog.getByRole('button', { name: 'Arm lifecycle prompt', exact: true }).click();
             await dialog.getByRole('alertdialog', { name: 'Change this example?' }).waitFor();
@@ -130,7 +136,7 @@ async function lifecycle(browser) {
         await dialog.waitFor();
         await settleMotion(page);
         await dialog.getByRole('button', { name: 'Child count 1', exact: true }).waitFor();
-        await natural(dialog.locator('.lifecycle-height'));
+        for (const source of ['parent', 'child', 'external', 'image', 'font']) await natural(dialog.locator(source === 'parent' ? '.lifecycle-height' : `.lifecycle-${source}-height`));
         await ids(page);
         await page.screenshot({ path: path.join(OUT, 'lifecycle-retained-desktop-light.png') });
         await page.keyboard.press('Escape');
