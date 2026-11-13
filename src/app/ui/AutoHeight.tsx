@@ -14,6 +14,7 @@ export function AutoHeight({ children, className = '', innerClassName }: AutoHei
     const outer = useRef<HTMLDivElement>(null);
     const inner = useRef<HTMLDivElement>(null);
     const schedule = useRef<() => void>();
+    const measure = useRef<() => void>();
     useLayoutEffect(() => {
         const container = outer.current;
         const content = inner.current;
@@ -66,6 +67,7 @@ export function AutoHeight({ children, className = '', innerClassName }: AutoHei
             // initial or coalesced observer delivery can never leave yesterday's fixed height.
             previous = next;
         };
+        measure.current = update;
         schedule.current = () => {
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(update);
@@ -77,12 +79,14 @@ export function AutoHeight({ children, className = '', innerClassName }: AutoHei
             cancelAnimationFrame(frame);
             active?.cancel();
             schedule.current = undefined;
+            measure.current = undefined;
             container.style.removeProperty('overflow');
         };
     }, []);
-    // A content update may be coalesced with the observer's first delivery. Measure after every
-    // committed render too; external size changes still come through the observer.
-    useLayoutEffect(() => schedule.current?.());
+    // Commit-driven changes must start before paint: delaying them to the observer's next
+    // frame would expose natural height first, then jump back to the old animation start.
+    // External size changes still come through the observer outside its delivery.
+    useLayoutEffect(() => measure.current?.());
     return (
         <div ref={outer} class={`auto-height ${className}`}>
             <div ref={inner} class={innerClassName}>

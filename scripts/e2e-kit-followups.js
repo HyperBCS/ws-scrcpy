@@ -95,6 +95,22 @@ async function lifecycle(browser) {
             await settleMotion(page);
             await natural(dialog.locator('.lifecycle-height'));
         }
+        const interrupted = await page.evaluate(async () => {
+            const card = document.querySelector('.lifecycle-height');
+            const click = text => Array.from(document.querySelectorAll('dialog[open] button')).find(node => node.textContent === text).click();
+            const start = card.getBoundingClientRect().height;
+            click('Shrink rows');
+            await new Promise(resolve => setTimeout(resolve, 80));
+            const before = card.getBoundingClientRect().height;
+            click('Grow rows');
+            await Promise.resolve(); await Promise.resolve();
+            return { start, before, after: card.getBoundingClientRect().height };
+        });
+        console.log('HEIGHT_INTERRUPTED', JSON.stringify(interrupted));
+        assert(interrupted.before < interrupted.start - 1, 'shrink reached an intermediate frame');
+        assert(Math.abs(interrupted.after - interrupted.before) < 1, 'reversed growth starts at the actual intermediate height');
+        await settleMotion(page);
+        await natural(dialog.locator('.lifecycle-height'));
         for (let index = 0; index < 3; index++) {
             await dialog.getByRole('button', { name: 'Arm lifecycle prompt', exact: true }).click();
             await dialog.getByRole('alertdialog', { name: 'Change this example?' }).waitFor();
@@ -109,6 +125,7 @@ async function lifecycle(browser) {
         await dialog.waitFor();
         await settleMotion(page);
         await dialog.getByRole('button', { name: 'Child count 1', exact: true }).waitFor();
+        await natural(dialog.locator('.lifecycle-height'));
         await ids(page);
         await page.screenshot({ path: path.join(OUT, 'lifecycle-retained-desktop-light.png') });
         await page.keyboard.press('Escape');
