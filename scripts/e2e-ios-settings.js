@@ -877,7 +877,7 @@ async function sectionsFlow(browser) {
             const about = dialog.locator('[data-section="about"]');
             const fact = (name) => about.locator(`[data-fact="${name}"] .kit-row-value`).textContent();
             assert.equal(await fact('status'), 'Asleep');
-            assert.equal(await about.locator('[data-fact="model"] .kit-row-desc').textContent(), 'iPhone 13 Pro Max');
+            assert.equal(await fact('model'), 'iPhone 13 Pro Max');
             assert.equal(await fact('system'), '27.2');
             assert.equal(await fact('screen'), 'Asleep');
             assert.equal(await fact('lock'), 'Locked');

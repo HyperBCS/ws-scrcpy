@@ -572,7 +572,7 @@ async function listFlow(browser) {
                     const about = dialog.locator('[data-section="about"]');
                     const fact = (name) => about.locator(`[data-fact="${name}"] .kit-row-value`).textContent();
                     assert.equal(await fact('status'), status);
-                    assert.equal(await about.locator('[data-fact="serial"] .kit-row-desc').textContent(), udid);
+                    assert.equal(await fact('serial'), udid);
                     assert.equal(await fact('system'), '16');
                     assert.equal(await fact('screen'), connected ? 'Asleep' : 'Unknown');
                     assert.equal(await fact('connection'), connected ? 'Connected' : 'Offline');
