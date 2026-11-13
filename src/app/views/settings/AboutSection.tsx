@@ -36,11 +36,9 @@ const DECODER: Record<DecoderKind, string> = { hevc: 'HEVC', mse: 'MSE' };
 // Bound error listeners independently of the shared eight-second Android Starting marker.
 const SERVICE_ERROR_OBSERVATION_MS = 30000;
 
-/** A fact shown as its value at the end of the row, or under its name where it may be long. */
-function Fact({ name, title, value, long }: { name: string; title: string; value: string; long?: boolean }) {
-    return long ? (
-        <SheetRow title={title} description={value} attributes={{ 'data-fact': name }} />
-    ) : (
+/** A phone fact, with its value beside its name and room to wrap. */
+function Fact({ name, title, value }: { name: string; title: string; value: string }) {
+    return (
         <SheetRow title={title} attributes={{ 'data-fact': name }}>
             <span class="kit-row-value">{value}</span>
         </SheetRow>
@@ -334,7 +332,7 @@ export function AboutSection({ platform, udid, entry, name, opening, screenOpen,
         <SettingsSection name="about">
             <SettingsGroup title="Phone" class="settings-facts">
                 {status && <Fact name="status" title="Status" value={status.label} />}
-                {entry && <Fact name="model" title="Model" value={model || FACT.unknown} long />}
+                {entry && <Fact name="model" title="Model" value={model || FACT.unknown} />}
                 {entry && (
                     <Fact
                         name="system"
@@ -342,7 +340,7 @@ export function AboutSection({ platform, udid, entry, name, opening, screenOpen,
                         value={version || FACT.unknown}
                     />
                 )}
-                <Fact name="serial" title="Serial" value={udid} long />
+                <Fact name="serial" title="Serial" value={udid} />
                 {entry && <Fact name="connection" title="Connection" value={connection.label} />}
                 {status && <Fact name="screen" title="Screen" value={screenFact(status.screen)} />}
                 {status && <Fact name="lock" title="Lock" value={lockFact(status.lock)} />}

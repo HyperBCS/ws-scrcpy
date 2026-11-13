@@ -234,13 +234,17 @@ async function geometry(test, state) {
         const part = node => {
             if (!node) return null;
             const range = document.createRange(); range.selectNodeContents(node);
+            const style = getComputedStyle(node);
             return { rect: rect(node), lines: [...range.getClientRects()].map(r => r.toJSON()),
+                content: node.textContent, fontSize: parseFloat(style.fontSize), userSelect: style.userSelect,
                 clientWidth: node.clientWidth, scrollWidth: node.scrollWidth };
         };
         return [...about.querySelectorAll('[data-fact],[data-service]')].map(row => ({
             fact: row.dataset.fact, service: row.dataset.service, rect: rect(row),
             text: part(row.querySelector('.kit-row-text')), title: part(row.querySelector('.kit-row-title')),
-            value: part(row.querySelector('.kit-row-value')), description: part(row.querySelector('.kit-row-desc')),
+            // Measure the old description path too, so a mixed layout fails on its geometry.
+            value: part(row.querySelector('.kit-row-value') || (row.dataset.fact && row.querySelector('.kit-row-desc'))),
+            description: part(row.querySelector('.kit-row-desc')),
             control: rect(row.querySelector('.kit-row-control')), button: rect(row.querySelector('button')),
             clientWidth: row.clientWidth, scrollWidth: row.scrollWidth,
         }));
@@ -268,12 +272,68 @@ async function geometry(test, state) {
             }
         }
     }
+    await factAlignment(test, state, result.filter(row => row.fact));
     const finite = await test.page.evaluate(() => document.getAnimations().filter(animation => {
         const timing = animation.effect?.getComputedTiming();
         return timing && Number.isFinite(timing.endTime) && animation.playState === 'running';
     }).length);
     assert.equal(finite, 0, 'finite motion has settled');
     return result;
+}
+
+// The label and value are separate lanes even when metadata wraps onto several lines.
+async function factAlignment(test, state, facts) {
+    const kit = await test.about.evaluate(about => {
+        const style = getComputedStyle(about.querySelector('[data-fact]'));
+        return { gap: parseFloat(style.columnGap), minHeight: parseFloat(style.minHeight),
+            padding: parseFloat(style.paddingRight), valueFont: parseFloat(style.getPropertyValue('--font-size-13')) };
+    });
+    const edge = facts[0].rect.right - kit.padding;
+    for (const row of facts) {
+        const label = `${test.id}/${state}/${row.fact}`;
+        assert(row.value, `${label}: fact has a visible value`);
+        assert.equal(row.title.lines.length, 1, `${label}: whole label stays on one line`);
+        assert(row.value.rect.left >= row.title.rect.right + kit.gap - 1,
+            `${label}: value sits beside the whole label in its own lane`);
+        assert(Math.abs(row.value.rect.right - edge) <= 1, `${label}: values share the right edge`);
+        assert.equal(row.value.fontSize, kit.valueFont, `${label}: value keeps the kit reading size`);
+        assert.notEqual(row.value.userSelect, 'none', `${label}: value allows text selection`);
+        for (const line of row.value.lines) {
+            assert(line.left >= row.value.rect.left - 1 && line.right <= row.value.rect.right + 1 &&
+                line.top >= row.value.rect.top - 1 && line.bottom <= row.value.rect.bottom + 1,
+            `${label}: wrapped value fits its own lane without clipping`);
+        }
+        if (row.value.lines.length === 1) {
+            assert(Math.abs(row.rect.height - kit.minHeight) <= 1, `${label}: ordinary fact keeps a compact row`);
+            assert(Math.abs(row.title.lines[0].top + row.title.lines[0].height / 2 -
+                (row.value.lines[0].top + row.value.lines[0].height / 2)) <= 1,
+            `${label}: one-line label and value align vertically`);
+        } else {
+            assert(row.value.rect.width > 100, `${label}: wrapped metadata keeps a readable lane`);
+        }
+    }
+    const selected = await test.about.locator('[data-fact] .kit-row-value').evaluateAll(values => values.map(value => {
+        const selection = window.getSelection();
+        selection.selectAllChildren(value);
+        const text = selection.toString();
+        selection.removeAllRanges();
+        return { content: value.textContent, selected: text };
+    }));
+    assert.equal(selected.length, facts.length, 'all fact values remain selectable');
+    for (const value of selected) assert.equal(value.selected, value.content, 'selection contains the complete fact value');
+}
+
+function factContent(test, rows, model, version) {
+    const expected = {
+        status: ['Status', 'Ready'], model: ['Model', model],
+        system: [test.platform === 'ios' ? 'iOS' : 'Android', version],
+        serial: ['Serial', test.item().udid], connection: ['Connection', 'Connected'],
+        screen: ['Screen', 'On'], lock: ['Lock', 'Unlocked'],
+        ...(test.platform === 'ios' ? { session: ['Session', 'Running'], paired: ['Paired', 'Yes'],
+            'developer-mode': ['Developer Mode', 'On'], ...(test.view.dock ? { decoder: ['Decoder', 'Unknown'] } : {}) } : {}),
+    };
+    assert.deepEqual(Object.fromEntries(rows.filter(row => row.fact).map(row =>
+        [row.fact, [row.title.content, row.value.content]])), expected, 'every fact retains its full label and value');
 }
 
 // Capture each selected group's full scroll span, including its lower row and border.
@@ -308,6 +368,7 @@ const VIEWS = [
     { name: '956-landscape-list', width: 956, height: 440, touch: true },
     { name: '1280-centred-list', width: 1280, height: 800, touch: false },
     { name: '1024-short-dock', width: 1024, height: 450, touch: false, dock: true },
+    { name: '440-primary-touch-list', width: 440, height: 956, touch: true },
 ];
 
 async function layout(browser) {
@@ -315,6 +376,8 @@ async function layout(browser) {
         const test = await fixture(browser, platform, view, theme, 'layout');
         try {
             const rows = await geometry(test, 'ordinary');
+            factContent(test, rows, platform === 'ios' ? 'iPhone fixture' : 'Fixture About Android',
+                platform === 'ios' ? '27.2.1' : '16');
             const system = rows.find(row => row.fact === 'system');
             assert.equal(system.title.lines.length, 1, 'ordinary System label stays on one line');
             assert.equal(system.value.lines.length, 1, 'ordinary System value stays on one line');
@@ -331,10 +394,20 @@ async function layout(browser) {
                 }
             }
             for (const [state, version] of [['vendor-version', VERSION], ['unbroken-version', TOKEN]]) {
-                test.send(platform === 'ios' ? { model: 'Long synthetic marketing model '.repeat(3), version } :
-                    { 'ro.product.model': 'Long synthetic marketing model '.repeat(3), 'ro.build.version.release': version });
+                const model = state === 'vendor-version' ? 'Long synthetic marketing model '.repeat(3).trim() : TOKEN.repeat(2);
+                test.send(platform === 'ios' ? { model, version } :
+                    { 'ro.product.model': model, 'ro.build.version.release': version });
                 await test.about.getByText(version, { exact: true }).waitFor();
-                const long = (await geometry(test, state)).find(row => row.fact === 'system');
+                const longRows = await geometry(test, state);
+                factContent(test, longRows, platform === 'ios' ? model : `Fixture ${model}`, version);
+                const long = longRows.find(row => row.fact === 'system');
+                for (const name of ['model', 'serial']) {
+                    const fact = longRows.find(row => row.fact === name);
+                    if (name === 'model' || view.width <= 440 || view.dock) {
+                        assert(fact.value.lines.length > 1, `${name}: long metadata wraps instead of truncating`);
+                    }
+                    assert(fact.value.rect.width > 100, `${name}: long metadata keeps a readable lane`);
+                }
                 assert.equal(long.title.lines.length, 1, 'long metadata never breaks its System label into letters');
                 assert(long.value.rect.width > 100, 'long System value has a readable width');
                 await pictures(test, state, '.settings-facts');
@@ -467,7 +540,7 @@ async function metadata(browser) {
             test.send({ state: 'unauthorized', model: '<NoModel>', version: '<NoVersion>', session: 'stopped',
                 paired: false, developerMode: 'unknown' });
             await test.about.locator('[data-fact="status"] .kit-row-value', { hasText: 'Unauthorized' }).waitFor();
-            assert.equal(await test.about.locator('[data-fact="model"] .kit-row-desc').textContent(), 'Unknown');
+            assert.equal(await test.about.locator('[data-fact="model"] .kit-row-value').textContent(), 'Unknown');
             assert.equal(await test.about.locator('[data-fact="system"] .kit-row-value').textContent(), 'Unknown');
             await geometry(test, 'unread-metadata');
             await pictures(test, 'unread-metadata', '.settings-facts');
@@ -475,7 +548,7 @@ async function metadata(browser) {
                 test.send({ state, model: 'Known <NoModel> suffix', version: 'Known <NoVersion> suffix',
                     session: 'stopped', paired: true, developerMode: true });
                 await test.about.getByText('Known <NoVersion> suffix', { exact: true }).waitFor();
-                assert.equal(await test.about.locator('[data-fact="model"] .kit-row-desc').textContent(), 'Known <NoModel> suffix');
+                assert.equal(await test.about.locator('[data-fact="model"] .kit-row-value').textContent(), 'Known <NoModel> suffix');
             }
             test.send({ session: 'error', sessionMessage: REASON, developerMode: false });
             await test.services.locator('[data-service="stream-service"] .kit-row-desc', { hasText: REASON }).waitFor();
@@ -488,7 +561,7 @@ async function metadata(browser) {
             assert.equal(await test.services.getByText(REASON, { exact: true }).count(), 0);
             test.drop();
             await test.about.locator('[data-fact="connection"] .kit-row-value', { hasText: 'Reconnecting…' }).waitFor();
-            assert.equal(await test.about.locator('[data-fact="model"] .kit-row-desc').textContent(), 'Known <NoModel> suffix');
+            assert.equal(await test.about.locator('[data-fact="model"] .kit-row-value').textContent(), 'Known <NoModel> suffix');
             assert.equal(await test.about.locator('[data-fact="system"] .kit-row-value').textContent(), 'Known <NoVersion> suffix');
             test.inventory({});
             await test.finish();
