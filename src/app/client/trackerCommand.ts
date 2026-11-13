@@ -163,17 +163,16 @@ export function observeTrackerCommandErrors(
     const settled = new Promise<void>((resolve, reject) => {
         let finished = false;
         let requestId: number | undefined;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        let stopWatchingClose: (() => void) | undefined;
+        const watching: { timer?: ReturnType<typeof setTimeout>; close?: () => void } = {};
         const finish = (error?: Error) => {
             if (finished) {
                 return;
             }
             finished = true;
-            clearTimeout(timer);
+            clearTimeout(watching.timer);
             tracker.off(type, onReply);
             signal?.removeEventListener('abort', onAbort);
-            stopWatchingClose?.();
+            watching.close?.();
             if (error) {
                 reject(error);
             } else {
@@ -203,8 +202,8 @@ export function observeTrackerCommandErrors(
         }
         tracker.on(type, onReply);
         signal?.addEventListener('abort', onAbort, { once: true });
-        timer = setTimeout(stop, timeoutMs);
-        stopWatchingClose = tracker.onceClosed?.(() => fail(new Error(TRACKER_CONNECTION_LOST)));
+        watching.timer = setTimeout(stop, timeoutMs);
+        watching.close = tracker.onceClosed?.(() => fail(new Error(TRACKER_CONNECTION_LOST)));
         try {
             requestId = tracker.sendCommand(type, { udid, ...data });
         } catch {
