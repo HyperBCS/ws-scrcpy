@@ -7,13 +7,16 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const express = require('express');
+const { EventEmitter } = require('node:events');
 require('ts-node').register({ transpileOnly: true });
-const { resetSettingsForTests } = require('../src/server/Settings');
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-notification-service-'));
 process.env.WS_NOTIFICATION_DATA = temporary;
 process.env.WS_DATA_DIR = temporary;
 process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
+delete process.env.WS_IOS_SETTINGS_KEY;
+delete process.env.WS_IOS_SETTINGS_KEY_FILE;
+const { resetSettingsForTests } = require('../src/server/Settings');
 const { NotificationService } = require('../src/server/notifications/NotificationService');
 const { NotificationFeed, shouldRelay } = require('../src/server/notifications/NotificationFeed');
 after(() => fs.rmSync(temporary, { recursive: true, force: true }));
@@ -123,10 +126,10 @@ test('a collector error stays until the collector started after it has reported 
     service.handleCollector({ kind: 'error', message: 'Bluetooth collector stopped after an internal error (KeyError)' });
     // The next collector starts after a minute's restart delay and reports at once.
     service.collectorErrorAt = Date.now() - 60000;
-    service.collectorStarted = Date.now() - 2000;
+    service.collector.startedAt = Date.now() - 2000;
     report(service);
     assert.equal(service.collectorError, 'Bluetooth collector stopped after an internal error (KeyError)');
-    service.collectorStarted = Date.now() - 30000;
+    service.collector.startedAt = Date.now() - 30000;
     report(service);
     assert.equal(service.collectorError, '');
 });
@@ -134,41 +137,47 @@ test('a collector error stays until the collector started after it has reported 
 test('collector restarts back off to one minute and start over after a minute of uptime', () => {
     const service = new NotificationService();
     assert.deepEqual(
-        Array.from({ length: 7 }, () => service.restartDelay(false, 1500)),
+        Array.from({ length: 7 }, () => service.collector.restartDelay(false, 1500)),
         [3000, 6000, 12000, 24000, 48000, 60000, 60000],
     );
-    assert.equal(service.collectorRestarts, 7);
-    assert.equal(service.restartDelay(true, 1500), 3000, 'a restart for changed phones is not a failure');
-    assert.equal(service.collectorRestarts, 7);
-    assert.equal(service.restartDelay(false, 60000), 3000);
-    assert.equal(service.collectorRestarts, 1);
+    assert.equal(service.collector.restarts, 7);
+    assert.equal(service.collector.restartDelay(true, 1500), 3000, 'a restart for changed phones is not a failure');
+    assert.equal(service.collector.restarts, 7);
+    assert.equal(service.collector.restartDelay(false, 60000), 3000);
+    assert.equal(service.collector.restarts, 1);
     // The count shown on the Setup page falls back once the running collector has stayed up.
-    service.child = {};
-    service.collectorStarted = Date.now() - 59000;
-    assert.equal(service.restartCount(), 1);
-    service.collectorStarted = Date.now() - 60000;
-    assert.equal(service.restartCount(), 0);
-    service.child = undefined;
+    service.collector.child = {};
+    service.collector.startedAt = Date.now() - 59000;
+    assert.equal(service.collector.restartCount(), 1);
+    service.collector.startedAt = Date.now() - 60000;
+    assert.equal(service.collector.restartCount(), 0);
+    service.collector.child = undefined;
 });
 
-// Stands in for /usr/bin/python3: the service runs `<interpreter> <collector.py>`.
-function fakeInterpreter(body) {
-    const file = path.join(temporary, `collector-${crypto.randomUUID()}`);
-    fs.writeFileSync(file, `#!${process.execPath}\n${body}\n`, { mode: 0o700 });
-    return file;
+// A fake child with only in-memory streams. No interpreter or Bluetooth tool is started.
+function fakeChild(produce) {
+    const child = new EventEmitter();
+    child.stdin = new EventEmitter();
+    child.stdin.writable = true;
+    child.stdin.write = (_line, callback) => { queueMicrotask(() => callback?.()); return true; };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdout.setEncoding = child.stderr.setEncoding = () => undefined;
+    child.kill = () => { queueMicrotask(() => child.emit('close')); return true; };
+    queueMicrotask(() => produce(child));
+    return child;
 }
-async function withCollector(interpreter, run) {
-    process.env.WS_BLUETOOTH_PYTHON = interpreter;
+async function withCollector(produce, run) {
     process.env.WS_NOTIFICATIONS_COLLECTOR = '1';
     resetSettingsForTests();
     try {
         await mounted(async (context) => {
-            context.service.closed = false;
-            context.service.startCollector();
+            context.service.collector.runtime.spawn = () => fakeChild(produce);
+            context.service.collector.runtime.script = () => '/fixture/collector.py';
+            context.service.collector.start();
             await run(context);
         });
     } finally {
-        delete process.env.WS_BLUETOOTH_PYTHON;
         process.env.WS_NOTIFICATIONS_COLLECTOR = '0';
         resetSettingsForTests();
     }
@@ -183,59 +192,61 @@ const until = async (condition, what) => {
 
 test('a crashing collector is logged with a size cap, counted, and its error stays on the Setup page', async (t) => {
     const logged = t.mock.method(console, 'error', () => undefined);
-    const crash = fakeInterpreter(`
-        process.stdout.write(JSON.stringify({ kind: 'devices', devices: [], pairingOpen: false }) + '\\n');
-        process.stderr.write('Traceback (most recent call last):\\n' + 'x'.repeat(40000) + '\\nKeyError: 7\\n', () => process.exit(1));
-    `);
+    const crash = (child) => {
+        child.stdout.emit('data', JSON.stringify({ kind: 'devices', devices: [], pairingOpen: false }) + '\n');
+        child.stderr.emit('data', 'Traceback (most recent call last):\n' + 'x'.repeat(40000) + '\nKeyError: 7\n');
+        child.emit('close', 1);
+    };
     await withCollector(crash, async ({ service, status }) => {
-        await until(() => !service.child && service.restart, 'the collector to exit');
+        await until(() => !service.collector.child && service.collector.restart, 'the collector to exit');
         const lines = logged.mock.calls.map((call) => String(call.arguments[0])).filter((line) => line.includes('collector:'));
         assert.match(lines[0], /^\[NotificationService\] collector: Traceback \(most recent call last\):/);
         assert.equal(lines.filter((line) => line.endsWith('further output from this process is not logged')).length, 1);
         assert.ok(lines.join('').length < 16384 + 100 * lines.length, 'the log is capped');
-        assert.equal(service.collectorRestarts, 1);
+        assert.equal(service.collector.restarts, 1);
         report(service);
         const current = await status();
         assert.equal(current.collectorError, 'Bluetooth collector failed; check host BlueZ and D-Bus access');
         assert.equal(current.collectorRestarts, 1);
         assert.equal(current.error, current.collectorError);
-        service.collectorRestarts = 4;
+        service.collector.restarts = 4;
         assert.equal((await status()).error, `${current.collectorError}. The collector has been restarted 4 times`);
     });
 });
 
 test('the error a collector reports about itself is not replaced by its traceback', async (t) => {
     t.mock.method(console, 'error', () => undefined);
-    const crash = fakeInterpreter(`
+    const crash = (child) => {
         const message = 'Bluetooth collector stopped after an internal error (KeyError)';
-        process.stdout.write(JSON.stringify({ kind: 'error', message }) + '\\n', () =>
-            setTimeout(() => process.stderr.write('Traceback (most recent call last):\\nKeyError: 7\\n', () => process.exit(0)), 100));
-    `);
+        child.stdout.emit('data', JSON.stringify({ kind: 'error', message }) + '\n');
+        child.stderr.emit('data', 'Traceback (most recent call last):\nKeyError: 7\n');
+        child.emit('close', 0);
+    };
     await withCollector(crash, async ({ service, status }) => {
-        await until(() => !service.child && service.restart, 'the collector to exit');
+        await until(() => !service.collector.child && service.collector.restart, 'the collector to exit');
         assert.equal((await status()).collectorError, 'Bluetooth collector stopped after an internal error (KeyError)');
     });
 });
 
 test('a collector that exits without a message is reported, and a restart for changed phones is not', async (t) => {
     t.mock.method(console, 'error', () => undefined);
-    const idle = fakeInterpreter(`process.stdin.on('data', () => undefined); setInterval(() => undefined, 1000);`);
+    const idle = () => undefined;
     await withCollector(idle, async ({ service, status }) => {
-        const first = service.child;
-        service.restartCollector();
-        await until(() => !service.child && service.restart, 'the collector to stop');
-        assert.equal(service.collectorRestarts, 0);
+        const first = service.collector.child;
+        service.collector.restartCollector();
+        await until(() => !service.collector.child && service.collector.restart, 'the collector to stop');
+        assert.equal(service.collector.restarts, 0);
         assert.equal((await status()).error, '');
-        clearTimeout(service.restart);
-        service.restart = undefined;
-        service.startCollector();
-        assert.notEqual(service.child, first);
+        clearTimeout(service.collector.restart);
+        service.collector.restart = undefined;
+        service.collector.start();
+        assert.notEqual(service.collector.child, first);
         // An error this collector reported earlier and that has since been cleared.
         service.handleCollector({ kind: 'error', message: 'Invalid collector command' });
         service.collectorError = '';
-        service.child.kill();
-        await until(() => !service.child && service.restart, 'the collector to stop');
-        assert.equal(service.collectorRestarts, 1);
+        service.collector.child.kill();
+        await until(() => !service.collector.child && service.collector.restart, 'the collector to stop');
+        assert.equal(service.collector.restarts, 1);
         assert.equal((await status()).collectorError, 'Bluetooth collector stopped');
     });
 });
