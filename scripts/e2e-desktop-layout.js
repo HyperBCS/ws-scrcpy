@@ -619,7 +619,8 @@ async function main() {
     }
 }
 
-main().catch((error) => {
+module.exports = { start, settle };
+if (require.main === module) main().catch((error) => {
     console.error(error);
     process.exit(1);
 });

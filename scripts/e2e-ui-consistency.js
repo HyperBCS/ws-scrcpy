@@ -8,6 +8,7 @@ const { settleMotion } = require('./ui-motion');
 const { start: startControls, openPanel: openControls } = require('./e2e-controls');
 const { start: startSettings, openPanel: openSettings, ZONE } = require('./e2e-ios-settings');
 const { fixture, openCardMenu } = require('./e2e-notifications');
+const { start: startLayout, settle: settleLayout } = require('./e2e-desktop-layout');
 const BASE = process.env.BASE;
 assert.ok(BASE && /^http:\/\/127\.0\.0\.1:\d+\/$/.test(BASE) && !/:(8000|8010)\/$/.test(BASE), 'runner-owned fixture URL required');
 const OUT = process.env.E2E_OUT;
@@ -166,6 +167,54 @@ async function railFit(browser) {
     }
     console.log('PASS intrinsic rail fit at the wrapped-caption boundary in both resize directions and across 600px; mount and socket retained');
 }
+// A real decoded fixture picture changes height with the space left by the rail. Read a
+// one-column candidate directly from layout; the production calculation uses intrinsic geometry.
+async function railWidth(browser) {
+    for (const platform of ['android', 'ios']) {
+        let required;
+        for (const history of [false, true]) {
+            const t = await startLayout(browser, platform, { name: history ? 'history320' : 'fresh550', width: history ? 320 : 550, height: 1000 });
+            const resizeErrors = [];
+            t.page.on('console', message => { if (message.type() === 'error' && /ResizeObserver/.test(message.text())) resizeErrors.push(message.text()); });
+            try {
+                const observe = async (state, expected) => {
+                    await settleLayout(t.page);
+                    const found = await t.page.evaluate(() => {
+                        const stage = document.querySelector('.stream-stage'), panel = document.querySelector('.floating-toolbar-panel');
+                        const picture = document.querySelector('.stream-mount .touch-layer');
+                        const style = getComputedStyle(panel), name = '--stream-rail-columns';
+                        const value = stage.style.getPropertyValue(name), priority = stage.style.getPropertyPriority(name);
+                        const present = Array.from(stage.style).includes(name);
+                        let candidateHeight;
+                        try { stage.style.setProperty(name, '1'); candidateHeight = picture.getBoundingClientRect().height; }
+                        finally { if (present) stage.style.setProperty(name, value, priority); else stage.style.removeProperty(name); }
+                        const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+                        return { columns: Number(document.querySelector('.floating-toolbar.desktop').dataset.columns),
+                            room: panel.clientHeight - padding, needed: document.querySelector('.control-buttons-list').getBoundingClientRect().height,
+                            candidateRoom: Math.round(candidateHeight - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth)) - padding,
+                            pictureHeight: picture.getBoundingClientRect().height,
+                            sameMount: window.__layoutMount === document.querySelector('.stream-mount'), sameStage: window.__layoutStage === stage,
+                            inlineRestored: stage.style.getPropertyValue(name) === value && stage.style.getPropertyPriority(name) === priority && Array.from(stage.style).includes(name) === present };
+                    });
+                    if (!history) required = found.needed;
+                    metrics.push({ id: `rail-width-${platform}`, state, required, ...found });
+                    await shot(t.page, `rail-width-${platform}-${state}`);
+                    assert.equal(found.columns, expected, `${platform} ${state}: columns follow actual one-column fit, independent of width history (${JSON.stringify({ required, ...found })})`);
+                    assert.equal(found.inlineRestored, true, 'candidate layout read restores the exact inline variable');
+                    assert.equal(found.sameMount, true); assert.equal(found.sameStage, true); assert.equal(t.streams, 1);
+                    if (expected === 1) { assert.ok(found.room >= required, 'the complete one-column list fits'); assert.ok(found.candidateRoom >= required); }
+                    else assert.ok(found.candidateRoom < required, 'two columns are required because a real one-column picture is too short');
+                };
+                await observe(history ? 'history320' : 'fresh550', history ? 2 : 1);
+                if (history) for (const [state, width] of [['first550', 550], ['wide650', 650], ['last550', 550]]) {
+                    await t.page.setViewportSize({ width, height: 1000 }); await observe(state, 1);
+                }
+                assert.equal(t.touches(), 0); assert.equal(t.typed(), 0); assert.deepEqual(t.errors, []); assert.deepEqual(resizeErrors, []);
+            } finally { await t.context.close(); }
+        }
+    }
+    console.log('PASS decoded picture rail fit: fresh550 and320→550→650→550 agree, true narrow limits use two columns, same mount/socket and no input');
+}
 async function time(browser, engine) {
     for (const { width, docked } of [{ width: 320 }, { width: 390 }, { width: 1280 }, { width: 1280, docked: true }]) for (const colorScheme of ['light', 'dark']) {
         const now = Date.UTC(2026, 10, 16, 5); // Midnight in the fixture zone; both runs are in the future.
@@ -309,7 +358,7 @@ async function main() {
     assert.ok(['chromium', 'webkit'].includes(engine));
     const browser = await ({ chromium, webkit }[engine]).launch({ headless: true });
     try {
-        const cases = engine === 'webkit' ? [time] : [controls, railFit, time, notifications];
+        const cases = engine === 'webkit' ? [time] : [controls, railFit, railWidth, time, notifications];
         const selected = cases.filter(run => !process.env.SCENARIO || process.env.SCENARIO === run.name);
         assert.ok(selected.length, 'SCENARIO must name an existing consistency case');
         for (const run of selected) await run(browser, engine);
