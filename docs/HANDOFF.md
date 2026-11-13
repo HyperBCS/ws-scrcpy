@@ -4642,3 +4642,167 @@ new muted-app events on the server, 50% idle touch opacity, rail attached at eve
    unmuted app, then Undo/unmute and receive again. Existing history must remain.
 5. Check Safari, Firefox and the installed app. Fixture Chromium does not establish those
    browser or hardware outcomes. Keep the iPhone session/start discipline from the deploy brief.
+
+
+### Redesign Android split: shell, polling and stream ownership (2026-11-13, tested without a phone)
+
+D7 / C-server-android-14 is complete in code and fixtures. Hardware and deployment remain.
+Merged `review/p6-android-device` at `073adedc4492ede3cbb6d3a28f2577f03724824a`
+into base `111d1550fd17d4e453c2d9466cf1bffe0c162bd6` with `--no-ff`.
+The merge is `7b45ae44cd231cc9a434badece9ab17640b16baf`; there were no conflicts.
+`675d25ba833eb08325b4885e45f5542d4bab151d` registers the 54-test
+`scripts/test-android-owners.js` suite. No browser registration or integration feature fix
+was needed. All thirteen reviewed production/test files retain the reviewed bytes.
+Not deployed. No phone, adb binary or daemon, real pymobiledevice3, Docker, live server,
+unlock or live settings were used. Real adbkit tests use owned fake loopback peers.
+No dependencies changed, install or push ran, or worktree/branch cleanup was done.
+
+**Module responsibilities and preserved contract.** `Device.ts` is a 204-line facade for
+its public descriptor, update event and 300ms throttle. It delegates actual ownership:
+
+| Module | Responsibility |
+| --- | --- |
+| AdbShell | Configured adbkit diagnostic/status/stream shell reads and uploads, timeout and cancellation. Both CLI paths are gone. Files keeps quoting, exit markers, the 65,000-byte command bound, uncapped output, 15s default and 120s long-operation timeout. Diagnostics gain no default timeout. |
+| DeviceStatePoller | One due-time scheduler for info/runtime/lock/PID, info backoff, properties and PID capability caches, cadence and cancellation generations. It waits for both info branches before retrying and rejects stale updates/rearming. Fresh lock reads retain ordering and unknown-on-failure. PID reads cannot overwrite newer reads or explicit session state. |
+| ScrcpySession | Viewers, 30s grace, serial start/stop/settings queue, own-scid orphan handling, encoders/audio fallback and each launch's shell, forward lease, Broadcast, readiness, delay and deadline. Failed operations leave the queue usable. |
+| AdbUtils / ScrcpyServer | Shared Files reader, serialized identity-counted forward leases, jar completion before launch, cancellation through upload startup and own-scid filtering. |
+| adb/index.ts | Per-operation client/sync views own the actual socket before TCP/transport/shell/sync OKAY and own active file readers. Installed adbkit commands/parser/framing remain. Operation connections reject daemon startup without invoking a child. |
+| BroadcastManager | The approved optional startup AbortSignal closes pending video/audio/control sockets and cleans late events; the exact returned Broadcast lets a launch retain its own identity. Existing no-signal socket order, readiness and control/audio diagnostics remain. |
+
+Attaching an idle phone starts nothing. The first viewer starts once; additional viewers
+reuse it. Last-viewer departure keeps the 30s grace; a quick return cancels it. Starts keep
+the 15s deadline, 1s first connect delay and 500ms retry. A watched settings change restarts
+through one queue; an unwatched change starts nothing. Only owner Stop closes viewers with
+4012, and an older queued ensure cannot undo it. Disconnect, restart, idle stop and shutdown
+retain ordinary reconnect behavior. Late old-launch close/audio/PID events cannot change a
+successor. Launch-time audio and fatal-audio fallback/reset remain. Runtime parsing keeps
+modern screen-state precedence and anchored battery level. Wake starts no idle stream.
+Only the intentionally dead `runShellCommandAdb` public method was removed; production had
+no caller. Other public methods, descriptor types, Files view, lock parser, protocol/audio
+frames, input adapters and both client reconnect policies are unchanged.
+
+**Forward and upload limits.** Cleanup has its own fresh 6500ms budget after a launch abort.
+Confirmed ownership is retained at zero users if removal is not confirmed; a later owner
+can reuse/release it without old cleanup deleting its successor. After a forward request
+but before final OKAY, a lost ACK and an external norebind collision are indistinguishable.
+The socket closes, but an uncertain mapping is left alone. The fixture lost-ACK and collision
+cases retain one mapping and send zero removals. A stalled cleanup can also leave an
+unconfirmed mapping. Zero matching TCP handles is proved; zero mappings is not claimed for
+those fault cases. Per-owned-transfer cancellation runs once, keeps its first boolean result
+and preserves normal/once listener order. It closes actual filepath readers before EOF.
+No global/dependency patch, automatic retry chain or adb daemon side effect was added.
+
+**Server/common scope and second pass.** The complete production diff was read before merge
+and checked again with the test/mock adaptations. It contains exactly these eight approved
+paths under src/server or src/common: goog-device/Device.ts, AdbShell.ts, AdbUtils.ts,
+DeviceStatePoller.ts, ScrcpySession.ts, ScrcpyServer.ts, goog-device/adb/index.ts and
+common/BroadcastManager.ts. No Broadcast.ts, other common or iPhone path changed.
+The five reviewed test paths are test-android-owners.js, test-android-server.js,
+test-server-regressions.js, test-settings.js and fixtures/data-dir-probe.js.
+Old mocks now address the real owners and raw adbkit combined streams/destruction in place
+of CLI stdout/stderr/SIGTERM. Existing scid, orphan, viewer, grace, lock/PID, config, audio and
+close-code assertions remain. The obsolete Android child expectations in test-settings were
+removed; the remaining two audio/icon children still exclude the key and retain PATH.
+Only android-owners was added to the fixture import matrix/audited helper set. Both data env
+names are selected before imports and restored. Integration changed no test assertion.
+
+**Checks and regression proof.** The full combined check passed at `675d25b` in 74.547s:
+typecheck; lint 0 errors/26 warnings; 787 Node tests passed, 0 failed/cancelled/skipped;
+Python 43 OK, 32 OK with 2 existing skips, 4 OK; both production builds. The client retains
+three existing webpack performance warnings. The 54 owner tests include all Linux FD cases.
+Then one uninterrupted `node scripts/test-browser.js` invocation passed all 36 defaults
+in order, exit 0, 1703.668s. No build overlapped it. No test or fixture was changed during it.
+Logs and machine-readable results are in
+`/tmp/ws-scrcpy-redesign/logs/integrate-android-20261112/` (check.log, check-result.json,
+browser.log, browser-result.json and combined-result.json).
+
+Review's exact-base public harness failed three real assertions on 111d and passed on review:
+one reconnect info chain, no retry while a sibling read is pending, and configured adbkit
+launch without a CLI child. Bounded reversion proofs cover stale cache/scheduler/PID order,
+late shell/forward/upload cleanup, queue/release/Stop, Broadcast startup and exact identity,
+facade callbacks and fixture isolation. Twelve old-2b handshake/cleanup logs fail actual
+Socket.destroyed assertions, without missing imports. Their audit is negative-log-audit.json;
+review's full proofs remain in logs/review-android-proofs and logs/review-android-handshake.
+The canonical-data negative leaves the guarded marker and its times/size unchanged.
+
+Fresh combined active-FD evidence records a direct stream receiving 394240 DATA bytes while
+not at EOF, filepath abort/release positions 851968/2293760 of 67108864 bytes, and the real
+ScrcpyServer upload at position 851968 before cancellation. Each leaves 0 matching client
+handles/FDs, one cancel and one end. ScrcpyServer's normal/once cancel listeners each run
+once in order and late launches are 0. See active-fd-evidence.json. These are fake-peer,
+real-library/reader results, not physical phone results.
+
+**Action and lifecycle inventory.** All client/style/public source and browser fixtures
+match 111d. The existing action inventory from step 6b remains: list Open/Wake/Files/Shell/
+Notifications/Settings and problem actions; header Phones/Notifications/Switch and tabs;
+stage state-card and rail/touch actions; Actions/Settings/Type text/Unlock groups; all Files
+and Shell operations; inbox browse/item/bulk actions; Setup and push routes. No action moved
+or disappeared. invariants.json records the public method and unchanged path checks.
+
+| Fixture observation | Measured passing result |
+| --- | --- |
+| Real facade plus owner cooperation | Tracking 0 launches; simultaneous first ensures 1 launch with 2 broadcast sockets without audio; an additional viewer adds 0 launches. |
+| Grace and settings | Non-last departure and quick return cause 0 stops; 29999ms after final departure adds 0 stops and 30000ms adds 1. Watched settings add 1 queued launch with 3 broadcast sockets for audio; unwatched settings add 0. Three completed launches remove 3 owned forwards. |
+| Close codes | Owner Stop yields [4012]; settings restart, idle stop, disconnect and release add no owner Stop code. |
+| Android browser lifecycle | Open 1 stream socket; 4012 adds 0; Start again makes 2 total; deliberate 4007 restart makes 3. List Wake opens 0; screen Wake stays at 1. |
+| Navigation/page/history | 1 stream per requested Screen open; Back/list/overlays add 0. Files closes Screen once; returning to Screen makes 2 total. Shell and Back add 0. |
+| Desktop layout/input | Same stage and mount, 1 socket through panels, width changes and capture/paste/local fields on both platforms. List Settings opens 0. Separate iPhone reconnect close-code/limit checks pass. |
+
+**Raw client and atlas identity.** Before merging/building, all 19 main-context dist/public
+files were copied outside the repo with raw SHA-256 manifests. They came from the completed
+6b normal build. All 19 new files, including every JS/CSS chunk and index.html, match those
+premerge bytes exactly, also after browsers. No module IDs or HTML were normalized.
+The premerge-source-provenance, public-assets-comparison, raw HTML and manifests are retained
+in the log directory. All 271 tracked client/build inputs and all browser scripts match base.
+
+Reused `/tmp/ws-scrcpy-redesign/atlas-integrate-6b` only after verifying all 292 golden hashes
+against the retained review manifest and source identity. The fresh atlas is
+`/tmp/ws-scrcpy-redesign/atlas-integrate-android-20261112`: 146 states/292 raw files, 38 phone
+states and 35 desktop states in each theme, at 390x844 and 1440x900. Every raw file was compared:
+145 PNGs and 145 JSONs are identical (290 files); no additions or removals.
+
+The only changed state is android-settings--desktop--light (one PNG/one JSON). This capture
+has the natural Quality-card height; the golden has the known intermittent stale 40px
+AutoHeight gap. Earlier retained actual measurements are outer 161.1875px/inner 119.1875px
+with 2 border pixels for the stale state, and outer 121.1875px with the same inner/borders for
+the natural state. The image changes 90497 pixels within x1077..1424/y359..900. Exactly four
+style rows differ: Quality card, Quality group, Stream section and outer Settings. Only
+height/block-size and their derived transform/perspective origins differ. Three rows match
+the retained stale/natural full-style proof exactly. The outer Settings raw hash matches the
+same 40px height/20px origin shift from the retained natural full style; the old 4434 probe
+predates the later Keyboard rows. All other computed rows match. Evidence: atlas-comparison.json,
+atlas-style-differences.json and quality-gap-identity-proof.json in the log directory, plus
+`/tmp/ws-scrcpy-redesign/integrate-6b-quality-gap-proof.json`. No capture was changed or
+normalized, and no second browser run was needed. This is an existing UI baseline variation
+with identical client bytes, not an Android feature fix. AutoHeight remains queued for the
+kit follow-up; it is not fixed here.
+
+I inspected Android Actions and Settings at both widths in both themes, plus the golden
+Settings image. Selected raw copies are in
+`/tmp/ws-scrcpy-redesign/screens/integrate-android-20261112/`. No new missing action or
+clipping was found. There is no intended layout/control change.
+
+**Visible and behavior changes, one per line.**
+- Remaining Android helper errors say phone.
+- Reconnect/release rejects stale info updates and retries.
+- Cancelled startup closes hidden TCP connections and active upload readers.
+- An earlier queued viewer ensure cannot undo owner Stop.
+- Forward cleanup is bounded and preserves uncertain external/successor mappings.
+- Normal stream timing, protocol, controls and both client reconnect policies remain.
+
+**One hardware checklist, through the separate deploy/check procedure only.**
+1. Idle attachment starts no scrcpy. First viewer starts once; additional viewers reuse
+   the same actual process and stream.
+2. Last viewer leaves: a return before 30s retains the stream; without a return it stops
+   after 30s and acknowledged owned forwards are removed.
+3. Rotation updates the actual picture and keeps input aligned.
+4. Physical USB unplug/replug reconnects without competing starts; cancelled work stays gone.
+5. Eligible Wake lights the phone. Idle-card Wake starts no scrcpy; watched Wake retains it.
+6. Owner-authorized watched quality/audio changes restart serially with the chosen settings;
+   unwatched changes start nothing until a viewer returns.
+7. Owner Stop keeps viewers stopped until Start again; disconnect/settings restart/shutdown
+   retain ordinary reconnect behavior. Check acknowledged forward cleanup separately from
+   the fixture lost-ACK limit. All iPhone/session/restart-window/settings restrictions remain.
+
+No hardware result above is claimed. The separate Android hardware/deploy step remains,
+as do p6-docs and the previously assigned follow-ups. No new integration defect is known.
