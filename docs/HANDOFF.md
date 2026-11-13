@@ -5569,8 +5569,8 @@ after this deployment.
 The owner pointed out a missed inconsistency after the previous About pass: Model and
 Serial still appeared under their labels while other Phone facts used right-aligned
 values. All Phone facts now use the same kit value element, with whole labels on the
-left and selectable, complete values wrapping in the right lane. Only AboutSection,
-the scoped About fact CSS and the existing about-ui suite changed. Services keep
+left and selectable, complete values wrapping in the right lane. Feature changes stay
+in AboutSection, scoped About fact CSS and the existing about-ui suite. Services keep
 their control/description layout and all command, focus, confirmation and stream rules.
 No shared kit, token, breakpoint, arbitrary size, server or configuration changed.
 
@@ -5583,6 +5583,15 @@ landscape, centered desktop and dock retained. The independent base-product nega
 failed Model's real lane geometry, not a missing selector; separate fixture controls
 proved clipping and whole-label assertions. Focused review and all four About flows
 passed; fresh main npm check/default39 and raw atlas results are pending below.
+
+The first main npm check passed at `e309bff`. The first default39 stopped normally
+with exit 1 after 205.676 s: Settings still looked for Serial in the old description
+element. The audit found one other stale Model lookup in ios-settings. Root approved
+two one-line adaptations to the existing value helper, retaining exact Serial/Model
+equality, committed separately at `13c522c`. All 98 browser descendants and the
+supervisor/launcher were gone; source and 24 artifacts matched the first check. Raw
+failure evidence is preserved. Fresh review and a new frozen full check/default39
+are required; the first browser run is not a passing result.
 
 This correction is not deployed by this integration. Last confirmed live remains
 source `33bc04f`, image `8086`, from the separate deployment above. A 440px Chromium
