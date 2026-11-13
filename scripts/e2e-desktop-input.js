@@ -13,8 +13,8 @@ function channelJson(id, data) {
     const frame = Buffer.alloc(5 + body.length);
     frame[0] = 32; frame.writeUInt32LE(id, 1); body.copy(frame, 5); return frame;
 }
-function initial() {
-    const p = Buffer.alloc(186); p.write('scrcpy_initial'); p.write('Keyboard phone', 14);
+function initial(name = 'Keyboard phone') {
+    const p = Buffer.alloc(186); p.write('scrcpy_initial'); p.write(name, 14, 64);
     for (const [at, n] of [[78, 1], [86, 720], [90, 1280], [110, 25], [122, 720], [126, 1280], [130, 720], [134, 1280], [139, 35], [143, 4000000], [147, 60], [182, 31]]) p.writeInt32BE(n, at);
     p.writeInt8(1, 151); p.writeInt8(-1, 165); return p;
 }
@@ -22,7 +22,7 @@ const sleep = (page) => page.waitForTimeout(80);
 const chip = (page) => page.locator('.kit-keyboard-chip');
 const control = (page, name) => page.locator(`.control-buttons-list [title="${name}"]`);
 
-async function start(browser, platform, { uhid = true, width = 1280, decode = true, theme = 'light', mobile = false, nativeClipboard = false } = {}) {
+async function start(browser, platform, { uhid = true, width = 1280, decode = true, theme = 'light', mobile = false, nativeClipboard = false, name = 'Keyboard phone' } = {}) {
     const context = await browser.newContext({ viewport: { width, height: mobile ? 844 : 900 }, colorScheme: theme, isMobile: mobile, hasTouch: mobile });
     if (nativeClipboard) await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     await context.addInitScript(({ decode, nativeClipboard }) => {
@@ -66,7 +66,7 @@ async function start(browser, platform, { uhid = true, width = 1280, decode = tr
                     reply[14] = 0; reply.writeInt32BE(text.length, 15); text.copy(reply, 19); socket.send(reply);
                 }
             });
-            setTimeout(() => socket.send(platform === 'android' ? initial() : JSON.stringify({ type: 'status', state: 'ready' })), 30);
+            setTimeout(() => socket.send(platform === 'android' ? initial(name) : JSON.stringify({ type: 'status', state: 'ready' })), 30);
             if (platform === 'ios') {
                 setTimeout(() => socket.send(JSON.stringify({ type: 'codec', codec: 'hev1.1.6.L150.B0', description: 'AQ==' })), 50);
                 let open = true; socket.onClose(() => { open = false; });
@@ -79,7 +79,7 @@ async function start(browser, platform, { uhid = true, width = 1280, decode = tr
             const frame = Buffer.from(data); if (frame[0] !== 4) return;
             const id = frame.readUInt32LE(1), kind = frame.subarray(5).toString();
             if (kind === 'HSTS') socket.send(channelJson(id, { id: -1, type: 'hosts', data: { local: [{ type: platform }] } }));
-            if (kind === 'GTRC' || kind === 'ATRC') socket.send(channelJson(id, { id: -1, type: 'devicelist', data: { id: 'keyboard', name: 'Fixture', list: [{ udid: 'keyboard-phone', name: 'Keyboard phone', state: platform === 'android' ? 'device' : 'Connected', pid: 123, model: 'Phone', version: '27', paired: true, developerMode: true, session: 'ready', 'screen.power': 'on', 'device.locked': true }] } }));
+            if (kind === 'GTRC' || kind === 'ATRC') socket.send(channelJson(id, { id: -1, type: 'devicelist', data: { id: 'keyboard', name: 'Fixture', list: [{ udid: 'keyboard-phone', name, 'ro.product.model': name, 'ro.product.manufacturer': '', state: platform === 'android' ? 'device' : 'Connected', pid: 123, model: 'Phone', version: '27', paired: true, developerMode: true, session: 'ready', 'screen.power': 'on', 'device.locked': true }] } }));
         });
     });
     const url = new URL(BASE);
@@ -272,27 +272,40 @@ async function phoneLayout(browser, platform, theme) {
 }
 
 async function narrowMouseHeader(browser, platform, width) {
-    const t = await start(browser, platform, { width });
-    try {
-        const { page } = t;
-        for (const released of [false, true]) {
-            if (released) { await page.keyboard.press('Control+Alt+k'); await sleep(page); }
-            assert.equal(await chip(page).innerText(), released ? 'Keyboard: this page' : 'Keyboard: phone');
-            if (OUT) await page.screenshot({ path: path.join(OUT, `${platform}-${width}-mouse-${released ? 'released' : 'captured'}.png`) });
-            const header = await page.locator('.kit-bar').evaluate(node => ({ width: node.clientWidth, content: node.scrollWidth }));
-            assert.ok(header.content <= header.width, `${platform} ${width}: header has no horizontal overflow (${JSON.stringify(header)})`);
-            assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'the page has no horizontal overflow');
-            for (const button of [page.locator('.kit-bar-back'), page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }), page.locator('.kit-bar').getByRole('link')]) {
-                assert.equal(await button.isVisible(), true, 'Back, bell and Switch stay visible');
-                assert.equal(await button.evaluate(node => {
-                    const b = node.getBoundingClientRect();
-                    return b.left >= 0 && b.right <= innerWidth && node.contains(document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2));
-                }), true, 'Back, bell and Switch stay inside the mouse viewport and can be pressed');
+    for (const theme of ['light', 'dark']) for (const name of ['Cedar', 'Cedar phone with a long distinctive name']) {
+        const t = await start(browser, platform, { width, theme, name });
+        try {
+            const { page } = t;
+            await page.locator('.stream-mount').evaluate(node => { window.__narrowHeaderMount = node; });
+            for (const released of [false, true]) {
+                if (released) { await page.keyboard.press('Control+Alt+k'); await sleep(page); }
+                assert.equal(await chip(page).innerText(), released ? 'Keyboard: this page' : 'Keyboard: phone');
+                if (OUT) await page.screenshot({ path: path.join(OUT, `${platform}-${width}-${theme}-${name === 'Cedar' ? 'short' : 'long'}-mouse-${released ? 'released' : 'captured'}.png`) });
+                const identity = await page.locator('.kit-bar-title').evaluate(node => {
+                    const name = node.querySelector('.kit-bar-name'), status = node.querySelector('.kit-bar-status');
+                    return { width: node.getBoundingClientRect().width, nameWidth: name.clientWidth, nameTextWidth: name.scrollWidth, statusWidth: status.clientWidth, statusTextWidth: status.scrollWidth };
+                });
+                assert.ok(identity.width >= 120, 'name and status retain readable width beside navigation');
+                if (name === 'Cedar') assert.ok(identity.nameWidth >= identity.nameTextWidth, 'a short distinctive phone name is fully readable');
+                assert.ok(identity.statusWidth >= identity.statusTextWidth, 'Connected remains fully readable');
+                const header = await page.locator('.kit-bar').evaluate(node => ({ width: node.clientWidth, content: node.scrollWidth }));
+                assert.ok(header.content <= header.width, `${platform} ${width}: header has no horizontal overflow (${JSON.stringify(header)})`);
+                assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'the page has no horizontal overflow');
+                for (const button of [page.locator('.kit-bar-back'), page.locator('.kit-bar').getByRole('button', { name: 'Switch', exact: true }), page.locator('.kit-bar').getByRole('link')]) {
+                    assert.equal(await button.isVisible(), true, 'Back, bell and Switch stay visible');
+                    assert.equal(await button.evaluate(node => {
+                        const b = node.getBoundingClientRect();
+                        return b.left >= 0 && b.right <= innerWidth && node.contains(document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2));
+                    }), true, 'Back, bell and Switch stay inside the mouse viewport and can be pressed');
+                }
             }
-        }
-        assert.equal(t.sockets.length, 1); assert.deepEqual(t.errors, []);
-        console.log(`PASS: ${platform} ${width}px mouse header stays inside the viewport with both keyboard targets`);
-    } finally { await t.context.close(); }
+            await page.setViewportSize({ width: 900, height: 900 }); await sleep(page);
+            await page.setViewportSize({ width, height: 900 }); await sleep(page);
+            assert.equal(await page.evaluate(() => window.__narrowHeaderMount === document.querySelector('.stream-mount')), true, 'header reflow retains the stage mount');
+            assert.equal(t.sockets.length, 1); assert.deepEqual(t.errors, []);
+            console.log(`PASS: ${platform} ${width}px mouse header stays inside the viewport with both keyboard targets`);
+        } finally { await t.context.close(); }
+    }
 }
 
 (async () => {
