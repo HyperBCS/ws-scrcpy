@@ -910,6 +910,7 @@ async function reconnectingSwitcher(browser, size) {
         assert.equal(await stale.locator('.kit-chip').textContent(), 'Asleep', 'The last phone status is retained');
         assert.equal(await stale.evaluate((node) => { node.focus(); return node !== document.activeElement; }), true);
         assert.equal(test.streams, 1, 'Opening the sheet and dropping the list never remount the stream');
+        await settleMotion(page);
         await page.screenshot({ path: path.join(OUT, `switcher-reconnecting-${size.width}-${size.colorScheme}.png`) });
         await sheet.getByRole('button', { name: /^Close/ }).click();
         await sheet.waitFor({ state: 'hidden' });

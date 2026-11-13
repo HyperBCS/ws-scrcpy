@@ -174,7 +174,9 @@ async function lostConnection(page, state, name) {
     await banner.getByText('Connection lost.',{exact:true}).waitFor({timeout:20000});
     assert.equal(await chip.innerText(),'Unable to connect');
     assert.equal(await chip.getAttribute('data-tone'),'error');
-    assert.equal(await page.getByText(/reconnect/i).count(),1,'one instruction: the Reconnect button');
+    const instructions = await page.getByText(/reconnect/i).all();
+    console.log('Reconnect text nodes:', JSON.stringify(await Promise.all(instructions.map(async (item) => ({ text: await item.textContent(), visible: await item.isVisible(), closedSheet: await item.evaluate((node) => !!node.closest('dialog:not([open])')) })))));
+    assert.equal(await page.getByText(/reconnect/i).filter({ visible: true }).count(),1,'one visible instruction: the Reconnect button');
     assert.equal(state.starts.length,sessions+2,'nothing starts while the server is away');
     const button = banner.getByRole('button',{name:'Reconnect',exact:true});
     // A tool that fails to load puts a long message here. The button must not give way to it.
