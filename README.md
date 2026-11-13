@@ -39,7 +39,7 @@ Apple developer account on the phone. This fork's behavior differs from upstream
 
 ## Build and run
 
-The checked toolchain uses Node.js 22; the Docker image uses `node:22-bookworm-slim`.
+The production Docker image uses Node.js 22 (`node:22-bookworm-slim`).
 A host build needs the C/C++ and Python build tools used by node-gyp for node-pty.
 A host iPhone installation also needs Python with venv support, usbmuxd and ffmpeg.
 The pinned toolchain is in [python/requirements.txt](python/requirements.txt).
