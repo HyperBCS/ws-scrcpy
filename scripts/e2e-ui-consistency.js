@@ -167,11 +167,11 @@ async function railFit(browser) {
     }
     console.log('PASS intrinsic rail fit at the wrapped-caption boundary in both resize directions and across 600px; mount and socket retained');
 }
-// A real decoded fixture picture changes height with the space left by the rail. Read a
-// one-column candidate directly from layout; the production calculation uses intrinsic geometry.
+// Compare actual decoded one-column geometry at the same width after different resize paths.
+// At320, even reserving only the button's minimum hit width leaves too little picture height.
 async function railWidth(browser) {
     for (const platform of ['android', 'ios']) {
-        let required;
+        let fresh;
         for (const history of [false, true]) {
             const t = await startLayout(browser, platform, { name: history ? 'history320' : 'fresh550', width: history ? 320 : 550, height: 1000 });
             const resizeErrors = [];
@@ -181,29 +181,33 @@ async function railWidth(browser) {
                     await settleLayout(t.page);
                     const found = await t.page.evaluate(() => {
                         const stage = document.querySelector('.stream-stage'), panel = document.querySelector('.floating-toolbar-panel');
-                        const picture = document.querySelector('.stream-mount .touch-layer');
-                        const style = getComputedStyle(panel), name = '--stream-rail-columns';
-                        const value = stage.style.getPropertyValue(name), priority = stage.style.getPropertyPriority(name);
-                        const present = Array.from(stage.style).includes(name);
-                        let candidateHeight;
-                        try { stage.style.setProperty(name, '1'); candidateHeight = picture.getBoundingClientRect().height; }
-                        finally { if (present) stage.style.setProperty(name, value, priority); else stage.style.removeProperty(name); }
-                        const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+                        const mount = document.querySelector('.stream-mount'), picture = mount.querySelector('.touch-layer');
+                        const stageStyle = stage.getAttribute('style'), mountStyle = mount.getAttribute('style');
+                        const style = getComputedStyle(panel), bounds = picture.getBoundingClientRect();
+                        const minimumHitWidth = parseFloat(getComputedStyle(panel.querySelector('button')).minWidth);
                         return { columns: Number(document.querySelector('.floating-toolbar.desktop').dataset.columns),
-                            room: panel.clientHeight - padding, needed: document.querySelector('.control-buttons-list').getBoundingClientRect().height,
-                            candidateRoom: Math.round(candidateHeight - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth)) - padding,
-                            pictureHeight: picture.getBoundingClientRect().height,
-                            sameMount: window.__layoutMount === document.querySelector('.stream-mount'), sameStage: window.__layoutStage === stage,
-                            inlineRestored: stage.style.getPropertyValue(name) === value && stage.style.getPropertyPriority(name) === priority && Array.from(stage.style).includes(name) === present };
+                            room: panel.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+                            needed: document.querySelector('.control-buttons-list').getBoundingClientRect().height,
+                            pictureWidth: bounds.width, pictureHeight: bounds.height,
+                            railWidth: document.querySelector('.stream-controls-slot').getBoundingClientRect().width,
+                            minimumHitWidth, narrowHeightUpperBound: (stage.getBoundingClientRect().width - minimumHitWidth) * picture.height / picture.width,
+                            sameMount: window.__layoutMount === mount, sameStage: window.__layoutStage === stage,
+                            stylesUnchanged: stage.getAttribute('style') === stageStyle && mount.getAttribute('style') === mountStyle };
                     });
-                    if (!history) required = found.needed;
-                    metrics.push({ id: `rail-width-${platform}`, state, required, ...found });
+                    if (!history) fresh = found;
+                    metrics.push({ id: `rail-width-${platform}`, state, freshNeeded: fresh.needed, freshRoom: fresh.room, ...found });
                     await shot(t.page, `rail-width-${platform}-${state}`);
-                    assert.equal(found.columns, expected, `${platform} ${state}: columns follow actual one-column fit, independent of width history (${JSON.stringify({ required, ...found })})`);
-                    assert.equal(found.inlineRestored, true, 'candidate layout read restores the exact inline variable');
+                    assert.equal(found.columns, expected, `${platform} ${state}: columns agree after either width history (${JSON.stringify({ fresh, found })})`);
+                    assert.equal(found.stylesUnchanged, true, 'measurement leaves real stage and mount styles unchanged');
                     assert.equal(found.sameMount, true); assert.equal(found.sameStage, true); assert.equal(t.streams, 1);
-                    if (expected === 1) { assert.ok(found.room >= required, 'the complete one-column list fits'); assert.ok(found.candidateRoom >= required); }
-                    else assert.ok(found.candidateRoom < required, 'two columns are required because a real one-column picture is too short');
+                    if (expected === 1) assert.ok(found.room >= found.needed, 'the complete one-column list fits');
+                    else {
+                        assert.ok(found.minimumHitWidth >= 44, 'at least the retained button target must be reserved');
+                        assert.ok(found.narrowHeightUpperBound < fresh.needed, 'even the conservative one-column height upper bound cannot fit the list');
+                    }
+                    if (state.endsWith('550')) for (const key of ['pictureWidth', 'pictureHeight', 'railWidth', 'room', 'needed']) {
+                        assert.ok(Math.abs(found[key] - fresh[key]) < 1, `${platform} ${state}: ${key} matches fresh one-column geometry`);
+                    }
                 };
                 await observe(history ? 'history320' : 'fresh550', history ? 2 : 1);
                 if (history) for (const [state, width] of [['first550', 550], ['wide650', 650], ['last550', 550]]) {
