@@ -37,6 +37,7 @@ if (!process.env.BASE) {
     process.exit(1);
 }
 const BASE = process.env.BASE;
+if (!process.env.KIT_BASE) throw Error('The browser runner must supply the separate KIT_BASE fixture');
 const OUT = process.env.E2E_OUT;
 
 const PHONE = { name: 'phone', width: 390, height: 844, mobile: true };
@@ -56,7 +57,7 @@ async function start(browser, viewport, colorScheme = 'light') {
     page.on('pageerror', (error) => test.errors.push(error.message));
     // The app looks for phones on every page. Here it finds no host.
     await page.routeWebSocket('**', () => undefined);
-    await page.goto(`${BASE}#!action=kit`);
+    await page.goto(`${process.env.KIT_BASE}#!action=kit`);
     await page.locator('.kit-page').waitFor();
     // The page scrolls inside itself. The sections of the sheet and the menu are put at its top,
     // so their buttons are in the window.

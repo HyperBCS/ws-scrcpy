@@ -149,7 +149,7 @@ export function StreamSection({ changes, ...playback }: StreamSectionProps) {
         <SettingsSection name="stream">
             <SettingsGroup
                 class="settings-quality"
-                hint="A change restarts the stream."
+                hint="A change restarts the stream. Use arrow keys to browse; press Enter or Space to apply."
                 status={
                     changes.status('stream') ||
                     (loaded && !configKnown && !loadError && (
@@ -182,6 +182,7 @@ export function StreamSection({ changes, ...playback }: StreamSectionProps) {
                 >
                     <SegmentedControl
                         label="Quality presets"
+                        activation="manual"
                         full
                         value={selectedPreset ?? ''}
                         options={QUALITY_PRESETS.map((preset) => ({ value: preset.name, label: preset.name }))}

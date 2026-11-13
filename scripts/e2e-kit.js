@@ -22,7 +22,7 @@ if (!process.env.BASE) {
     console.error('Run this suite as: node scripts/test-browser.js kit');
     process.exit(1);
 }
-const BASE = process.env.BASE;
+if (!process.env.KIT_BASE) throw Error('The browser runner must supply the separate KIT_BASE fixture');
 const OUT = process.env.E2E_OUT || '/tmp/ws-scrcpy-kit';
 const VIEWPORTS = [
     { name: 'phone', width: 390, height: 844, mobile: true },
@@ -268,7 +268,7 @@ async function run(browser, viewport, theme) {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.route('**/api/notifications/**', (route) => route.fulfill({ json: { sources: [], unread: 0, unreadBySource: {} } }));
     await page.routeWebSocket('**', () => {});
-    await page.goto(`${BASE}#!action=kit`);
+    await page.goto(`${process.env.KIT_BASE}#!action=kit`);
     const kit = page.locator('.kit-page');
     await kit.waitFor();
     // The pointer rests in a corner while styles are read, so nothing is under it.

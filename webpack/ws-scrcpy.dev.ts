@@ -18,7 +18,7 @@ const mergeWithOutput = (base: webpack.Configuration, extras: webpack.Configurat
 };
 
 const front = () => {
-    return mergeWithOutput(frontend(), devOpts);
+    return mergeWithOutput(frontend(true), devOpts);
 };
 const back = () => {
     return mergeWithOutput(backend(), devOpts);

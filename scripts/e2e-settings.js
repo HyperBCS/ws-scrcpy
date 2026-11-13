@@ -31,7 +31,7 @@ function audioError() {
     body.copy(frame, 23);
     return frame;
 }
-async function fixture(page, { onApply, onStreamMessage, initialPacket, onStreamReady, sdk = '36', deviceList, onCommand, onTrackerReady } = {}) {
+async function fixture(page, { onApply, onStreamMessage, initialPacket, onStreamReady, sdk = '36', deviceList, onCommand, onTrackerReady, onEncoders } = {}) {
     const commands = [];
     await page.routeWebSocket('**', (socket) => {
         const target = new URL(socket.url());
@@ -90,7 +90,8 @@ async function fixture(page, { onApply, onStreamMessage, initialPacket, onStream
                 const command = JSON.parse(frame.subarray(5).toString());
                 commands.push(command);
                 if (onCommand) onCommand(command, reply);
-                if (command.type === 'list_encoders')
+                if (command.type === 'list_encoders' && onEncoders) onEncoders(command, reply);
+                if (command.type === 'list_encoders' && !onEncoders)
                     reply({
                         id: command.id,
                         type: command.type,
@@ -351,6 +352,9 @@ async function applyFlow(browser) {
                 // control shows what the phone runs, and focus is back on the presets.
                 await saver.focus();
                 await page.keyboard.press('ArrowRight');
+                assert.equal(applies(commands).length, 1, 'browsing quality options sends no change');
+                assert.equal(await saver.isChecked(), true, 'browsing keeps the current choice');
+                await page.keyboard.press('Enter');
                 await quality.filter({ hasText: 'Restarting stream…' }).waitFor();
                 assert.deepEqual(applies(commands).at(-1).data.config, { bitrate: 3500000, maxFps: 60, maxSize: 1280 });
                 answer({ error: 'encoder failed' });

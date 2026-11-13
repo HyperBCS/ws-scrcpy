@@ -17,6 +17,8 @@ interface SegmentedControlProps<T extends string> {
     /** Takes the width of its container, with segments of equal width. */
     full?: boolean;
     disabled?: boolean;
+    /** For costly changes: arrows move focus; Enter or Space commits the focused option. */
+    activation?: 'automatic' | 'manual';
 }
 
 /**
@@ -30,10 +32,18 @@ export function SegmentedControl<T extends string>({
     onChange,
     full = false,
     disabled = false,
+    activation = 'automatic',
 }: SegmentedControlProps<T>) {
     const name = useId();
     return (
-        <div class={`kit-segmented ${full ? 'kit-segmented-full' : ''}`.trim()} role="radiogroup" aria-label={label}>
+        <div
+            class={`kit-segmented ${full ? 'kit-segmented-full' : ''}`.trim()}
+            role="radiogroup"
+            aria-label={label}
+            aria-description={
+                activation === 'manual' ? 'Use arrow keys to browse. Press Enter or Space to apply.' : undefined
+            }
+        >
             {options.map((option) => (
                 <label class="kit-segment" key={option.value}>
                     <input
@@ -43,6 +53,31 @@ export function SegmentedControl<T extends string>({
                         checked={option.value === value}
                         disabled={disabled || option.disabled}
                         onChange={() => onChange(option.value)}
+                        onKeyDown={(event) => {
+                            if (activation !== 'manual') return;
+                            if (event.key === 'Enter') {
+                                event.preventDefault();
+                                onChange(option.value);
+                            } else if (
+                                ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
+                            ) {
+                                event.preventDefault();
+                                const inputs = Array.from(
+                                    event.currentTarget
+                                        .closest('[role="radiogroup"]')!
+                                        .querySelectorAll<HTMLInputElement>('input:not(:disabled)'),
+                                );
+                                const index = inputs.indexOf(event.currentTarget);
+                                const direction = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+                                const next =
+                                    event.key === 'Home'
+                                        ? 0
+                                        : event.key === 'End'
+                                          ? inputs.length - 1
+                                          : (index + direction + inputs.length) % inputs.length;
+                                inputs[next]?.focus();
+                            }
+                        }}
                     />
                     <span>{option.label}</span>
                 </label>

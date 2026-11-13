@@ -109,6 +109,13 @@ interface SheetProps {
     dock?: boolean;
 }
 
+// A component boundary keeps reused element children attached to the current Preact tree when
+// Sheet renders itself. A child mounted on a later parent render must find the real root for
+// useId, and callers should not need their own content wrapper.
+function SheetContent({ children }: { children: ComponentChildren }) {
+    return <>{children}</>;
+}
+
 /**
  * The one sheet, on the native `<dialog>`: a bottom sheet below 600px and a centred dialog
  * 560px wide from there, or docked beside a phone's screen (`dock`). The dialog element covers
@@ -135,7 +142,7 @@ export function Sheet({
     const host = dock && wide ? dockHost.value : null;
     const rootRef = useRef<HTMLDialogElement>(null);
     const headerRef = useRef<HTMLElement>(null);
-    const { ref: panelRef, present } = usePresence<HTMLDivElement>(open, 'sheet', SHEET_DIALOG);
+    const { ref: panelRef, present } = usePresence<HTMLDivElement>(open, host ? 'sheet-docked' : 'sheet', SHEET_DIALOG);
     const titleId = useId();
     const subtitleId = useId();
     const closeRef = useRef(onClose);
@@ -397,7 +404,9 @@ export function Sheet({
                         disabled={!dismissible}
                     />
                 </header>
-                <div class={`kit-sheet-body ${bodyClassName || ''}`}>{children}</div>
+                <div class={`kit-sheet-body ${bodyClassName || ''}`}>
+                    <SheetContent>{children}</SheetContent>
+                </div>
                 {footer && <footer class="kit-sheet-footer">{footer}</footer>}
             </div>
         </dialog>

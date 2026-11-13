@@ -13,44 +13,47 @@ interface AutoHeightProps {
 export function AutoHeight({ children, className = '', innerClassName }: AutoHeightProps) {
     const outer = useRef<HTMLDivElement>(null);
     const inner = useRef<HTMLDivElement>(null);
+    const schedule = useRef<() => void>();
     useLayoutEffect(() => {
         const container = outer.current;
         const content = inner.current;
         if (!container || !content) return;
-        const naturalHeight = () => {
+        // Layout sizes, rather than transformed screen rects: a centred sheet can be scaling
+        // during its entrance. Keep fractional pixels and include the wrapper's padding/borders.
+        const size = () => {
             const style = getComputedStyle(container);
-            return (
-                content.getBoundingClientRect().height +
-                parseFloat(style.paddingTop) +
-                parseFloat(style.paddingBottom) +
-                parseFloat(style.borderTopWidth) +
-                parseFloat(style.borderBottomWidth)
-            );
+            const inside = getComputedStyle(content);
+            const extra = (value: CSSStyleDeclaration) =>
+                parseFloat(value.paddingTop) +
+                parseFloat(value.paddingBottom) +
+                parseFloat(value.borderTopWidth) +
+                parseFloat(value.borderBottomWidth);
+            return {
+                height:
+                    parseFloat(inside.height) + (inside.boxSizing === 'border-box' ? 0 : extra(inside)) + extra(style),
+                width: content.clientWidth,
+            };
         };
-        let height = naturalHeight();
-        let width = content.clientWidth;
+        let previous = size();
         let active: Animation | undefined;
         let frame = 0;
-        if (width) container.style.height = `${height}px`;
         const update = () => {
-            const next = naturalHeight();
-            const nextWidth = content.clientWidth;
-            if (!nextWidth) {
+            const next = size();
+            if (!next.width || !Number.isFinite(next.height)) {
                 active?.cancel();
                 active = undefined;
-                container.style.removeProperty('height');
                 container.style.removeProperty('overflow');
-                width = height = 0;
+                previous = next;
                 return;
             }
-            if (Math.abs(next - height) < 0.5 && nextWidth === width) return;
-            const from = active ? container.getBoundingClientRect().height : height;
+            if (Math.abs(next.height - previous.height) < 0.5 && next.width === previous.width) return;
+            const from = active ? parseFloat(getComputedStyle(container).height) : previous.height;
             active?.cancel();
-            container.style.height = `${next}px`;
+            active = undefined;
             container.style.removeProperty('overflow');
-            if (nextWidth === width) {
+            if (next.width === previous.width && previous.width && Number.isFinite(from)) {
                 container.style.overflow = 'clip';
-                const transition = animate(container, [{ height: `${from}px` }, { height: `${next}px` }]);
+                const transition = animate(container, [{ height: `${from}px` }, { height: `${next.height}px` }]);
                 active = transition;
                 void finished(transition).then(() => {
                     if (active !== transition) return;
@@ -58,21 +61,28 @@ export function AutoHeight({ children, className = '', innerClassName }: AutoHei
                     active = undefined;
                     container.style.removeProperty('overflow');
                 });
-            } else active = undefined;
-            height = next;
-            width = nextWidth;
+            }
+            // Height is animated only. At rest the wrapper always uses natural layout, so an
+            // initial or coalesced observer delivery can never leave yesterday's fixed height.
+            previous = next;
         };
-        const observer = new ResizeObserver(() => {
+        schedule.current = () => {
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(update);
-        });
+        };
+        const observer = new ResizeObserver(() => schedule.current?.());
         observer.observe(content);
         return () => {
             observer.disconnect();
             cancelAnimationFrame(frame);
             active?.cancel();
+            schedule.current = undefined;
+            container.style.removeProperty('overflow');
         };
     }, []);
+    // A content update may be coalesced with the observer's first delivery. Measure after every
+    // committed render too; external size changes still come through the observer.
+    useLayoutEffect(() => schedule.current?.());
     return (
         <div ref={outer} class={`auto-height ${className}`}>
             <div ref={inner} class={innerClassName}>

@@ -6,7 +6,7 @@ import { iconButtonClass } from '../ui/IconButton';
 import { animate } from '../ui/motion';
 import { useOverlayHistory } from '../ui/overlayHistory';
 import { usePresence } from '../ui/Presence';
-import { readStorage, writeStorage } from '../ui/storage';
+import { readStorage, removeStorage, writeStorage } from '../ui/storage';
 import {
     Box,
     clampPoint,
@@ -223,11 +223,10 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
     // the picture's own size move it to its place again.
     useLayoutEffect(() => {
         const area = buttonArea(stage());
-        chosen.current =
-            parsePlace(readStorage(PLACE_KEY)) ??
-            placeFromPosition(readStorage(OLD_POSITION_KEY), area, buttonSize(), OLD_SIZE);
-        if (chosen.current && !readStorage(PLACE_KEY)) {
-            writeStorage(PLACE_KEY, JSON.stringify(chosen.current));
+        const saved = parsePlace(readStorage(PLACE_KEY));
+        chosen.current = saved ?? placeFromPosition(readStorage(OLD_POSITION_KEY), area, buttonSize(), OLD_SIZE);
+        if (!saved && chosen.current && writeStorage(PLACE_KEY, JSON.stringify(chosen.current))) {
+            removeStorage(OLD_POSITION_KEY);
         }
         layout();
         const sizes = new ResizeObserver(() => layout());

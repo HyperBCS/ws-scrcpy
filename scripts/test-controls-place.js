@@ -88,3 +88,29 @@ test('the corner kept before the button stayed on an edge becomes a place at the
     assert.equal(placeFromPosition(null, PORTRAIT, SIZE, old), undefined);
     assert.equal(placeFromPosition('{', PORTRAIT, SIZE, old), undefined);
 });
+
+const { readStorage, writeStorage, removeStorage } = require('../src/app/ui/storage');
+test('storage removal is guarded when the storage getter or operation is blocked', () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    try {
+        const kept = new Map([['old', 'position']]);
+        Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+            getItem: key => kept.get(key) ?? null,
+            setItem: (key, value) => kept.set(key, value),
+            removeItem: key => kept.delete(key),
+        } });
+        assert.equal(removeStorage('old'), true);
+        assert.equal(readStorage('old'), null);
+        Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw Error('blocked'); } });
+        assert.equal(readStorage('old'), null);
+        assert.equal(writeStorage('new', 'position'), false);
+        assert.equal(removeStorage('old'), false);
+        Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+            removeItem() { throw Error('blocked removal'); },
+        } });
+        assert.equal(removeStorage('old'), false);
+    } finally {
+        if (original) Object.defineProperty(globalThis, 'localStorage', original);
+        else delete globalThis.localStorage;
+    }
+});

@@ -1,7 +1,8 @@
 import { Component, ComponentChildren } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useId, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import type { AudioPlaybackStatus, AudioSession } from '../state/audio';
+import { AutoHeight } from '../ui/AutoHeight';
 import { Disclosure } from '../ui/AnimatedDetails';
 import { AppBar, AppBarStatus } from '../ui/AppBar';
 import { Badge } from '../ui/Badge';
@@ -912,6 +913,59 @@ function Bars() {
     );
 }
 
+// Exercise element children created by an ancestor, without a caller-owned content wrapper.
+function StatefulSheetChild() {
+    const id = useId();
+    const [count, setCount] = useState(0);
+    return (
+        <button id={id} class={buttonClass()} type="button" onClick={() => setCount(count + 1)}>
+            Child count {count}
+        </button>
+    );
+}
+
+function SheetLifecycle() {
+    const [open, setOpen] = useState(false);
+    const [added, setAdded] = useState(false);
+    const [grown, setGrown] = useState(false);
+    const action = useArmedAction<'example'>(open);
+    return (
+        <Section title="Sheet lifecycle">
+            <Demo name="retained children">
+                <Button onClick={() => setOpen(true)}>Open lifecycle sheet</Button>
+                <Sheet open={open} onClose={() => setOpen(false)} title="Lifecycle">
+                    <div class="kit-demo-fields">
+                        <TextField label="Existing child" />
+                        <Button onClick={() => setAdded(!added)}>Toggle child</Button>
+                        {added && <StatefulSheetChild />}
+                        <Button onClick={() => setGrown(!grown)}>{grown ? 'Shrink rows' : 'Grow rows'}</Button>
+                        <AutoHeight className="kit-card kit-list lifecycle-height">
+                            <SheetRow title="First row" />
+                            {grown && <SheetRow title="Second row" />}
+                            {grown && <SheetRow title="Third row" />}
+                        </AutoHeight>
+                        <Button onClick={(event) => action.arm('example', event.currentTarget)}>
+                            Arm lifecycle prompt
+                        </Button>
+                        {action.armed && (
+                            <ConfirmPrompt
+                                action={action}
+                                question="Change this example?"
+                                consequence="Only the example changes."
+                                confirmLabel="Change"
+                                onConfirm={() => {}}
+                            />
+                        )}
+                    </div>
+                </Sheet>
+                <Sheet open={false} onClose={() => {}} title="Retained neighbour">
+                    <TextField label="Neighbour child" />
+                </Sheet>
+            </Demo>
+        </Section>
+    );
+}
+
 export function KitPage() {
     return (
         <main class="kit-page">
@@ -935,6 +989,7 @@ export function KitPage() {
                 <Groups />
                 <SheetsAndMenu />
                 <Bars />
+                <SheetLifecycle />
             </div>
         </main>
     );

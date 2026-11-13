@@ -2,7 +2,7 @@ import { ComponentChildren, JSX } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { animate, finished, MOTION } from './motion';
 
-export type MotionKind = 'fade' | 'toast' | 'popover' | 'sheet' | 'collapse';
+export type MotionKind = 'fade' | 'toast' | 'popover' | 'sheet' | 'sheet-docked' | 'collapse';
 
 /**
  * Keeps the real element mounted through its exit, including when an exit is interrupted.
@@ -48,13 +48,15 @@ export function usePresence<T extends HTMLElement>(visible: boolean, kind: Motio
                 ? 'translateY(20px) scale(0.96)'
                 : kind === 'popover'
                   ? 'translateY(6px) scale(0.96)'
-                  : kind === 'sheet'
-                    ? desktop
-                        ? 'translateY(12px) scale(0.98)'
-                        : 'translateY(100%)'
-                    : kind === 'collapse'
-                      ? 'translateY(-4px)'
-                      : 'none';
+                  : kind === 'sheet-docked'
+                    ? 'translateX(100%)'
+                    : kind === 'sheet'
+                      ? desktop
+                          ? 'translateY(12px) scale(0.98)'
+                          : 'translateY(100%)'
+                      : kind === 'collapse'
+                        ? 'translateY(-4px)'
+                        : 'none';
         const hidden: Keyframe = { opacity: 0, transform: hiddenTransform };
         const shown: Keyframe = { opacity: 1, transform: 'none' };
         if (kind === 'collapse') {

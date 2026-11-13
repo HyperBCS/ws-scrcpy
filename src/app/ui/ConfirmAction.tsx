@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { buttonClass } from './Button';
 import '../../style/kit/ConfirmPrompt.css';
 
@@ -73,6 +73,10 @@ export function useArmedAction<T>(active = true): ArmedAction<T> {
 }
 
 // Prompts on screen, so the surface that holds one can cancel it before closing itself.
+// Prompts can mount while an ancestor updates retained children. Keep their ids independent of
+// Preact's ancestry-based useId allocation, including prompts in separate render roots.
+let nextPromptId = 0;
+
 const openPrompts = new Map<HTMLElement, () => void>();
 
 /**
@@ -125,8 +129,9 @@ export function ConfirmPrompt({
     const [swapped, setSwapped] = useState(false);
     const shownAt = useRef(0);
     const [ready, setReady] = useState(false);
-    const questionId = useId();
-    const consequenceId = useId();
+    const [id] = useState(() => `kit-confirm-${nextPromptId++}`);
+    const questionId = `${id}-question`;
+    const consequenceId = `${id}-consequence`;
     const disarm = useRef(action.disarm);
     disarm.current = action.disarm;
 
