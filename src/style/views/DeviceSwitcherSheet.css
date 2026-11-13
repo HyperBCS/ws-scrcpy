@@ -77,6 +77,16 @@
 }
 .device-switcher-row {
     flex: 1 1 auto;
+    width: 100%;
+}
+.device-switcher-item:has(.device-switcher-reconnecting) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-4);
+}
+.device-switcher-reconnecting {
+    color: var(--text-muted);
+    font-size: var(--font-size-13);
 }
 .device-switcher-item:disabled {
     cursor: default;

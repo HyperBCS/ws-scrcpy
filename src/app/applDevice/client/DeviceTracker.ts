@@ -3,11 +3,9 @@ import { ACTION } from '../../../common/Action';
 import ApplDeviceDescriptor from '../../../types/ApplDeviceDescriptor';
 import { HostItem } from '../../../types/Configuration';
 import { ChannelCode } from '../../../common/ChannelCode';
-import { Tool } from '../../client/Tool';
 
 export class DeviceTracker extends BaseDeviceTracker<ApplDeviceDescriptor, never> {
     public static ACTION = ACTION.APPL_DEVICE_LIST;
-    public static tools: Set<Tool> = new Set();
     private static instancesByUrl: Map<string, DeviceTracker> = new Map();
 
     public static start(hostItem: HostItem): DeviceTracker {

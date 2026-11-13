@@ -63,7 +63,7 @@ function frame(type, id, data) {
     return packet;
 }
 
-async function start(browser, { width, height, mobile, colorScheme = 'light', androids = ANDROIDS, iphones = IPHONES, summary = SUMMARY, hash, holdLists = false } = {}) {
+async function start(browser, { width, height, mobile, colorScheme = 'light', androids = ANDROIDS, iphones = IPHONES, summary = SUMMARY, hash, holdLists = false, remoteAndroids = [] } = {}) {
     const context = await browser.newContext({ viewport: { width, height }, isMobile: mobile, hasTouch: mobile, colorScheme, serviceWorkers: 'block' });
     const page = await context.newPage();
     // `streams` counts the screen sockets the page opens; `updateAndroid` sends one phone's new
@@ -73,7 +73,7 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
     // carry; a restarted server sends new ones.
     const state = {
         context, page, errors: [], commands: [], channels: [], summary, streams: 0, updateAndroid: undefined,
-        holdLists: false, heldLists: [], listSocket: undefined, listIds: { android: 'android', ios: 'ios' },
+        holdLists: false, heldLists: [], remoteSocket: undefined, listSocket: undefined, listIds: { android: 'android', ios: 'ios' },
         releaseLists() { state.holdLists = false; state.heldLists.splice(0).forEach((send) => send()); },
         dropList() { state.listSocket.close({ code: 1006, reason: 'Server restart' }); },
     };
@@ -89,7 +89,9 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
         } });
     });
     await page.routeWebSocket('**', (socket) => {
-        const action = new URL(socket.url()).searchParams.get('action');
+        const socketUrl = new URL(socket.url());
+        const action = socketUrl.searchParams.get('action');
+        const remote = socketUrl.hostname === 'remote.test';
         if (action === 'proxy-adb') {
             state.streams++;
             setTimeout(() => socket.send(initialStreamPacket()), 40);
@@ -99,7 +101,8 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
             state.streams++;
             return; // The iPhone stream stays on "Connecting".
         }
-        state.listSocket = socket;
+        if (remote) state.remoteSocket = socket;
+        else state.listSocket = socket;
         socket.onMessage((data) => {
             const packet = Buffer.from(data);
             if (packet.length < 5) return;
@@ -107,8 +110,12 @@ async function start(browser, { width, height, mobile, colorScheme = 'light', an
             const send = (message) => socket.send(frame(32, id, JSON.stringify(message)));
             if (packet[0] === 4) {
                 state.channels.push(body);
-                if (body === 'HSTS') send({ id: -1, type: 'hosts', data: { local: [{ type: 'android' }, { type: 'ios' }] } });
-                if (body === 'GTRC') {
+                if (body === 'HSTS') send({ id: -1, type: 'hosts', data: { local: [{ type: 'android' }, { type: 'ios' }], remote: remoteAndroids.length ? [{ type: 'android', hostname: 'remote.test', port: 80, secure: false }] : [] } });
+                if (body === 'GTRC' && remote) {
+                    state.remoteSend = (type, data) => send({ id: -1, type, data: { id: 'remote-android', name: 'Remote fixture host', ...data } });
+                    if (!state.holdRemote) state.remoteSend('devicelist', { list: remoteAndroids });
+                }
+                if (body === 'GTRC' && !remote) {
                     list(() => send({ id: -1, type: 'devicelist', data: { id: state.listIds.android, name: 'Fixture host', list: androids } }));
                     state.updateAndroid = (device) => send({ id: -1, type: 'device', data: { id: state.listIds.android, name: 'Fixture host', device } });
                 }
@@ -852,6 +859,65 @@ async function reconnectingList(browser, { width, height, mobile, colorScheme })
  * share their top, their height and the line of their actions, and at most three columns in the
  * 1200px of the list. The widths are measured, not read from the stylesheet.
  */
+/** A reconnect notice belongs to its server; healthy phones keep their controls and summary. */
+async function reconnectingOneServer(browser, size) {
+    const test = await start(browser, { ...size, androids: [ANDROIDS[0]], iphones: [], remoteAndroids: [android('HOME-REMOTE', 'Remote phone')] });
+    const { page } = test;
+    try {
+        const local = card(page, 'android:HOME-PIXEL-0001');
+        const remote = card(page, 'remote-android:HOME-REMOTE');
+        await remote.waitFor();
+        const localOpen = local.getByRole('link', { name: 'Open screen', exact: true });
+        await localOpen.focus();
+        const localBox = await local.boundingBox();
+        // A multiplex channel closes without closing the other server's socket.
+        test.holdRemote = true;
+        test.remoteSocket.close({ code: 1006, reason: 'Only the remote server dropped' });
+        await remote.locator('.phone-row-stale').waitFor();
+        const affected = remote.locator('xpath=ancestor::section[contains(@class,"tracker-block")]');
+        const healthy = local.locator('xpath=ancestor::section[contains(@class,"tracker-block")]');
+        assert.equal(await page.locator('.devices-reconnecting').count(), 0, 'No page-wide warning over a healthy server');
+        assert.match(await affected.locator('.tracker-reconnecting').textContent(), /Reconnecting…/);
+        assert.equal(await healthy.locator('.tracker-reconnecting').count(), 0);
+        assert.equal(await localOpen.isEnabled(), true);
+        assert.equal(await localOpen.evaluate((node) => node === document.activeElement), true, 'Healthy card keeps focus');
+        assert.equal(await remote.getByRole('button', { name: 'Open screen', exact: true }).isDisabled(), true);
+        assert.doesNotMatch(await page.locator(`${HEADER} .kit-bar-status`).textContent(), /Reconnecting/);
+        const after = await local.boundingBox();
+        assert.equal(after.width, localBox.width, 'The card grid keeps its even widths');
+        await page.screenshot({ path: path.join(OUT, `one-server-reconnecting-${size.width}-${size.colorScheme}.png`), fullPage: true });
+        assert.equal(test.streams, 0);
+        assert.deepEqual(test.errors, []);
+    } finally { await test.context.close(); }
+}
+
+/** A stale switcher row keeps its last status and explicitly says why it is disabled. */
+async function reconnectingSwitcher(browser, size) {
+    const test = await start(browser, { ...size, androids: [ANDROIDS[0], ANDROIDS[1]], iphones: [] });
+    const { page } = test;
+    try {
+        await card(page, 'android:HOME-PIXEL-0001').getByRole('link', { name: 'Open screen', exact: true }).click();
+        await page.locator('.touch-layer').waitFor();
+        await page.getByRole('button', { name: 'Switch', exact: true }).click();
+        const sheet = page.getByRole('dialog', { name: 'Switch phone', exact: true });
+        await sheet.waitFor();
+        test.holdLists = true;
+        test.dropList();
+        const stale = sheet.locator('.device-switcher-item:not(.current)');
+        await stale.locator('.device-switcher-reconnecting').waitFor();
+        assert.equal((await stale.locator('.device-switcher-reconnecting').textContent()).trim(), 'Reconnecting…');
+        assert.equal(await stale.isDisabled(), true);
+        assert.equal(await stale.locator('.kit-chip').textContent(), 'Asleep', 'The last phone status is retained');
+        assert.equal(await stale.evaluate((node) => { node.focus(); return node !== document.activeElement; }), true);
+        assert.equal(test.streams, 1, 'Opening the sheet and dropping the list never remount the stream');
+        await page.screenshot({ path: path.join(OUT, `switcher-reconnecting-${size.width}-${size.colorScheme}.png`) });
+        await sheet.getByRole('button', { name: /^Close/ }).click();
+        await sheet.waitFor({ state: 'hidden' });
+        assert.equal(test.streams, 1);
+        assert.deepEqual(test.errors, []);
+    } finally { await test.context.close(); }
+}
+
 async function evenGrid(browser) {
     for (const [width, height, columns] of [[1024, 768, 2], [1280, 800, 3], [1440, 900, 3], [1920, 1080, 3], [390, 844, 1]]) {
         for (const colorScheme of width === 1280 ? ['light', 'dark'] : ['light']) {
@@ -1306,6 +1372,8 @@ async function main() {
         for (const size of sizes) {
             await firstList(browser, size);
             await reconnectingList(browser, size);
+            await reconnectingOneServer(browser, size);
+            await reconnectingSwitcher(browser, size);
         }
         await evenGrid(browser);
         await startFromSettings(browser);

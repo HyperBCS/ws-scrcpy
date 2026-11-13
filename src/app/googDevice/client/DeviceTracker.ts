@@ -5,7 +5,6 @@ import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { HostItem } from '../../../types/Configuration';
 import { ChannelCode } from '../../../common/ChannelCode';
-import { Tool } from '../../client/Tool';
 import { EncoderInfo } from '../../../types/EncoderInfo';
 import { AndroidLockStateReply } from '../../../types/AndroidLockState';
 import { TRACKER_STATUS, TrackerStatus } from '../../../common/TrackerStatus';
@@ -33,7 +32,6 @@ export interface GoogDeviceTrackerEvents {
 export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, GoogDeviceTrackerEvents> {
     public static readonly ACTION = ACTION.GOOG_DEVICE_LIST;
     private static instancesByUrl: Map<string, DeviceTracker> = new Map();
-    public static tools: Set<Tool> = new Set();
 
     public static start(hostItem: HostItem): DeviceTracker {
         const url = this.buildUrlForTracker(hostItem).toString();

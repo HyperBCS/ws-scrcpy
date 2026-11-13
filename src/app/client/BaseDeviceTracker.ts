@@ -5,10 +5,10 @@ import { DeviceTrackerEvent } from '../../types/DeviceTrackerEvent';
 import { DeviceTrackerEventList } from '../../types/DeviceTrackerEventList';
 import { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import { HostItem } from '../../types/Configuration';
-import { Tool } from './Tool';
 import Util from '../Util';
 import { EventKey, EventMap } from '../../common/TypedEmitter';
 import {
+    expireTrackerDevices,
     markTrackerDevicesStale,
     removeTrackerDevices,
     setTrackerDevices,
@@ -29,12 +29,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
 > {
     public static readonly ACTION_LIST = 'devicelist';
     public static readonly ACTION_DEVICE = 'device';
-    public static tools: Set<Tool> = new Set();
     protected static instanceId = 0;
-
-    public static registerTool(tool: Tool): void {
-        this.tools.add(tool);
-    }
 
     public static buildUrl(item: HostItem): URL {
         const { secure, port, hostname } = item;
@@ -60,7 +55,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     protected id = '';
     private messageId = 0;
     private reconnectTimer?: ReturnType<typeof setTimeout>;
-    private staleTimer?: ReturnType<typeof setTimeout>;
+    private readonly staleTimers = new Set<ReturnType<typeof setTimeout>>();
     private readonly closeListeners = new Set<() => void>();
 
     protected constructor(
@@ -131,10 +126,8 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     }
 
     private clearStaleTimer(): void {
-        if (this.staleTimer !== undefined) {
-            clearTimeout(this.staleTimer);
-            this.staleTimer = undefined;
-        }
+        this.staleTimers.forEach(clearTimeout);
+        this.staleTimers.clear();
     }
 
     protected onSocketClose(event: CloseEvent): void {
@@ -144,17 +137,19 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         }
         console.log(TAG, `Connection closed: ${event.reason}`);
         this.descriptors = [];
-        // The list keeps the phones as they were, marked stale, until the next list replaces
-        // them. The limit counts from the first close, not from each failed reconnect. Past it
-        // the phones go, and the list loads again when the server is back.
-        markTrackerDevicesStale(this.id, this);
-        if (this.staleTimer === undefined) {
-            this.staleTimer = setTimeout(() => {
-                this.staleTimer = undefined;
+        // Each newly stale phone gets a bounded interval. A repeated failed reconnect does not
+        // extend it. An individual update replaces its entry, so an older interval cannot erase
+        // the fresh phone, or a later close's stale entry. A full list ends all intervals.
+        const stale = markTrackerDevicesStale(this.id, this);
+        if (stale.size || this.staleTimers.size === 0) {
+            const trackerId = this.id;
+            const timer = setTimeout(() => {
+                this.staleTimers.delete(timer);
                 if (!this.destroyed) {
-                    removeTrackerDevices(this.id, this);
+                    expireTrackerDevices(trackerId, this, stale);
                 }
             }, STALE_LIST_LIMIT_MS);
+            this.staleTimers.add(timer);
         }
         if (this.reconnectTimer === undefined) {
             this.reconnectTimer = setTimeout(() => {

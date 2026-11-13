@@ -630,3 +630,22 @@ test('the list, its cards, the switcher and the notices take their controls, ico
     }
     assert.doesNotMatch(card, /Device unavailable|Waiting for trust|Browser cannot play/);
 });
+
+
+test('Screen and tools share header actions while keeping their connection placement', () => {
+    const { PhoneHeader } = require('../src/app/views/PhoneHeader');
+    const { connectionStatus } = require('../src/app/state/phoneStatus');
+    const screen = elements(PhoneHeader({ name: 'Bench iPhone', connection: connectionStatus('connected'), inbox: 'IPHONE', keyboard: true, switchDisabled: true }));
+    const tool = elements(PhoneHeader({ name: 'Google Pixel', service: 'Stream service stopped' }));
+    assert.equal(screen.filter((node) => node.type === 'header').length, 1);
+    assert.equal(screen.find((node) => node.type === 'h1').props.children, 'Bench iPhone');
+    assert.equal(screen.find((node) => node.props.class === 'kit-bar-status').props.children, 'Connected');
+    assert.equal(screen.filter((node) => node.props.class?.includes('kit-keyboard-chip')).length, 1);
+    assert.equal(tool.filter((node) => node.props.class?.includes('kit-keyboard-chip')).length, 0, 'Tools do not inherit screen keyboard capture');
+    assert.equal(tool.filter((node) => node.props.class === 'kit-bar-status').length, 0, 'Tool connection stays in the tab strip');
+    for (const nodes of [screen, tool]) {
+        assert.equal(nodes.filter((node) => node.props.class?.includes('notifications-link')).length, 1);
+        assert.equal(nodes.find((node) => node.type === 'button' && node.props.children === 'Switch').props.disabled, nodes === screen ? true : undefined);
+        assert.equal(nodes.find((node) => node.props.class === 'kit-bar-back').props['aria-label'], 'Phones');
+    }
+});

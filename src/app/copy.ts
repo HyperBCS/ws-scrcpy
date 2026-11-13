@@ -150,3 +150,10 @@ export const ROW = {
      */
     inUse: 'In use',
 } as const;
+
+// p6-client-followups
+/** The reconnect notice applies only to phones whose last report is stale. */
+export const CLIENT_FOLLOWUPS = {
+    stalePhones: 'The phones are shown as last reported.',
+    staleSomePhones: 'The dimmed phones are shown as last reported.',
+} as const;

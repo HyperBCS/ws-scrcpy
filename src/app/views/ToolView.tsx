@@ -10,14 +10,12 @@ import { DEFAULT_FILES_PATH } from '../googDevice/client/deviceTools';
 import { findDeviceForTool } from '../state/toolDevice';
 import { deviceHref, followLink } from '../state/links';
 import type { DeviceView } from '../state/routes';
-import { closeAllSheets, openSheet } from '../state/stream';
-import { AppBar } from '../ui/AppBar';
+import { closeAllSheets } from '../state/stream';
 import { Banner } from '../ui/Banner';
-import { Button } from '../ui/Button';
 import { StreamServiceStatus } from '../ui/StreamServiceStatus';
+import { PhoneHeader } from './PhoneHeader';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { StateCardBody } from './screen/StateCard';
-import { NotificationsLink } from '../ui/NotificationsLink';
 import { ShellKeys, ShellTerminal } from './shell/ShellKeys';
 import '../../style/views/StreamView.css';
 import '../../style/views/ToolView.css';
@@ -340,19 +338,14 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
             }
         >
             {active && (
-                <AppBar
-                    title={phoneName(udid, entry)}
-                    status={
+                <PhoneHeader
+                    name={phoneName(udid, entry)}
+                    service={
                         descriptor && (
                             <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} unlessRunning />
                         )
                     }
-                >
-                    <NotificationsLink compact />
-                    <Button size="compact" onClick={() => openSheet('devices')}>
-                        Switch
-                    </Button>
-                </AppBar>
+                />
             )}
             {active &&
                 tabs(

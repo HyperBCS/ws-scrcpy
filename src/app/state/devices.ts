@@ -174,16 +174,40 @@ export function setTrackerDevices(
  * were last reported; the tracker's next list replaces them (`setTrackerDevices`), and a tracker
  * that stays closed removes them (`removeTrackerDevices`).
  */
-export function markTrackerDevicesStale(trackerId: string, owner: DeviceEntry['tracker']): void {
+export function markTrackerDevicesStale(trackerId: string, owner: DeviceEntry['tracker']): ReadonlySet<DeviceEntry> {
+    const stale = new Set<DeviceEntry>();
     let next: Map<string, DeviceEntry> | undefined;
     for (const [key, entry] of devices.value) {
         if (entry.trackerId === trackerId && entry.tracker === owner && !entry.stale) {
             next ??= new Map(devices.value);
-            next.set(key, { ...entry, stale: true });
+            const marked = { ...entry, stale: true };
+            next.set(key, marked);
+            stale.add(marked);
         }
     }
     if (next) {
         devices.value = next;
+    }
+    return stale;
+}
+
+/** Expires only the unchanged entries of one close, leaving newer phone updates in place. */
+export function expireTrackerDevices(
+    trackerId: string,
+    owner: DeviceEntry['tracker'],
+    stale: ReadonlySet<DeviceEntry>,
+): void {
+    const next = new Map(devices.value);
+    for (const [key, entry] of next) {
+        if (entry.trackerId === trackerId && entry.tracker === owner && stale.has(entry)) {
+            next.delete(key);
+        }
+    }
+    if (next.size !== devices.value.size) {
+        devices.value = next;
+    }
+    if (![...next.values()].some((entry) => entry.tracker === owner)) {
+        setListed(owner, false);
     }
 }
 
@@ -210,6 +234,7 @@ export function updateTrackerDevice(
     next.set(key, entry);
     rememberNames([entry]);
     devices.value = next;
+    setListed(tracker, true);
 }
 
 // Used by stream-side views (`views/screen/iphone.tsx`, ...) that only know the udid they show, not

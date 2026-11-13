@@ -6,7 +6,7 @@ import { deviceHref, followLink } from '../state/links';
 import { getDeviceStatusInfo } from '../state/phoneStatus';
 import { notificationSummary } from '../state/notifications';
 import { isNotificationSource } from '../state/notificationsTarget';
-import { SESSION } from '../copy';
+import { CONNECTION, SESSION } from '../copy';
 import { isSwitcherShortcut, nextHighlight } from '../state/switcherKeys';
 import { Chip } from '../ui/Chip';
 import { Icon } from '../ui/Icon';
@@ -233,6 +233,7 @@ export function DeviceSwitcherSheet({
                             class="device-switcher-row"
                             chip={isCurrent ? <Chip tone="info">{SESSION.viewing}</Chip> : undefined}
                         />
+                        {entry.stale && <span class="device-switcher-reconnecting">{CONNECTION.reconnecting}</span>}
                     </button>
                 ))}
             </div>

@@ -10,6 +10,7 @@ import {
     takeOpenedCard,
 } from '../state/deviceListView';
 import { hostsError, hostsStatus } from '../state/hosts';
+import { CLIENT_FOLLOWUPS } from '../copy';
 import { LIST_PAGE_NAME } from '../state/routes';
 import { DeviceCard } from './DeviceCard';
 import { DeviceIcon } from '../ui/DeviceIcon';
@@ -109,6 +110,8 @@ export function DeviceList() {
     );
     const groups = groupByHost(entries);
     const reconnecting = connectionStatus('reconnecting').label;
+    const allStale = stale && entries.every((entry) => entry.stale);
+    const pageNotice = allStale && groups.length === 1;
 
     // A stale card turns its links off, and a link that is off cannot keep the focus. When the
     // next list turns them on, the control that had the focus gets it back. It is read when the
@@ -147,7 +150,7 @@ export function DeviceList() {
                 title={LIST_PAGE_NAME}
                 status={
                     <AppBarStatus>
-                        {stale || state === 'disconnected'
+                        {allStale || state === 'disconnected'
                             ? reconnecting
                             : listSummary(entries.length, available, attention)}
                     </AppBarStatus>
@@ -158,10 +161,10 @@ export function DeviceList() {
                 <IconButton icon="refresh" label="Reload" onClick={() => location.reload()} />
             </AppBar>
             {/* Outside the scrolling list, so it does not move the cards and stays in view. */}
-            {stale && (
+            {pageNotice && (
                 <div class="devices-reconnecting">
                     <Banner>
-                        <strong>{reconnecting}</strong> The phones are shown as last reported.
+                        <strong>{reconnecting}</strong> {CLIENT_FOLLOWUPS.stalePhones}
                     </Banner>
                 </div>
             )}
@@ -211,6 +214,13 @@ export function DeviceList() {
                                     <span>
                                         {group.entries.length} phone{group.entries.length === 1 ? '' : 's'}
                                     </span>
+                                </div>
+                            )}
+                            {!pageNotice && group.entries.some((entry) => entry.stale) && (
+                                <div class="tracker-reconnecting">
+                                    <Banner>
+                                        <strong>{reconnecting}</strong> {CLIENT_FOLLOWUPS.staleSomePhones}
+                                    </Banner>
                                 </div>
                             )}
                             <div class="device-list">

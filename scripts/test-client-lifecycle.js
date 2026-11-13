@@ -45,6 +45,7 @@ class TestTracker extends BaseDeviceTracker {
 }
 const params = { hostname: 'localhost', port: 8000, pathname: '/', secure: false, type: 'android', action: 'test' };
 const listMessage = (id, ...udids) => ({ data: JSON.stringify({ id: -1, type: 'devicelist', data: { id, name: 'Test host', list: udids.map((udid) => ({ udid, state: 'device' })) } }) });
+const deviceMessage = (id, udid) => ({ data: JSON.stringify({ id: -1, type: 'device', data: { id, name: 'Test host', device: { udid, state: 'device' } } }) });
 const listed = () => [...devices.value.values()].map((entry) => `${entry.descriptor.udid}${entry.stale ? ' (stale)' : ''}`).sort();
 
 try {
@@ -122,6 +123,48 @@ try {
     assert.equal(listReceived.value, false);
     restarted.destroy();
     timers.clear();
+
+    // An individual update ends only that phone's stale generation. Its siblings retain their
+    // original deadline, even when the tracker closes again before the first deadline fires.
+    const partial = new TestTracker(params, 'ws://localhost:8000/?action=partial');
+    partial.onSocketMessage(listMessage('partial-old', 'fresh-phone', 'stale-sibling'));
+    partial.onSocketClose({ reason: 'First drop' });
+    const [, olderLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    partial.onSocketMessage(deviceMessage('partial-old', 'fresh-phone'));
+    assert.deepEqual(listed(), ['fresh-phone', 'stale-sibling (stale)']);
+    assert.equal(findDeviceByUdid('fresh-phone')?.tracker, partial);
+    olderLimit();
+    assert.deepEqual(listed(), ['fresh-phone'], 'A fresh individual update survives the older limit; stale siblings expire');
+    assert.equal(listReceived.value, true, 'The individual update is still a current list report');
+    partial.onSocketMessage(listMessage('partial-old', 'fresh-phone', 'stale-sibling'));
+    partial.onSocketClose({ reason: 'Another drop' });
+    const [, siblingLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    partial.onSocketMessage(deviceMessage('partial-old', 'fresh-phone'));
+    partial.onSocketClose({ reason: 'Fresh phone dropped later' });
+    assert.equal([...timers.values()].filter((timer) => timer.delay === STALE_LIST_LIMIT_MS).length, 2);
+    siblingLimit();
+    assert.deepEqual(listed(), ['fresh-phone (stale)'], 'An older close cannot expire a newer stale generation');
+    const [newLimitId, newLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    partial.onSocketClose({ reason: 'Repeated failure' });
+    assert.equal(timerFor(STALE_LIST_LIMIT_MS)[0], newLimitId, 'Repeated close keeps the newer generation bounded');
+    newLimit();
+    assert.deepEqual([listed(), listReceived.value], [[], false], 'The newer stale generation also expires');
+    partial.onSocketMessage(listMessage('partial-old', 'old-phone'));
+    partial.onSocketClose({ reason: 'Server restart' });
+    const [, oldIdLimit] = timerFor(STALE_LIST_LIMIT_MS);
+    partial.onSocketMessage(deviceMessage('partial-new', 'new-phone'));
+    oldIdLimit();
+    assert.deepEqual([listed(), listReceived.value], [['new-phone'], true], 'A tracker-id change and fresh individual report survive the old timer');
+    partial.onSocketMessage(listMessage('partial-new'));
+    assert.deepEqual(listed(), [], 'A full list remains authoritative over individual updates');
+    partial.onSocketMessage(listMessage('partial-new', 'release-phone'));
+    partial.onSocketClose({ reason: 'Release' });
+    const queued = [...timers.values()];
+    partial.destroy();
+    partial.destroy();
+    assert.equal(timers.size, 0, 'Release clears every reconnect and stale-generation timer');
+    queued.forEach((callback) => callback());
+    assert.deepEqual([listed(), listReceived.value], [[], false], 'Callbacks queued before release cannot publish or remove phones');
 
     const survivor = new TestTracker(params, 'ws://localhost:8000/?action=survivor');
     survivor.onSocketMessage(listMessage('shared-id', 'surviving-phone'));
