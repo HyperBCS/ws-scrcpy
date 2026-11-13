@@ -9,11 +9,10 @@ interface AutoHeightProps {
     innerClassName?: string;
 }
 
-/** Observe natural content size without resizing it inside a ResizeObserver delivery. */
+/** Animate the wrapper around independently sized natural content. */
 export function AutoHeight({ children, className = '', innerClassName }: AutoHeightProps) {
     const outer = useRef<HTMLDivElement>(null);
     const inner = useRef<HTMLDivElement>(null);
-    const schedule = useRef<() => void>();
     const measure = useRef<() => void>();
     useLayoutEffect(() => {
         const container = outer.current;
@@ -37,7 +36,6 @@ export function AutoHeight({ children, className = '', innerClassName }: AutoHei
         };
         let previous = size();
         let active: Animation | undefined;
-        let frame = 0;
         const update = () => {
             const next = size();
             if (!next.width || !Number.isFinite(next.height)) {
@@ -68,24 +66,21 @@ export function AutoHeight({ children, className = '', innerClassName }: AutoHei
             previous = next;
         };
         measure.current = update;
-        schedule.current = () => {
-            cancelAnimationFrame(frame);
-            frame = requestAnimationFrame(update);
-        };
-        const observer = new ResizeObserver(() => schedule.current?.());
+        // Observe only the inner flow root. Its natural height is independent of the wrapper's
+        // animation, so starting before this paint does not feed height changes back into the
+        // observation. Waiting another frame would paint the target then jump to the old size.
+        const observer = new ResizeObserver(update);
         observer.observe(content);
         return () => {
             observer.disconnect();
-            cancelAnimationFrame(frame);
             active?.cancel();
-            schedule.current = undefined;
             measure.current = undefined;
             container.style.removeProperty('overflow');
         };
     }, []);
     // Commit-driven changes must start before paint: delaying them to the observer's next
     // frame would expose natural height first, then jump back to the old animation start.
-    // External size changes still come through the observer outside its delivery.
+    // Child-only updates and external layout changes reach the observer before paint too.
     useLayoutEffect(() => measure.current?.());
     return (
         <div ref={outer} class={`auto-height ${className}`}>
