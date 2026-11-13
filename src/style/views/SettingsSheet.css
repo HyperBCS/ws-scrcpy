@@ -86,15 +86,18 @@
     margin: 0;
 }
 
-/* Raw System metadata may be long. Keep the label readable and short values aligned, while
-   allowing the value to wrap inside its own share of this fact row. */
-.settings-facts [data-fact='system'] > .kit-row-text {
+/* Phone facts keep whole labels on the left and values on the right. Long metadata wraps
+   inside the value lane, with the same alignment as a short status word. */
+.settings-facts [data-fact] > .kit-row-text {
     flex: 1 0 auto;
 }
-.settings-facts [data-fact='system'] > .kit-row-control {
+.settings-facts [data-fact] .kit-row-title {
+    white-space: nowrap;
+}
+.settings-facts [data-fact] > .kit-row-control {
     flex: 0 1 auto;
 }
-.settings-facts [data-fact='system'] .kit-row-value {
+.settings-facts [data-fact] .kit-row-value {
     flex: 0 1 auto;
     min-width: 0;
     white-space: normal;
