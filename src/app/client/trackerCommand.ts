@@ -134,3 +134,82 @@ export function sendServiceCommand(
 ): Promise<unknown> {
     return sendTrackerCommand(tracker, command, udid, {}, serviceCommandTimeoutMs(command), signal);
 }
+
+/** A command whose success is a descriptor update, rather than a required reply. */
+export interface TrackerErrorObservation {
+    /** Resolves silently when observation ends; rejects only for an available failure. */
+    settled: Promise<void>;
+    stop: () => void;
+    /** The expected descriptor state has been confirmed since this command was sent. */
+    isComplete?: () => boolean;
+}
+
+/**
+ * Send once and observe existing keyed failures without inventing a missing-success timeout.
+ * Expiry, a descriptor-confirmed outcome and an optional acknowledgment end observation quietly.
+ * The caller stops it on descriptor changes; checking the descriptor before a failure also
+ * prevents a late reply or socket drop from undoing an already confirmed outcome.
+ */
+export function observeTrackerCommandErrors(
+    tracker: CommandTracker,
+    type: string,
+    udid: string,
+    data: Record<string, unknown>,
+    timeoutMs: number,
+    signal?: AbortSignal,
+    isComplete?: () => boolean,
+): TrackerErrorObservation {
+    let stop = () => undefined as void;
+    const settled = new Promise<void>((resolve, reject) => {
+        let finished = false;
+        let requestId: number | undefined;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let stopWatchingClose: (() => void) | undefined;
+        const finish = (error?: Error) => {
+            if (finished) {
+                return;
+            }
+            finished = true;
+            clearTimeout(timer);
+            tracker.off(type, onReply);
+            signal?.removeEventListener('abort', onAbort);
+            stopWatchingClose?.();
+            if (error) {
+                reject(error);
+            } else {
+                resolve();
+            }
+        };
+        const fail = (error: Error) => finish(isComplete?.() ? undefined : error);
+        const onReply = (reply: TrackerReply) => {
+            if (requestId === undefined || reply?.udid !== udid || reply.requestId !== requestId) {
+                return;
+            }
+            if (reply.error) {
+                fail(new Error(reply.error));
+            } else {
+                finish();
+            }
+        };
+        const onAbort = () => finish(new TrackerCommandAborted());
+        stop = () => finish();
+        if (signal?.aborted) {
+            onAbort();
+            return;
+        }
+        if (tracker.isOpen && !tracker.isOpen()) {
+            fail(new Error(TRACKER_UNREACHABLE));
+            return;
+        }
+        tracker.on(type, onReply);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        timer = setTimeout(stop, timeoutMs);
+        stopWatchingClose = tracker.onceClosed?.(() => fail(new Error(TRACKER_CONNECTION_LOST)));
+        try {
+            requestId = tracker.sendCommand(type, { udid, ...data });
+        } catch {
+            fail(new Error(TRACKER_UNREACHABLE));
+        }
+    });
+    return { settled, stop, isComplete };
+}

@@ -4,7 +4,9 @@ import { SheetRow } from '../../ui/SheetControls';
 import { DeviceEntry, isDeviceAvailable } from '../../state/devices';
 import type { Platform } from '../../state/routes';
 import {
+    clearStarting,
     connectionStatus,
+    getDeviceProblems,
     getDeviceStatusInfo,
     getStreamServiceStatus,
     hasRunningStreamService,
@@ -19,7 +21,7 @@ import {
 import { streamConnected } from '../../state/stream';
 import { closeSettingsSheet } from '../../state/settingsSheet';
 import { deviceHref, followLink, isLocalLink } from '../../state/links';
-import { replyText, sendServiceCommand } from '../../client/trackerCommand';
+import { observeTrackerCommandErrors, replyText, sendServiceCommand } from '../../client/trackerCommand';
 import { FACT, STREAM_SERVICE } from '../../copy';
 import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
 import { StreamClientScrcpy } from '../../googDevice/client/StreamClientScrcpy';
@@ -31,6 +33,8 @@ import { ServiceRow, ServiceRows } from './ServiceRows';
 import { NOT_CONNECTED } from './streamChanges';
 
 const DECODER: Record<DecoderKind, string> = { hevc: 'HEVC', mse: 'MSE' };
+// Bound error listeners independently of the shared eight-second Android Starting marker.
+const SERVICE_ERROR_OBSERVATION_MS = 30000;
 
 /** A fact shown as its value at the end of the row, or under its name where it may be long. */
 function Fact({ name, title, value, long }: { name: string; title: string; value: string; long?: boolean }) {
@@ -78,18 +82,34 @@ function androidServices(entry: DeviceEntry, name: string, connected: boolean): 
                       confirmLabel: 'Stop stream service',
                   }
                 : undefined,
-            // The server answers these with a device update, not a reply.
-            run: () => {
+            // Android confirms success through its descriptor; only failures have keyed replies.
+            run: (signal) => {
                 if (!running) {
                     markStarting(entry.key);
                 }
-                entry.tracker.sendCommand(
-                    running ? ControlCenterCommand.KILL_SERVER : ControlCenterCommand.START_SERVER,
-                    {
-                        udid: descriptor.udid,
-                        pid: running ? descriptor.pid : undefined,
-                    },
-                );
+                return {
+                    ...observeTrackerCommandErrors(
+                        entry.tracker,
+                        running ? ControlCenterCommand.KILL_SERVER : ControlCenterCommand.START_SERVER,
+                        descriptor.udid,
+                        {
+                            pid: running ? descriptor.pid : undefined,
+                        },
+                        SERVICE_ERROR_OBSERVATION_MS,
+                        signal,
+                        () => {
+                            const next = entry.tracker.getDescriptorByUdid(descriptor.udid) as
+                                | GoogDeviceDescriptor
+                                | undefined;
+                            return (
+                                !!next &&
+                                next !== descriptor &&
+                                (running ? next.pid === -1 : hasRunningStreamService(next.pid))
+                            );
+                        },
+                    ),
+                    failed: running ? undefined : () => clearStarting(entry.key),
+                };
             },
         },
     ];
@@ -105,22 +125,25 @@ function iosServices(entry: DeviceEntry, name: string, connected: boolean, scree
     const udid = descriptor.udid;
     const session = descriptor.session ?? 'stopped';
     const canStop = connected && (session === 'ready' || session === 'starting');
+    const sessionProblem = getDeviceProblems(entry).find((problem) => problem.kind === 'session');
     const command = (type: string, done: string) => (signal: AbortSignal) =>
         sendServiceCommand(entry.tracker, type, udid, signal).then((result) => replyText(result, done));
     return [
         {
             id: 'stream-service',
             title: STREAM_SERVICE.name,
-            description: sentence(
-                sessionFact(session),
-                canStop && screenOpen
-                    ? 'This screen would start it again at once, so stop it from the list.'
-                    : canStop
-                      ? 'Stopping it ends the screen stream for every viewer.'
-                      : connected
-                        ? 'It starts when the screen is opened.'
-                        : '',
-            ),
+            description:
+                sessionProblem?.message ??
+                sentence(
+                    sessionFact(session),
+                    canStop && screenOpen
+                        ? 'This screen would start it again at once, so stop it from the list.'
+                        : canStop
+                          ? 'Stopping it ends the screen stream for every viewer.'
+                          : connected
+                            ? 'It starts when the screen is opened.'
+                            : '',
+                ),
             label: 'Stop',
             ariaLabel: 'Stop stream service',
             variant: 'danger',
@@ -130,13 +153,24 @@ function iosServices(entry: DeviceEntry, name: string, connected: boolean, scree
                 consequence: 'The screen stream ends for every viewer. Open the screen to start it again.',
                 confirmLabel: 'Stop stream service',
             },
-            // The server answers this with a device update, not a reply.
-            run: () => {
-                entry.tracker.sendCommand(ControlCenterCommand.KILL_SERVER, { udid, pid: 1 });
-            },
+            // A keyed acknowledgment accepts the request; it does not prove shutdown finished.
+            run: (signal) =>
+                observeTrackerCommandErrors(
+                    entry.tracker,
+                    ControlCenterCommand.KILL_SERVER,
+                    udid,
+                    { pid: 1 },
+                    SERVICE_ERROR_OBSERVATION_MS,
+                    signal,
+                    () => {
+                        const next = entry.tracker.getDescriptorByUdid(udid) as ApplDeviceDescriptor | undefined;
+                        return !!next && next !== descriptor && next.session === 'stopped';
+                    },
+                ),
         },
         {
             id: 'restart-services',
+            layout: 'pair',
             title: 'Restart services',
             description:
                 'Use if touch, keyboard or clipboard stop responding. Ends the phone session for every viewer.',
@@ -273,8 +307,9 @@ export function AboutSection({ platform, udid, entry, name, opening, screenOpen,
     const ios = entry?.params.type === 'ios' ? (entry.descriptor as ApplDeviceDescriptor) : undefined;
     const model = android
         ? [android['ro.product.manufacturer'], android['ro.product.model']].filter(Boolean).join(' ')
-        : ios?.model;
-    const version = android ? android['ro.build.version.release'] : ios?.version;
+        : ios?.model === '<NoModel>' ? undefined : ios?.model;
+    const version = android ? android['ro.build.version.release']
+        : ios?.version === '<NoVersion>' ? undefined : ios?.version;
     // The phone as last listed in this opening of the sheet. The list is empty for a moment when
     // its socket drops: the service rows stay, off until the phone is listed again, so the outcome
     // of a command that was out when the socket dropped is still shown under them.

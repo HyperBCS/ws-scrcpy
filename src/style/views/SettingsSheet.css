@@ -85,6 +85,22 @@
 .settings-time-feedback > .kit-status {
     margin: 0;
 }
+
+/* Raw System metadata may be long. Keep the label readable and short values aligned, while
+   allowing the value to wrap inside its own share of this fact row. */
+.settings-facts [data-fact='system'] > .kit-row-text {
+    flex: 1 0 auto;
+}
+.settings-facts [data-fact='system'] > .kit-row-control {
+    flex: 0 1 auto;
+}
+.settings-facts [data-fact='system'] .kit-row-value {
+    flex: 0 1 auto;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: right;
+}
 /* Native WebKit time text otherwise sits at the top of the 44px field. Chromium keeps its
    native segment/picker layout with the same value height. */
 .settings [data-unlock-time] input[type='time']::-webkit-date-and-time-value {
