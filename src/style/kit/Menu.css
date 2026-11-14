@@ -102,9 +102,12 @@
 }
 
 /* The check of an item that is on or off: a kit icon (`iconSvg('check', 20)` in markup built
-   without Preact), hidden while the item is off so the label stays in place. */
+   without Preact), drawn at the end of the item. Its label then starts where the labels of the
+   plain items of the menu start. It is hidden while the item is off and keeps its room. */
 .kit-menu-item[aria-checked] > .kit-icon {
     flex: none;
+    order: 1;
+    margin-left: auto;
 }
 
 .kit-menu-item[aria-checked='false'] > .kit-icon {
