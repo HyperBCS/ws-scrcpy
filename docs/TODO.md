@@ -5,6 +5,42 @@ it is done and recorded in a dated section of `docs/HANDOFF.md`.
 
 ## Asked for
 
+### Notifications stop after a silent Bluetooth reconnect (found 2026-11-14)
+
+The owner reported that notifications stopped. Last one stored at 03:11:59 UTC on 2026-11-14;
+the status read "Notification response timed out; retrying" for hours. The deploy of 02:01 UTC
+is not the cause: notifications arrived after it.
+
+What was seen at 06:07 to 06:15 UTC, read only:
+
+- The phone did not restart (no USB event, same iOS build). The container was healthy, the
+  collector running with 0 restarts and no error.
+- The LE link was up (`hcitool con`: LE, AUTH ENCRYPT). A trace with btmon showed the collector
+  writing a request to the ANCS Control Point every 48 s and the iPhone answering at once on the
+  Data Source with a complete, well-formed reply (143 and 206 bytes for two UIDs).
+- BlueZ had `Notifying: false` on both the Notification Source and the Data Source
+  (`GetManagedObjects`). It was not passing the phone's replies on, so every request timed out.
+- The kernel logged `ACL packet for unknown connection handle` at 04:42:07, the line that came
+  before the outage of 2026-11-05. bluetoothd logged `Device is already marked as connected` at
+  06:05:35. Either is a reconnect that the collector was not told about. Which of the two ended
+  the subscription is not known.
+
+Cause in the code: `Client.tick` in `python/notifications/collector.py` adds a characteristic to
+`self.ready` after `StartNotify` and never takes it out again. It learns of a lost link only
+from `Connected: false` on the device. When BlueZ attaches to the phone again without that
+signal, the subscription is gone and the collector goes on asking.
+
+- Fix: in `Client.tick`, a characteristic that is in `ready` but has `Notifying: false` in the
+  fresh object list leaves `ready` and `owned_notifications`, so `StartNotify` is called again.
+  The iPhone announces its alerts once per subscription, so decide whether a new subscription
+  needs a new session id for the feed.
+- A test in `python/notifications/test_collector.py`: a client that is ready, `Notifying` turns
+  false with no `Connected` change, and the next tick subscribes again.
+- This is a server change: read the diff before the deploy and say so in the report.
+- Until it is deployed, a restart of the container brings notifications back (the new collector
+  subscribes afresh and the LE link stays). Only on the owner's word, not within 15 minutes of
+  03:00 or 15:00 UTC, and not while a screen session runs.
+
 ### The picture of an iPhone is too bright and too contrasty (owner, 2026-11-14)
 
 The owner's words: "the colors look like the contrast is turned all the way up on iphone", then
