@@ -48,7 +48,7 @@ async function controls(browser) {
                 }
                 const order = platform === 'android'
                     ? ['Back', 'Home', 'Overview', 'Volume down', 'Mute phone', 'Volume up', 'Lock', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings']
-                    : ['Home', 'Volume down', 'Mute phone', 'Volume up', 'Lock', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings', 'Siri'];
+                    : ['Home', 'Siri', 'Lock', 'Volume down', 'Mute phone', 'Volume up', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings'];
                 assert.deepEqual(data.map(b => b.name), order, 'every platform action keeps its logical order, with Siri last');
                 if (!viewport.mobile) {
                     const columns = Number(await page.locator('.floating-toolbar.desktop').getAttribute('data-columns'));

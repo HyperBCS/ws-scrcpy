@@ -1394,20 +1394,20 @@ test('iPhone controls: a tap is one press and a hold is down and up, through the
     }
 });
 
-test('one slot map for both kinds of phone, with an empty slot where one has no control', (t) => {
+test('a slot map for each kind of phone: Android cells, and full rows of its own on an iPhone', (t) => {
     const { CONTROLS, shownControls } = require('../src/app/controls/definition');
     const { streamConnected } = require('../src/app/state/stream');
     const android = androidClient(t, Object.assign(fakePlayer(), { supportsScreenshot: true })).client.getControls();
     const iphone = iphoneClient(t, 'iphone-slots').client.getControls();
-    const slots = (controls) => Object.fromEntries(shownControls(controls).map(({ definition: { id, slot } }) => [id, `${slot.row}.${slot.column}`]));
+    const slots = (controls) => Object.fromEntries(shownControls(controls).map(({ definition: { id }, slot }) => [id, `${slot.row}.${slot.column}`]));
     const SHARED = { volumeDown: '2.1', mute: '2.2', volumeUp: '2.3', lock: '3.1', listen: '3.2', screenshot: '3.3', typeText: '4.1', actions: '4.2', settings: '4.3' };
     assert.deepEqual(slots(android), { back: '1.1', home: '1.2', overview: '1.3', ...SHARED });
-    assert.deepEqual(slots(iphone), { home: '1.2', ...SHARED, siri: '5.1' }, 'Home in the middle; Siri outside the shared rows');
+    assert.deepEqual(slots(iphone), { home: '1.1', siri: '1.2', lock: '1.3', volumeDown: '2.1', mute: '2.2', volumeUp: '2.3', listen: '3.1', screenshot: '3.2', typeText: '3.3', actions: '4.1', settings: '4.2' }, 'the iPhone buttons first; no row before the last has an empty cell');
     const cells = CONTROLS.map(({ slot }) => `${slot.row}.${slot.column}`);
     assert.equal(new Set(cells).size, cells.length, 'one control per slot');
     const names = (controls) => shownControls(controls).map(({ definition }) => definition.label);
     assert.deepEqual(names(android), ['Back', 'Home', 'Overview', 'Volume down', 'Mute phone', 'Volume up', 'Lock', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings']);
-    assert.deepEqual(names(iphone), ['Home', 'Volume down', 'Mute phone', 'Volume up', 'Lock', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings', 'Siri'], 'the side button has one name');
+    assert.deepEqual(names(iphone), ['Home', 'Siri', 'Lock', 'Volume down', 'Mute phone', 'Volume up', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings'], 'the side button has one name');
 
     // An Android player without screenshots leaves its slot empty.
     const plain = androidClient(t, fakePlayer()).client.getControls();

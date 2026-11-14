@@ -22,6 +22,12 @@ export type ControlId =
     | 'settings'
     | 'siri';
 
+/** A cell of the grid of three columns: row and column from 1. */
+export interface Slot {
+    row: number;
+    column: number;
+}
+
 export interface ControlDefinition {
     id: ControlId;
     /** The name: read out and shown on hover. */
@@ -32,10 +38,10 @@ export interface ControlDefinition {
     description?: string;
     icon: IconName;
     /**
-     * The cell in a grid of three columns. Rows 1 to 4 are the same on every phone, and a cell
-     * stays empty where a phone lacks the control, so a control is in the same place on both.
+     * The cell in a grid of three columns on an Android phone. An iPhone has cells of its own
+     * (`IPHONE_SLOTS`); `shownControls` gives the cell for the phone at hand.
      */
-    slot: { row: number; column: number };
+    slot: Slot;
     /**
      * A key of the phone that can be held: down while pressed, up when let go (`HeldButtons`).
      * Without it, a key is one tap per click (`ControlButton`).
@@ -152,7 +158,7 @@ export const CONTROLS: readonly ControlDefinition[] = [
         hold: false,
         needsConnection: false,
     },
-    // Outside the shared rows: only an iPhone has it.
+    // Only an iPhone has it, in a cell of `IPHONE_SLOTS`.
     {
         id: 'siri',
         label: 'Siri',
@@ -163,6 +169,30 @@ export const CONTROLS: readonly ControlDefinition[] = [
         requires: { key: 'siri' },
     },
 ];
+
+/**
+ * The cells of an iPhone's controls. It has no Back and no Overview and it has Siri, so the
+ * Android cells would leave Home alone in its row and Siri alone in a fifth. Here the phone's
+ * own buttons are the first row and every row before the last is full.
+ */
+export const IPHONE_SLOTS: Partial<Record<ControlId, Slot>> = {
+    home: { row: 1, column: 1 },
+    siri: { row: 1, column: 2 },
+    lock: { row: 1, column: 3 },
+    volumeDown: { row: 2, column: 1 },
+    mute: { row: 2, column: 2 },
+    volumeUp: { row: 2, column: 3 },
+    listen: { row: 3, column: 1 },
+    screenshot: { row: 3, column: 2 },
+    typeText: { row: 3, column: 3 },
+    actions: { row: 4, column: 1 },
+    settings: { row: 4, column: 2 },
+};
+
+/** The cell of a control on a kind of phone. */
+export function slotOf(definition: ControlDefinition, platform: Platform): Slot {
+    return (platform === 'ios' && IPHONE_SLOTS[definition.id]) || definition.slot;
+}
 
 /** The number of columns of the slot grid. */
 export const SLOT_COLUMNS = 3;
@@ -214,12 +244,21 @@ function offered(control: ControlDefinition, platform: Platform): boolean {
     return phone.typeText;
 }
 
-/** The controls a phone shows, each with its action, in slot order. */
-export function shownControls(controls: PhoneControls): { definition: ControlDefinition; action: ControlAction }[] {
-    return CONTROLS.flatMap((definition) => {
+/** A control a phone shows: its definition, its action and its cell on that kind of phone. */
+export interface ShownControl {
+    definition: ControlDefinition;
+    action: ControlAction;
+    slot: Slot;
+}
+
+/** The controls a phone shows, in the order of their cells on that kind of phone. */
+export function shownControls(controls: PhoneControls): ShownControl[] {
+    return CONTROLS.flatMap((definition): ShownControl[] => {
         const action = controls.actions[definition.id];
-        return action && offered(definition, controls.platform) ? [{ definition, action }] : [];
-    });
+        return action && offered(definition, controls.platform)
+            ? [{ definition, action, slot: slotOf(definition, controls.platform) }]
+            : [];
+    }).sort((a, b) => a.slot.row - b.slot.row || a.slot.column - b.slot.column);
 }
 
 /** Builds the controls of one stream from a platform's actions. */

@@ -471,15 +471,15 @@ export function ControlPanel({ controls }: { controls: PhoneControls }) {
                 >
                     <div class="floating-toolbar-heading">{CONTROLS_LABEL}</div>
                     <div class="control-buttons-list floating">
-                        {shownControls(controls).map(({ definition, action }) => (
+                        {shownControls(controls).map(({ definition, action, slot }) => (
                             <ControlButton
                                 key={definition.id}
                                 definition={definition}
                                 action={action}
                                 held={controls.held}
                                 style={{
-                                    gridRow: String(definition.slot.row),
-                                    gridColumn: String(definition.slot.column),
+                                    gridRow: String(slot.row),
+                                    gridColumn: String(slot.column),
                                 }}
                             />
                         ))}

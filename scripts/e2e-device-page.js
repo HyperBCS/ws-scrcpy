@@ -371,7 +371,7 @@ async function checkControls(page, label, viewport, titles) {
 async function screenControls(browser, viewport) {
     for (const [udid, titles] of [
         [PIXEL, ['Back', 'Home', 'Overview', 'Volume down', 'Mute phone', 'Volume up', 'Lock', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings']],
-        [IPHONE, ['Home', 'Volume down', 'Mute phone', 'Volume up', 'Lock', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings', 'Siri']],
+        [IPHONE, ['Home', 'Siri', 'Lock', 'Volume down', 'Mute phone', 'Volume up', 'Listen', 'Take screenshot', 'Type text', 'Actions', 'Settings']],
     ]) {
         const test = await start(browser, { viewport, hash: `action=device&udid=${udid}&view=screen` });
         try {

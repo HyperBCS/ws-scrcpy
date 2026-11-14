@@ -1,6 +1,6 @@
 // node scripts/test-browser.js controls      (E2E_OUT=/tmp/ws-scrcpy-controls for screenshots)
 // The controls of a phone's screen, on an Android phone and an iPhone, against socket fixtures:
-//   - the same touch grid on both phones (390x844), with empty cells for absent controls;
+//   - the touch grid of each kind of phone (390x844): the Android cells, and four rows of its own on an iPhone;
 //     the mouse rail (1280x800) uses consecutive slots, light and dark;
 //   - what each control sends or opens, found by its icon, not its name;
 //   - a key of the phone is disabled while there is no connection, and only the keys;
@@ -67,12 +67,18 @@ const SHARED = {
 };
 const SLOTS = {
     android: { Back: [1, 1], Home: [1, 2], Overview: [1, 3], ...SHARED },
-    ios: { Home: [1, 2], ...SHARED, Siri: [5, 1] },
+    // The iPhone's own buttons first; every row before the last is full.
+    ios: {
+        Home: [1, 1], Siri: [1, 2], Lock: [1, 3],
+        'Volume down': [2, 1], 'Mute phone': [2, 2], 'Volume up': [2, 3],
+        Listen: [3, 1], 'Take screenshot': [3, 2], 'Type text': [3, 3],
+        Actions: [4, 1], Settings: [4, 2],
+    },
 };
 /** The keys of the phone: they need a connection. */
 const KEYS = {
     android: ['Back', 'Home', 'Overview', 'Volume down', 'Mute phone', 'Volume up', 'Lock'],
-    ios: ['Home', 'Volume down', 'Mute phone', 'Volume up', 'Lock', 'Siri'],
+    ios: ['Home', 'Siri', 'Lock', 'Volume down', 'Mute phone', 'Volume up'],
 };
 
 /**
@@ -295,15 +301,18 @@ async function slotMap(browser) {
                 }
             }
             if (viewport.mobile) {
-                for (const name of Object.keys(SHARED).concat('Home')) {
+                for (const name of ['Volume down', 'Mute phone', 'Volume up']) {
                     assert.deepEqual(found.ios[name], found.android[name], `${viewport.name}-${colorScheme}: ${name} has one touch cell on both kinds of phone`);
                 }
-                const taken = (cell) => Object.values(found.ios).some((other) => other.join() === cell.join());
-                assert.deepEqual([[1, 1], [1, 3]].filter(taken), [], `${viewport.name}-${colorScheme}: iPhone touch cells of Back and Overview stay empty`);
+                // No control alone in a row and no hole: the cells of each phone are 1.1, 1.2, 1.3, 2.1 and so on.
+                for (const platform of ['android', 'ios']) {
+                    const cells = Object.values(found[platform]).map(([row, column]) => (row - 1) * 3 + column).sort((a, b) => a - b);
+                    assert.deepEqual(cells, cells.map((_, index) => index + 1), `${viewport.name}-${colorScheme}: the ${platform} touch grid has no empty cell before its last control`);
+                }
             }
         }
     }
-    console.log('PASS shared touch cells with iPhone blanks and consecutive mouse rail slots, light and dark');
+    console.log('PASS touch cells without holes on both kinds of phone and consecutive mouse rail slots, light and dark');
 }
 
 /** While there is no connection the keys of the phone are disabled, and only they. */
