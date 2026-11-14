@@ -5,6 +5,22 @@ it is done and recorded in a dated section of `docs/HANDOFF.md`.
 
 ## Asked for
 
+### Notifications: the filter row is too close to the bar (owner, 2026-11-14)
+
+On a phone the row with Inbox, Unread and Archive starts about 3 px under the bar of the page
+(owner's screenshot from the iPhone). The day label "Today" under it is as tight.
+
+- Cause: below 600 px `.notification-page-header-inbox` has `padding-top: 0`
+  (`NotificationsPage.css`) and the row itself, `.notification-history-tools`
+  (`NotificationsInbox.css`), has `padding: 0`. The comment there says the row carries the space
+  under the bar, but it has none. From 600 px the block above gives 12 px.
+- Fix: put the space on the row itself (`--space-8` above, and a little more under it before
+  the first day label), so it is also there while the row is stuck to the top during a scroll.
+  Take the same amount off the block above from 600 px, so the desktop does not grow.
+- The row is sticky and its background covers the cards that scroll under it: check the first
+  card is not cut and the row does not jump when Search opens above it.
+- Checks: the atlas at 440x956 and 1440x900, and `e2e-notification-inbox.js` for the sticky row.
+
 ### Notifications stop after a silent Bluetooth reconnect (found 2026-11-14)
 
 The owner reported that notifications stopped. Last one stored at 03:11:59 UTC on 2026-11-14;
