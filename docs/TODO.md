@@ -5,6 +5,28 @@ it is done and recorded in a dated section of `docs/HANDOFF.md`.
 
 ## Asked for
 
+### Files: holding a file opens its menu (owner, 2026-11-14)
+
+On a touch screen, holding a file or a folder in Files opens the menu a right click opens on a
+desktop (Download or Open, Cut, Copy, Paste, Copy path, Rename, Delete, Properties), at the
+finger. The browser's own menu for a link does not appear.
+
+- Today a hold starts multi-select (`onPointerDown` in `FileListingClient.ts`, after
+  `LONG_PRESS_MS`), and `onContextMenu` only cancels the browser's menu on touch. iOS does not
+  send `contextmenu` for a hold and shows its own preview and menu for the name, which is a
+  link. Keep the hold timer and open `itemMenuItems()` from it, as the right click does.
+- Stop the iOS menu and the text selection on the rows: `-webkit-touch-callout: none` and
+  `user-select: none` on the row and its link on touch, as the kit's icon button has. The name
+  may need to stop being a link with an address on touch.
+- The hold selects the row it opens the menu for, as a right click does. A hold on a row of a
+  selection keeps the selection, and the menu acts on all of it.
+- Multi-select then needs another way in: "Select" as an item of that menu, beside "Select
+  items" in the Actions menu. The owner's to confirm.
+- The tap that ends the hold must not also open the file's sheet or a folder (the code already
+  drops the click that follows a hold).
+- Checks on fixtures in the touch flow of `e2e-files-flows.js`. Needs hardware: Safari and the
+  installed app on the iPhone, where the browser's menu shows today.
+
 ### Show touches (owner, 2026-11-14)
 
 A circle under each finger, or under the mouse pointer while its button is down, on the picture
