@@ -5,6 +5,32 @@ it is done and recorded in a dated section of `docs/HANDOFF.md`.
 
 ## Asked for
 
+### The picture of an iPhone looks too contrasty (owner, 2026-11-14)
+
+The owner's words: "the colors look like the contrast is turned all the way up on iphone". Read
+here as the picture of an iPhone's screen in the app, not the app's own colours. To confirm with
+the owner, with the browser and the device they saw it on, and whether an Android phone's
+picture looks right in the same place.
+
+- A lead, not a finding: neither iPhone player hands the browser any colour information.
+  `WebCodecsHevcPlayer.ts` configures the decoder without `colorSpace`, and `hevcFmp4.ts` writes
+  no `colr` box for `MseHevcPlayer.ts`. The browser then takes the range and the primaries from
+  the stream's own header, or guesses.
+- A full-range picture read as limited range has crushed blacks and clipped whites, which looks
+  like contrast turned up. A Display P3 or HDR picture read as BT.709 looks too saturated.
+- First read what the phone sends: from a few seconds of the stream, the SPS colour fields
+  (`video_full_range_flag`, primaries, transfer, matrix) and the bit depth. Compare one frame
+  with `screen-capture screenshot` of the same screen, which needs no display session.
+- Then say the same to the browser: `colorSpace` for the WebCodecs decoder, and a `colr` box in
+  the fMP4 header for the MSE player. Look for a setting of pymobiledevice3's screen stream for
+  SDR or the pixel format.
+- Reading the stream needs a display session. Take it during the one session of a deploy check,
+  not in a session of its own.
+- Needs hardware: headless Chromium cannot decode the iPhone's video, so only a real browser
+  with HEVC can show the result.
+- If the owner means the app's own colours on the iPhone 17 Pro Max, this item is about the
+  tokens on a wide-gamut screen instead, and none of the above applies.
+
 ### Files: holding a file selects it, without the iOS menu (owner, 2026-11-14)
 
 On a touch screen, holding a file or a folder in Files selects it and starts multi-select. No
