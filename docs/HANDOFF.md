@@ -5696,3 +5696,88 @@ PWA, decoded HEVC, native phone input/audio and actual notification delivery rem
 unverified. Physical Android rotation, USB replug and owner stream-setting restart
 remain DEFERRED. Owner focus-ring/mute-drop/idle-opacity/rail choices are unchanged.
 Reload each browser tab and reopen the installed app once after this deployment.
+
+### Owner UI feedback: header status, controls, icons and Files (2026-11-14, fixtures only)
+
+The owner looked at the app on an iPhone 17 Pro Max and on a desktop and named six things. An
+inspection of every page at 440x956, 956x440 and 1440x900 came first (no code changed), then the
+owner chose between the open options and asked for the fixes. Not deployed.
+
+Owner's choices of 2026-11-14: item check boxes are off until turned on; the iPhone gets its own
+control layout; the thirteen control icons take Lucide's shapes; a tap on a file on a touch
+screen opens a sheet with the file's actions.
+
+What changed, one commit each:
+
+- **A tool's connection is under the phone's name.** On Files and Shell the word "Connected" was
+  the last item of the tab row: on a phone it read as a fourth tab, on a desktop it stood alone at
+  the far right, and the header had no status line, so the phone's name moved when the tab changed.
+  `ToolView.tsx` now passes its `toolConnection` to `PhoneHeader` (`connection`,
+  `connectionClass`), the same line Screen uses. `TabStrip` takes no children any more and
+  `DevicePage` passes the strip itself, not a function. The line keeps the classes
+  `tool-connection` and `connected`, which many browser checks wait for.
+- **The unread count of Notifications is words.** The bar drew the kit's badge on its own, a red
+  number with no icon. `UnreadCount` (`NotificationHistory.tsx`) now writes " · N unread" after
+  the status line, in `notification-bar-status`. The status line (`kit-bar-status`) keeps its own
+  text, and the number keeps the class `notification-unread-count`.
+- **The iPhone has its own control cells.** `IPHONE_SLOTS` and `slotOf` in
+  `controls/definition.ts`; `shownControls` returns each control with its cell for the phone at
+  hand, in cell order. iPhone: Home, Siri, Lock / Volume down, Mute phone, Volume up / Listen,
+  Screenshot, Type text / Actions, Settings. Android is unchanged. The desktop rail follows the
+  same order. This gives up "one cell on both kinds of phone" for every control but the volume
+  keys.
+- **Lucide shapes for the control icons.** `navBack`, `home`, `square`, `power`, `volDown`,
+  `volUp`, `volMute`, `headphones`, `mic`, `camera`, `text`, `sliders` and `bolt` in
+  `ui/icons.ts` are the shapes of Lucide 1.72.0, each merged into one path (a circle and a
+  rectangle written as arcs). `navBack` is its triangle turned to point left. No dependency is
+  added; the ISC and MIT notices are in a `/*! */` comment at the end of the file. The old paths
+  measured 24x24 in Chromium and WebKit, so nothing was stretched: the shapes themselves were
+  uneven (ink from 12x12 to 17.5x12). `sliders` and `bolt` are used outside the controls too.
+- **Files: Item check boxes, a sheet for a file, and tidier menus.**
+  - "Item check boxes" in the View menu, stored as `checkboxes` in
+    `ws-scrcpy.files.preferences`, off by default. `data-checkboxes` on the explorer shows the
+    column for every row or for none. It no longer appears with a selection, which moved every
+    name aside on the first click.
+  - On a touch screen a tap on a file opens `askAboutFile`: the name, size, type and date, and
+    Download, Rename, Delete and Cancel. Each runs the row menu's command for that file. A mouse
+    double click and Enter still download at once.
+  - In the installed app on an iPhone (`navigator.standalone`) the download link opens in a new
+    context. Not tried on a phone: see below.
+  - The check of a menu item is drawn at the end of the item (`kit/Menu.css`), so "Select items"
+    starts where the items above it start. A line separates the sort key from the direction.
+
+Tests added or changed: `e2e-device-page.js` (the tool's line is in the header and the strip
+holds only tabs), `e2e-controls.js`, `test-stream-clients.js`, `e2e-ui-consistency.js` (the
+iPhone cells and order, no hole in either grid), `test-kit.js` and `e2e-notifications.js` (the
+count in words), `e2e-files-kit.js` (the option off, on, kept, and off with a selection),
+`e2e-files-flows.js` (a tap opens the sheet and starts no download; Download and Rename in it),
+`e2e-files.js` (its `open` helper answers the sheet on touch; rows are pressed in selection
+mode).
+
+Not done, from the same inspection, and the owner's to decide:
+
+- The Keyboard section of Settings and the hint "Use arrow keys to browse" show on a touch phone,
+  as does "Mouse and keyboard" in Actions. Hiding them would also hide them from a phone with a
+  keyboard attached.
+- In landscape on touch (956x440) Files uses the desktop toolbar, which scrolls sideways with no
+  hint; its quick access rows are 22 px high. The header, tabs and lock notice take 157 of 440 px.
+- Shell's key row needs about 575 px, so Copy, A- and A+ are off-screen at 440 px.
+- Files uses the same arrow for Forward and for Move. The root "/" of the address is 17 px wide.
+- On a desktop the cards of Phones stretch to the tallest in their row, and "Volume down" wraps
+  in the rail, so that tile is taller than the others.
+- With two iPhones the switcher of Notifications is a chevron on its own in the bar.
+
+Needs hardware (the owner's iPhone, Safari and the installed app):
+
+- Download from the file sheet in the installed app: iOS should show the file outside the app's
+  window, with Done. If it shows a blank view or still replaces the app, the next thing to try is
+  `navigator.share({ files })`, which holds the file in memory and needs a size limit.
+- The file sheet, the check boxes and the controls panel under a real finger.
+
+Checks at the head of this step, all on fixtures: `npm run check` passes (type check; lint with
+0 errors and 26 warnings; 819 node tests; the Python tests; the production build), and
+`node scripts/test-browser.js` passes all 39 default suites. The new browser checks were not run
+against a build of the base to prove they fail there; the base behaviour is in the inspection's
+screenshots. No atlas comparison with the base was made: the header of Files and Shell, the bar
+of Notifications, the controls, every menu with a check item and the control icons differ on
+purpose. No phone, adb, docker or live server was touched, and nothing is deployed.
