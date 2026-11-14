@@ -449,8 +449,20 @@ async function androidTabs(browser, viewport, colorScheme) {
         await tab(page, 'Shell').click();
         await page.locator('.tool-view-shell').waitFor();
         await page.locator('.tool-connection.connected').waitFor();
-        // The chip at the end of the tabs is in the colour of its tone, as the screen's header
-        // line: Connected in the text colour, and each other tone as the header draws it.
+        // The tool's connection is the status line under the phone's name, where the screen's is,
+        // and not a word at the end of the tab row, which read as another tab.
+        const place = await page.locator('.tool-view:not([hidden])').evaluate((view) => {
+            const line = view.querySelector('.tool-connection');
+            const strip = view.querySelector('nav.kit-tabs');
+            return {
+                text: line.textContent, inTitle: !!line.closest('.kit-bar > .kit-bar-title'), isStatusLine: line.matches('.kit-bar-status[role="status"]'),
+                strip: [...strip.children].map((child) => child.className), tabs: [...strip.querySelectorAll('.kit-tab')].map((tab) => tab.textContent),
+                stripText: strip.textContent,
+            };
+        });
+        assert.deepEqual(place, { text: 'Connected', inTitle: true, isStatusLine: true, strip: ['kit-tabs-list'], tabs: ['Screen', 'Files', 'Shell'], stripText: 'ScreenFilesShell' }, `${label}: the tool's connection is in the header and the tab row holds only tabs`);
+        // It is in the colour of its tone, as the screen's header line: Connected in the text
+        // colour, and each other tone as the header draws it.
         assert.deepEqual(await chipColours(page), { success: 'text', warning: 'warning', error: 'danger', neutral: 'muted' }, `${label}: the chip's tones`);
         await until(async () => (await terminalText(page)).includes('Fixture terminal 1 ready'), 'the shell starts');
         const rows = await terminalRows(page);

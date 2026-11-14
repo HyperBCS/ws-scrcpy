@@ -79,9 +79,18 @@ export function AppBar({
  * A failure is red and a wait amber; Connected is in the colour of the text, and a phone that is
  * not there, or a line without a tone, stays muted.
  */
-export function AppBarStatus({ tone, children }: { tone?: ChipTone; children: ComponentChildren }) {
+export function AppBarStatus({
+    tone,
+    children,
+    class: className,
+}: {
+    tone?: ChipTone;
+    children: ComponentChildren;
+    /** A name of the caller's own, beside the kit's. */
+    class?: string;
+}) {
     return (
-        <span class="kit-bar-status" role="status" data-tone={tone}>
+        <span class={`kit-bar-status ${className || ''}`.trim()} role="status" data-tone={tone}>
             {children}
         </span>
     );

@@ -1,4 +1,3 @@
-import { ComponentChildren } from 'preact';
 import '../../style/kit/TabStrip.css';
 
 // Each view of a page draws the strip itself, so a press on a tab removes the strip with its
@@ -38,12 +37,10 @@ interface TabStripProps<T extends string> {
     tabs: ReadonlyArray<Tab<T>>;
     current: T;
     onSelect: (id: T) => void;
-    /** Shown at the end of the row: the connection state of the tab that is open. */
-    children?: ComponentChildren;
 }
 
 /** The tabs under the bar, with the class names of `style/kit/TabStrip.css`. */
-export function TabStrip<T extends string>({ label, tabs, current, onSelect, children }: TabStripProps<T>) {
+export function TabStrip<T extends string>({ label, tabs, current, onSelect }: TabStripProps<T>) {
     return (
         <nav ref={standIn} class="kit-tabs" aria-label={label}>
             <div class="kit-tabs-list">
@@ -68,7 +65,6 @@ export function TabStrip<T extends string>({ label, tabs, current, onSelect, chi
                     </button>
                 ))}
             </div>
-            {children}
         </nav>
     );
 }

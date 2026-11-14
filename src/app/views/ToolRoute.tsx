@@ -18,7 +18,7 @@ interface ToolRouteProps {
     params: URLSearchParams;
     /** Whether this tool's tab is the one shown. See `ToolView`. */
     active: boolean;
-    tabs: (status: ComponentChildren) => ComponentChildren;
+    tabs: ComponentChildren;
 }
 
 /**

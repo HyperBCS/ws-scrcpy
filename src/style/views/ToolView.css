@@ -10,29 +10,6 @@
     background: var(--surface-sunken);
 }
 
-/* The connection state of the open tool, at the end of the tab row. The row gives it its size
-   and the muted colour, which the tones below replace. It keeps to the right edge, and the
-   ellipsis is for a narrow phone. */
-.tool-connection {
-    flex: 0 1 auto;
-    margin-left: auto;
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-/* In the tone of its state, as the status line of a screen's header: Failed red, Connecting and
-   Reconnecting amber, Connected in the colour of the text, Offline and Stopped muted. */
-.tool-connection[data-tone='error'] {
-    color: var(--danger-text);
-}
-.tool-connection[data-tone='warning'] {
-    color: var(--warning-text);
-}
-.tool-connection[data-tone='success'] {
-    color: var(--text);
-}
-
 .tool-workspace {
     display: flex;
     flex: 1 1 0;

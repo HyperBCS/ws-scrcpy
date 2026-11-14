@@ -8,8 +8,10 @@ import { Button } from '../ui/Button';
 
 interface PhoneHeaderProps {
     name: string;
-    /** Screen connection. Tools keep their connection in the tab strip. */
+    /** The connection of the view that is open: the screen's stream, or the tool's own socket. */
     connection?: ConnectionStatus;
+    /** A class on the connection line, for a tool's own name of it. */
+    connectionClass?: string;
     service?: ComponentChildren;
     inbox?: string;
     switchDisabled?: boolean;
@@ -18,14 +20,26 @@ interface PhoneHeaderProps {
 }
 
 /** The header of Screen, Files and Shell. It owns no stream, styles or phone lookup. */
-export function PhoneHeader({ name, connection, service, inbox, switchDisabled, keyboard }: PhoneHeaderProps) {
+export function PhoneHeader({
+    name,
+    connection,
+    connectionClass,
+    service,
+    inbox,
+    switchDisabled,
+    keyboard,
+}: PhoneHeaderProps) {
     return (
         <AppBar
             class={keyboard ? 'phone-header-keyboard' : undefined}
             title={name}
             status={
                 <>
-                    {connection && <AppBarStatus tone={connection.tone}>{connection.label}</AppBarStatus>}
+                    {connection && (
+                        <AppBarStatus tone={connection.tone} class={connectionClass}>
+                            {connection.label}
+                        </AppBarStatus>
+                    )}
                     {service}
                 </>
             }

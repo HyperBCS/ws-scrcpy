@@ -95,8 +95,8 @@ interface ToolViewProps {
     params: URLSearchParams;
     /** False while another tab of the phone's page is shown. The tool stays mounted, hidden. */
     active: boolean;
-    /** The tab strip of the phone's page, drawn with this tool's connection state at its end. */
-    tabs: (status: ComponentChildren) => ComponentChildren;
+    /** The tab strip of the phone's page. The tool's connection is in the header, under the name. */
+    tabs: ComponentChildren;
 }
 
 /**
@@ -340,6 +340,8 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
             {active && (
                 <PhoneHeader
                     name={phoneName(udid, entry)}
+                    connection={connection}
+                    connectionClass={`tool-connection ${connected ? 'connected' : ''}`.trim()}
                     service={
                         descriptor && (
                             <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} unlessRunning />
@@ -347,16 +349,7 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
                     }
                 />
             )}
-            {active &&
-                tabs(
-                    <span
-                        class={`tool-connection ${connected ? 'connected' : ''}`}
-                        role="status"
-                        data-tone={connection.tone}
-                    >
-                        {connection.label}
-                    </span>,
-                )}
+            {active && tabs}
             <section ref={workspaceRef} class="tool-workspace" aria-label={tool?.title}>
                 <Presence show={showBanner} kind="collapse" class="tool-error">
                     <Banner action={{ label: bannerRef.current.button, run: reconnect }}>

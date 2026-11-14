@@ -1,4 +1,3 @@
-import { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import { BaseClient } from '../client/BaseClient';
@@ -208,19 +207,15 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
     // Files and Shell run over adb, so a tool's page is an Android phone's until the list says
     // otherwise (`ToolRoute` refuses an iPhone).
     const tabList = useMemo(() => phoneTabs(platform ?? 'android'), [platform]);
-    const tabs = (status?: ComponentChildren) =>
-        tabList.length > 1 ? (
-            <TabStrip label="Phone views" tabs={tabList} current={view} onSelect={selectTab}>
-                {status}
-            </TabStrip>
-        ) : null;
+    const tabs =
+        tabList.length > 1 ? <TabStrip label="Phone views" tabs={tabList} current={view} onSelect={selectTab} /> : null;
 
     return (
         <>
             {/* One screen view, with the adapter of the phone's platform. Each platform keeps its
                 own place among the children, so a view never changes its adapter (its hooks). */}
-            {android && <ScreenView params={android} useScreen={useAndroidScreen} tabs={tabs()} />}
-            {ios && <ScreenView params={ios} useScreen={useIphoneScreen} tabs={tabs()} />}
+            {android && <ScreenView params={android} useScreen={useAndroidScreen} tabs={tabs} />}
+            {ios && <ScreenView params={ios} useScreen={useIphoneScreen} tabs={tabs} />}
             {view === 'screen' &&
                 !android &&
                 !ios &&
