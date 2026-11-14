@@ -27,8 +27,10 @@ export const ICONS = {
     // The app's pages and sheets.
     phone: 'M8 3h8a1 1 0 011 1v16a1 1 0 01-1 1H8a1 1 0 01-1-1V4a1 1 0 011-1zM11 18h2',
     bell: 'M6 16v-5a6 6 0 0112 0v5l1.5 2h-15L6 16zM10 20.5a2 2 0 004 0',
-    sliders: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4',
-    bolt: 'M13 3L5 14h6l-1 7 8-11h-6l1-7z',
+    sliders: 'M10 5H3M12 19H3M14 3v4M16 17v4M21 12h-9M21 19h-5M21 5h-7M8 10v4M8 12H3',
+    bolt:
+        'M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 ' +
+        '1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z',
     terminal: 'M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM7 9l3 3-3 3M12 15h5',
     lock: 'M7 11V8a5 5 0 0110 0v3M6 11h12a1 1 0 011 1v7a1 1 0 01-1 1H6a1 1 0 01-1-1v-7a1 1 0 011-1z',
     moon: 'M20 13.5A8 8 0 1110.5 4a7 7 0 009.5 9.5z',
@@ -42,27 +44,37 @@ export const ICONS = {
     checkCircle: 'M12 3a9 9 0 100 18 9 9 0 000-18zM8 12.5l2.7 2.7L16 9.5',
     errorCircle: 'M12 3a9 9 0 100 18 9 9 0 000-18zM12 7.5v6M12 16.5h.01',
 
-    // Phone controls.
-    navBack: 'M15 6l-8 6 8 6V6z',
-    home: 'M12 6a6 6 0 100 12 6 6 0 000-12z',
-    square: 'M7 7h10v10H7z',
-    power: 'M12 4v8M7.5 7a7 7 0 109 0',
+    // Phone controls. The shapes of navBack to text below, and of `sliders` and `bolt` above, are
+    // those of Lucide 1.72.0 (see the notice at the end of this file), each merged into one path.
+    // navBack is its triangle turned a quarter to point left.
+    navBack: 'M4 10.27a2 2 0 0 0 0 3.46l14 8A2 2 0 0 0 21 20V4a2 2 0 0 0-3-1.73z',
+    home: 'M2 12a10 10 0 1 0 20 0 10 10 0 1 0-20 0z',
+    square: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z',
+    power: 'M12 2v10M18.4 6.6a9 9 0 1 1-12.77.04',
     rotate: 'M4 9a8 8 0 0114-3M20 4v4h-4M20 15a8 8 0 01-14 3M4 20v-4h4',
-    volDown: 'M4 10v4h4l5 4V6l-5 4H4zM17 12h3',
-    volUp: 'M4 10v4h4l5 4V6l-5 4H4zM17 9a4 4 0 010 6',
+    volDown:
+        'M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 ' +
+        '0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6',
+    volUp:
+        'M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 ' +
+        '0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6M19.3' +
+        '64 18.364a9 9 0 0 0 0-12.728',
     // The phone's own mute key. Sound in this browser is `headphones`.
-    volMute: 'M4 10v4h4l5 4V6l-5 4H4zM16.5 9.5l5 5M21.5 9.5l-5 5',
+    volMute:
+        'M11 4.702a.7.7 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 ' +
+        '1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.7.7 0 0 0 11 19.298zM16.5 14.5l5-5M16.5 9.5l5 5',
     headphones:
-        'M4 15v-3a8 8 0 0116 0v3M5 14h2a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4a1 1 0 011-1z' +
-        'M17 14h2a1 1 0 011 1v4a1 1 0 01-1 1h-2a1 1 0 01-1-1v-4a1 1 0 011-1z',
-    mic: 'M12 3a3 3 0 00-3 3v5a3 3 0 006 0V6a3 3 0 00-3-3zM6 11a6 6 0 0012 0M12 17v4',
+        'M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0' +
+        ' 0 1-2-2v-3a2 2 0 0 1 2-2h3',
+    mic: 'M12 19v3M19 10v2a7 7 0 0 1-14 0v-2M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z',
     camera:
-        'M5 7h2.5L9 5h6l1.5 2H19a1 1 0 011 1v10a1 1 0 01-1 1H5a1 1 0 01-1-1V8a1 1 0 011-1z' +
-        'M12 10a3 3 0 100 6 3 3 0 000-6z',
+        'M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0' +
+        ' 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4zM9 13a3 3 0 1 ' +
+        '0 6 0 3 3 0 1 0-6 0z',
     keyboard:
         'M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z' +
         'M7 10h.01M10.3 10h.01M13.7 10h.01M17 10h.01M8 14h8',
-    text: 'M5 6h14M12 6v13M9 19h6',
+    text: 'M12 4v16M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2M9 20h6',
     backspace: 'M9 6h11a1 1 0 011 1v10a1 1 0 01-1 1H9l-6-6 6-6zM12 10l4 4M16 10l-4 4',
     enter: 'M19 6v6a2 2 0 01-2 2H5M9 10l-4 4 4 4',
 
@@ -115,3 +127,34 @@ export function iconSvg(name: IconName, size: IconSize = 24): string {
         .join(' ');
     return `<svg ${attributes} width="${size}" height="${size}"><path d="${ICONS[name]}"/></svg>`;
 }
+
+/*!
+ * The phone control icons (navBack, home, square, power, volDown, volUp, volMute, headphones, mic,
+ * camera, text, sliders, bolt) use shapes from Lucide 1.72.0 (https://lucide.dev).
+ *
+ * ISC License. Copyright (c) 2026 Lucide Icons and Contributors.
+ * Permission to use, copy, modify, and/or distribute this software for any purpose with or without
+ * fee is hereby granted, provided that the above copyright notice and this permission notice
+ * appear in all copies.
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS
+ * SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE
+ * AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+ * NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
+ * OF THIS SOFTWARE.
+ *
+ * Some of these Lucide icons are derived from the Feather project.
+ * The MIT License (MIT). Copyright (c) 2013-present Cole Bemis.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+ * and associated documentation files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ * The above copyright notice and this permission notice shall be included in all copies or
+ * substantial portions of the Software.
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
+ * BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+ * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
