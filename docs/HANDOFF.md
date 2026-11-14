@@ -5840,3 +5840,19 @@ did not start; it was gone by 02:07:45.
 
 Rollback, for a break only: `docker tag ws-scrcpy:before-ui-feedback-20261114 ws-scrcpy:latest`
 and `docker compose up -d ws-scrcpy`. Reload each browser tab and reopen the installed app once.
+
+### Notifications outage and restart (2026-11-14)
+
+Notifications stopped after 03:11:59 UTC with the status "Notification response timed out;
+retrying". The cause was not the deploy of 02:01 UTC. BlueZ had lost its subscription on the two
+ANCS characteristics (`Notifying: false`) after a reconnect it did not announce, and the
+collector subscribes once per connection. The evidence and the code fix are in `docs/TODO.md`
+("Notifications stop after a silent Bluetooth reconnect"). The fix is not written yet; the owner
+chose to do it later.
+
+On the owner's word the live container was restarted at 07:28:38 UTC with
+`docker compose restart ws-scrcpy`: same image `f0382167242d`, no screen session running, not
+near an unlock slot. After 45 s: healthy, 0 restarts, the collector running as uid 1000, status
+"Receiving notifications", `Notifying: true` on both characteristics, the LE link kept, the
+named unlock fields unchanged. Until the fix is deployed the same outage can return after the
+next silent reconnect, and a restart brings notifications back.
