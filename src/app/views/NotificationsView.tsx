@@ -23,7 +23,7 @@ import {
     syncPushSubscription,
 } from '../state/notifications';
 import { saveNotificationSource } from '../state/notificationSources';
-import { FEED_LABELS, FEED_TONES, FeedBadge, NotificationHistory, UnreadBadge, feedState } from './NotificationHistory';
+import { FEED_LABELS, FEED_TONES, FeedBadge, NotificationHistory, UnreadCount, feedState } from './NotificationHistory';
 import { NotificationActionSheet } from './NotificationActionSheet';
 import { SourceChange, SourceSettings } from './notifications/SourceSettings';
 import { route } from '../state/router';
@@ -383,17 +383,20 @@ export function NotificationsView() {
                     activePanel === 'setup' && status ? (
                         <AppBarStatus>Setup & delivery</AppBarStatus>
                     ) : shown && feed ? (
-                        <AppBarStatus tone={FEED_TONES[feed]}>
-                            {shown.name} · {FEED_LABELS[feed]}
-                        </AppBarStatus>
+                        <span class="notification-bar-status">
+                            <AppBarStatus tone={FEED_TONES[feed]}>
+                                {shown.name} · {FEED_LABELS[feed]}
+                            </AppBarStatus>
+                            <UnreadCount count={status?.unreadBySource?.[shown.id] || 0} />
+                        </span>
                     ) : allShown ? (
-                        <AppBarStatus>All iPhones</AppBarStatus>
+                        <span class="notification-bar-status">
+                            <AppBarStatus>All iPhones</AppBarStatus>
+                            <UnreadCount count={status?.unread || 0} />
+                        </span>
                     ) : undefined
                 }
             >
-                <UnreadBadge
-                    count={shown ? status?.unreadBySource?.[shown.id] || 0 : allShown ? status?.unread || 0 : 0}
-                />
                 {!!status && status.sources.length > 1 && (
                     <IconButton
                         icon="chevDown"

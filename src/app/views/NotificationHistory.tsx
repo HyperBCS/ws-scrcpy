@@ -34,12 +34,16 @@ import '../../style/views/NotificationsInbox.css';
 export type { NotificationHistoryItem as HistoryItem } from '../../common/Notification';
 import type { NotificationHistoryItem as HistoryItem } from '../../common/Notification';
 
-/** The unread count in the bar of Notifications: the kit's badge on its own, not on a button. */
-export function UnreadBadge({ count }: { count: number }) {
+/**
+ * The unread count in the bar of Notifications: words after the status line, on the same line
+ * (`notification-bar-status`). Nothing for zero. The status line keeps its own text.
+ */
+export function UnreadCount({ count }: { count: number }) {
     const text = badgeText(count);
     return text ? (
-        <span class="kit-badge kit-badge-inline notification-unread-count" aria-label={`${count} unread notifications`}>
-            {text}
+        <span class="notification-unread-line">
+            {' · '}
+            <span class="notification-unread-count">{text}</span> unread
         </span>
     ) : null;
 }

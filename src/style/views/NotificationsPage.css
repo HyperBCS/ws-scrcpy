@@ -2,7 +2,7 @@
 
 @layer views {
 /* The Notifications page (`views/NotificationsView.tsx`): the bar stays in place and the page
-   under it scrolls. The bar is one row: back, the title with the iPhone shown, the unread count,
+   under it scrolls. The bar is one row: back, the title with the iPhone shown and its unread count,
    Switch where more than one iPhone is linked, Search and Setup. Every control is a kit part;
    these rules place the parts and set the text between them. The inbox is in
    NotificationsInbox.css and Setup in NotificationsSetup.css. No rule here selects a button, a
@@ -13,8 +13,20 @@
     height: 100%;
     background: var(--surface);
 }
-.notifications-view > .kit-bar .notification-unread-count {
-    margin-right: var(--space-4);
+/* The status line and, after it on the same line, the unread count in words. The count keeps
+   its place when a long iPhone name is cut short. */
+.notification-bar-status {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+}
+.notification-unread-line {
+    flex: none;
+    color: var(--text);
+    font-size: var(--font-size-12);
+    font-weight: var(--font-weight-regular);
+    line-height: 1.4;
+    white-space: pre;
 }
 .notification-switch {
     flex: none;

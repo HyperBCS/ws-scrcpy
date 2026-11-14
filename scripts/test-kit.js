@@ -183,11 +183,15 @@ test('a select at the end of a row does not shrink under the width of its option
     assert.match(select, /min-width: 100%;/, 'which fills the control where there is room');
 });
 
-test('the unread count of Notifications is the kit badge, on its own in the bar', () => {
+test('the unread count of Notifications is words in the status line of the bar, not a badge without an icon', () => {
     const source = fs.readFileSync(path.join(__dirname, '../src/app/views/NotificationHistory.tsx'), 'utf8');
-    const badge = /export function UnreadBadge[\s\S]*?\n}\n/.exec(source)?.[0] || '';
-    assert.match(badge, /class="kit-badge kit-badge-inline notification-unread-count"/);
-    assert.match(badge, /badgeText\(count\)/, 'the words of the count are the kit badge\'s');
+    const count = /export function UnreadCount[\s\S]*?\n}\n/.exec(source)?.[0] || '';
+    assert.match(count, /<span class="notification-unread-line">[\s\S]*<span class="notification-unread-count">\{text\}<\/span> unread/);
+    assert.doesNotMatch(count, /kit-badge/, 'no red count on its own in the bar');
+    assert.match(count, /badgeText\(count\)/, 'the words of the count are the kit badge\'s');
+    const view = fs.readFileSync(path.join(__dirname, '../src/app/views/NotificationsView.tsx'), 'utf8');
+    assert.equal((view.match(/<UnreadCount /g) || []).length, 2, 'one iPhone and All iPhones each say their count');
+    assert.match(view, /\{shown\.name\} · \{FEED_LABELS\[feed\]\}\s*<\/AppBarStatus>\s*<UnreadCount /, 'after the status line, on its line');
     assert.match(rule('kit/Badge.css', '.kit-badge-inline'), /position: static;/);
     assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '../src/style/app.css'), 'utf8'), /notification-unread-count/, 'app.css has no badge of its own');
 });

@@ -2195,13 +2195,13 @@ async function sharedHeader(browser) {
             assert.equal(await backControl(page).getAttribute('title'), 'Phones');
             assert.equal(await page.getByRole('link', { name: /Devices/ }).count(), 0, 'the link that added a history entry is gone');
             assert.equal(await headerBadge(page).textContent(), '60');
-            // One row: back, the title with the iPhone shown, the unread count, Switch (two iPhones
-            // are linked), Search and Setup, all on one line.
+            // One row: back, the title with the iPhone shown and its unread count in words, Switch
+            // (two iPhones are linked), Search and Setup, all on one line. No count stands alone.
             const row = await header.evaluate(el => [...el.children].map(child => {
                 const box = child.getBoundingClientRect();
                 return { name: child.getAttribute('aria-label') || child.textContent.trim(), top: Math.round(box.top), bottom: Math.round(box.bottom) };
             }));
-            assert.deepEqual(row.map(item => item.name), ['Phones', 'NotificationsPhone A · Connected', '60 unread notifications', 'Switch iPhone', 'Search', 'Setup']);
+            assert.deepEqual(row.map(item => item.name), ['Phones', 'NotificationsPhone A · Connected · 60 unread', 'Switch iPhone', 'Search', 'Setup']);
             assert.ok(row.every(item => item.top >= 0 && item.bottom <= 61 && item.top < row[0].bottom), `one row at ${width} px: ${JSON.stringify(row)}`);
             const firstCard = await article(page, 'Message 1').evaluate(el => el.getBoundingClientRect().top);
             if (width === 390) assert.ok(firstCard <= 130, `the first notification starts within 130 px of the top (${firstCard})`);
