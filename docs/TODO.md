@@ -5,27 +5,27 @@ it is done and recorded in a dated section of `docs/HANDOFF.md`.
 
 ## Asked for
 
-### Files: holding a file opens its menu (owner, 2026-11-14)
+### Files: holding a file selects it, without the iOS menu (owner, 2026-11-14)
 
-On a touch screen, holding a file or a folder in Files opens the menu a right click opens on a
-desktop (Download or Open, Cut, Copy, Paste, Copy path, Rename, Delete, Properties), at the
-finger. The browser's own menu for a link does not appear.
+On a touch screen, holding a file or a folder in Files selects it and starts multi-select. No
+menu opens: not ours, and not the browser's. (The owner first asked for the right-click menu on
+a hold, then chose selection. The row's menu stays on its ⋮ button.)
 
-- Today a hold starts multi-select (`onPointerDown` in `FileListingClient.ts`, after
-  `LONG_PRESS_MS`), and `onContextMenu` only cancels the browser's menu on touch. iOS does not
-  send `contextmenu` for a hold and shows its own preview and menu for the name, which is a
-  link. Keep the hold timer and open `itemMenuItems()` from it, as the right click does.
-- Stop the iOS menu and the text selection on the rows: `-webkit-touch-callout: none` and
-  `user-select: none` on the row and its link on touch, as the kit's icon button has. The name
-  may need to stop being a link with an address on touch.
-- The hold selects the row it opens the menu for, as a right click does. A hold on a row of a
-  selection keeps the selection, and the menu acts on all of it.
-- Multi-select then needs another way in: "Select" as an item of that menu, beside "Select
-  items" in the Actions menu. The owner's to confirm.
-- The tap that ends the hold must not also open the file's sheet or a folder (the code already
-  drops the click that follows a hold).
+- The code already means to do this: `onPointerDown` in `FileListingClient.ts` starts a timer
+  (`LONG_PRESS_MS`, 450 ms) that selects the row and turns selection mode on.
+- What happens on the owner's iPhone in Safari (screenshot of 2026-11-14): iOS shows a preview
+  of the page and its own menu (Open, Add to Reading List, Copy Link, Share…, Ask Siri). The
+  name of a row is a link with an address, and `filelisting.css` has no rule that turns the iOS
+  callout off.
+- Fix: on touch, `-webkit-touch-callout: none` and `user-select: none` on the row and its link,
+  as the kit's icon button has, and `draggable="false"` on the link so iOS does not lift it for
+  a drag. If the preview still shows, the name must stop being a link with an address on touch.
+- Check that iOS does not cancel the pointer before the 450 ms are over; a cancelled pointer
+  clears the timer and nothing would be selected.
+- The tap that ends the hold must not open the file's sheet or a folder (the code already drops
+  the click that follows a hold).
 - Checks on fixtures in the touch flow of `e2e-files-flows.js`. Needs hardware: Safari and the
-  installed app on the iPhone, where the browser's menu shows today.
+  installed app on the iPhone. A fixture cannot show the iOS menu.
 
 ### Show touches (owner, 2026-11-14)
 
@@ -52,6 +52,9 @@ of a phone's screen. Like "Show taps" in Android's developer options.
 The text of each is in `docs/HANDOFF.md`, section "Owner UI feedback: header status, controls,
 icons and Files".
 
+- On Files and Shell the header shows "Stream service: Stopped" under "Connected" once the
+  stream has stopped, which is the normal state there (seen in the owner's screenshot of
+  2026-11-14). The header is then three lines high. Leave the service line out on those tabs?
 - Hide the Keyboard section of Settings and the keyboard hints on a touch phone, or keep them
   for a phone with a keyboard attached.
 - Files in landscape on touch: the toolbar runs off the edge; the quick access rows are 22 px.
