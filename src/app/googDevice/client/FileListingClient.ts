@@ -88,10 +88,18 @@ type Preferences = {
     sort: SortKey;
     ascending: boolean;
     showHidden: boolean;
+    /** Item check boxes, as in Explorer: a check box on every row, or none at all. */
+    checkboxes: boolean;
 };
 
 const PREFERENCES_KEY = 'ws-scrcpy.files.preferences';
-const DEFAULT_PREFERENCES: Preferences = { view: 'details', sort: 'name', ascending: true, showHidden: false };
+const DEFAULT_PREFERENCES: Preferences = {
+    view: 'details',
+    sort: 'name',
+    ascending: true,
+    showHidden: false,
+    checkboxes: false,
+};
 
 // Quick access, in the order Explorer puts its own: the roots first, then the folders people
 // actually visit. Any of them can be missing on a given device; opening one then reports the
@@ -131,6 +139,7 @@ const ROW_MENU_ICON = iconSvg('more', 20);
 // the solid danger fill.
 const ANSWER = buttonClass();
 const ANSWER_PRIMARY = buttonClass({ variant: 'primary' });
+const ANSWER_DANGER = buttonClass({ variant: 'danger' });
 const ANSWER_REMOVES = buttonClass({ variant: 'danger-solid' });
 const MENU_SEPARATOR = '<div class="kit-menu-separator" role="separator"></div>';
 
@@ -190,6 +199,7 @@ function readPreferences(): Preferences {
             sort: ['name', 'size', 'type', 'modified'].includes(stored.sort) ? stored.sort : DEFAULT_PREFERENCES.sort,
             ascending: typeof stored.ascending === 'boolean' ? stored.ascending : DEFAULT_PREFERENCES.ascending,
             showHidden: typeof stored.showHidden === 'boolean' ? stored.showHidden : DEFAULT_PREFERENCES.showHidden,
+            checkboxes: typeof stored.checkboxes === 'boolean' ? stored.checkboxes : DEFAULT_PREFERENCES.checkboxes,
         };
     } catch {
         // Private windows and blocked site data throw here; the explorer still works with defaults.
@@ -750,11 +760,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private applyPreferences(): void {
-        const { view, sort, ascending } = this.preferences;
+        const { view, sort, ascending, checkboxes } = this.preferences;
         if (this.wrapper.dataset.view !== view) {
             this.forgetRowGeometry();
         }
         this.wrapper.dataset.view = view;
+        // The check box column is there for every row or for none (`filelisting.css`), so a
+        // first selection never moves the names.
+        this.wrapper.dataset.checkboxes = checkboxes ? 'on' : 'off';
         this.tableHead.querySelectorAll<HTMLElement>('th[aria-sort]').forEach((cell) => {
             const key = cell.querySelector<HTMLElement>('.fx-sort')?.dataset.sort;
             cell.setAttribute('aria-sort', key === sort ? (ascending ? 'ascending' : 'descending') : 'none');
@@ -1380,7 +1393,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             if (this.selectionMode) {
                 this.toggleSelection(name);
             } else if (opens) {
-                this.open(name);
+                const entry = this.folder.get(name);
+                if (coarse && event.detail !== 0 && entry?.isFile()) {
+                    // A tap is also how a list is scrolled past and a folder opened. It does not
+                    // start a download; it asks what to do with the file.
+                    void this.askAboutFile(entry);
+                } else {
+                    this.open(name);
+                }
             } else {
                 this.selectOnly(name);
             }
@@ -1724,7 +1744,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private viewMenuItems(): string[] {
-        const { view, sort, ascending, showHidden } = this.preferences;
+        const { view, sort, ascending, showHidden, checkboxes } = this.preferences;
         const radio = (value: string, title: string, checked: boolean, key: string) =>
             this.checkItem('menuitemradio', title, checked, key, value);
         return [
@@ -1735,10 +1755,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             MENU_SEPARATOR,
             '<div class="kit-menu-title" role="presentation">Sort by</div>',
             ...(Object.keys(SORT_TITLES) as SortKey[]).map((key) => radio(key, SORT_TITLES[key], sort === key, 'sort')),
+            // What to sort by and which way are two choices: a line between them.
+            MENU_SEPARATOR,
             radio('asc', 'Ascending', ascending, 'order'),
             radio('desc', 'Descending', !ascending, 'order'),
             MENU_SEPARATOR,
             this.checkItem('menuitemcheckbox', 'Hidden items', showHidden, 'hidden'),
+            this.checkItem('menuitemcheckbox', 'Item check boxes', checkboxes, 'checkboxes'),
         ];
     }
 
@@ -1865,6 +1888,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             this.preferences.ascending = value === 'asc';
         } else if (kind === 'hidden') {
             this.preferences.showHidden = !this.preferences.showHidden;
+        } else if (kind === 'checkboxes') {
+            this.preferences.checkboxes = !this.preferences.checkboxes;
         }
         this.applyPreferences();
         this.renderItems();
@@ -2059,6 +2084,34 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             this.download(destination, entry);
         } else {
             this.navigate(destination);
+        }
+    }
+
+    /**
+     * The sheet a tap on a file opens on a touch screen: what the file is, and Download, Rename
+     * and Delete. Each runs the command of the row's menu for this one file.
+     */
+    private async askAboutFile(entry: Entry): Promise<void> {
+        const off = this.canModify() ? '' : ' disabled';
+        const facts = [formatSize(entry.size), typeLabel(entry), formatModified(entry.mtime)].filter(Boolean);
+        this.dialog.innerHTML = this.sheetMarkup({
+            title: entry.name,
+            close: 'Close',
+            className: 'fx-file-sheet',
+            body: `<p class="fx-dialog-message">${esc(facts.join(' · '))}</p>
+                <div class="fx-file-actions">
+                    <button type="submit" class="${ANSWER_PRIMARY}" value="download"${off}>Download</button>
+                    <button type="submit" class="${ANSWER}" value="rename"${off}>Rename</button>
+                    <button type="submit" class="${ANSWER_DANGER}" value="delete"${off}>Delete</button>
+                </div>`,
+            actions: `<button type="button" class="${ANSWER}" data-dialog="cancel">Cancel</button>`,
+        });
+        const result = await this.showDialog(() => {
+            // Cancel is the default, as for the app's other sheets that can remove something.
+            this.dialog.querySelector<HTMLButtonElement>('[data-dialog="cancel"]')?.focus();
+        });
+        if (result === 'download' || result === 'rename' || result === 'delete') {
+            this.runCommand(result, [entry.name]);
         }
     }
 
@@ -3002,6 +3055,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const link = document.createElement('a');
         link.href = this.files.downloadLink(destination);
         link.download = entry.name;
+        // The installed app on an iPhone has no browser bar. A file that iOS shows in the app's
+        // own window leaves no way back, so the link opens outside it, where iOS gives Done.
+        if ((navigator as Navigator & { standalone?: boolean }).standalone === true) {
+            link.target = '_blank';
+            link.rel = 'noopener';
+        }
         document.body.appendChild(link);
         link.click();
         link.remove();

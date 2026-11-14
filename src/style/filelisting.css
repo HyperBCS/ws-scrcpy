@@ -553,18 +553,19 @@
     }
 }
 
-/* The checkbox column only takes space once selecting is under way -- Explorer reveals it the
-   same way, and on a phone it would otherwise eat a quarter of the name column. */
+/* The checkbox column is there for every row or for none: "Item check boxes" in the View menu,
+   off until the owner turns it on (`data-checkboxes` on the explorer). It does not come and go
+   with a selection, which moved every name aside on the first click. */
 .fx-table .fx-cell-select {
     padding: 0;
 }
 
-.file-explorer:not(.fx-selecting) .fx-table .fx-cell-select {
+.file-explorer:not([data-checkboxes='on']) .fx-table .fx-cell-select {
     width: 0;
     overflow: hidden;
 }
 
-.file-explorer:not(.fx-selecting) .fx-cell-select > * {
+.file-explorer:not([data-checkboxes='on']) .fx-cell-select > * {
     display: none;
 }
 
@@ -813,6 +814,14 @@
     .fx-conflict .kit-button {
         padding: 0 var(--space-8);
     }
+}
+
+/* The sheet for one file on a touch screen: its actions one under the other, each the full
+   width, as in the sheet of a notification. */
+.fx-file-actions {
+    display: grid;
+    gap: var(--space-8);
+    margin-top: var(--space-12);
 }
 
 .fx-properties {

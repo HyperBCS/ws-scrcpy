@@ -357,6 +357,18 @@ async function run(browser, layout, theme) {
     await tiles.click();
     assert.deepEqual(await checkOf(tiles), { icon: true, drawn: true, checked: 'true' }, `${label}: one of a set shows the same check`);
     assert.equal(await focusedLabel(page), 'Tiles');
+    // Item check boxes: off until asked for. On, every row has its check box with nothing selected.
+    const boxes = menu.getByRole('menuitemcheckbox', { name: 'Item check boxes', exact: true });
+    assert.deepEqual(await checkOf(boxes), { icon: true, drawn: false, checked: 'false' }, `${label}: item check boxes are off by default`);
+    assert.equal(await page.locator('.file-explorer').getAttribute('data-checkboxes'), 'off');
+    assert.equal(await row(page, 'notes.txt').locator('.fx-check').isVisible(), false, `${label}: no check box while the option is off`);
+    await boxes.click();
+    assert.deepEqual(await checkOf(boxes), { icon: true, drawn: true, checked: 'true' }, `${label}: the option shows its check`);
+    assert.equal(await page.locator('.file-explorer').getAttribute('data-checkboxes'), 'on');
+    assert.equal(await page.locator('.fx-row.selected').count(), 0);
+    assert.equal(await row(page, 'notes.txt').locator('.fx-check').isVisible(), true, `${label}: a check box on every row with nothing selected`);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('ws-scrcpy.files.preferences')).checkboxes), true, `${label}: the choice is kept in this browser`);
+    await tiles.focus();
     await check('view-menu');
     await page.keyboard.press('Escape');
     await menu.waitFor({ state: 'hidden' });
@@ -373,6 +385,19 @@ async function run(browser, layout, theme) {
     await row(page, 'notes.txt').locator('.fx-check').click();
     await page.locator('.fx-row.selected[data-name="notes.txt"]').waitFor();
     await check('tiles-selected');
+    await page.locator('.fx-items').press('Escape');
+    await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
+    // Off again: no check box, also while a row is selected.
+    await opener.click();
+    if (layout.mobile) await menu.getByRole('menuitem', { name: 'View options…', exact: true }).click();
+    await menu.getByRole('menuitemcheckbox', { name: 'Item check boxes', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('.file-explorer').getAttribute('data-checkboxes'), 'off');
+    await command('Select', 'Select items');
+    await row(page, 'notes.txt').click();
+    await page.locator('.fx-row.selected[data-name="notes.txt"]').waitFor();
+    assert.equal(await page.locator('.fx-check').first().isVisible(), false, `${label}: a selection brings no check boxes while the option is off`);
     await page.locator('.fx-items').press('Escape');
     await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
 

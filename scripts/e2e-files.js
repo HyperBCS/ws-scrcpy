@@ -385,8 +385,15 @@ async function goTo(page, target) {
 async function open(page, name) {
     const anchor = page.locator(`.fx-row[data-name="${name}"] .entry-name a`);
     const coarse = await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches);
-    if (coarse) await anchor.click();
-    else await anchor.dblclick();
+    if (!coarse) return void (await anchor.dblclick());
+    // Read before the tap: a folder's row is gone once it has opened.
+    const file = await anchor.evaluate((link) => link.classList.contains('file'));
+    await anchor.click();
+    // On a touch screen a tap on a file asks first: Download in its sheet is what opens it.
+    if (file) {
+        await page.locator('.fx-dialog[open] .fx-file-actions').getByRole('button', { name: 'Download', exact: true }).click();
+        await page.locator('.fx-dialog').waitFor({ state: 'hidden' });
+    }
 }
 
 async function select(page, ...names) {
@@ -860,8 +867,9 @@ async function main() {
 
             // Multi-select: the per-row menu, then a two-item delete.
             await command(page, 'Select', 'Select items');
-            await page.locator('.fx-row[data-name="photo.png"] .fx-check').click();
-            await page.locator('.fx-row[data-name="empty"] .fx-check').click();
+            // Item check boxes are off: in selection mode a press on the row selects it.
+            await page.locator('.fx-row[data-name="photo.png"]').click();
+            await page.locator('.fx-row[data-name="empty"]').click();
             await page.waitForFunction(() => document.querySelectorAll('.fx-row.selected').length === 2);
             assert(
                 (await page.locator('.fx-counts').innerText()).includes('2 selected'),

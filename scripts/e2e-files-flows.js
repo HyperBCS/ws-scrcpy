@@ -652,6 +652,36 @@ async function phoneSelection(browser, layout, name, scheme) {
     const tap = (item) => row(page, item).locator('.entry-name a').click();
     assert.equal(await bar.isVisible(), false, 'no bar without a selection');
 
+    // A tap on a file starts no download on a touch screen. It opens a sheet with the file's
+    // facts and Download, Rename and Delete, and only Download there starts one.
+    let downloads = 0;
+    page.on('download', () => downloads++);
+    await tap('notes.txt');
+    await dialog.getByRole('heading', { name: 'notes.txt', exact: true }).waitFor();
+    assert.deepEqual(await dialog.locator('.fx-file-actions .kit-button').allInnerTexts(), ['Download', 'Rename', 'Delete']);
+    assert.match(await dialog.locator('.fx-dialog-message').innerText(), / · /, 'the size, the type and the date of the file');
+    assert.equal(await dialog.getByRole('button', { name: 'Cancel', exact: true }).evaluate((button) => button === document.activeElement), true, 'Cancel has the focus');
+    await page.waitForTimeout(300);
+    assert.equal(downloads, 0, 'the tap started no download');
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await closed();
+    assert.equal(downloads, 0, 'Cancel starts none');
+    assert.equal(traffic.operations.length, 0);
+    await tap('notes.txt');
+    await dialog.getByRole('button', { name: 'Download', exact: true }).click();
+    await closed();
+    for (let attempt = 0; attempt < 100 && downloads === 0; attempt++) await page.waitForTimeout(50);
+    assert.equal(downloads, 1, 'Download in the sheet starts the download');
+    // Rename in the sheet is the row menu's Rename for this file.
+    await tap('notes.txt');
+    await dialog.getByRole('button', { name: 'Rename', exact: true }).click();
+    await dialog.locator('input[name="value"]').waitFor();
+    assert.equal(await dialog.locator('input[name="value"]').inputValue(), 'notes.txt');
+    await page.keyboard.press('Escape');
+    await closed();
+    assert.equal(traffic.operations.length, 0);
+    assert.deepEqual(await selected(), [], 'the sheet selects nothing');
+
     await page.getByRole('button', { name: 'Actions', exact: true }).click();
     await page.getByRole('menuitemcheckbox', { name: 'Select items', exact: true }).click();
     await tap('notes.txt');
