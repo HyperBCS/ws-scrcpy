@@ -5781,3 +5781,62 @@ against a build of the base to prove they fail there; the base behaviour is in t
 screenshots. No atlas comparison with the base was made: the header of Files and Shell, the bar
 of Notifications, the controls, every menu with a check item and the control icons differ on
 purpose. No phone, adb, docker or live server was touched, and nothing is deployed.
+
+### Owner UI feedback deployment (2026-11-14)
+
+The owner asked for the deploy while watching the iPhone on the live server. A screen session was
+running in the live container, so the owner closed the iPhone's screen first (session gone at
+01:49:19 UTC). Head `f29246b` plus this section. Client only:
+`git diff --stat 647de3b f29246b -- src/server src/common src/public python Dockerfile docker-compose.yml package.json`
+is empty.
+
+Before: image `73504e796884`, started 2026-11-13T18:05:10Z, healthy, 0 restarts. Named unlock
+fields: enabled, time 03:00, lastRun unlocked at 2026-11-13T22:48:37Z, lastTypedUnlockAt and
+lastUnlockedAt 22:48:46Z, lastSlotAt 2026-11-13T15:00Z, a passcode stored.
+
+Phone health (host venv, one-shot commands, 01:49 UTC): iOS 27.2.1 (24B156) as at the last run,
+the developer image mounted at /System/Developer, `list-processes` answered, `sessions: []`.
+
+Test server (port 8010, built with `{"INCLUDE_GOOG": false}`, data in `data/test`, no stored
+passcode): 200 locally, 403 for `evil.example`. One iPhone screen session, started six minutes
+after the owner's ended, at 1280x800 in headless Chromium:
+
+- One start (stream at 01:57:16). Bytes on the one `proxy-coredevice` socket: 1.1 MB in the
+  first seconds, 68.9 MB after two idle minutes, no second socket. The header said "No picture"
+  and the stage "This browser cannot show the stream" (no HEVC decoder), the banner "Phone
+  locked" with Unlock, which was not pressed.
+- Controls in the new order: Home, Siri, Lock, Volume down, Mute phone, Volume up, Listen, Take
+  screenshot, Type text, Actions, Settings. Switch phone, Actions (Clipboard, Screen, Lock,
+  Power) and Settings (Sound, Keyboard, Unlock, About and troubleshooting) opened and closed.
+- Left by the header at 01:59:22; the card showed "In use", then not; `shutdown complete` at
+  01:59:37; no SIGKILL; Back once started nothing. No page or console error.
+- An earlier run of the script ended before it opened anything: it looked for the card under
+  `ios:<udid>`, and a real server keys a card `<host id>:<udid>`. It started no session.
+
+The test server was stopped with SIGTERM by PID (exited at once), `build.config.override.json`
+restored to `{}`, the normal dist rebuilt, nothing listening on 8010, `sessions: []`.
+
+Deploy: `docker tag ws-scrcpy:latest ws-scrcpy:before-ui-feedback-20261114` (image
+`73504e796884`), `docker compose build ws-scrcpy` (new image `f0382167242d`),
+`docker compose up -d ws-scrcpy` at 02:01:33 UTC with no screen session in the container.
+
+After: healthy, 0 restarts, `node index.js` as uid 1000, no error line in the log; 200 on
+127.0.0.1:8000, on 10.10.10.5:8000 and for Host `mini-nuc.tailea1801.ts.net`, 403 for
+`evil.example`; the named unlock fields the same straight after and at 02:07:45.
+
+Look-only pass on the live server (Android, fresh browser context, nothing typed or saved, no
+press on the picture): both phones listed; Settings from the POCO card has its five sections;
+Screen connects with tabs Screen, Files, Shell and the tab row holds only tabs; the stage showed
+"Screen is asleep" with Wake (not pressed); controls in the Android order; Actions and Switch
+open; Files shows "Connected" under the phone's name, check boxes off, and "Item check boxes" in
+the View menu; Shell connects with no key row; Screen after Files opens one new stream socket;
+Notifications reads "iPhone · Connected · 38 unread" with no badge in the bar; the log shows
+"No viewers left. Stopping the stream service" after each visit. No page or console error.
+
+Not checked on the live server: the iPhone's screen (no second session was started by the
+agent), the file sheet and the controls panel on a real touch screen, a download in the
+installed app. At 02:05:00 a screen session was running in the live container that the agent
+did not start; it was gone by 02:07:45.
+
+Rollback, for a break only: `docker tag ws-scrcpy:before-ui-feedback-20261114 ws-scrcpy:latest`
+and `docker compose up -d ws-scrcpy`. Reload each browser tab and reopen the installed app once.
