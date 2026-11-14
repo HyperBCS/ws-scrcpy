@@ -319,7 +319,11 @@ test('the header and the card over the picture print the same connection value',
     const view = read('src/app/views/ScreenView.tsx');
     const header = read('src/app/views/PhoneHeader.tsx');
     assert.match(view, /<PhoneHeader[^>]*connection=\{connection\}/, 'ScreenView: the header receives the same connection');
-    assert.match(header, /<AppBarStatus tone=\{connection\.tone\}>\{connection\.label\}<\/AppBarStatus>/, 'PhoneHeader: the header prints it');
+    assert.match(header, /<AppBarStatus tone=\{connection\.tone\} class=\{connectionClass\}>\s*\{connection\.label\}\s*<\/AppBarStatus>/, 'PhoneHeader: the header prints it');
+    // Files and Shell print their own connection on the same line, not at the end of the tab row.
+    const tool = read('src/app/views/ToolView.tsx');
+    assert.match(tool, /<PhoneHeader[^>]*connection=\{connection\}\s*connectionClass=/, 'ToolView: the header receives the tool\'s connection');
+    assert.doesNotMatch(read('src/app/ui/TabStrip.tsx'), /children/, 'the tab row holds only tabs');
     assert.match(view, /<StateCard[^>]*connection=\{connection\}/, 'ScreenView: the card on the stage prints it');
     const adapters = ['src/app/views/screen/android.tsx', 'src/app/views/screen/iphone.tsx'];
     for (const file of adapters) {
@@ -337,7 +341,8 @@ test('the header and the card over the picture print the same connection value',
     const card = read('src/app/views/screen/StateCard.tsx');
     assert.match(card, /title: connection\.label/);
     assert.doesNotMatch(card, /hasConnected/, 'the card keeps no connection state of its own');
-    assert.match(read('src/app/views/ToolView.tsx'), /\{connection\.label\}/);
+    // A tool hands its connection to the header, which prints the label (asserted above).
+    assert.match(read('src/app/views/ToolView.tsx'), /connection=\{connection\}/);
 });
 
 test('a phone that drops out of the list keeps its last name', () => {
