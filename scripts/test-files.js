@@ -379,6 +379,88 @@ test('every kind of file has an icon of the kit set, with the classes the explor
     assert.notEqual(iconMarkup('folder'), iconMarkup('file').replace('fx-icon-file', 'fx-icon-folder'), 'a folder and a file differ');
 });
 
+/**
+ * The box around the points a path's commands end on: near enough to tell an arrow from a folder.
+ * The flags of an arc must be written apart, as Lucide writes them.
+ */
+function pathBox(data) {
+    const counts = { m: 2, l: 2, h: 1, v: 1, c: 6, s: 4, q: 4, t: 2, a: 7, z: 0 };
+    let x = 0;
+    let y = 0;
+    let start = [0, 0];
+    const xs = [];
+    const ys = [];
+    for (const [, letter, args] of data.matchAll(/([MmLlHhVvCcSsQqTtAaZz])([^MmLlHhVvCcSsQqTtAaZz]*)/g)) {
+        const numbers = (args.match(/-?(?:\d+\.?\d*|\.\d+)/g) || []).map(Number);
+        const lower = letter.toLowerCase();
+        const relative = letter === lower;
+        if (lower === 'z') {
+            [x, y] = start;
+            continue;
+        }
+        for (let at = 0; at < numbers.length; at += counts[lower]) {
+            const set = numbers.slice(at, at + counts[lower]);
+            if (lower === 'h') x = relative ? x + set[0] : set[0];
+            else if (lower === 'v') y = relative ? y + set[0] : set[0];
+            else {
+                const [endX, endY] = set.slice(-2);
+                x = relative ? x + endX : endX;
+                y = relative ? y + endY : endY;
+            }
+            if (lower === 'm' && at === 0) start = [x, y];
+            xs.push(x);
+            ys.push(y);
+        }
+    }
+    return { width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+}
+
+test('Move in the selection bar has a shape of its own, not the arrow of Forward', () => {
+    const { ICONS, iconSvg } = require('../src/app/ui/icons');
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'app', 'googDevice', 'client', 'FileListingClient.ts'), 'utf8');
+    const forward = /const TOOLBAR_ICONS[\s\S]*?\bforward: '(\w+)'/.exec(source)[1];
+    const move = /const SELECTION_ICONS[\s\S]*?\bcut: '(\w+)'/.exec(source)[1];
+    assert.equal(forward, 'arrowRight');
+    assert.equal(move, 'move');
+    // The arrow is a line with a head, a little more than half the grid high. Move is a folder
+    // with an arrow going into it (Lucide's folder-input), nearly the whole grid high.
+    assert.ok(pathBox(ICONS.arrowRight).height <= 12, `the arrow is ${pathBox(ICONS.arrowRight).height} high`);
+    assert.ok(pathBox(ICONS.move).height >= 16, `Move is ${pathBox(ICONS.move).height} high, not an arrow`);
+    assert.equal((iconSvg('move').match(/<path /g) || []).length, 1, 'Move is one path');
+    assert.deepEqual(
+        Object.keys(ICONS).filter((name) => name !== 'move' && ICONS[name] === ICONS.move),
+        [],
+        'no other icon has the shape of Move',
+    );
+    const notice = fs.readFileSync(path.join(__dirname, '..', 'src', 'app', 'ui', 'icons.ts'), 'utf8').split('/*!')[1];
+    assert.match(notice, /move \(folder-input\)/, 'the notice at the end of icons.ts names Move');
+});
+
+test('on touch a row of Files takes no text selection and brings up no callout', () => {
+    // Chromium does not report -webkit-touch-callout, so the browser checks cannot see it.
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'style', 'filelisting.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const block = /@media \(hover: none\) and \(pointer: coarse\) \{\s*\.fx-row,\s*\.fx-row \* \{([^}]*)\}/.exec(source);
+    assert.ok(block, 'a rule for the row and everything in it, on a touch screen');
+    for (const declaration of ['-webkit-touch-callout: none', '-webkit-user-select: none', 'user-select: none']) {
+        assert.ok(block[1].includes(`${declaration};`), declaration);
+    }
+});
+
+test('Files chooses its phone or desktop layout by one condition, with the pointer query of the client', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'style', 'filelisting.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const client = fs.readFileSync(path.join(__dirname, '..', 'src', 'app', 'googDevice', 'client', 'FileListingClient.ts'), 'utf8');
+    const coarse = /const COARSE_POINTER = '([^']+)';/.exec(client)[1];
+    const phone = /@media \(max-width: 700px\), ([^{]+?) \{/.exec(source);
+    const desktop = /@media not all and ([^{]+?) \{/.exec(source);
+    assert.ok(phone && desktop, 'the phone layout and the desktop layout each have their condition');
+    assert.equal(phone[1], `${coarse} and (max-width: 1023px)`, 'the phone layout: a touch screen below 1024px');
+    assert.equal(desktop[1], phone[1], 'the desktop layout leaves out exactly what the phone layout takes');
+    // The sidebar and the one-row toolbar of a short window belong to the desktop layout only.
+    const desktopBlock = source.slice(desktop.index, source.indexOf('@media (max-width: 700px),'));
+    assert.match(desktopBlock, /@media \(min-width: 900px\) \{\s*\.fx-body/);
+    assert.match(desktopBlock, /@media \(min-width: 700px\) and \(max-height: 560px\) \{\s*\.fx-chrome \{\s*flex-wrap: nowrap;/);
+});
+
 // ------------------------------------------------------------------ FileService
 //
 // The service against a Files channel answered by hand: each request opens a channel, and the

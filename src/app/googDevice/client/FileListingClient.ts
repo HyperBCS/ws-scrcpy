@@ -345,7 +345,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /** When the rows were last put in order, for `RENDER_INTERVAL_MS`. */
     private renderedAt = 0;
     private longPressTimer?: ReturnType<typeof setTimeout>;
+    /** When a hold last selected a row, and again when its finger lifted; 0 from the next touch. */
     private longPressedAt = 0;
+    /** True from the moment a hold selects a row until its finger lifts. */
+    private holding = false;
+    /** A touch screen. The rows are built for it (`rowMarkup`), and built again when it changes. */
+    private readonly coarsePointer = window.matchMedia(COARSE_POINTER);
     /** Rebuilds the open menu after a setting inside it changes, keeping any Back item. */
     private menuBuilder?: () => string[];
     /** The button the open menu belongs to, or the point a context menu was asked for at. */
@@ -657,8 +662,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.wrapper.addEventListener('keydown', this.onKeyDown);
         this.tableBody.addEventListener('focusin', this.onRowFocus);
         this.tableBody.addEventListener('pointerdown', this.onPointerDown);
-        this.tableBody.addEventListener('pointerup', this.cancelLongPress);
+        this.tableBody.addEventListener('pointerup', this.onPointerUp);
+        // The browser cancels the pointer when the finger scrolls the list: that is no hold.
         this.tableBody.addEventListener('pointercancel', this.cancelLongPress);
+        this.coarsePointer.addEventListener('change', this.onPointerKind);
         this.items.addEventListener('scroll', this.onListScroll, { passive: true });
         if (typeof ResizeObserver === 'function') {
             // A new width can change how many tiles fit on a line and how tall they are. A new
@@ -1041,21 +1048,35 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.updateWindow();
     }
 
-    /** The rows of several items, from one piece of markup. */
+    /**
+     * The rows of several items, from one piece of markup. On a touch screen the name has no
+     * address (see `rowMarkup`), so there is no prefix for one.
+     */
     private buildRows(entries: Entry[]): HTMLElement[] {
         const cut = this.cutNames();
-        const prefix = this.linkPrefix();
+        const prefix = this.coarsePointer.matches ? undefined : this.linkPrefix();
         const template = document.createElement('template');
         template.innerHTML = entries.map((entry) => this.rowMarkup(entry, cut, prefix)).join('');
         return Array.from(template.content.children) as HTMLElement[];
     }
 
-    private rowMarkup(entry: Entry, cut: ReadonlySet<string>, prefix: string): string {
+    /**
+     * One row. The name is a link to the item, so a mouse can open a folder in a new tab. On a
+     * touch screen it is a link without an address that cannot be dragged: a finger held on a
+     * link with an address brings up iOS's page preview and menu, which no style turns off, and
+     * the hold must select the row instead. It keeps its role, its name and its Tab stop, and
+     * Enter on it is a click (`onKeyDown`).
+     */
+    private rowMarkup(entry: Entry, cut: ReadonlySet<string>, prefix: string | undefined): string {
         const index = this.folder.indexOf(entry.name);
         const directory = entry.isDirectory();
         const selected = this.selection.has(entry.name);
         const name = esc(entry.name);
         const tabIndex = entry.name === this.rovingName ? 0 : -1;
+        const target =
+            prefix === undefined
+                ? 'role="link" draggable="false"'
+                : `href="${esc(this.link(path.join(this.path, entry.name), prefix))}"`;
         return `<tr class="fx-row${selected ? ' selected' : ''}${cut.has(entry.name) ? ' fx-cut' : ''}${
             this.menuTargets?.includes(entry.name) ? ' fx-row-menu-open' : ''
         }" data-name="${name}" data-index="${index}" data-kind="${kindOf(entry)}" aria-selected="${selected}">
@@ -1063,9 +1084,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     selected ? ' checked' : ''
                 }></td>
                 <td class="entry-name">
-                    <a class="${directory ? 'dir' : 'file'}" href="${esc(
-                        this.link(path.join(this.path, entry.name), prefix),
-                    )}" data-name="${name}" data-entry-id="${index}" tabindex="${tabIndex}" aria-label="${
+                    <a class="${directory ? 'dir' : 'file'}" ${target} data-name="${name}" data-entry-id="${index}" tabindex="${tabIndex}" aria-label="${
                         entry.isFile() ? 'Download' : 'Open'
                     } ${name}">${iconMarkup(kindOf(entry))}<span class="fx-name">${name}</span></a>
                 </td>
@@ -1446,6 +1465,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     };
 
     private onPointerDown = (event: PointerEvent): void => {
+        // The click that may follow a hold comes before any new touch, so a new touch ends the
+        // window in which it is dropped: a quick tap after a hold adds its row.
+        this.longPressedAt = 0;
         if (event.pointerType === 'mouse' || event.button !== 0) {
             return;
         }
@@ -1459,6 +1481,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.longPressTimer = setTimeout(() => {
             this.longPressTimer = undefined;
             this.longPressedAt = Date.now();
+            this.holding = true;
             this.selectionMode = true;
             this.selection.add(name);
             this.anchorName = name;
@@ -1466,10 +1489,43 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }, LONG_PRESS_MS);
     };
 
+    /**
+     * The finger lifts. After a hold, the click that may follow is dropped (`onClick`), however
+     * long the finger was held, so it does not toggle the row straight back out. The window ends
+     * after 600ms or at the next touch (`onPointerDown`), whichever comes first.
+     */
+    private onPointerUp = (): void => {
+        if (this.holding) {
+            this.longPressedAt = Date.now();
+        }
+        this.cancelLongPress();
+    };
+
     private cancelLongPress = (): void => {
+        this.holding = false;
         if (this.longPressTimer) {
             clearTimeout(this.longPressTimer);
             this.longPressTimer = undefined;
+        }
+    };
+
+    /**
+     * A mouse was attached or a touch screen became the pointer: the rows are built again for it.
+     * The selection and the folder stay; focus stays on its row (`renderItems`). An open menu
+     * closes first, as a row's menu belongs to the button that is replaced and every menu was
+     * sized for the other pointer.
+     */
+    private onPointerKind = (): void => {
+        this.closeMenu();
+        // Chromium scrolls the list to its top when the row that has focus is taken out.
+        const scroll = this.items.scrollTop;
+        this.rows.clear();
+        // A folder that is loading puts its rows in order when they arrive.
+        if (!this.loading) {
+            this.renderItems();
+        }
+        if (this.items.scrollTop !== scroll) {
+            this.items.scrollTop = scroll;
         }
     };
 
@@ -1507,6 +1563,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             return;
         }
         if (typing) {
+            return;
+        }
+        // On a touch screen the name is a link without an address (`rowMarkup`), which Enter does
+        // not click by itself. With an address the browser clicks it, and the click opens the item.
+        if (event.key === 'Enter' && target?.matches('.entry-name a:not([href])')) {
+            event.preventDefault();
+            target.click();
             return;
         }
         const list = this.visible();
@@ -1703,6 +1766,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /**
      * The phone command bar: every toolbar command in one menu, so the address bar can have a
      * whole line to itself. Selection commands come first, exactly as the row menu lists them.
+     * The phone layout is used up to 700px, and on a touch screen up to 1023px
+     * (`filelisting.css`); it has no command row, so nothing may be left out of this menu.
      */
     private actionsMenuItems(): string[] {
         const ready = this.canModify();
@@ -1733,7 +1798,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         ];
     }
 
-    /** Quick access as a menu, for every width where the sidebar would crowd out the listing. */
+    /**
+     * Quick access as a menu, wherever there is no sidebar: below 900px, and in the phone layout
+     * on a touch screen up to 1023px (`filelisting.css`).
+     */
     private placesMenuItems(): string[] {
         return [
             '<div class="kit-menu-title" role="presentation">Quick access</div>',
@@ -3448,6 +3516,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         this.stopped = true;
         this.cancelLongPress();
+        this.coarsePointer.removeEventListener('change', this.onPointerKind);
         this.closeMenu();
         this.cancelRender();
         if (this.windowFrame) {

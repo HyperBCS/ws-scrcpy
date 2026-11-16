@@ -274,8 +274,10 @@ async function menus(browser) {
     await page.screenshot({ path: path.join(OUT, 'flows-menu-landscape-row.png') });
     await page.keyboard.press('Escape');
     await page.locator('.files-menu').waitFor({ state: 'hidden' });
-    await pressAtRest(page, page.locator('.fx-commands').getByRole('button', { name: 'View', exact: true }));
-    await page.locator('.files-menu').waitFor();
+    // A touch screen below 1024px has the phone layout: View is in the Actions menu.
+    await pressAtRest(page, page.getByRole('button', { name: 'Actions', exact: true }));
+    await page.getByRole('menuitem', { name: 'View options…', exact: true }).click();
+    await page.locator('.files-menu [data-menu="view"]').first().waitFor();
     await menuFits(page, 'the View menu');
     assert(
         await page.locator('.files-menu').evaluate((menu) => menu.scrollHeight > menu.clientHeight),
@@ -1158,6 +1160,346 @@ async function largeFolder(browser, layout, name) {
     await finish();
 }
 
+/**
+ * A finger on `target` for `ms`, sent as touch events so the page sees a touch pointer. `move`
+ * drags it up that far first, as a scroll does. `click` makes sure one click follows when the
+ * finger lifts, as it may on a phone: Chromium sends one after a long hold, and if it sends
+ * none, this does.
+ */
+async function touchHold(page, target, ms, { move = 0, click = false } = {}) {
+    const box = await target.boundingBox();
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await page.evaluate(() => {
+        if (window.__holdClicks === undefined) document.addEventListener('click', () => window.__holdClicks++, { capture: true });
+        window.__holdClicks = 0;
+    });
+    const cdp = await page.context().newCDPSession(page);
+    try {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        for (let step = 1; move && step <= 6; step++) {
+            await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - (move * step) / 6 }] });
+        }
+        await page.waitForTimeout(ms);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await page.waitForTimeout(50);
+        if (click && !(await page.evaluate(() => window.__holdClicks))) {
+            await target.evaluate((element) => element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 })));
+        }
+    } finally {
+        await cdp.detach();
+    }
+}
+
+/**
+ * Under a finger a press anywhere across 44px of the address lands on each crumb: what is
+ * counted is where the browser finds the crumb under a point, not the size of its box. And the
+ * names are not moved apart for it where they need no room: a name of three letters or more
+ * keeps the gap a mouse has to the name before it.
+ */
+async function crumbTargets(page, what) {
+    const { hits, gaps } = await page.locator('.fx-breadcrumb').evaluate((bar) => {
+        const crumbs = [...bar.querySelectorAll('.fx-crumb')];
+        const hits = crumbs.map((crumb) => {
+            // Each crumb in turn in the middle of the bar, as a finger scrolls a long path.
+            const middle = (box) => box.left + box.width / 2;
+            bar.scrollLeft += middle(crumb.getBoundingClientRect()) - middle(bar.getBoundingClientRect());
+            const box = crumb.getBoundingClientRect();
+            const y = box.top + box.height / 2;
+            let count = 0;
+            for (let x = Math.floor(box.left) - 48; x < box.right + 48; x++) {
+                if (document.elementFromPoint(x + 0.5, y)?.closest('.fx-crumb') === crumb) count++;
+            }
+            return [crumb.textContent, count];
+        });
+        bar.scrollLeft = 0;
+        const text = (crumb) => {
+            const range = document.createRange();
+            range.selectNodeContents(crumb);
+            return range.getBoundingClientRect();
+        };
+        const gaps = [];
+        crumbs.slice(1).forEach((crumb, index) => {
+            const before = crumbs[index];
+            const slash = crumb.parentElement.querySelector('.fx-crumb-separator');
+            // A mouse has 4px of padding on each side of a name, and the slash between.
+            const mouse = 8 + (slash ? slash.getBoundingClientRect().width : 0);
+            if (text(crumb).width >= 26 && text(before).width >= 26) {
+                gaps.push([before.textContent, crumb.textContent, Math.round((text(crumb).left - text(before).right - mouse) * 10) / 10]);
+            }
+        });
+        bar.scrollLeft = bar.scrollWidth;
+        return { hits, gaps };
+    });
+    assert.deepEqual(hits.filter(([, width]) => width < 44), [], `${what}: a finger hits each crumb across 44px (${JSON.stringify(hits)})`);
+    assert.deepEqual(gaps.filter(([, , extra]) => Math.abs(extra) > 0.5), [], `${what}: names that need no room are not moved apart (${JSON.stringify(gaps)})`);
+}
+
+// Holding a row on a touch screen selects it and turns selection mode on. No menu shows, ours or
+// the browser's: on touch the name is a link without an address that cannot be dragged, and the
+// row takes no text selection and no callout. The iOS menu itself needs a phone to see.
+async function hold(browser) {
+    const { page, finish, traffic } = await start(browser, PHONE, ROOT, 'light');
+    const name = (item) => row(page, item).locator('.entry-name a');
+    const bar = page.locator('.fx-selection-bar');
+    const selected = () => page.locator('.fx-row.selected').evaluateAll((rows) => rows.map((item) => item.dataset.name));
+    const endSelection = async () => {
+        await bar.getByRole('button', { name: 'Close selection', exact: true }).click();
+        await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
+    };
+    let downloads = 0;
+    page.on('download', () => downloads++);
+
+    // The name: still a link with its name for assistive technology, with no address and no drag.
+    assert.equal(await page.getByRole('link', { name: 'Download notes.txt', exact: true }).count(), 1, 'the name keeps its role and name');
+    assert.equal(await name('notes.txt').getAttribute('href'), null, 'on touch a file name has no address');
+    assert.equal(await name('archive').getAttribute('href'), null, 'on touch a folder name has no address');
+    assert.equal(await name('notes.txt').evaluate((link) => link.draggable), false, 'the name cannot be dragged');
+    const styles = await row(page, 'notes.txt').evaluate((item) =>
+        [item, item.querySelector('.entry-name a'), item.querySelector('.fx-name'), item.querySelector('.entry-size')].map((element) => {
+            const style = getComputedStyle(element);
+            return { select: style.userSelect || style.webkitUserSelect, callout: style.webkitTouchCallout || null };
+        }),
+    );
+    for (const style of styles) {
+        assert.equal(style.select, 'none', 'the row and what is in it take no text selection');
+        // Chromium does not report the callout; WebKit does. The stylesheet itself is read in test-files.js.
+        if (style.callout) assert.equal(style.callout, 'none', 'and bring up no callout');
+    }
+    await crumbTargets(page, 'a phone');
+
+    // A hold of 600ms on a file selects it. Letting go opens no sheet, menu or download.
+    const hash = await page.evaluate(() => location.hash);
+    await page.evaluate(() => {
+        window.__cancels = 0;
+        document.addEventListener('pointercancel', () => window.__cancels++, true);
+    });
+    await touchHold(page, name('notes.txt'), 600, { click: true });
+    await page.locator('.file-explorer.fx-selecting').waitFor();
+    assert.equal(await page.evaluate(() => window.__cancels), 0, 'nothing cancelled the finger held still');
+    await page.waitForTimeout(300);
+    assert.deepEqual(await selected(), ['notes.txt'], 'the hold selected the file');
+    assert.equal(await bar.isVisible(), true, 'and turned selection mode on');
+    assert.equal(await page.locator('.fx-dialog[open]').count(), 0, 'letting go opened no sheet');
+    assert.equal(await page.locator('.files-menu:not([hidden])').count(), 0, 'and no menu');
+    assert.equal(downloads, 0, 'and started no download');
+    assert.equal(await page.evaluate(() => location.hash), hash);
+    // Selection mode is on: a tap adds a row, also a quick one. The click dropped after a hold is
+    // the one of the hold itself; a new touch ends that window.
+    await endSelection();
+    await touchHold(page, name('notes.txt'), 600, { click: true });
+    await page.locator('.file-explorer.fx-selecting').waitFor();
+    await name('photo.png').tap();
+    await page.waitForFunction(() => document.querySelectorAll('.fx-row.selected').length === 2, null, { timeout: 2000 }).catch(() => {});
+    assert.deepEqual(await selected(), ['notes.txt', 'photo.png'], 'a quick tap right after the hold adds a row');
+    await page.waitForTimeout(700);
+    await name('archive').tap();
+    assert.deepEqual(await selected(), ['archive', 'notes.txt', 'photo.png'], 'and so does a later tap');
+    await endSelection();
+
+    // A folder: held, it is selected and not opened.
+    await touchHold(page, name('archive'), 600, { click: true });
+    await page.locator('.file-explorer.fx-selecting').waitFor();
+    await page.waitForTimeout(300);
+    assert.deepEqual(await selected(), ['archive'], 'the hold selected the folder');
+    assert.equal(await page.locator('.fx-crumb[aria-current="page"]').innerText(), 'tmp', 'and did not open it');
+    assert.equal(await page.evaluate(() => location.hash), hash);
+    await endSelection();
+
+    // A long hold, then the click that may follow when the finger lifts: the click is dropped,
+    // so the row stays selected and nothing opens.
+    await touchHold(page, name('notes.txt'), 1200, { click: true });
+    await page.locator('.file-explorer.fx-selecting').waitFor();
+    await page.waitForTimeout(300);
+    assert.deepEqual(await selected(), ['notes.txt'], 'the click after a long hold does not undo it');
+    assert.equal(await page.locator('.fx-dialog[open]').count(), 0, 'and opens no sheet');
+    await endSelection();
+
+    // A finger that scrolls the list is no hold.
+    await touchHold(page, name('notes.txt'), 600, { move: 120 });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await selected(), [], 'a scroll selects nothing');
+    assert.equal(await page.locator('.file-explorer.fx-selecting').count(), 0);
+
+    // A keyboard or assistive technology still opens the name: Enter on a folder opens it.
+    await name('archive').focus();
+    await page.keyboard.press('Enter');
+    await crumb(page, 'archive');
+    await ready(page);
+    assert.equal(downloads, 0);
+    assert.equal(traffic.operations.length, 0, 'nothing was sent to the phone');
+    await page.screenshot({ path: path.join(OUT, 'flows-hold-phone.png') });
+    await finish();
+
+    // A mouse keeps the links as they were: an address, and a drag of its own.
+    const desktop = await start(browser, DESKTOP, ROOT, 'dark');
+    const link = row(desktop.page, 'archive').locator('.entry-name a');
+    assert.equal(await link.getAttribute('href'), new URL(address(ROOT + '/archive'), BASE).toString(), 'a mouse keeps the address');
+    assert.equal(await link.evaluate((element) => element.draggable), true, 'and the drag');
+    await desktop.finish();
+}
+
+// A touch screen below 1024px has the phone layout at every width. A phone in landscape has the
+// history row with Search and Actions and quick access behind its button, and no command row or
+// sidebar. Every command of the desktop's row is in the Actions menu.
+async function landscapeLayout(browser) {
+    const width = 956;
+    const { page, finish } = await start(browser, { width, height: 440, touch: true }, ROOT, 'dark');
+    assert.equal(await page.locator('.fx-commands').isVisible(), false, 'landscape: no command row');
+    assert.equal(await page.locator('.fx-places').isVisible(), false, 'landscape: no sidebar');
+    for (const label of ['Back', 'Forward', 'Up one folder', 'Phone root', 'Quick access', 'Filter this folder', 'Actions']) {
+        const button = page.locator('.fx-history, .fx-mobile-tools').getByRole('button', { name: label, exact: true });
+        assert.equal(await button.isVisible(), true, `landscape: ${label} is shown`);
+        const box = await button.boundingBox();
+        assert(box && box.width >= 44 && box.height >= 44 && box.x >= 0 && box.x + box.width <= width, `landscape: ${label} is a whole target on screen`);
+    }
+    // The command row of the desktop layout scrolled sideways inside itself, with no hint.
+    const overflow = await page.evaluate(() =>
+        [document.documentElement, ...document.querySelectorAll('.file-explorer, .fx-chrome, .fx-commands, .fx-items')].map(
+            (element) => element.scrollWidth - element.clientWidth,
+        ),
+    );
+    assert(overflow.every((extra) => extra <= 1), `landscape: nothing overflows sideways (${overflow})`);
+    // Width to spare and no height: history, the address and the tools share one line.
+    const middle = async (selector) => {
+        const box = await page.locator(selector).boundingBox();
+        return box && Math.round(box.y + box.height / 2);
+    };
+    assert.equal(await middle('.fx-address'), await middle('.fx-history'), 'landscape: the address shares the line of history');
+    assert.equal(await middle('.fx-mobile-tools'), await middle('.fx-history'), 'landscape: and of the tools');
+    await crumbTargets(page, 'a phone in landscape');
+    await page.screenshot({ path: path.join(OUT, 'flows-touch-landscape.png') });
+
+    // Quick access is a menu of 44px rows.
+    await pressAtRest(page, page.getByRole('button', { name: 'Quick access', exact: true }));
+    await page.locator('.files-menu [data-menu="place"]').first().waitFor();
+    await settleMotion(page);
+    const places = await page.locator('.files-menu [data-menu="place"]').evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height));
+    assert(places.length >= 9 && places.every((height) => height >= 44), `landscape: quick access rows are 44px (${places})`);
+    await page.keyboard.press('Escape');
+    await page.locator('.files-menu').waitFor({ state: 'hidden' });
+
+    // Every command of the desktop's command row is in the Actions menu, here with a file selected.
+    const desktopRow = await page.locator('.fx-commands [data-command]').evaluateAll((buttons) => buttons.map((button) => button.dataset.command));
+    assert.deepEqual(desktopRow, ['upload', 'new-folder', 'download', 'rename', 'delete', 'cut', 'copy', 'paste', 'selection-mode', 'view-menu']);
+    await pressAtRest(page, page.getByRole('button', { name: 'Actions', exact: true }));
+    await page.getByRole('menuitemcheckbox', { name: 'Select items', exact: true }).click();
+    await row(page, 'notes.txt').locator('.entry-name a').click();
+    await page.locator('.fx-row.selected').waitFor();
+    await pressAtRest(page, page.getByRole('button', { name: 'Actions', exact: true }));
+    await page.locator('.files-menu').waitFor();
+    const items = await page.locator('.files-menu [data-menu]').evaluateAll((list) =>
+        list.map((item) => [item.dataset.value, item.textContent.trim(), item.disabled]),
+    );
+    // The menu's name for each command: one file selected is downloaded by Download (`open`).
+    const inMenu = { upload: 'upload', 'new-folder': 'new-folder', download: 'open', rename: 'rename', delete: 'delete', cut: 'cut', copy: 'copy', paste: 'paste', 'selection-mode': 'selection-mode', 'view-menu': 'view' };
+    for (const command of desktopRow) {
+        assert(items.some(([value]) => value === inMenu[command]), `landscape: ${command} is in the Actions menu (${JSON.stringify(items)})`);
+    }
+    assert.deepEqual(items.find(([value]) => value === 'open'), ['open', 'Download', false]);
+    await page.keyboard.press('Escape');
+    await page.locator('.files-menu').waitFor({ state: 'hidden' });
+    await page.locator('.fx-selection-bar').getByRole('button', { name: 'Close selection', exact: true }).click();
+    await finish();
+
+    // A short mouse window as narrow as a phone keeps the layout it had: the address on a line of
+    // its own, above history and the tools.
+    const mouse = await start(browser, { width: 650, height: 480, touch: false }, ROOT, 'light');
+    const explorer = await mouse.page.locator('.file-explorer').boundingBox();
+    const bar = await mouse.page.locator('.fx-address').boundingBox();
+    const history = await mouse.page.locator('.fx-history').boundingBox();
+    assert(bar.width >= explorer.width - 16, `a short mouse window: the address takes a whole line (${bar.width} of ${explorer.width})`);
+    assert(history.y >= bar.y + bar.height, 'a short mouse window: history is under the address');
+    await mouse.finish();
+}
+
+// A mouse attached to a touch screen, or taken away again: the rows are built again for the new
+// pointer, once. The selection, the scroll position and the focused row stay; an open row menu,
+// whose button is replaced, closes.
+async function pointerChange(browser) {
+    const { page, finish, traffic } = await start(browser, { width: 1280, height: 340, touch: false }, ROOT, 'light');
+    const cdp = await page.context().newCDPSession(page);
+    const pointer = async (touch) => {
+        // What Playwright does for a context with touch: the page then has a coarse pointer and no hover.
+        await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: touch, maxTouchPoints: touch ? 1 : undefined });
+        await page.waitForFunction((want) => matchMedia('(hover: none) and (pointer: coarse)').matches === want, touch);
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    };
+    const state = () =>
+        page.evaluate(() => {
+            const rows = [...document.querySelectorAll('.fx-row')];
+            return {
+                selected: rows.filter((row) => row.classList.contains('selected')).map((row) => row.dataset.name),
+                links: rows.map((row) => row.querySelector('.entry-name a').hasAttribute('href')),
+                kept: rows.filter((row) => row.__mark).length,
+                scroll: document.querySelector('.fx-items').scrollTop,
+                focused: document.activeElement?.closest('tr[data-name]')?.dataset.name,
+            };
+        });
+    const mark = () => page.evaluate(() => document.querySelectorAll('.fx-row').forEach((row) => (row.__mark = true)));
+
+    // A mouse: two rows selected, focus on a name, the list scrolled to its end.
+    await row(page, 'notes.txt').locator('.entry-size').click();
+    await row(page, 'photo.png').locator('.entry-size').click({ modifiers: ['Control'] });
+    await row(page, 'photo.png').locator('.entry-name a').focus();
+    await page.locator('.fx-items').evaluate((items) => (items.scrollTop = items.scrollHeight));
+    await mark();
+    let before = await state();
+    assert(before.links.every(Boolean) && before.scroll > 0, JSON.stringify(before));
+
+    await pointer(true);
+    let after = await state();
+    assert.equal(after.kept, 0, 'a touch screen: every row is built again');
+    assert(after.links.every((link) => !link), 'a touch screen: no name has an address');
+    assert.deepEqual(after.selected, ['notes.txt', 'photo.png'], 'the selection stays');
+    assert.equal(after.scroll, before.scroll, 'the list keeps its place');
+    assert.equal(after.focused, 'photo.png', 'focus stays on its row');
+    // Once: nothing builds the rows again after that.
+    await mark();
+    await page.waitForTimeout(500);
+    assert.equal((await state()).kept, before.links.length, 'the rows are built once');
+
+    // The menu of a row is open when the mouse comes back. Its button is replaced, so it closes,
+    // and focus goes back to that row.
+    await pressAtRest(page, row(page, 'photo.png').getByRole('button', { name: 'Actions for photo.png', exact: true }));
+    await page.locator('.files-menu').waitFor();
+    before = await state();
+    await pointer(false);
+    await page.locator('.files-menu').waitFor({ state: 'hidden', timeout: 2000 });
+    after = await state();
+    assert.equal(after.kept, 0, 'a mouse again: every row is built again');
+    assert(after.links.every(Boolean), 'a mouse again: each name has its address');
+    assert.deepEqual(after.selected, ['notes.txt', 'photo.png']);
+    // The rows are lower under a mouse, so the list cannot go as far down: it stays at its end.
+    const end = await page.locator('.fx-items').evaluate((items) => items.scrollHeight - items.clientHeight);
+    assert.equal(after.scroll, Math.min(before.scroll, end), 'the list keeps its place');
+    assert.equal(after.focused, 'photo.png', 'focus is back on the row whose menu closed');
+    assert.equal(traffic.operations.length, 0, 'nothing was sent to the phone');
+    await cdp.detach();
+    await finish();
+}
+
+// A touch screen from 1024px keeps the desktop layout, with quick access rows of 44px also when
+// the window is short.
+async function tabletLayout(browser) {
+    const { page, finish } = await start(browser, { width: 1180, height: 820, touch: true }, ROOT, 'light');
+    assert.equal(await page.locator('.fx-commands').isVisible(), true, 'tablet: the command row');
+    assert.equal(await page.getByRole('button', { name: 'Actions', exact: true }).isVisible(), false, 'tablet: no Actions menu');
+    assert.equal(await page.locator('.fx-places').isVisible(), true, 'tablet: the quick access sidebar');
+    const sidebar = () => page.locator('.fx-place').evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height));
+    let heights = await sidebar();
+    assert(heights.length >= 9 && heights.every((height) => height >= 44), `tablet: quick access rows are 44px (${heights})`);
+    await crumbTargets(page, 'a tablet');
+    await page.screenshot({ path: path.join(OUT, 'flows-touch-tablet.png') });
+    // A short window: the sidebar scrolls, and its rows stay 44px.
+    await page.setViewportSize({ width: 1180, height: 600 });
+    await page.waitForTimeout(100);
+    assert.equal(await page.locator('.fx-places').isVisible(), true, 'a short tablet: the quick access sidebar');
+    heights = await sidebar();
+    assert(heights.every((height) => height >= 44), `a short tablet: quick access rows are 44px (${heights})`);
+    await finish();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -1176,6 +1518,10 @@ async function main() {
         ['errors desktop', () => errors(browser, DESKTOP, 'desktop')],
         ['selection on a phone', () => phoneSelection(browser, PHONE, 'phone', 'light')],
         ['selection on a small phone', () => phoneSelection(browser, { width: 320, height: 640, touch: true }, 'phone320', 'dark')],
+        ['hold on a phone', () => hold(browser)],
+        ['touch layout in landscape', () => landscapeLayout(browser)],
+        ['touch layout on a tablet', () => tabletLayout(browser)],
+        ['a change of pointer', () => pointerChange(browser)],
         ['uploads phone', () => uploads(browser, PHONE, 'phone', 'light')],
         ['uploads desktop', () => uploads(browser, DESKTOP, 'desktop', 'dark')],
         ['large folder phone', () => largeFolder(browser, PHONE, 'phone')],

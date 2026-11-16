@@ -489,15 +489,16 @@ async function main() {
             assert(geometry.scrollWidth <= geometry.width + 1, 'long names do not widen Files');
             assert(geometry.doc <= geometry.viewport + 1, 'no document overflow');
             // A phone shows only the address bar, history and two icon buttons; the command bar
-            // is a desktop affair.
+            // is a desktop affair. A touch screen has the phone layout up to 1023px.
             const upload = page.getByRole('button', { name: 'Upload files to this folder', exact: true });
             const actions = page.getByRole('button', { name: 'Actions', exact: true });
-            if (width <= 700) {
+            if (width <= 700 || (touch && width < 1024)) {
                 assert.equal(await upload.isVisible(), false, 'phone hides the command bar');
                 assert.equal(await page.locator('.fx-commands').isVisible(), false, 'phone hides the command bar');
                 const address = await page.locator('.fx-address').boundingBox();
                 const explorer = await page.locator('.file-explorer').boundingBox();
-                assert(address.width >= explorer.width - 16, 'the address bar takes a whole line on a phone');
+                // In landscape the address shares its line with history and the tools.
+                if (height > width || height > 560) assert(address.width >= explorer.width - 16, 'the address bar takes a whole line on a phone');
                 const actionsBox = await actions.boundingBox();
                 assert(actionsBox.height >= 44 && actionsBox.width >= 44, `actions target ${actionsBox.height}`);
                 assert.equal(await page.locator('.fx-filter-input').isVisible(), false, 'filter hides until asked for');
@@ -634,9 +635,10 @@ async function main() {
             // Navigation: folders, errors, Up, the browser's own Back and the history buttons.
             const channelsBefore = traffic.fsChannels;
             const entriesBefore = await page.evaluate(() => history.state.nav.index);
+            // On a touch screen the name has no address, so a held finger brings up no preview.
             assert.equal(
                 await row(page, 'empty').locator('.entry-name a').getAttribute('href'),
-                new URL(address(ROOT + '/empty'), BASE).toString(),
+                touch ? null : new URL(address(ROOT + '/empty'), BASE).toString(),
                 'a folder row links to its folder on the phone page',
             );
             await open(page, 'empty');
