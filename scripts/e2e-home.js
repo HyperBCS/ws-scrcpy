@@ -943,7 +943,7 @@ async function reconnectingSwitcher(browser, size) {
 
 async function evenGrid(browser) {
     for (const [width, height, columns] of [[1024, 768, 2], [1280, 800, 3], [1440, 900, 3], [1920, 1080, 3], [390, 844, 1]]) {
-        for (const colorScheme of width === 1280 ? ['light', 'dark'] : ['light']) {
+        for (const colorScheme of width === 1280 || width === 1440 ? ['light', 'dark'] : ['light']) {
             const label = `${width}-${colorScheme}`;
             const mobile = width < 600;
             const test = await start(browser, { width, height, mobile, colorScheme });

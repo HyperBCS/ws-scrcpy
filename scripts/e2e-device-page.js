@@ -42,6 +42,9 @@ const IPHONES = [iphone(IPHONE, 'Bench iPhone')];
 const SUMMARY = { unread: 2, unreadBySource: { [IPHONE]: 2 }, sources: [{ id: IPHONE, name: 'Bench iPhone' }] };
 const PHONE = { name: 'phone', width: 390, height: 844, mobile: true };
 const DESKTOP = { name: 'desktop', width: 1280, height: 800, mobile: false };
+// The owner's phone and desktop window.
+const IPHONE_17 = { name: 'iphone17pm', width: 440, height: 956, mobile: true };
+const DESKTOP_1440 = { name: '1440x900', width: 1440, height: 900, mobile: false };
 const TABS = ['Screen', 'Files', 'Shell'];
 
 const ROOT = '/data/local/tmp';
@@ -556,11 +559,12 @@ async function androidTabs(browser, viewport, colorScheme) {
 /**
  * The header of Files and Shell has one status line, the tool's connection, also when the stream
  * service is stopped, as it normally is behind those tabs. Screen still names a stopped service.
+ * At the owner's phone and desktop sizes, in both themes, with a picture of each tab.
  */
-async function toolHeaderOneLine(browser, viewport) {
-    const test = await start(browser, { viewport, hash: `action=device&udid=${PIXEL}&view=screen` });
+async function toolHeaderOneLine(browser, viewport, colorScheme) {
+    const test = await start(browser, { viewport, colorScheme, hash: `action=device&udid=${PIXEL}&view=screen` });
     const { page } = test;
-    const label = `${viewport.name} tool header`;
+    const label = `${viewport.name}-${colorScheme} tool header`;
     // Every line under the phone's name, with its class and its words.
     const lines = () => page.locator('header.kit-bar .kit-bar-title > :not(.kit-bar-name)').evaluateAll((list) =>
         list.map((line) => [line.classList.contains('tool-connection') ? 'tool' : line.classList.contains('stream-service-status') ? 'service' : line.className, line.textContent]),
@@ -576,6 +580,8 @@ async function toolHeaderOneLine(browser, viewport) {
             await page.locator('.tool-view:not([hidden]) .tool-connection.connected').waitFor();
             assert.deepEqual(await lines(), [['tool', 'Connected']], `${label}: ${name} has one status line, its connection`);
             assert.equal(await page.locator('header.kit-bar .stream-service-status').count(), 0, `${label}: ${name} has no stream service line`);
+            await settleMotion(page);
+            await page.screenshot({ path: path.join(OUT, `tool-header-${name.toLowerCase()}-${viewport.name}-${colorScheme}.png`) });
         }
         await tab(page, 'Screen').click();
         await page.locator('.stream-view').waitFor();
@@ -945,9 +951,11 @@ async function main() {
                 await iphonePage(browser, viewport, colorScheme);
             }
             await screenControls(browser, viewport);
-            await toolHeaderOneLine(browser, viewport);
             await oneBackFromAnyTab(browser, viewport);
             await switchReplaces(browser, viewport);
+        }
+        for (const viewport of [IPHONE_17, DESKTOP_1440]) {
+            for (const colorScheme of ['light', 'dark']) await toolHeaderOneLine(browser, viewport, colorScheme);
         }
         await androidActionsSheet(browser);
         await playerChangeReplaces(browser);
