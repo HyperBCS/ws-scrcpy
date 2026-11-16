@@ -176,6 +176,14 @@
     font-weight: var(--font-weight-bold);
 }
 
+/* Under a finger each crumb is a 44px target, also the root "/" and a short name. The name
+   stays in the middle, so the names move apart only as far as that takes. */
+@media (pointer: coarse) {
+    .fx-crumb {
+        min-width: var(--control-height);
+    }
+}
+
 .fx-crumb-part {
     display: inline-flex;
     flex: none;

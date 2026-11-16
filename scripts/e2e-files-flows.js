@@ -1191,6 +1191,14 @@ async function touchHold(page, target, ms, { move = 0, click = false } = {}) {
     }
 }
 
+/** Every crumb of the address is a 44px target under a finger. */
+async function crumbTargets(page, what) {
+    const widths = await page.locator('.fx-crumb').evaluateAll((crumbs) =>
+        crumbs.map((crumb) => [crumb.textContent, Math.round(crumb.getBoundingClientRect().width * 10) / 10]),
+    );
+    assert.deepEqual(widths.filter(([, width]) => width < 44), [], `${what}: every crumb is at least 44px wide (${JSON.stringify(widths)})`);
+}
+
 // Holding a row on a touch screen selects it and turns selection mode on. No menu shows, ours or
 // the browser's: on touch the name is a link without an address that cannot be dragged, and the
 // row takes no text selection and no callout. The iOS menu itself needs a phone to see.
@@ -1222,6 +1230,7 @@ async function hold(browser) {
         // Chromium does not report the callout; WebKit does. The stylesheet itself is read in test-files.js.
         if (style.callout) assert.equal(style.callout, 'none', 'and bring up no callout');
     }
+    await crumbTargets(page, 'a phone');
 
     // A hold of 600ms on a file selects it. Letting go opens no sheet, menu or download.
     const hash = await page.evaluate(() => location.hash);
@@ -1315,6 +1324,7 @@ async function landscapeLayout(browser) {
     };
     assert.equal(await middle('.fx-address'), await middle('.fx-history'), 'landscape: the address shares the line of history');
     assert.equal(await middle('.fx-mobile-tools'), await middle('.fx-history'), 'landscape: and of the tools');
+    await crumbTargets(page, 'a phone in landscape');
     await page.screenshot({ path: path.join(OUT, 'flows-touch-landscape.png') });
 
     // Quick access is a menu of 44px rows.
@@ -1360,6 +1370,7 @@ async function tabletLayout(browser) {
     const sidebar = () => page.locator('.fx-place').evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height));
     let heights = await sidebar();
     assert(heights.length >= 9 && heights.every((height) => height >= 44), `tablet: quick access rows are 44px (${heights})`);
+    await crumbTargets(page, 'a tablet');
     await page.screenshot({ path: path.join(OUT, 'flows-touch-tablet.png') });
     // A short window: the sidebar scrolls, and its rows stay 44px.
     await page.setViewportSize({ width: 1180, height: 600 });
