@@ -1377,6 +1377,65 @@ async function landscapeLayout(browser) {
     await mouse.finish();
 }
 
+// A mouse attached to a touch screen, or taken away again: the rows are built again for the new
+// pointer, once. The selection, the scroll position and the focused row stay; an open row menu,
+// whose button is replaced, closes.
+async function pointerChange(browser) {
+    const { page, finish, traffic } = await start(browser, { width: 1280, height: 340, touch: false }, ROOT, 'light');
+    const cdp = await page.context().newCDPSession(page);
+    const pointer = async (touch) => {
+        // What Playwright does for a context with touch: the page then has a coarse pointer and no hover.
+        await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: touch, maxTouchPoints: touch ? 1 : undefined });
+        await page.waitForFunction((want) => matchMedia('(hover: none) and (pointer: coarse)').matches === want, touch);
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    };
+    const state = () =>
+        page.evaluate(() => {
+            const rows = [...document.querySelectorAll('.fx-row')];
+            return {
+                selected: rows.filter((row) => row.classList.contains('selected')).map((row) => row.dataset.name),
+                links: rows.map((row) => row.querySelector('.entry-name a').hasAttribute('href')),
+                kept: rows.filter((row) => row.__mark).length,
+                scroll: document.querySelector('.fx-items').scrollTop,
+                focused: document.activeElement?.closest('tr[data-name]')?.dataset.name,
+            };
+        });
+    const mark = () => page.evaluate(() => document.querySelectorAll('.fx-row').forEach((row) => (row.__mark = true)));
+
+    await row(page, 'notes.txt').locator('.entry-size').click();
+    await row(page, 'photo.png').locator('.entry-size').click({ modifiers: ['Control'] });
+    await row(page, 'photo.png').locator('.entry-name a').focus();
+    await page.locator('.fx-items').evaluate((items) => (items.scrollTop = items.scrollHeight));
+    await pressAtRest(page, row(page, 'photo.png').getByRole('button', { name: 'Actions for photo.png', exact: true }));
+    await page.locator('.files-menu').waitFor();
+    await mark();
+    const before = await state();
+    assert(before.links.every(Boolean) && before.scroll > 0, JSON.stringify(before));
+
+    await pointer(true);
+    let after = await state();
+    assert.equal(after.kept, 0, 'a touch screen: every row is built again');
+    assert(after.links.every((link) => !link), 'a touch screen: no name has an address');
+    assert.deepEqual(after.selected, ['notes.txt', 'photo.png'], 'the selection stays');
+    assert.equal(after.scroll, before.scroll, 'the list keeps its place');
+    assert.equal(after.focused, 'photo.png', 'focus stays on its row');
+    await page.locator('.files-menu').waitFor({ state: 'hidden', timeout: 2000 });
+    // Once: nothing builds the rows again after that.
+    await mark();
+    await page.waitForTimeout(500);
+    assert.equal((await state()).kept, before.links.length, 'the rows are built once');
+
+    await pointer(false);
+    after = await state();
+    assert.equal(after.kept, 0, 'a mouse again: every row is built again');
+    assert(after.links.every(Boolean), 'a mouse again: each name has its address');
+    assert.deepEqual(after.selected, ['notes.txt', 'photo.png']);
+    assert.equal(after.focused, 'photo.png');
+    assert.equal(traffic.operations.length, 0, 'nothing was sent to the phone');
+    await cdp.detach();
+    await finish();
+}
+
 // A touch screen from 1024px keeps the desktop layout, with quick access rows of 44px also when
 // the window is short.
 async function tabletLayout(browser) {
@@ -1419,6 +1478,7 @@ async function main() {
         ['hold on a phone', () => hold(browser)],
         ['touch layout in landscape', () => landscapeLayout(browser)],
         ['touch layout on a tablet', () => tabletLayout(browser)],
+        ['a change of pointer', () => pointerChange(browser)],
         ['uploads phone', () => uploads(browser, PHONE, 'phone', 'light')],
         ['uploads desktop', () => uploads(browser, DESKTOP, 'desktop', 'dark')],
         ['large folder phone', () => largeFolder(browser, PHONE, 'phone')],

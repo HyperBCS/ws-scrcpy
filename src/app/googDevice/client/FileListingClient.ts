@@ -1509,12 +1509,23 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
     };
 
-    /** A mouse was attached or a touch screen became the pointer: the rows are built again for it. */
+    /**
+     * A mouse was attached or a touch screen became the pointer: the rows are built again for it.
+     * The selection and the folder stay; focus stays on its row (`renderItems`). An open menu
+     * closes first, as a row's menu belongs to the button that is replaced and every menu was
+     * sized for the other pointer.
+     */
     private onPointerKind = (): void => {
+        this.closeMenu();
+        // Chromium scrolls the list to its top when the row that has focus is taken out.
+        const scroll = this.items.scrollTop;
         this.rows.clear();
         // A folder that is loading puts its rows in order when they arrive.
         if (!this.loading) {
             this.renderItems();
+        }
+        if (this.items.scrollTop !== scroll) {
+            this.items.scrollTop = scroll;
         }
     };
 
