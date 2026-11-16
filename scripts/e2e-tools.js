@@ -372,12 +372,18 @@ async function keyRow(page, state, name) {
     };
     const quietly = async () => page.waitForTimeout(150);
 
-    // Below 600px the keys wrap to a second row in their order, every one in the window; from
-    // 600px they are one row, which scrolls sideways if it must (polish, 2026-11-16).
+    // Below 600px the keys take two rows of six equal columns in their order, every one in the
+    // window and of one size; from 600px they are one row, which scrolls sideways if it must
+    // (polish, 2026-11-16).
     const scroll = await row.evaluate(el=>{
+        const range = document.createRange();
         const keys = Array.from(el.children).map(key=>{
             const r = key.getBoundingClientRect();
-            return { name:key.getAttribute('aria-label') || key.textContent, top:Math.round(r.top), left:r.left, right:r.right, height:r.height };
+            range.selectNodeContents(key);
+            const words = range.getBoundingClientRect();
+            return { name:key.getAttribute('aria-label') || key.textContent, top:Math.round(r.top), left:r.left, right:r.right, width:r.width, height:r.height,
+                // The words or the icon of the key stay inside its border.
+                inside: words.left>=r.left && words.right<=r.right };
         });
         const fits = el.scrollWidth<=el.clientWidth+1;
         el.scrollLeft = el.scrollWidth;
@@ -394,6 +400,12 @@ async function keyRow(page, state, name) {
         assert.deepEqual(scroll.keys.filter(entry=>entry.left<0 || entry.right>scroll.width+0.5).map(entry=>entry.name),[],`${name}: every key is inside the window`);
         assert.equal(lines,2,`${name}: the keys take two rows`);
         assert.deepEqual(scroll.keys.filter(entry=>entry.height<44).map(entry=>entry.name),[],`${name}: every key is at least 44px high`);
+        const widths = scroll.keys.map(entry=>entry.width), heights = scroll.keys.map(entry=>entry.height);
+        assert(Math.max(...widths)-Math.min(...widths)<0.5 && Math.max(...heights)-Math.min(...heights)<0.5,`${name}: every key has one size (${widths.map(Math.round)} by ${heights})`);
+        const first = scroll.keys.filter(entry=>entry.top===scroll.keys[0].top), second = scroll.keys.slice(first.length);
+        assert.deepEqual(first.map(entry=>entry.name),['Esc','Tab','Ctrl','Left arrow','Up arrow','Down arrow'],`${name}: the first row ends at Down arrow`);
+        assert(second.every((entry,index)=>Math.abs(entry.left-first[index].left)<0.5),`${name}: the second row lines up with the first`);
+        assert.deepEqual(scroll.keys.filter(entry=>!entry.inside).map(entry=>entry.name),[],`${name}: the words of every key are inside it`);
     } else {
         assert.equal(lines,1,`${name}: the keys are one row`);
         if (!scroll.fits) assert(scroll.moved && scroll.lastShown,`${name}: the row scrolls sideways to its last key`);

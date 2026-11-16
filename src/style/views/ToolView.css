@@ -89,16 +89,19 @@
     );
 }
 
-/* A phone held upright has no room for the keys in one row (about 575px). They wrap to a second
-   row in the same order, each row filled, and none is out of sight. The toast stands above both
-   rows. */
+/* A phone held upright has no room for the keys in one row (about 575px). They take two rows of
+   six equal columns in the same order, Esc to Down arrow and then Right arrow to A+, so every key
+   has one size, the rows line up and none is out of sight. A key's words are centred in its
+   whole width. The toast stands above both rows. */
 @media (max-width: 599px) {
     .shell-keys {
-        flex-wrap: wrap;
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
         overflow-x: visible;
     }
     .shell-keys > * {
-        flex: 1 0 auto;
+        width: auto;
+        padding-inline: 0;
     }
     .kit-toast.shell-keys-toast {
         bottom: calc(
