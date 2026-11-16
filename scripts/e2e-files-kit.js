@@ -13,6 +13,9 @@
 //   menus     the menus are the kit's menu in the top layer, with the arrow keys, Home, End,
 //             Escape and Back; a check item shows the kit's check and leaves the menu open
 //   toast     results are the kit's toast
+//   address   at 1440x900 with a mouse, the fill and the focus ring of each crumb and of the
+//             edit button stay inside the address field, 4px from its top and bottom, and
+//             nothing moves on hover, focus or press
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -107,10 +110,14 @@ function audit({ mobile, tokens }) {
     if (coarse !== mobile) faults.push(`(pointer: coarse) is ${coarse} in a ${mobile ? 'touch' : 'mouse'} context`);
     const height = (element) => Math.round(element.getBoundingClientRect().height * 100) / 100;
     const dense = mobile ? 44 : 32;
+    // Under a mouse the edit button of the address is drawn inside the field, 4px from its top
+    // and bottom, as a crumb is (see `addressHighlight`).
+    const inField = (element) => !mobile && element.matches('.fx-address-toggle, .fx-crumb');
     for (const element of all('.kit-button, .kit-icon-button')) {
-        const expected = element.matches('.kit-button-compact, .kit-icon-button-compact') ? dense : 44;
+        const expected = inField(element) ? dense - 8 : element.matches('.kit-button-compact, .kit-icon-button-compact') ? dense : 44;
         if (height(element) !== expected) faults.push(`${height(element)}px high, not ${expected}px: ${name(element)}`);
-        if (element.matches('.kit-icon-button') && element.getBoundingClientRect().width !== expected) faults.push(`not square: ${name(element)}`);
+        const wide = inField(element) ? dense - 4 : expected;
+        if (element.matches('.kit-icon-button') && element.getBoundingClientRect().width !== wide) faults.push(`not ${wide}px wide: ${name(element)}`);
     }
     for (const element of all('.kit-menu-item, .fx-address, .fx-filter-input, .fx-sort')) {
         if (height(element) !== dense) faults.push(`${height(element)}px high, not ${dense}px: ${name(element)}`);
@@ -118,9 +125,12 @@ function audit({ mobile, tokens }) {
     for (const element of all('dialog input.kit-field, .kit-toast-close')) {
         if (height(element) !== 44) faults.push(`${height(element)}px high, not 44px: ${name(element)}`);
     }
-    // A crumb is pressed over the whole height of the address box, and a row over its own.
+    // A crumb is pressed over the whole height of the address box, and a row over its own. Under
+    // a mouse the crumb is drawn 4px inside the box and its press reaches the box's edges
+    // (`addressHighlight`).
     for (const element of all('.fx-crumb')) {
-        if (height(element) !== dense) faults.push(`${height(element)}px high, not ${dense}px: ${name(element)}`);
+        const expected = inField(element) ? dense - 8 : dense;
+        if (height(element) !== expected) faults.push(`${height(element)}px high, not ${expected}px: ${name(element)}`);
     }
     for (const element of all('tr.fx-row, .fx-dialog-check')) {
         if (height(element) < dense) faults.push(`${height(element)}px high, under ${dense}px: ${name(element)}`);
@@ -627,10 +637,168 @@ async function run(browser, layout, theme) {
     console.log(`PASS ${label}: ${audits} states hold only the kit's controls, type and colours; menus, dialog and toast are the kit's`);
 }
 
+/**
+ * Where a control of the address is painted, against the field (`.fx-address`): the box of its
+ * fill (clipped as its background is) and of its focus ring, as the distance of each edge from
+ * the field's edge, and where its name or icon is. Runs in the page.
+ */
+function addressShape(selector) {
+    const field = document.querySelector('.fx-address').getBoundingClientRect();
+    const element = document.querySelector(selector);
+    const style = getComputedStyle(element);
+    const box = element.getBoundingClientRect();
+    const px = (value) => parseFloat(value) || 0;
+    const round = (value) => Math.round(value * 100) / 100;
+    const edges = (rect) => rect && { above: round(rect.top - field.top), below: round(field.bottom - rect.bottom), left: round(rect.left - field.left), right: round(field.right - rect.right) };
+    const clipped = style.backgroundClip !== 'border-box';
+    const inset = (side) => (clipped ? px(style[`border${side}Width`]) : 0);
+    const filled = style.backgroundColor !== 'rgba(0, 0, 0, 0)';
+    const fill = filled && { top: box.top + inset('Top'), bottom: box.bottom - inset('Bottom'), left: box.left + inset('Left'), right: box.right - inset('Right') };
+    const out = px(style.outlineOffset) + px(style.outlineWidth);
+    const ringed = style.outlineStyle !== 'none' && px(style.outlineWidth) > 0;
+    const ring = ringed && { top: box.top - out, bottom: box.bottom + out, left: box.left - out, right: box.right + out };
+    const icon = element.querySelector('svg');
+    let content = icon?.getBoundingClientRect();
+    if (!content) {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        content = range.getBoundingClientRect();
+    }
+    return {
+        fill: edges(fill), fillColour: style.backgroundColor, ring: edges(ring), ringColour: ringed ? style.outlineColor : null,
+        radius: style.borderTopLeftRadius, box: [round(box.width), round(box.height)],
+        content: [round(content.left), round(content.top), round(content.width), round(content.height)],
+    };
+}
+
+/**
+ * The address under a mouse at 1440x900. The root, a middle crumb, the folder you are in and the
+ * edit button, hovered, focused and pressed: the fill or the focus ring is a rounded rectangle
+ * (--radius-sm) inside the field, 4px from its top and bottom edge, and the name or the icon and
+ * the control's size are what they are at rest. A press anywhere over the height of the field
+ * lands on the crumb, and a slash is part of no crumb and shows no fill. Every fault is listed.
+ */
+async function addressHighlight(browser, theme) {
+    const label = `address 1440x900 mouse ${theme}`;
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await fixture(page);
+    const url = new URL(BASE);
+    url.hash = address(ROOT);
+    await page.goto(url.toString());
+    await ready(page);
+    await row(page, 'notes.txt').waitFor();
+    await settleMotion(page);
+    const token = (name) =>
+        page.evaluate((name) => {
+            const probe = document.createElement('span');
+            probe.style.transition = 'none';
+            probe.style.color = `var(${name})`;
+            document.body.append(probe);
+            const value = getComputedStyle(probe).color;
+            probe.remove();
+            return value;
+        }, name);
+    const sunken = await token('--surface-sunken');
+    const accent = await token('--accent');
+    const small = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--radius-sm').trim());
+    const targets = {
+        root: '.fx-crumb-root',
+        'middle crumb': '.fx-breadcrumb > .fx-crumb-part:nth-child(3) > .fx-crumb',
+        'current folder': '.fx-crumb[aria-current="page"]',
+        'edit button': '.fx-address-toggle',
+    };
+    assert.deepEqual(
+        await page.evaluate((selectors) => selectors.map((selector) => document.querySelector(selector).textContent.trim()), Object.values(targets).slice(0, 3)),
+        ['/', 'local', 'tmp'],
+    );
+    const faults = [];
+    const inside = (what, edges) => {
+        if (!edges) return faults.push(`${what}: nothing is drawn`);
+        if (Math.abs(edges.above - 4) > 0.5 || Math.abs(edges.below - 4) > 0.5) faults.push(`${what}: ${edges.above}px above and ${edges.below}px below inside the field, not 4px`);
+        if (edges.left < 0 || edges.right < 0) faults.push(`${what}: reaches out of the field at the side (${edges.left}, ${edges.right})`);
+    };
+    const center = async (selector) => {
+        const box = await page.locator(selector).boundingBox();
+        return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    };
+    for (const [name, selector] of Object.entries(targets)) {
+        const element = page.locator(selector);
+        const rest = await page.evaluate(addressShape, selector);
+        if (rest.fill || rest.ring) faults.push(`${name} at rest: a fill or a ring is drawn`);
+        const same = (state, now) => {
+            if (now.content.join() !== rest.content.join()) faults.push(`${name} ${state}: its ${name === 'edit button' ? 'icon' : 'name'} moved from ${rest.content} to ${now.content}`);
+            if (now.box.join() !== rest.box.join()) faults.push(`${name} ${state}: its size changed from ${rest.box} to ${now.box}`);
+            if (now.radius !== small) faults.push(`${name} ${state}: a radius of ${now.radius}, not ${small}`);
+        };
+        // Hovered.
+        const point = await center(selector);
+        await page.mouse.move(point.x, point.y);
+        await settleMotion(page);
+        const hover = await page.evaluate(addressShape, selector);
+        if (hover.fillColour !== sunken) faults.push(`${name} hovered: filled with ${hover.fillColour}, not ${sunken}`);
+        inside(`${name} hovered: the fill`, hover.fill);
+        same('hovered', hover);
+        if (OUT) await page.screenshot({ path: path.join(OUT, `address-${name.replace(/ /g, '-')}-hover-${theme}.png`), clip: { x: 0, y: 100, width: 1440, height: 80 } });
+        // Pressed. It is let go over the page's bar, so nothing is clicked.
+        await page.mouse.down();
+        await settleMotion(page);
+        const pressed = await page.evaluate(addressShape, selector);
+        if (pressed.fillColour !== sunken) faults.push(`${name} pressed: filled with ${pressed.fillColour}, not ${sunken}`);
+        inside(`${name} pressed: the fill`, pressed.fill);
+        same('pressed', pressed);
+        await page.mouse.move(720, 20);
+        await page.mouse.up();
+        await settleMotion(page);
+        // Focused from the keyboard.
+        await element.focus();
+        await page.keyboard.press('Shift+Tab');
+        await page.keyboard.press('Tab');
+        await settleMotion(page);
+        const focus = await page.evaluate(addressShape, selector);
+        if (focus.ringColour !== accent) faults.push(`${name} focused: no ring in the accent (${focus.ringColour})`);
+        inside(`${name} focused: the ring`, focus.ring);
+        same('focused', focus);
+        if (OUT) await page.screenshot({ path: path.join(OUT, `address-${name.replace(/ /g, '-')}-focus-${theme}.png`), clip: { x: 0, y: 100, width: 1440, height: 80 } });
+        await element.evaluate((node) => node.blur());
+        // A press anywhere over the height of the field lands on it.
+        const reach = await element.evaluate((node) => {
+            const field = node.closest('.fx-address').getBoundingClientRect();
+            const box = node.getBoundingClientRect();
+            const x = box.left + box.width / 2;
+            return [field.top + 0.5, field.bottom - 0.5].map((y) => document.elementFromPoint(x, y)?.closest('.fx-crumb, .fx-address-toggle') === node);
+        });
+        if (reach.includes(false)) faults.push(`${name}: a press at the field's top or bottom edge misses it (${reach})`);
+    }
+    // A slash is part of no crumb: no fill under the pointer, and a press there is not a crumb's.
+    for (const slash of await page.locator('.fx-crumb-separator').all()) {
+        const point = await slash.boundingBox();
+        await page.mouse.move(point.x + point.width / 2, point.y + point.height / 2);
+        await settleMotion(page);
+        const seen = await slash.evaluate((node) => {
+            const box = node.getBoundingClientRect();
+            const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+            const filled = [...node.closest('.fx-address').querySelectorAll('*')].filter((element) => getComputedStyle(element).backgroundColor !== 'rgba(0, 0, 0, 0)');
+            return { crumb: !!hit?.closest('.fx-crumb'), filled: filled.map((element) => element.className) };
+        });
+        if (seen.crumb || seen.filled.length) faults.push(`a slash: ${JSON.stringify(seen)}`);
+    }
+    await page.mouse.move(720, 20);
+    assert.deepEqual(faults, [], `${label}: the address`);
+    assert.equal(await page.evaluate(() => location.hash), address(ROOT), `${label}: no press opened anything`);
+    assert.equal(await page.locator('.fx-address-input').isVisible(), false, `${label}: the path field stays closed`);
+    assert.deepEqual(errors, [], `${label}: no browser errors`);
+    await context.close();
+    console.log(`PASS ${label}: the root, a middle crumb, the current folder and the edit button fill and ring inside the field, 4px from its top and bottom, and nothing moves`);
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
     try {
+        for (const theme of THEMES) await addressHighlight(browser, theme);
         for (const layout of LAYOUTS) for (const theme of THEMES) await run(browser, layout, theme);
     } finally {
         await browser.close();
