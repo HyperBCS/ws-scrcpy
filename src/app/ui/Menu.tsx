@@ -214,18 +214,27 @@ interface MenuItemProps {
     onSelect: () => void;
     /** A setting that is on or off. The item shows a check and the menu stays open. */
     checked?: boolean;
+    /** With `checked`: one choice of a set, of which one is checked (`menuitemradio`). */
+    radio?: boolean;
     /** An action that removes something. */
     danger?: boolean;
     disabled?: boolean;
     children: ComponentChildren;
 }
 
-export function MenuItem({ onSelect, checked, danger = false, disabled = false, children }: MenuItemProps) {
+export function MenuItem({
+    onSelect,
+    checked,
+    radio = false,
+    danger = false,
+    disabled = false,
+    children,
+}: MenuItemProps) {
     return (
         <button
             type="button"
             class={`kit-menu-item${danger ? ' kit-menu-danger' : ''}`}
-            role={checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+            role={checked === undefined ? 'menuitem' : radio ? 'menuitemradio' : 'menuitemcheckbox'}
             aria-checked={checked}
             tabIndex={-1}
             disabled={disabled}

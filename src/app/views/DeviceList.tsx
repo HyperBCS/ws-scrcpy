@@ -19,10 +19,9 @@ import { TrackerStatusNotice } from '../ui/TrackerStatusNotice';
 import { NotificationsLink } from '../ui/NotificationsLink';
 import { AppBar, AppBarStatus } from '../ui/AppBar';
 import { Banner } from '../ui/Banner';
-import { Icon } from '../ui/Icon';
 import { IconButton } from '../ui/IconButton';
 import { InlineStatus } from '../ui/InlineStatus';
-import { Menu } from '../ui/Menu';
+import { Menu, MenuItem } from '../ui/Menu';
 import '../../style/views/DeviceList.css';
 
 interface HostGroup {
@@ -108,20 +107,9 @@ function ThemeButton() {
             />
             <Menu open={open} onClose={() => setOpen(false)} anchor={anchor} label={THEME.button}>
                 {THEME_CHOICES.map((choice) => (
-                    // The kit's markup for one of a set (style/kit/Menu.css): its check is drawn
-                    // at the end and hidden while it is not the one in use.
-                    <button
-                        key={choice}
-                        type="button"
-                        class="kit-menu-item"
-                        role="menuitemradio"
-                        aria-checked={current === choice}
-                        tabIndex={-1}
-                        onClick={() => setTheme(choice)}
-                    >
-                        <Icon name="check" size={20} />
+                    <MenuItem key={choice} radio checked={current === choice} onSelect={() => setTheme(choice)}>
                         {THEME.choices[choice]}
-                    </button>
+                    </MenuItem>
                 ))}
             </Menu>
         </>
