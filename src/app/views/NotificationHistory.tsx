@@ -36,7 +36,9 @@ import type { NotificationHistoryItem as HistoryItem } from '../../common/Notifi
 
 /**
  * The unread count in the bar of Notifications: words after the status line, on the same line
- * (`notification-bar-status`). Nothing for zero. The status line keeps its own text.
+ * (`notification-bar-status`). Nothing for zero. The status line keeps its own text. Where the
+ * line has no room for both, the words are not shown (`NotificationsPage.css`); the filter row
+ * has the count too.
  */
 export function UnreadCount({ count }: { count: number }) {
     const text = badgeText(count);
