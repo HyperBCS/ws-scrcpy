@@ -1191,12 +1191,48 @@ async function touchHold(page, target, ms, { move = 0, click = false } = {}) {
     }
 }
 
-/** Every crumb of the address is a 44px target under a finger. */
+/**
+ * Under a finger a press anywhere across 44px of the address lands on each crumb: what is
+ * counted is where the browser finds the crumb under a point, not the size of its box. And the
+ * names are not moved apart for it where they need no room: a name of three letters or more
+ * keeps the gap a mouse has to the name before it.
+ */
 async function crumbTargets(page, what) {
-    const widths = await page.locator('.fx-crumb').evaluateAll((crumbs) =>
-        crumbs.map((crumb) => [crumb.textContent, Math.round(crumb.getBoundingClientRect().width * 10) / 10]),
-    );
-    assert.deepEqual(widths.filter(([, width]) => width < 44), [], `${what}: every crumb is at least 44px wide (${JSON.stringify(widths)})`);
+    const { hits, gaps } = await page.locator('.fx-breadcrumb').evaluate((bar) => {
+        const crumbs = [...bar.querySelectorAll('.fx-crumb')];
+        const hits = crumbs.map((crumb) => {
+            // Each crumb in turn in the middle of the bar, as a finger scrolls a long path.
+            const middle = (box) => box.left + box.width / 2;
+            bar.scrollLeft += middle(crumb.getBoundingClientRect()) - middle(bar.getBoundingClientRect());
+            const box = crumb.getBoundingClientRect();
+            const y = box.top + box.height / 2;
+            let count = 0;
+            for (let x = Math.floor(box.left) - 48; x < box.right + 48; x++) {
+                if (document.elementFromPoint(x + 0.5, y)?.closest('.fx-crumb') === crumb) count++;
+            }
+            return [crumb.textContent, count];
+        });
+        bar.scrollLeft = 0;
+        const text = (crumb) => {
+            const range = document.createRange();
+            range.selectNodeContents(crumb);
+            return range.getBoundingClientRect();
+        };
+        const gaps = [];
+        crumbs.slice(1).forEach((crumb, index) => {
+            const before = crumbs[index];
+            const slash = crumb.parentElement.querySelector('.fx-crumb-separator');
+            // A mouse has 4px of padding on each side of a name, and the slash between.
+            const mouse = 8 + (slash ? slash.getBoundingClientRect().width : 0);
+            if (text(crumb).width >= 26 && text(before).width >= 26) {
+                gaps.push([before.textContent, crumb.textContent, Math.round((text(crumb).left - text(before).right - mouse) * 10) / 10]);
+            }
+        });
+        bar.scrollLeft = bar.scrollWidth;
+        return { hits, gaps };
+    });
+    assert.deepEqual(hits.filter(([, width]) => width < 44), [], `${what}: a finger hits each crumb across 44px (${JSON.stringify(hits)})`);
+    assert.deepEqual(gaps.filter(([, , extra]) => Math.abs(extra) > 0.5), [], `${what}: names that need no room are not moved apart (${JSON.stringify(gaps)})`);
 }
 
 // Holding a row on a touch screen selects it and turns selection mode on. No menu shows, ours or

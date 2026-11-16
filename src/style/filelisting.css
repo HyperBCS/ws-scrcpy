@@ -176,11 +176,30 @@
     font-weight: var(--font-weight-bold);
 }
 
-/* Under a finger each crumb is a 44px target, also the root "/" and a short name. The name
-   stays in the middle, so the names move apart only as far as that takes. */
+/* Under a finger each crumb is a target of at least 44px, also the root "/" and a short name,
+   and the names stay where they were. A crumb reaches to the middle of the slash on each side
+   (4.5px is half a slash of the mono face at 15px): the slash takes no room of its own and lets
+   a press through. A name of three letters then fills 44px; only a shorter one gets more room,
+   around it. The root takes its room before the "/", where the address starts, and the folder
+   you are in after its name. */
 @media (pointer: coarse) {
     .fx-crumb {
         min-width: var(--control-height);
+        padding: 0 calc(var(--space-4) + 4.5px);
+    }
+    .fx-crumb-separator {
+        margin: 0 -4.5px;
+        pointer-events: none;
+    }
+    .fx-crumb-root {
+        padding-right: var(--space-4);
+        text-align: right;
+    }
+    .fx-crumb-root + .fx-crumb-part > .fx-crumb {
+        padding-left: var(--space-4);
+    }
+    .fx-crumb-part:last-child > .fx-crumb {
+        text-align: left;
     }
 }
 
