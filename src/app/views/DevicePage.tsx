@@ -214,8 +214,8 @@ export function DevicePage({ params }: { params: URLSearchParams }) {
         <>
             {/* One screen view, with the adapter of the phone's platform. Each platform keeps its
                 own place among the children, so a view never changes its adapter (its hooks). */}
-            {android && <ScreenView params={android} useScreen={useAndroidScreen} tabs={tabs} />}
-            {ios && <ScreenView params={ios} useScreen={useIphoneScreen} tabs={tabs} />}
+            {android && <ScreenView platform="android" params={android} useScreen={useAndroidScreen} tabs={tabs} />}
+            {ios && <ScreenView platform="ios" params={ios} useScreen={useIphoneScreen} tabs={tabs} />}
             {view === 'screen' &&
                 !android &&
                 !ios &&

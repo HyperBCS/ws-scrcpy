@@ -39,6 +39,14 @@ export type WheelEventNames = 'wheel';
 export type InteractionEvents = TouchEventNames | WheelEventNames;
 export type KeyEventNames = 'keydown' | 'keyup';
 
+/**
+ * Hears the fingers of a mouse pinch each time the pinch code draws them on a picture: the
+ * pointer's finger first, then its mirror, in video pixels. The Show touches layer
+ * (`views/screen/TouchMarks.tsx`) draws the second finger from it. Nothing that is sent to the
+ * phone depends on it.
+ */
+export type PinchWatcher = (picture: HTMLCanvasElement, fingers: readonly Point[]) => void;
+
 export abstract class InteractionHandler {
     protected static readonly SIMULATE_MULTI_TOUCH = 'SIMULATE_MULTI_TOUCH';
     protected static readonly STROKE_STYLE: string = '#00BEA4';
@@ -61,6 +69,7 @@ export abstract class InteractionHandler {
     private static centerPointImage?: HTMLImageElement;
     private static pointImagesLoaded = false;
     private static eventListeners: Map<string, Set<InteractionHandler>> = new Map();
+    private static readonly pinchWatchers = new Set<PinchWatcher>();
     private multiTouchActive = false;
     private multiTouchCenter?: Point;
     private multiTouchShift = false;
@@ -359,6 +368,14 @@ export abstract class InteractionHandler {
         this.clearCanvas();
     }
 
+    /** Adds a watcher of the fingers of a mouse pinch. The function returned removes it. */
+    public static watchPinch(watcher: PinchWatcher): () => void {
+        InteractionHandler.pinchWatchers.add(watcher);
+        return () => {
+            InteractionHandler.pinchWatchers.delete(watcher);
+        };
+    }
+
     /** Draws the centre of a pinch and its fingers on the touch layer, in video pixels. */
     protected drawPinch(centre: Point, points: Point[]): void {
         this.clearCanvas();
@@ -366,6 +383,14 @@ export abstract class InteractionHandler {
         points.forEach((point) => {
             this.drawPoint(point, InteractionHandler.touchPointRadius, InteractionHandler.touchPointImage);
             this.drawLine(centre, point);
+        });
+        // A watcher that fails must not stop the messages of this pinch from being sent.
+        InteractionHandler.pinchWatchers.forEach((watcher) => {
+            try {
+                watcher(this.tag, points);
+            } catch (error) {
+                console.error(TAG, 'Pinch watcher failed', error);
+            }
         });
     }
 

@@ -1,0 +1,44 @@
+@layer tokens, base, components, views;
+
+@layer views {
+/* Show touches (`views/screen/TouchMarks.tsx`). The layer lies over the picture's box, which
+   `ScreenView.tsx` writes on the stage, and cuts a circle off at the edge of the picture as the
+   phone's own screen would. It takes no press: every press goes to the picture under it. It is
+   above the picture (1) and its touch layer (2), and under the controls' shield (4), the state
+   card (5) and the controls (8). Neither the layer nor a circle has a transition, not even the
+   short one `app.css` gives everything with motion reduced: a circle is placed against the layer's
+   box as it is at that moment, and follows its pointer without delay. */
+.touch-marks {
+    position: absolute;
+    top: var(--stream-picture-top, 0px);
+    left: calc(var(--stream-picture-right, 0px) - var(--stream-picture-width, 0px));
+    width: var(--stream-picture-width, 0px);
+    height: var(--stream-picture-height, 0px);
+    z-index: 3;
+    overflow: hidden;
+    pointer-events: none;
+    transition: none;
+}
+
+/* One circle, centred on its point and the size of a touch target. A ring in the accent with an
+   edge in the colour drawn on the accent, outside and inside it, so it shows on a light picture,
+   on a dark one and on one in the accent's own colour. The middle is only tinted, so what lies
+   under it stays in sight. It moves by its transform alone. */
+.touch-mark {
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    width: var(--control-height);
+    height: var(--control-height);
+    margin: calc(var(--control-height) / -2) 0 0 calc(var(--control-height) / -2);
+    border: 3px solid var(--accent);
+    border-radius: var(--radius-full);
+    background-color: color-mix(in srgb, var(--accent) 20%, transparent);
+    box-shadow:
+        0 0 0 1px var(--on-accent),
+        inset 0 0 0 1px var(--on-accent);
+    transition: none;
+    will-change: transform;
+}
+}

@@ -5,6 +5,7 @@ import type { StreamClientCoreDevice } from '../../applDevice/client/StreamClien
 import type { Platform } from '../../state/routes';
 import { keyboardCapture, KEYBOARD_SHORTCUTS } from '../../state/keyboardCapture';
 import { phoneKeys } from '../../state/capabilities';
+import { setShowTouches, showTouches } from '../../state/showTouches';
 import { SettingsGroup, SettingsSection } from './Section';
 
 const OPEN_THE_SCREEN = 'Open the screen to change this.';
@@ -22,7 +23,9 @@ interface KeyboardSectionProps {
 /**
  * Keyboard: whether keys typed in this browser go to the phone, with one label on both kinds of
  * phone. An Android phone can also take them through its own keyboard layout (UHID). Both apply
- * at once, to the screen open in this browser, and are not sent to the phone as settings.
+ * at once, to the screen open in this browser, and are not sent to the phone as settings. The
+ * section also holds Show touches (`state/showTouches.ts`), the one input setting both kinds of
+ * phone have besides the keyboard.
  */
 export function KeyboardSection({ platform, android, ios, opening }: KeyboardSectionProps) {
     const screenOpen = !!(android || ios);
@@ -76,6 +79,15 @@ export function KeyboardSection({ platform, android, ios, opening }: KeyboardSec
                 ).map(({ letter, label }) => (
                     <SheetRow key={letter} title={label} description={`Ctrl+Alt+${letter}`} />
                 ))}
+            </SettingsGroup>
+            {/* Show touches belongs to this browser, not to a phone or its screen: it can be
+                changed from the list too, and applies at once to a screen that is open. */}
+            <SettingsGroup
+                title="Touch"
+                hint="A circle where you touch the picture. This browser only."
+                class="settings-touches"
+            >
+                <SheetToggleRow title="Show touches" checked={showTouches.value} onChange={setShowTouches} />
             </SettingsGroup>
         </SettingsSection>
     );

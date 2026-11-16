@@ -30,6 +30,8 @@ const ALLOWED = {
     // The black behind the picture, twice, and the order of the picture (1), its touch layer (2)
     // and the one state card on the stage (5, over the controls' shield).
     'views/StreamView.css': { colours: 2, zIndex: 3 },
+    // Show touches: its circles (3) over the picture's touch layer, under the controls' shield.
+    'views/TouchMarks.css': { zIndex: 1 },
     // The black around the terminal, the colour xterm draws it in.
     'views/ToolView.css': { colours: 1 },
 };
