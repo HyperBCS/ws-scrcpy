@@ -549,8 +549,14 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         // or the picture stays frozen until the phone happens to send it. The proxy passes on
         // at most one request a second.
         player.on('decoder-error', () => this.requestKeyframe());
-        // A change of the picture colour range starts the decoder again in the same way.
-        player.on('keyframe-request', () => this.requestKeyframe());
+        // A change of the picture colour range starts the decoder again in the same way. Not while
+        // the session is starting or the socket is down: the next session starts with a key frame
+        // and a codec message of its own, and nothing is sent to a session that is not up.
+        player.on('keyframe-request', () => {
+            if (this.isConnected()) {
+                this.requestKeyframe();
+            }
+        });
         player.setColourRange(colourRange.peek());
         this.player = player;
         this.decoderKind = kind;

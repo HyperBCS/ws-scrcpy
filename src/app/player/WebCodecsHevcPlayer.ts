@@ -55,6 +55,8 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
     private config?: VideoDecoderConfig;
     private gotKey = false;
     private needsResync = false;
+    /** `config` changed: build the decoder again at the next key frame; the current one runs on until then. */
+    private reconfigure = false;
     private timestamp = 0;
     private frameSize?: Size;
     private codec?: string;
@@ -86,61 +88,47 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
         this.codec = codec;
         this.description = description;
         this.streamColour = parseHevcColour(description);
-        this.applyConfig();
+        this.config = this.colourConfig(codec, description);
+        this.rebuildDecoder();
+        this.checkColourSupport(this.config);
     }
 
     /**
      * Auto follows the range the stream declares; Full and Limited override it. A different
      * colour space needs a new decoder, which starts at a key frame: `keyframe-request` asks the
-     * client for one. Nothing else reaches the phone, and the canvas keeps the last picture.
+     * client for one. The current decoder keeps the picture going until that key frame, so a
+     * request the proxy drops (it passes one a second) only delays the change. Nothing else
+     * reaches the phone.
      */
     public setColourRange(range: ColourRange): void {
         if (range === this.colourRange) {
             return;
         }
         this.colourRange = range;
-        if (!this.codec || !this.description || !this.decoder) {
+        if (!this.codec || !this.description || !this.config || !this.decoder) {
             return; // applied at the next configure
         }
-        const before = this.config;
-        this.applyConfig(true);
-        if (this.config !== before) {
-            this.emit('keyframe-request', undefined);
+        const config = this.colourConfig(this.codec, this.description);
+        if (JSON.stringify(config.colorSpace) === JSON.stringify(this.config.colorSpace)) {
+            return;
         }
+        this.config = config;
+        this.reconfigure = true;
+        this.emit('keyframe-request', undefined);
+        this.checkColourSupport(config);
     }
 
     /**
      * The decoder config with the picture's colour space (`hevcColour.ts`), or without one where
-     * the colour is not known or this browser refused it. `onlyIfChanged` keeps the decoder when
-     * the colour space comes out the same.
+     * the colour is not known or this browser refused it.
      */
-    private applyConfig(onlyIfChanged = false): void {
-        if (!this.codec || !this.description) {
-            return;
-        }
-        const plain: VideoDecoderConfig = {
-            codec: this.codec,
-            description: this.description,
-            optimizeForLatency: true,
-        };
+    private colourConfig(codec: string, description: Uint8Array): VideoDecoderConfig {
+        const plain: VideoDecoderConfig = { codec, description, optimizeForLatency: true };
         const colour = pictureColour(this.streamColour, this.colourRange);
         const colorSpace = colour && (webCodecsColour(colour) as VideoColorSpaceInit);
-        const config =
-            colorSpace && !this.refusedColour.has(this.colourKey({ ...plain, colorSpace }))
-                ? { ...plain, colorSpace }
-                : plain;
-        if (
-            onlyIfChanged &&
-            this.config &&
-            JSON.stringify(this.config.colorSpace) === JSON.stringify(config.colorSpace)
-        ) {
-            return;
-        }
-        this.config = config;
-        this.rebuildDecoder();
-        if (this.config.colorSpace) {
-            this.checkColourSupport(this.config);
-        }
+        return colorSpace && !this.refusedColour.has(this.colourKey({ ...plain, colorSpace }))
+            ? { ...plain, colorSpace }
+            : plain;
     }
 
     private colourKey(config: VideoDecoderConfig): string {
@@ -161,9 +149,14 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
     /**
      * The decoder is configured with the colour space at once, so the first key frame is not
      * lost to a wait. If the browser then says it does not support that config, the decoder is
-     * built again without it and the client asks for a key frame.
+     * built again without it at the next key frame. The client is asked for that key frame only
+     * when a picture is already showing and no change is waiting for one; otherwise the key
+     * frame is on its way (the start of the stream, a decoder error, a colour change).
      */
     private checkColourSupport(config: VideoDecoderConfig): void {
+        if (!config.colorSpace) {
+            return;
+        }
         let check: Promise<VideoDecoderSupport>;
         try {
             check = VideoDecoder.isConfigSupported(config);
@@ -180,8 +173,12 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
                     return; // a later configure or colour change owns the decoder now
                 }
                 this.refuseColour(config);
-                if (this.decoder) {
-                    this.rebuildDecoder();
+                if (!this.decoder) {
+                    return; // stopped
+                }
+                const waiting = this.reconfigure || this.needsResync || !this.gotKey;
+                this.reconfigure = true;
+                if (!waiting) {
                     this.emit('keyframe-request', undefined);
                 }
             });
@@ -224,6 +221,7 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
         }
         this.gotKey = false;
         this.needsResync = false;
+        this.reconfigure = false;
     }
 
     private onOutput(frame: VideoFrame): void {
@@ -264,7 +262,7 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
         }
         const type = frame[0];
         const isKey = type === COREDEVICE_FRAME_KEY || type === COREDEVICE_FRAME_RESET_KEY;
-        if (type === COREDEVICE_FRAME_RESET_KEY || (isKey && this.needsResync)) {
+        if (type === COREDEVICE_FRAME_RESET_KEY || (isKey && (this.needsResync || this.reconfigure))) {
             this.rebuildDecoder();
         }
         if (isKey) {

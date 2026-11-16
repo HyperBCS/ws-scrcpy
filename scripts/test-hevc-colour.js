@@ -293,17 +293,43 @@ test('the WebCodecs player configures without the colour space when the browser 
     assert.ok(decoders[0].configs[0].colorSpace, 'tried with the colour space first, so no key frame waits on the check');
     await settle();
     assert.equal(asked.length, 1);
+    // Refused before the first key frame: that key frame, which is on its way, builds the decoder.
+    assert.equal(decoders.length, 1);
+    assert.deepEqual(requests, [], 'the first key frame is coming anyway: nothing is asked');
+    player.play();
+    player.pushFrame(key);
     assert.equal(decoders.length, 2, 'refused: a new decoder');
     assert.equal(decoders[0].state, 'closed');
     assert.deepEqual(decoders[1].configs, [{ codec: CODEC, description: IPHONE_HVCC, optimizeForLatency: true }]);
-    assert.deepEqual(requests, [2], 'and one key frame request for it');
+    assert.deepEqual(decoders[1].chunks.map((chunk) => chunk.type), ['key'], 'and it decodes that key frame');
     // The same stream again (a reconnect): straight to the config the browser takes.
     player.configure(CODEC, IPHONE_HVCC);
     await settle();
     assert.equal(decoders.length, 3);
     assert.equal(decoders[2].configs[0].colorSpace, undefined);
     assert.equal(asked.length, 1, 'not asked again');
-    assert.deepEqual(requests, [2]);
+    assert.deepEqual(requests, []);
+
+    // Refused once a picture shows: that decoder keeps the picture going, one key frame request,
+    // and the key frame builds the decoder without the colour space.
+    const late = hevcPlayer(t);
+    let answer;
+    MockDecoder.isConfigSupported = (config) => new Promise((resolve) => (answer = () => resolve({ supported: !config.colorSpace })));
+    late.player.configure(CODEC, IPHONE_HVCC);
+    late.player.play();
+    late.player.pushFrame(key);
+    late.player.pushFrame(delta);
+    answer();
+    await settle();
+    assert.deepEqual(late.requests, [1], 'one key frame request');
+    late.player.pushFrame(delta);
+    assert.equal(late.decoders.length, 1);
+    assert.deepEqual(late.decoders[0].chunks.map((chunk) => chunk.type), ['key', 'delta', 'delta'], 'the picture goes on');
+    late.player.pushFrame(key);
+    assert.equal(late.decoders.length, 2);
+    assert.equal(late.decoders[1].configs[0].colorSpace, undefined);
+    assert.deepEqual(late.decoders[1].chunks.map((chunk) => chunk.type), ['key']);
+    assert.deepEqual(late.requests, [1]);
 
     // A browser that does not know a colour space value throws in configure(): no error leaves
     // the player, and the same decoder is configured without it.
@@ -328,26 +354,41 @@ test('Full and Limited override the WebCodecs colour range, Auto follows the str
     player.pushFrame(key);
     player.pushFrame(delta);
     player.setColourRange('full');
-    assert.equal(decoders.length, 2, 'a new decoder for the new colour space');
+    assert.deepEqual(requests, [1], 'a key frame request');
+    player.pushFrame(delta);
+    assert.equal(decoders.length, 1, 'until the key frame the decoder keeps the picture going');
+    assert.deepEqual(decoders[0].chunks.map((chunk) => chunk.type), ['key', 'delta', 'delta']);
+    player.pushFrame(key);
+    assert.equal(decoders.length, 2, 'the key frame gets a new decoder for the new colour space');
     assert.equal(decoders[0].state, 'closed');
     assert.deepEqual(decoders[1].configs[0].colorSpace, { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: true });
-    assert.deepEqual(requests, [2], 'with a key frame request');
-    player.pushFrame(delta);
-    assert.equal(decoders[1].chunks.length, 0, 'deltas wait for that key frame');
-    player.pushFrame(key);
     assert.deepEqual(decoders[1].chunks.map((chunk) => chunk.type), ['key']);
     player.setColourRange('auto');
+    player.pushFrame(key);
     assert.equal(decoders.length, 2, 'Auto is Full for this stream: the decoder stays');
-    assert.deepEqual(requests, [2], 'and nothing is asked of the phone');
+    assert.deepEqual(requests, [1], 'and nothing is asked of the phone');
+    // Two changes before a key frame arrives (the proxy passes one request a second): the
+    // picture goes on, and the next key frame applies the last choice.
     player.setColourRange('limited');
-    assert.equal(decoders[2].configs[0].colorSpace.fullRange, false);
+    player.pushFrame(delta);
     player.setColourRange('auto');
+    player.setColourRange('limited');
+    player.pushFrame(delta);
+    assert.equal(decoders.length, 2);
+    assert.deepEqual(decoders[1].chunks.map((chunk) => chunk.type), ['key', 'key', 'delta', 'delta']);
+    player.pushFrame(key);
+    assert.equal(decoders.length, 3, 'one new decoder');
+    assert.equal(decoders[2].configs[0].colorSpace.fullRange, false, 'with the last choice');
+    assert.deepEqual(requests, [1, 2, 2, 2], 'one request per change');
+    player.setColourRange('auto');
+    player.pushFrame(key);
     assert.equal(decoders[3].configs[0].colorSpace.fullRange, true, 'Auto: what the stream declares');
-    assert.deepEqual(requests, [2, 3, 4]);
+    assert.deepEqual(requests, [1, 2, 2, 2, 3]);
     player.stop();
     player.setColourRange('limited');
+    player.pushFrame(key);
     assert.equal(decoders.length, 4, 'a stopped player builds nothing');
-    assert.deepEqual(requests, [2, 3, 4]);
+    assert.deepEqual(requests, [1, 2, 2, 2, 3]);
 });
 
 // ---------------------------------------------------------------- MSE
@@ -563,6 +604,8 @@ test('a change of the colour range asks for one key frame and opens no socket, s
     const connections = t.mock.method(CoreDeviceReceiver.prototype, 'openNewConnection', () => undefined);
     const sent = [];
     t.mock.method(CoreDeviceReceiver.prototype, 'send', (message) => sent.push(message));
+    let up = true;
+    t.mock.method(CoreDeviceReceiver.prototype, 'isReady', () => up);
     MockDecoder.instances.length = 0;
     MockDecoder.isConfigSupported = async () => ({ supported: true });
     MockDecoder.throwOnColour = false;
@@ -579,10 +622,12 @@ test('a change of the colour range asks for one key frame and opens no socket, s
     const before = { connections: connections.mock.callCount(), children: client.videoWrapper.children.length };
     assert.ok(before.children > 0, 'the player is mounted');
 
+    client.onVideo(key);
     setColourRange('limited');
     assert.equal(colourRange.value, 'limited');
     assert.equal(storage.get('ws-scrcpy.iphone.colour-range'), 'limited', 'kept in this browser');
     assert.deepEqual(sent, [{ type: 'pli' }], 'one key frame request, and nothing else');
+    client.onVideo(key);
     assert.equal(MockDecoder.instances.at(-1).configs[0].colorSpace.fullRange, false);
     assert.equal(client.getPlayer(), player, 'the same player');
     assert.equal(connections.mock.callCount(), before.connections, 'no new socket');
@@ -590,7 +635,21 @@ test('a change of the colour range asks for one key frame and opens no socket, s
     assert.equal(container.children.length, 1, 'one phone view');
     setColourRange('auto');
     assert.deepEqual(sent, [{ type: 'pli' }, { type: 'pli' }]);
+    client.onVideo(key);
     assert.equal(MockDecoder.instances.at(-1).configs[0].colorSpace.fullRange, true);
+
+    // While the session is starting again or the socket is down nothing is sent; the next key
+    // frame, which a new session starts with, applies the choice.
+    up = false;
+    setColourRange('limited');
+    assert.deepEqual(sent, [{ type: 'pli' }, { type: 'pli' }], 'nothing is sent to a session that is not up');
+    client.onVideo(key);
+    assert.equal(MockDecoder.instances.at(-1).configs[0].colorSpace.fullRange, false);
+    setColourRange('auto');
+    up = true;
+    client.onVideo(key);
+    assert.equal(MockDecoder.instances.at(-1).configs[0].colorSpace.fullRange, true);
+    assert.equal(sent.length, 2);
 
     client.stop();
     stopped = true;
