@@ -14,7 +14,12 @@
 //   - the same messages on the stream socket with the switch on as with it off;
 //   - one stream socket and the same mount node through all of it, and off again from Settings
 //     takes the layer and its listeners away.
-// Without reduced motion a circle fades when its pointer is let go.
+// Without reduced motion a circle fades when its pointer is let go. In light only: a pointer held
+// while the window turns or gets smaller keeps its circle on its point of the picture; presses at
+// 956x440, 320x956 (bands above and below) and 1024x700 and beside Type text docked; the controls'
+// shield lies over a circle; Files takes the circles away. On a computer with a touch screen and a
+// mouse: the circles follow what each kind of phone takes (`TOUCH_RULES`), and go on a lost
+// window, a cancelled touch and a hidden page; the switch is also in the list card's Settings.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -48,6 +53,8 @@ const IOS = {
 };
 const TOUCH = { name: 'touch', width: 440, height: 956, mobile: true };
 const MOUSE = { name: 'mouse', width: 1440, height: 900, mobile: false };
+// A computer with a touch screen and a mouse, with Show touches already on in this browser.
+const BOTH = { name: 'touch and mouse', width: 1440, height: 900, mobile: false, touch: true, on: true };
 const MOUNT_EVENTS = ['mousedown', 'touchcancel', 'touchend', 'touchmove', 'touchstart'];
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -84,9 +91,18 @@ function input(test) {
 /** A phone's screen on the fixture server. `sent` is every message on its stream socket. */
 async function start(browser, platform, viewport, theme) {
     const context = await browser.newContext({
-        viewport: { width: viewport.width, height: viewport.height }, isMobile: viewport.mobile, hasTouch: viewport.mobile,
+        viewport: { width: viewport.width, height: viewport.height }, isMobile: viewport.mobile, hasTouch: viewport.mobile || !!viewport.touch,
         colorScheme: theme, reducedMotion: 'reduce', serviceWorkers: 'block',
     });
+    // Once for the tab: a change made later in the page is kept through a reload.
+    if (viewport.on) {
+        await context.addInitScript((key) => {
+            if (!sessionStorage.getItem(key)) {
+                sessionStorage.setItem(key, 'seeded');
+                localStorage.setItem(key, '1');
+            }
+        }, KEY);
+    }
     // A picture for the iPhone: the socket announces a codec and sends key frames, and this
     // decoder turns each into a frame of the phone's size.
     await context.addInitScript(({ width, height }) => {
@@ -113,7 +129,7 @@ async function start(browser, platform, viewport, theme) {
     }, VIDEO.ios);
     const page = await context.newPage();
     const cdp = await context.newCDPSession(page);
-    const test = { context, page, cdp, platform, mobile: viewport.mobile, label: `${platform} ${viewport.name} ${theme}`, errors: [], sent: [], streams: 0 };
+    const test = { context, page, cdp, platform, mobile: viewport.mobile, label: `${platform} ${viewport.name} ${theme}`, errors: [], sent: [], streams: 0, on: !!viewport.on };
     page.on('pageerror', (error) => test.errors.push(error.message));
     await page.route('**/api/notifications/**', (route) => route.fulfill({ json: { sources: [], unread: 0, unreadBySource: {} } }));
     await page.routeWebSocket('**', (socket) => {
@@ -372,6 +388,14 @@ async function mouseGestures(test) {
         () => expectMarks(test, [], 'both fingers let go'),
         () => keyboard.up('Control'),
     ]));
+    // A scroll on Android, a short swipe on an iPhone. It is not a pointer that is down, so no circle.
+    sent.push(await gesture(test, 'a wheel', [
+        () => move(one),
+        () => mouse.wheel(0, 120),
+        () => expectMarks(test, [], 'the wheel'),
+        // The iPhone's swipe takes five moves of 20 ms and a rest of 100 ms before it lifts.
+        () => pause(300),
+    ]));
     sent.push(await gesture(test, 'a right-click', [
         () => move(one),
         () => mouse.down({ button: 'right' }),
@@ -444,8 +468,8 @@ async function turn(test, on) {
     test.on = on;
 }
 
-/** The layer at rest: over the picture, takes no press, hidden from assistive technology, empty. */
-async function checkLayer(test) {
+/** The layer: over the picture, takes no press, hidden from assistive technology, with `circles` in it. */
+async function checkLayer(test, circles = 0) {
     const layer = await test.page.evaluate(() => {
         const node = document.querySelector('.touch-marks');
         const canvas = window.__showTouches.canvas;
@@ -465,7 +489,7 @@ async function checkLayer(test) {
     assert.equal(layer.hidden, 'true', `${test.label}: hidden from assistive technology`);
     assert.equal(layer.tabindex, null);
     assert.equal(layer.focusable, false, `${test.label}: never takes focus`);
-    assert.equal(layer.children, 0, `${test.label}: no circle at rest`);
+    assert.equal(layer.children, circles, `${test.label}: ${circles} circle(s) in the layer`);
     assert.equal(layer.stage, true, `${test.label}: on the stage, beside the mount node`);
     assert.ok(layer.offsets.every((offset) => Math.abs(offset) <= 1), `${test.label}: over the picture (${layer.offsets})`);
 }
@@ -529,6 +553,291 @@ async function pictures(test) {
     await style.evaluate((node) => node.remove());
 }
 
+/** Waits until the picture has its place after the window changed; the players lay out again after a wait of their own. */
+async function settled(page) {
+    let last = '';
+    for (let tries = 0; tries < 30; tries++) {
+        await pause(150);
+        const box = JSON.stringify(await picture(page));
+        if (box === last) return;
+        last = box;
+    }
+    throw new Error('The picture did not settle');
+}
+
+/** Where a point of the picture, as a share of its width and height, is on the page now. */
+async function sharePoint(page, share) {
+    const box = await picture(page);
+    return { x: box.left + share.fx * box.width, y: box.top + share.fy * box.height };
+}
+const shareOf = (box, point) => ({ fx: (point.x - box.left) / box.width, fy: (point.y - box.top) / box.height });
+
+/**
+ * What lies at a point, top first, among the picture, the layer, a circle and the controls'
+ * shield. The layer takes no press, so it is made to take them for this one look.
+ */
+function stackAt(page, point) {
+    return page.evaluate(({ x, y }) => {
+        const style = document.createElement('style');
+        style.textContent = '.touch-marks, .touch-mark { pointer-events: auto !important; }';
+        document.head.append(style);
+        const names = { 'touch-mark': 'circle', 'touch-marks': 'layer', 'touch-layer': 'picture', 'floating-toolbar-shield': 'shield' };
+        const stack = document.elementsFromPoint(x, y).flatMap((node) => Object.keys(names).filter((name) => node.classList.contains(name)).map((name) => names[name]));
+        style.remove();
+        return stack;
+    }, point);
+}
+
+/**
+ * Touch, light only: a finger held while the window turns, bands above and below the picture in a
+ * narrow window, and the controls' shield over a circle.
+ */
+async function touchPlaces(test) {
+    const { page, cdp } = test;
+    const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(({ x, y }, id) => ({ id: id + 1, x, y, force: 1 })) });
+    const sentBefore = test.sent.length;
+
+    // The window turns with a finger held: the phone keeps the touch where it was on the picture.
+    let box = await picture(page);
+    const held = at(box, 0.3, 0.4);
+    const share = shareOf(box, held);
+    await touch('touchStart', [held]);
+    await expectMarks(test, [held], 'a finger held');
+    await page.setViewportSize({ width: TOUCH.height, height: TOUCH.width });
+    await settled(page);
+    await expectMarks(test, [await sharePoint(page, share)], 'the window turned with the finger held: on the same point of the picture');
+    await checkLayer(test, 1);
+    await touch('touchEnd', []);
+    await expectMarks(test, [], 'let go after the turn');
+    box = await picture(page);
+    assert.ok(box.band > 8, `${test.label}: bands beside the picture in landscape (${box.band.toFixed(1)} px)`);
+    const landscape = at(box, 0.7, 0.3);
+    await landsOn(test, landscape, 'picture');
+    await touch('touchStart', [landscape]);
+    await expectMarks(test, [landscape], 'a finger in landscape');
+    await touch('touchEnd', []);
+    await landsOn(test, left(box, landscape.y), 'band');
+    await touch('touchStart', [left(box, landscape.y)]);
+    await expectMarks(test, [], 'a finger beside the picture in landscape');
+    await touch('touchEnd', []);
+
+    // A window narrower than the picture's shape: the bands are above and below it.
+    await page.setViewportSize({ width: 320, height: TOUCH.height });
+    await settled(page);
+    box = await picture(page);
+    const top = await page.evaluate(() => {
+        const canvas = window.__showTouches.canvas;
+        return canvas.getBoundingClientRect().top - canvas.parentElement.getBoundingClientRect().top;
+    });
+    assert.ok(top > 8 && box.band < 1, `${test.label}: bands above and below the picture (${top.toFixed(1)} px)`);
+    const above = { x: Math.round(box.left + box.width / 2), y: Math.round(box.top - top / 2) };
+    await landsOn(test, above, 'band');
+    await touch('touchStart', [above]);
+    await expectMarks(test, [], 'a finger above the picture');
+    await touch('touchEnd', []);
+    const narrow = at(box, 0.4, 0.1);
+    await touch('touchStart', [narrow]);
+    await expectMarks(test, [narrow], 'a finger near the top of the picture');
+    await touch('touchEnd', []);
+    await page.setViewportSize({ width: TOUCH.width, height: TOUCH.height });
+    await settled(page);
+
+    // The controls open over a held finger: their shield lies over the circle, the circle over the picture.
+    box = await picture(page);
+    const under = at(box, 0.5, 0.5);
+    await touch('touchStart', [under]);
+    await expectMarks(test, [under], 'a finger held before the controls open');
+    assert.deepEqual(await stackAt(page, under), ['circle', 'layer', 'picture'], `${test.label}: the circle lies over the picture`);
+    await page.locator('.floating-toolbar-fab').click();
+    await page.locator('.floating-toolbar.open').waitFor();
+    await settleMotion(page);
+    assert.deepEqual(await stackAt(page, under), ['shield', 'circle', 'layer', 'picture'], `${test.label}: the controls' shield lies over the circle`);
+    await page.keyboard.press('Escape');
+    await page.locator('.floating-toolbar.open').waitFor({ state: 'detached' });
+    await settleMotion(page);
+    await touch('touchEnd', []);
+    await expectMarks(test, [], 'let go after the controls closed');
+    assert.ok(test.sent.length > sentBefore, `${test.label}: the held fingers reached the phone`);
+}
+
+/**
+ * Mouse, light only: the button held while the window gets smaller, a press at 1024x700, and a
+ * press with Type text docked beside the picture.
+ */
+async function mousePlaces(test) {
+    const { page } = test;
+    let box = await picture(page);
+    const held = at(box, 0.35, 0.45);
+    const share = shareOf(box, held);
+    await page.mouse.move(held.x, held.y);
+    await page.mouse.down();
+    await expectMarks(test, [held], 'the button held');
+    await page.setViewportSize({ width: 1024, height: 700 });
+    await settled(page);
+    await expectMarks(test, [await sharePoint(page, share)], 'the window got smaller with the button held: on the same point of the picture');
+    await checkLayer(test, 1);
+    await page.mouse.up();
+    await expectMarks(test, [], 'let go after the resize');
+    box = await picture(page);
+    assert.ok(box.band > 8, `${test.label}: bands beside the picture at 1024x700 (${box.band.toFixed(1)} px)`);
+    const small = at(box, 0.65, 0.75);
+    await landsOn(test, small, 'picture');
+    await page.mouse.move(small.x, small.y);
+    await page.mouse.down();
+    await expectMarks(test, [small], 'a press at 1024x700');
+    await page.mouse.up();
+    await page.setViewportSize({ width: MOUSE.width, height: MOUSE.height });
+    await settled(page);
+
+    // Type text stands beside the picture and leaves it in use.
+    await page.locator('.control-buttons-list [title="Type text"]').click();
+    await page.locator('.stream-stage[data-sheet-docked]').waitFor();
+    await settleMotion(page);
+    await settled(page);
+    await checkLayer(test);
+    box = await picture(page);
+    const docked = at(box, 0.6, 0.4);
+    await landsOn(test, docked, 'picture');
+    await page.mouse.move(docked.x, docked.y);
+    await page.mouse.down();
+    await expectMarks(test, [docked], 'a press with Type text docked');
+    await page.mouse.up();
+    await expectMarks(test, [], 'let go with Type text docked');
+    await page.getByRole('button', { name: 'Close Type text', exact: true }).click();
+    await page.locator('.stream-stage[data-sheet-docked]').waitFor({ state: 'detached' });
+    await settleMotion(page);
+    await settled(page);
+}
+
+/**
+ * A computer with a touch screen and a mouse, where the two kinds of phone take different
+ * pointers (`TOUCH_RULES` in src/app/input/touchMarks.ts): a circle for each pointer the phone
+ * gets and none for one it does not. Then a lost window, a cancelled touch and a hidden page,
+ * and the switch in the Settings of the list's card.
+ */
+async function rulesRun(browser, platform) {
+    const test = await start(browser, platform, BOTH, 'light');
+    const { page, cdp } = test;
+    const android = platform === 'android';
+    const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(({ x, y }, id) => ({ id: id + 1, x, y, force: 1 })) });
+    try {
+        await page.locator('.touch-marks').waitFor({ state: 'attached' });
+        await checkLayer(test);
+        const box = await picture(page);
+        const fingers = [0.2, 0.35, 0.5, 0.65, 0.8, 0.5].map((fx, index) => at(box, fx, 0.15 + index * 0.13));
+        const mouse = at(box, 0.3, 0.3);
+        const finger = at(box, 0.7, 0.7);
+        const moved = at(box, 0.6, 0.6);
+
+        // Six fingers: an iPhone takes five.
+        let before = test.sent.length;
+        await touch('touchStart', fingers);
+        await expectMarks(test, android ? fingers : fingers.slice(0, 5), 'six fingers');
+        if (!android) {
+            await pause(100);
+            const frames = input({ ...test, sent: test.sent.slice(before) }).filter((message) => message.includes('"touch-frame"'));
+            assert.equal(JSON.parse(frames.at(-1)).contacts.filter((contact) => contact.touching).length, 5, `${test.label}: the phone has five fingers`);
+        }
+        await touch('touchEnd', []);
+        await expectMarks(test, [], 'six fingers let go');
+
+        // A finger while the button is held: an iPhone takes the one that came first.
+        await page.mouse.move(mouse.x, mouse.y);
+        await page.mouse.down();
+        await expectMarks(test, [mouse], 'the button held');
+        before = test.sent.length;
+        await touch('touchStart', [finger]);
+        await expectMarks(test, android ? [mouse, finger] : [mouse], 'a finger with the button held');
+        if (!android) {
+            await pause(100);
+            assert.ok(!input({ ...test, sent: test.sent.slice(before) }).some((message) => message.includes('"touch-frame"')), `${test.label}: the finger did not reach the phone`);
+        }
+        await touch('touchEnd', []);
+        await page.mouse.up();
+        await expectMarks(test, [], 'both let go');
+
+        // A press of the button while a finger is down.
+        await touch('touchStart', [finger]);
+        await page.mouse.move(mouse.x, mouse.y);
+        await page.mouse.down();
+        await expectMarks(test, android ? [finger, mouse] : [finger], 'a press with a finger down');
+        await page.mouse.up();
+        await touch('touchEnd', []);
+        await expectMarks(test, [], 'both let go');
+
+        // The window loses focus with a finger down: the input lets go. When the finger moves on,
+        // Android puts it down again and an iPhone does not.
+        await touch('touchStart', [finger]);
+        await expectMarks(test, [finger], 'a finger');
+        await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+        await expectMarks(test, [], 'the window lost focus');
+        await touch('touchMove', [moved]);
+        await expectMarks(test, android ? [moved] : [], 'the finger moved on after the window lost focus');
+        await touch('touchEnd', []);
+        await expectMarks(test, [], 'let go');
+
+        // A touch the browser cancels.
+        await touch('touchStart', [finger]);
+        await expectMarks(test, [finger], 'a finger');
+        await touch('touchCancel', []);
+        await expectMarks(test, [], 'the touch cancelled');
+
+        assert.equal(test.streams, 1, `${test.label}: one stream socket`);
+        assert.deepEqual(test.errors, [], `${test.label}: no page error`);
+
+        // The page is hidden with a finger down.
+        await touch('touchStart', [finger]);
+        await expectMarks(test, [finger], 'a finger');
+        await page.evaluate(() => {
+            Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+        await expectMarks(test, [], 'the page hidden');
+        await page.evaluate(() => {
+            delete document.visibilityState;
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+        await touch('touchEnd', []);
+
+        // The list's card: the same switch in Settings, turned off there.
+        await page.goto(`${BASE}#!`);
+        const settings = page.getByRole('button', { name: `Settings for ${android ? 'Google Pixel 9' : IOS.name}`, exact: true });
+        await settings.click();
+        const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+        await dialog.waitFor();
+        await settleMotion(page);
+        const group = dialog.locator('[data-section="keyboard"] section.kit-group.settings-touches');
+        await group.scrollIntoViewIfNeeded();
+        assert.equal(await group.locator('.kit-group-hint').textContent(), HINT);
+        const toggle = group.getByRole('switch', { name: 'Show touches', exact: true });
+        assert.equal(await toggle.isChecked(), true, `${test.label}: on in the list's Settings`);
+        await toggle.click();
+        assert.equal(await page.evaluate((key) => localStorage.getItem(key), KEY), null, `${test.label}: off from the list's card`);
+        await page.getByRole('button', { name: 'Close Settings', exact: true }).click();
+        await page.locator('dialog.kit-sheet[open]').waitFor({ state: 'detached' });
+        await page.goto(`${BASE}#!action=device&udid=${android ? PIXEL : IPHONE}&view=screen`);
+        await page.waitForFunction(() => document.querySelector('.stream-mount canvas.touch-layer')?.hasAttribute('width'));
+        assert.equal(await page.locator('.touch-marks').count(), 0, `${test.label}: off on the screen too`);
+        assert.deepEqual(test.errors, [], `${test.label}: no page error`);
+        console.log(`PASS ${test.label}: circles for the pointers the phone gets, none after a lost window, a cancel or a hidden page; the switch on the list's card`);
+    } finally {
+        await test.context.close();
+    }
+}
+
+/** Android, touch: a tab change to Files with a finger down takes the screen and its circles away. */
+async function toFiles(test) {
+    const { page, cdp } = test;
+    const box = await picture(page);
+    const point = at(box, 0.5, 0.5);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, ...point, force: 1 }] });
+    await expectMarks(test, [point], 'a finger before Files');
+    await page.locator('.kit-tab', { hasText: 'Files' }).click();
+    await page.locator('.stream-mount').waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.touch-mark, .touch-marks').count(), 0, `${test.label}: no circle on Files`);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+}
+
 async function run(browser, platform, viewport, theme) {
     const test = await start(browser, platform, viewport, theme);
     const { page } = test;
@@ -546,12 +855,16 @@ async function run(browser, platform, viewport, theme) {
         assert.deepEqual(await mountListeners(test), MOUNT_EVENTS, `${test.label}: the layer listens on the mount node, once each`);
         const on = await gestures(test);
         for (const [index, [name, messages]] of on.entries()) {
-            assert.ok(name !== 'a press and a drag' || messages.length > 0, `${test.label}: ${name} reaches the phone`);
+            assert.ok(!['a press and a drag', 'a wheel', 'a Ctrl+drag pinch'].includes(name) || messages.length > 0, `${test.label}: ${name} reaches the phone`);
             assert.deepEqual(messages, off[index][1], `${test.label}: ${name} sends the same with the switch on as off`);
         }
         await checkLayer(test);
         await fades(test);
         await pictures(test);
+        if (theme === 'light') {
+            await (viewport.mobile ? touchPlaces : mousePlaces)(test);
+            await checkLayer(test);
+        }
 
         await turn(test, false);
         assert.deepEqual(await mountListeners(test), [], `${test.label}: off again, nothing listens`);
@@ -565,6 +878,10 @@ async function run(browser, platform, viewport, theme) {
             `${test.label}: the same mount node and picture throughout`,
         );
         assert.deepEqual(test.errors, [], `${test.label}: no page error`);
+        if (platform === 'android' && viewport.mobile && theme === 'light') {
+            await turn(test, true);
+            await toFiles(test);
+        }
         console.log(`PASS ${test.label}: off by default, on from Settings, circles under ${viewport.mobile ? 'fingers' : 'the mouse'}, none beside the picture or after release, same messages, one stream`);
     } finally {
         await test.context.close();
@@ -578,6 +895,7 @@ async function run(browser, platform, viewport, theme) {
             for (const viewport of [TOUCH, MOUSE]) {
                 for (const theme of ['light', 'dark']) await run(browser, platform, viewport, theme);
             }
+            await rulesRun(browser, platform);
         }
     } finally {
         await browser.close();
