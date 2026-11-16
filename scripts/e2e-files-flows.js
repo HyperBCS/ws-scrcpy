@@ -1358,6 +1358,16 @@ async function landscapeLayout(browser) {
     await page.locator('.files-menu').waitFor({ state: 'hidden' });
     await page.locator('.fx-selection-bar').getByRole('button', { name: 'Close selection', exact: true }).click();
     await finish();
+
+    // A short mouse window as narrow as a phone keeps the layout it had: the address on a line of
+    // its own, above history and the tools.
+    const mouse = await start(browser, { width: 650, height: 480, touch: false }, ROOT, 'light');
+    const explorer = await mouse.page.locator('.file-explorer').boundingBox();
+    const bar = await mouse.page.locator('.fx-address').boundingBox();
+    const history = await mouse.page.locator('.fx-history').boundingBox();
+    assert(bar.width >= explorer.width - 16, `a short mouse window: the address takes a whole line (${bar.width} of ${explorer.width})`);
+    assert(history.y >= bar.y + bar.height, 'a short mouse window: history is under the address');
+    await mouse.finish();
 }
 
 // A touch screen from 1024px keeps the desktop layout, with quick access rows of 44px also when

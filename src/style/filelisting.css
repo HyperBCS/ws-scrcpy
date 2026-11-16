@@ -996,8 +996,9 @@
         flex: 1 1 100%;
     }
     /* A phone in landscape has width to spare and no height: history (or the selection bar),
-       the address bar and the two tools share one line. The filter field keeps its own line. */
-    @media (orientation: landscape) and (max-height: 560px) {
+       the address bar and the two tools share one line. The filter field keeps its own line.
+       Only under a finger: a short mouse window keeps the address on a line of its own. */
+    @media (hover: none) and (pointer: coarse) and (orientation: landscape) and (max-height: 560px) {
         .fx-address {
             order: 2;
             flex: 1 1 0;
