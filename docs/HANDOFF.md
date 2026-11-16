@@ -6451,3 +6451,116 @@ removed.
 - Show touches: the dot under a finger on a light and on a dark screen, on the iPhone and the
   POCO; a pinch shows two.
 - Files on a desktop: hover, Tab focus and press on a crumb and on the edit button; a long path.
+
+### Step 8 deployment (2026-11-16)
+
+Head `85bcb6c` plus this section. Client only:
+`git diff --stat 090eb83 85bcb6c -- src/server src/common src/public python config Dockerfile docker-compose.yml webpack`
+lists only `src/public/index.html`, `src/public/theme.js` and `webpack/ws-scrcpy.common.ts`.
+
+Before (20:21 UTC): image `6c090b25102d`, started 2026-11-16T16:54:18Z, healthy, 0 restarts.
+Named unlock fields: enabled, time 03:00, lastRun unlocked at 2026-11-16T17:09:22Z (a manual
+unlock: "manual unlocked in 9493 ms" in the log), lastTypedUnlockAt and lastUnlockedAt
+17:09:31Z, lastSlotAt 15:00Z, a passcode stored. No screen session ran in the live container,
+and none was seen in a check every 20 s from 20:24:40 to 20:30:41.
+
+Phone health (host venv, one-shot commands, 20:21 to 20:22 UTC): iOS 27.2.1 (24B156) as at the
+last run, the developer image mounted at /System/Developer, `list-processes` answered,
+`sessions: []`.
+
+Test server (port 8010, built with `{"INCLUDE_GOOG": false}`, data in `data/test`,
+`WS_SCRCPY_DEBUG=1`): the server bundle had none of `WebsocketProxyOverAdb`, `RemoteShell`,
+`FileListing`; `dist/public/index.html` names `theme.js?<hash>` before `main.css`. 200 on `/` and
+on `/theme.js` (`application/javascript`), 403 for `evil.example`, no serve-web at start. One
+iPhone screen session at 1280x800 in headless Chromium, system colour scheme light:
+
+- The list: the bar holds Notifications, Theme and Reload in that order. Theme opened with
+  System, Light and Dark as radio items, System checked. Dark: the root got `data-theme="dark"`,
+  the page background `rgb(23, 25, 29)` (#17191d), `dark` stored; no socket to a phone opened.
+  Escape closed the menu.
+- Opened from the card at 20:30:58. serve-web (PID 25408) started at 20:31:00, the only one.
+  Bytes on the one `proxy-coredevice` socket: 1.1 MB at 20:31:03, 78.2 MB at the end. The header
+  said "No picture" and the stage "This browser cannot show the stream" (no HEVC decoder); the
+  banner "Phone locked" with Unlock, which was not pressed.
+- Rail: Home, Siri, Lock, Volume down, Mute phone, Volume up, Listen, Take screenshot, Type text,
+  Actions, Settings. Each caption on one line, every tile 56 px high.
+- Theme with the stream open (20:31:04 to 20:31:19): the system scheme to dark and back to light
+  (Dark stayed), `light` written from a second page of the context (the page turned light), the
+  key removed from that page (no `data-theme`). After each: one stream socket, bytes kept
+  arriving, the same mount node, no new serve-web.
+- Settings from the rail: Sound, Keyboard, Unlock, About and troubleshooting. Keyboard has the
+  groups "Keyboard shortcuts" and "Touch"; Show touches was off. On: one `.touch-marks`, one
+  stream socket, the same mount node. Off: no `.touch-marks`. The picture was not pressed.
+- Actions (Clipboard, Screen, Lock, Power) opened and closed.
+- Two idle minutes: one socket, 12.3 MB to 78.2 MB.
+- Left by the header at 20:33:23. The card showed "In use" until 20:33:38 (15 s), then not.
+  serve-web logged `shutdown complete` at 20:33:38; no SIGKILL. Back once, then 20 s: no phone
+  screen, no new socket. No page or console error. One serve-web start in the log.
+
+`sessions: []` at 20:34:16 and 20:34:47. The test server was stopped with SIGTERM by PID at
+20:34:48 and exited in about 2 s; `build.config.override.json` restored to `{}`, the normal dist
+rebuilt, nothing listening on 8010.
+
+Deploy: `docker tag ws-scrcpy:latest ws-scrcpy:before-step8-20261116` (image `6c090b25102d`),
+`docker compose build ws-scrcpy` (new image `0bb876fcfa1f`; `package.json` changed, so `npm ci`
+and the image's venv ran again: pymobiledevice3 11.44.0 as pinned, the four venv patches
+applied), `docker compose up -d ws-scrcpy` at 20:36:26 UTC with no screen session in the
+container, not near an unlock slot.
+
+After: container started 20:36:26, healthy, 0 restarts, `node index.js` as uid 1000, no error
+line in the log; 200 on 127.0.0.1:8000, on 10.10.10.5:8000 and for Host
+`mini-nuc.tailea1801.ts.net`, 403 for `evil.example`; `/theme.js` 200 and named before
+`main.css`; no serve-web; the named unlock fields the same as before, straight after and at
+20:42:26, when the container was still healthy with 0 restarts and no serve-web.
+
+Notifications (read only, 90 s after the restart): "Receiving notifications", Bluetooth
+connected, no error, no collector error, 0 collector restarts. BlueZ shows `Notifying: true` on
+Notification Source and Data Source.
+
+Look-only pass on the live server (Android, fresh browser contexts, nothing typed or saved on
+the server, no press on the picture; the theme and Show touches are kept in the test browser):
+- Mouse, 1280x800, system light: both phones listed; the bar holds Notifications, Theme and
+  Reload in one row, each 44x44. Theme: System checked; Dark made the list dark
+  (`data-theme="dark"`, #17191d); after a reload the root and the body were already dark at
+  `domcontentloaded` and in the first frame; Light under an emulated dark system gave the light
+  list (#f5f6f8); System then followed the dark system with no attribute, and the light system
+  after it.
+- With Dark chosen, the POCO's screen: Connected, tabs Screen, Files, Shell, one stream socket;
+  the stage "Screen is asleep" with Wake (not pressed); the rail in the Android order. The
+  system scheme to dark, then `light` written from a second page: the page turned light, still
+  one stream socket and the same mount node. The screen page's own background is
+  `rgb(236, 238, 242)` in light and `rgb(42, 46, 54)` in dark, on the test server as well.
+- Settings from the rail: Stream, Sound, Keyboard, Unlock, About and troubleshooting; "Touch"
+  with Show touches in Keyboard. On: one `.touch-marks`, the same mount node, one socket. Off.
+- Files under a mouse at /data/local/tmp, light and then dark: the field is 1054x32. Hovered,
+  the root, "local", "tmp" and the edit button each fill a box 24 px high, 4 px below the
+  field's top and 4 px above its bottom (root 15.8 px wide, "local" 47.1, "tmp" 31.5, the edit
+  button 24x24 4 px from the field's end). No name or icon moved between rest and hover. The
+  fill is `rgb(236, 238, 242)` in light and `rgb(42, 46, 54)` in dark. Nothing was pressed; the
+  path editor stayed closed.
+- Shell connected; nothing typed. Screen again: one new stream socket.
+- Notifications in dark: "iPhone · Connected · 99+ unread", 20 cards. The red banner "Could not
+  check notifications on this device" is the test browser's own (service workers blocked).
+- Back to the list, then Back once: no stream socket. No page or console error.
+- Touch, 440x956, light: the bar is one row, Notifications, Theme and Reload each 44x44 inside
+  it, no sideways scroll. Theme opened (System checked) and closed; no stream socket. Files at
+  /data/local/tmp: the field is 424x44; the crumbs are 44 px high, "/" 44 px wide, and each
+  reaches to the middle of the slash beside it ("data" ends at 105.6 and "local" starts at
+  105.7, the first slash's middle 105.6; "local" ends and "tmp" starts at 167.8, the second
+  slash's middle). In Downloads a tap on a file opened the sheet with Download, Rename, Delete
+  and Cancel; Cancel closed it. Nothing was downloaded, renamed or deleted.
+- The log shows "No viewers left. Stopping the stream service" at 20:39:31, 30 s after the last
+  stream socket closed. No page or console error.
+
+Seen on the way: the hint under Show touches still reads "A circle where you touch the
+picture" while the mark is now a dot (`src/app/views/settings/KeyboardSection.tsx`). The live
+log has a `DEP0180` warning (`fs.Stats constructor is deprecated`) when Files opened; it is a
+warning, not an error.
+
+Not checked: the iPhone's picture (headless Chromium cannot decode it), the theme on a real
+phone and in the installed app (status bar colour, the first paint after a cold start), Show
+touches under a real finger or pointer, Tab focus and press in the Files address on the live
+server (hover only), Safari and Firefox, the iPhone's screen on the live server.
+
+Rollback, for a break only: `docker tag ws-scrcpy:before-step8-20261116 ws-scrcpy:latest` and
+`docker compose up -d ws-scrcpy`. Reload each browser tab and reopen the installed app once.
