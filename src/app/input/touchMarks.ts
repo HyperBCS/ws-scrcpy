@@ -1,14 +1,14 @@
 import type { SizeInterface } from '../Size';
-import { clientPointToVideo, ClientBox, VideoPoint } from './pointMapper';
+import { ClientBox, VideoPoint } from './pointMapper';
 
 /**
  * Where the Show touches layer (`views/screen/TouchMarks.tsx`) draws the circle of a pointer.
  * Pure, so `scripts/test-show-touches.js` checks it directly.
  *
- * The circle is where the phone receives the touch: the page point goes through the input's own
- * mapping (`clientPointToVideo`), clamped onto the picture like the input, and the point on the
- * picture is turned back into a place on the page. The layer's box can be anywhere; the place is
- * given from its top left corner.
+ * The circle is where the phone receives the touch: the layer maps the page point with the
+ * input's own mapping (`clientPointToVideo`), clamped onto the picture like the input, keeps that
+ * point of the picture, and turns it back into a place on the page with `videoPointToLayer`. The
+ * layer's box can be anywhere; the place is given from its top left corner.
  */
 
 /** A place on the layer, in CSS pixels from its top left corner. */
@@ -48,20 +48,4 @@ export function videoPointToLayer(
         x: picture.left + (point.x / videoSize.width) * picture.width - layer.left,
         y: picture.top + (point.y / videoSize.height) * picture.height - layer.top,
     };
-}
-
-/**
- * Where the circle of a pointer at a page point goes on the layer: the point the input sends to
- * the phone, so a pointer beside the picture puts it on the nearest edge. `undefined` when the
- * input has no point either.
- */
-export function markPoint(
-    clientX: number,
-    clientY: number,
-    box: ClientBox,
-    videoSize: SizeInterface,
-    layer: { left: number; top: number },
-): LayerPoint | undefined {
-    const point = clientPointToVideo(clientX, clientY, box, videoSize);
-    return point && videoPointToLayer(point, box, videoSize, layer);
 }

@@ -65,7 +65,13 @@ global.TouchEvent = class TouchEvent {
 };
 
 const { clientPointToVideo } = require('../src/app/input/pointMapper');
-const { markPoint, videoPointToLayer } = require('../src/app/input/touchMarks');
+const { videoPointToLayer } = require('../src/app/input/touchMarks');
+
+/** Where the layer puts the circle of a pointer at a page point: the two steps of its `place`. */
+function markPoint(clientX, clientY, box, video, layer) {
+    const point = clientPointToVideo(clientX, clientY, box, video);
+    return point && videoPointToLayer(point, box, video, layer);
+}
 const Size = require('../src/app/Size').default;
 const Rect = require('../src/app/Rect').default;
 const ScreenInfo = require('../src/app/ScreenInfo').default;
@@ -299,3 +305,4 @@ test('the pinch sends the same with a watcher as without one, even one that fail
         console.error = errors;
     }
 });
+
