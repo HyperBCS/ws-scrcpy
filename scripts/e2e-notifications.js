@@ -1595,8 +1595,9 @@ async function stickyBarsReachScrollTop(browser) {
                 getComputedStyle(document.querySelector('main.notifications-page')).paddingTop,
                 getComputedStyle(document.querySelector('.notification-page-header')).paddingTop,
             ]);
-            // In the inbox the sticky bar's own padding is the space under the page's bar on a phone.
-            assert.deepEqual(padding, ['0px', width <= 420 ? '0px' : '12px'], `the block at the top of the page, not the scroller, carries the top padding at ${width} px`);
+            // In the inbox the sticky bar's own padding is the space under the page's bar: all of
+            // it on a phone, and 8 of the 12 px from 600 px.
+            assert.deepEqual(padding, ['0px', width <= 420 ? '0px' : '4px'], `the block at the top of the page, not the scroller, carries the top padding at ${width} px`);
             const tools = await measureSticky(f.page, '.notification-history-tools');
             if (width === 390) {
                 await fs.mkdir(OUT, { recursive: true });
@@ -2204,7 +2205,8 @@ async function sharedHeader(browser) {
             assert.deepEqual(row.map(item => item.name), ['Phones', 'NotificationsPhone A · Connected · 60 unread', 'Switch iPhone', 'Search', 'Setup']);
             assert.ok(row.every(item => item.top >= 0 && item.bottom <= 61 && item.top < row[0].bottom), `one row at ${width} px: ${JSON.stringify(row)}`);
             const firstCard = await article(page, 'Message 1').evaluate(el => el.getBoundingClientRect().top);
-            if (width === 390) assert.ok(firstCard <= 130, `the first notification starts within 130 px of the top (${firstCard})`);
+            // The bar, 8 px, the filter row, 8 px and the day label: 16 px lower than at f734c43.
+            if (width === 390) assert.ok(firstCard <= 146, `the first notification starts within 146 px of the top (${firstCard})`);
             // The header stays in place and the page scrolls under it.
             await page.locator('main').evaluate(el => { el.scrollTop = 900; });
             const bar = await header.boundingBox();

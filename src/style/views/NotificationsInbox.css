@@ -14,7 +14,8 @@
 }
 
 /* Search (opened from the page's bar), filters and the actions of the list. The bar stays at the
-   top while the list scrolls. Under it the first notification is as far as the next one. */
+   top while the list scrolls. Its padding keeps 8 px under the page's bar, at rest and while it
+   is stuck, and 8 px over the first day label; its background covers the cards under it. */
 .notification-history-tools {
     position: sticky;
     top: 0;
@@ -23,7 +24,7 @@
     flex-direction: column;
     gap: var(--space-8);
     margin-bottom: 0;
-    padding: 0;
+    padding: var(--space-8) 0;
     background: var(--surface);
 }
 .notification-search,
