@@ -171,7 +171,8 @@ interface MenuProps {
 
 /**
  * The one menu. Render it next to its button and keep `open` in the caller; the button toggles
- * it. Choosing a `MenuItem` closes the menu; a checked item leaves it open.
+ * it. Choosing a `MenuItem` closes the menu, a radio item too: the choice is made. An item that
+ * is on or off leaves it open, so several can be changed in one visit.
  */
 export function Menu({ open, onClose, anchor, label, compact, children }: MenuProps) {
     const { ref, present } = usePresence<HTMLDivElement>(open, 'popover');
@@ -199,7 +200,10 @@ export function Menu({ open, onClose, anchor, label, compact, children }: MenuPr
             tabIndex={-1}
             data-exiting={!open || undefined}
             onClick={(event) => {
-                const item = event.target instanceof Element ? event.target.closest('[role="menuitem"]') : null;
+                const item =
+                    event.target instanceof Element
+                        ? event.target.closest('[role="menuitem"], [role="menuitemradio"]')
+                        : null;
                 if (item && !item.matches(':disabled')) {
                     onClose();
                 }
@@ -214,7 +218,10 @@ interface MenuItemProps {
     onSelect: () => void;
     /** A setting that is on or off. The item shows a check and the menu stays open. */
     checked?: boolean;
-    /** With `checked`: one choice of a set, of which one is checked (`menuitemradio`). */
+    /**
+     * With `checked`: one choice of a set, of which one is checked (`menuitemradio`). Choosing it
+     * closes the menu.
+     */
     radio?: boolean;
     /** An action that removes something. */
     danger?: boolean;

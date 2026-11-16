@@ -3,7 +3,7 @@
 // 1440x900 with a mouse:
 //   - Theme in the bar of the Phones page, after the bell and before Reload, opens the kit's menu
 //     with System, Light and Dark as radio items, the one in use checked; a choice applies at
-//     once, is kept in this browser, and the menu stays open;
+//     once, is kept in this browser, and closes the menu with the focus back on Theme;
 //   - Dark chosen under a light system gives the Phones page, a phone's Settings sheet, Files and
 //     the Notifications inbox the same computed styles as System under a dark system, and Light
 //     under a dark system the same as System under a light one (every element and its ::before
@@ -266,7 +266,7 @@ async function choose(test, name) {
     await press(test, themeMenu(page).getByRole('menuitemradio', { name, exact: true }));
 }
 
-/** The bar's Theme button and its menu; each choice at once, kept, and the menu open after it. */
+/** The bar's Theme button and its menu; each choice at once, kept, and the menu closed after it. */
 async function menu(browser, viewport) {
     const test = await start(browser, viewport, 'light');
     const { page } = test;
@@ -299,11 +299,17 @@ async function menu(browser, viewport) {
 
         for (const [name, theme, scheme] of [['Dark', 'dark', 'dark'], ['Light', 'light', 'light'], ['System', null, 'light']]) {
             await choose(test, name);
+            // One of a set is chosen: the menu goes, as after any plain item.
+            await list.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => assert.fail(`${test.label}: the menu closes after ${name}`));
             await settleMotion(page);
             await expectLooks(page, scheme, theme, `${test.label}: ${name} at once`);
             assert.equal(await page.evaluate((key) => localStorage.getItem(key), KEY), theme, `${test.label}: ${name} kept in this browser`);
-            assert.equal(await list.isVisible(), true, `${test.label}: the menu stays open after ${name}`);
-            assert.deepEqual(await items(page), expectedItems(name), `${test.label}: ${name} checked`);
+            assert.equal(await button.getAttribute('aria-expanded'), 'false', `${test.label}: Theme is not expanded after ${name}`);
+            assert.equal(await button.evaluate((element) => element === document.activeElement), true, `${test.label}: ${name} returns focus to Theme`);
+            await press(test, button);
+            await list.waitFor();
+            await settleMotion(page);
+            assert.deepEqual(await items(page), expectedItems(name), `${test.label}: ${name} checked when the menu opens again`);
             if (OUT && name === 'Dark') await page.screenshot({ path: path.join(OUT, `theme-menu-${viewport.name}-dark.png`) });
         }
         await page.keyboard.press('Escape');
@@ -311,7 +317,7 @@ async function menu(browser, viewport) {
         assert.equal(await button.getAttribute('aria-expanded'), 'false');
         assert.equal(await button.evaluate((element) => element === document.activeElement), true, `${test.label}: Escape returns focus to Theme`);
         assert.deepEqual(test.errors, []);
-        console.log(`PASS ${test.label}: Theme in the bar, its menu, and each choice at once and kept`);
+        console.log(`PASS ${test.label}: Theme in the bar, its menu, and each choice at once, kept, and closing the menu`);
     } finally {
         await test.context.close();
     }
@@ -526,8 +532,12 @@ async function blockedStorage(browser, viewport) {
             await expectLooks(page, system, null, `${test.label}: storage blocked follows the system`);
             await choose(test, other(system) === 'dark' ? 'Dark' : 'Light');
             await expectLooks(page, other(system), other(system), `${test.label}: a choice applies to this page`);
+            await themeMenu(page).waitFor({ state: 'hidden' });
+            await press(test, themeButton(page));
+            await themeMenu(page).waitFor();
             assert.deepEqual(await items(page), expectedItems(other(system) === 'dark' ? 'Dark' : 'Light'));
             await page.keyboard.press('Escape');
+            await themeMenu(page).waitFor({ state: 'hidden' });
             await page.reload();
             await card(page, `android:${PIXEL}`).waitFor();
             await expectLooks(page, system, null, `${test.label}: and is not kept`);
