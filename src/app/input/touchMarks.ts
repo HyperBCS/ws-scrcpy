@@ -1,9 +1,10 @@
 import type { SizeInterface } from '../Size';
+import type { Platform } from '../state/routes';
 import { ClientBox, VideoPoint } from './pointMapper';
 
 /**
- * Where the Show touches layer (`views/screen/TouchMarks.tsx`) draws the circle of a pointer.
- * Pure, so `scripts/test-show-touches.js` checks it directly.
+ * Where the Show touches layer (`views/screen/TouchMarks.tsx`) draws the circle of a pointer, and
+ * which pointers it draws. Pure, so `scripts/test-show-touches.js` checks it directly.
  *
  * The circle is where the phone receives the touch: the layer maps the page point with the
  * input's own mapping (`clientPointToVideo`), clamped onto the picture like the input, keeps that
@@ -16,6 +17,33 @@ export interface LayerPoint {
     x: number;
     y: number;
 }
+
+/**
+ * Where the input of the two kinds of phone differs in what it takes as a touch. The layer
+ * follows these, so it draws a circle exactly while the phone has the touch.
+ */
+export interface TouchRules {
+    /** The most fingers the phone has at once. A finger past them gets nothing. */
+    fingers: number;
+    /** Fingers and a held mouse button at the same time. Without it, whichever came first wins. */
+    fingersWithMouse: boolean;
+    /**
+     * A finger that moves on the picture while the phone has no touch of it puts one down: a press
+     * that began before there was a picture, or one held while the input let everything go.
+     */
+    moveStartsTouch: boolean;
+}
+
+/** `scripts/test-show-touches.js` drives each handler against this table. */
+export const TOUCH_RULES: Readonly<Record<Platform, Readonly<TouchRules>>> = {
+    // interactionHandler/InteractionHandler.ts `formatTouchEvent`: every finger, also with the
+    // mouse, and a move without a down is sent with one.
+    android: { fingers: Infinity, fingersWithMouse: true, moveStartsTouch: true },
+    // applDevice/CoreDeviceInteractionHandler.ts `onTouch` and `onMouse`: a contact frame carries
+    // five fingers, a finger is not sent while the button is held nor a press while a finger is
+    // down, and a finger only goes down where it starts or where it reaches the picture.
+    ios: { fingers: 5, fingersWithMouse: false, moveStartsTouch: false },
+};
 
 /** The picture inside the touch layer's box: centred, with the video's own shape. */
 function pictureIn(box: ClientBox, videoSize: SizeInterface): ClientBox {

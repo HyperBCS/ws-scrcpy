@@ -2,8 +2,9 @@ import { RefObject } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import type { SizeInterface } from '../../Size';
 import { ClientBox, clientPointToVideo, elementBox, isInside, VideoPoint } from '../../input/pointMapper';
-import { videoPointToLayer } from '../../input/touchMarks';
+import { TOUCH_RULES, TouchRules, videoPointToLayer } from '../../input/touchMarks';
 import { InteractionHandler } from '../../interactionHandler/InteractionHandler';
+import type { Platform } from '../../state/routes';
 import { showTouches } from '../../state/showTouches';
 import { animate, finished, MOTION } from '../../ui/motion';
 import '../../../style/views/TouchMarks.css';
@@ -41,7 +42,8 @@ interface Mark {
  * them: a touch counts from where it starts on the picture, or from where it first reaches the
  * picture when it starts on the bands beside it; the mouse counts from a left press on the picture
  * until that button comes up, wherever the pointer goes meanwhile; a lost window or a hidden page
- * lets everything go. Each point goes through the input's own mapping (`input/touchMarks.ts`). The second finger of a Ctrl+drag pinch
+ * lets everything go. Where the two kinds of phone differ, `TOUCH_RULES` says how. Each point goes
+ * through the input's own mapping (`input/touchMarks.ts`). The second finger of a Ctrl+drag pinch
  * comes from the pinch code (`InteractionHandler.watchPinch`).
  */
 class TouchMarkLayer {
@@ -58,6 +60,7 @@ class TouchMarkLayer {
     constructor(
         private readonly layer: HTMLElement,
         private readonly mount: HTMLElement,
+        private readonly rules: TouchRules,
     ) {
         TOUCH_EVENTS.forEach((type) => mount.addEventListener(type, this.onTouch, LISTEN));
         mount.addEventListener('mousedown', this.onMouseDown, LISTEN);
@@ -82,9 +85,22 @@ class TouchMarkLayer {
         };
     }
 
+    /** The fingers the phone has now. */
+    private fingers(): number {
+        let count = 0;
+        this.marks.forEach((_, key) => {
+            if (key.startsWith(TOUCH)) {
+                count++;
+            }
+        });
+        return count;
+    }
+
     private onTouch = (event: TouchEvent): void => {
         const ending = event.type === 'touchend' || event.type === 'touchcancel';
         const picture = this.picture();
+        // On an iPhone a finger is not sent while the mouse's button is held.
+        const refused = this.mouseDown && !this.rules.fingersWithMouse;
         for (const touch of Array.from(event.changedTouches)) {
             const key = `${TOUCH}${touch.identifier}`;
             if (ending) {
@@ -96,7 +112,19 @@ class TouchMarkLayer {
                 continue;
             }
             // A touch on the picture, or on the bands beside it, which is where an edge swipe starts.
-            if (!picture || (touch.target !== picture.canvas && touch.target !== picture.canvas.parentElement)) {
+            if (
+                refused ||
+                !picture ||
+                (touch.target !== picture.canvas && touch.target !== picture.canvas.parentElement)
+            ) {
+                continue;
+            }
+            if (this.marks.has(key)) {
+                this.place(key, picture, touch.clientX, touch.clientY);
+                continue;
+            }
+            // A finger past the most the phone has at once is not sent, nor remembered.
+            if (this.fingers() >= this.rules.fingers) {
                 continue;
             }
             const inside = isInside(picture.box, touch.clientX, touch.clientY);
@@ -106,9 +134,12 @@ class TouchMarkLayer {
                 } else {
                     this.besides.add(touch.identifier);
                 }
-            } else if (this.marks.has(key)) {
-                this.place(key, picture, touch.clientX, touch.clientY);
-            } else if (inside && this.besides.delete(touch.identifier)) {
+            } else if (this.besides.has(touch.identifier)) {
+                if (inside) {
+                    this.besides.delete(touch.identifier);
+                    this.place(key, picture, touch.clientX, touch.clientY);
+                }
+            } else if (this.rules.moveStartsTouch) {
                 this.place(key, picture, touch.clientX, touch.clientY);
             }
         }
@@ -116,6 +147,10 @@ class TouchMarkLayer {
 
     private onMouseDown = (event: MouseEvent): void => {
         if (event.button !== 0 || this.mouseDown) {
+            return;
+        }
+        // On an iPhone a press is not sent while a finger is down.
+        if (!this.rules.fingersWithMouse && this.fingers() > 0) {
             return;
         }
         const picture = this.picture();
@@ -270,9 +305,10 @@ class TouchMarkLayer {
  * that is down on it, the same on both kinds of phone. It is drawn in this browser only, so it is
  * not in a screenshot of the phone, and it takes no press. With the switch off
  * (`state/showTouches.ts`) there is no layer and nothing listens. `ScreenView` puts it beside the
- * mount node, which it listens on with passive listeners and never changes.
+ * mount node, which it listens on with passive listeners and never changes. `platform` picks the
+ * input's rules (`TOUCH_RULES`); a view keeps one platform for its whole life.
  */
-export function TouchMarks({ mount }: { mount: RefObject<HTMLDivElement> }) {
+export function TouchMarks({ mount, platform }: { mount: RefObject<HTMLDivElement>; platform: Platform }) {
     const on = showTouches.value;
     const layerRef = useRef<HTMLDivElement>(null);
 
@@ -282,7 +318,7 @@ export function TouchMarks({ mount }: { mount: RefObject<HTMLDivElement> }) {
         if (!on || !layer || !node) {
             return;
         }
-        const marks = new TouchMarkLayer(layer, node);
+        const marks = new TouchMarkLayer(layer, node, TOUCH_RULES[platform]);
         return () => marks.stop();
     }, [on]);
 

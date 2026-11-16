@@ -2,6 +2,7 @@ import { ComponentChildren, RefObject } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { openSheet, streamNotice } from '../state/stream';
 import type { ConnectionStatus } from '../state/phoneStatus';
+import type { Platform } from '../state/routes';
 import { Icon } from '../ui/Icon';
 import { IconButton } from '../ui/IconButton';
 import { Presence } from '../ui/Presence';
@@ -58,6 +59,8 @@ export interface ScreenModel {
 export type ScreenAdapter<P> = (params: P, mount: RefObject<HTMLDivElement>) => ScreenModel;
 
 interface ScreenViewProps<P> {
+    /** The kind of phone. Show touches follows the rules of its input. */
+    platform: Platform;
     params: P;
     /** The adapter of the phone's platform. A view keeps the same one for its whole life. */
     useScreen: ScreenAdapter<P>;
@@ -114,7 +117,7 @@ function usePictureBox(stageRef: RefObject<HTMLDivElement>, mountRef: RefObject<
  * the stage with the picture and its controls, and one card on the stage for each state without
  * a picture.
  */
-export function ScreenView<P extends { udid: string }>({ params, useScreen, tabs }: ScreenViewProps<P>) {
+export function ScreenView<P extends { udid: string }>({ platform, params, useScreen, tabs }: ScreenViewProps<P>) {
     const mountRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
     const screen = useScreen(params, mountRef);
@@ -184,7 +187,7 @@ export function ScreenView<P extends { udid: string }>({ params, useScreen, tabs
                 draws nothing and does not listen. */}
             <div key="stage" class="stream-stage" ref={stageRef}>
                 <div class="stream-mount" ref={mountRef} />
-                <TouchMarks mount={mountRef} />
+                <TouchMarks mount={mountRef} platform={platform} />
                 <aside class="stream-controls-slot" aria-label="Phone controls">
                     {screen.controls}
                 </aside>

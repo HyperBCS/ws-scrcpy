@@ -65,7 +65,7 @@ global.TouchEvent = class TouchEvent {
 };
 
 const { clientPointToVideo } = require('../src/app/input/pointMapper');
-const { videoPointToLayer } = require('../src/app/input/touchMarks');
+const { TOUCH_RULES, videoPointToLayer } = require('../src/app/input/touchMarks');
 
 /** Where the layer puts the circle of a pointer at a page point: the two steps of its `place`. */
 function markPoint(clientX, clientY, box, video, layer) {
@@ -306,3 +306,103 @@ test('the pinch sends the same with a watcher as without one, even one that fail
     }
 });
 
+// ---------------------------------------------------------------- which pointers the phone gets
+
+/**
+ * One kind of phone's input on a picture, with what it sends. `fingers()` is the number of
+ * fingers the phone has after the last message; `record.sent` counts every message.
+ */
+function phoneInput(platform) {
+    const { canvas, player: phone } = player();
+    const record = { sent: 0, frames: [], touches: new Set() };
+    let handler;
+    if (platform === 'android') {
+        const { FeaturedInteractionHandler } = require('../src/app/interactionHandler/FeaturedInteractionHandler');
+        handler = new FeaturedInteractionHandler(phone, {
+            sendMessage: (message) => {
+                record.sent++;
+                // A touch's pointer: down (0) puts it on the phone, up (1) lifts it.
+                if (message.action === 0) record.touches.add(message.pointerId);
+                if (message.action === 1) record.touches.delete(message.pointerId);
+            },
+        });
+    } else {
+        const { CoreDeviceInteractionHandler } = require('../src/app/applDevice/CoreDeviceInteractionHandler');
+        handler = new CoreDeviceInteractionHandler(phone, {
+            sendTouch: () => record.sent++,
+            sendContacts: (contacts) => {
+                record.sent++;
+                record.frames.push(contacts.filter((contact) => contact.touching).length);
+            },
+        });
+    }
+    const point = (index) => ({ clientX: PINCH_BOX.left + 20 + 30 * index, clientY: PINCH_BOX.top + 40 + 50 * index });
+    const touches = (ids) => ids.map((identifier, index) => ({ identifier, target: canvas, force: 1, ...point(index) }));
+    return {
+        record,
+        fingers: () => (platform === 'android' ? record.touches.size : (record.frames.at(-1) ?? 0)),
+        touch: (type, ids) => {
+            handler.onInteraction(new TouchEvent(type, { target: canvas, changedTouches: touches(ids) }));
+            flush();
+        },
+        mouse: (type) => {
+            const event = new MouseEvent(type, { target: canvas, button: 0, buttons: type === 'mouseup' ? 0 : 1, ...point(0) });
+            if (type === 'mousedown') handler.onInteraction(event);
+            else window.dispatch(type, event);
+            flush();
+        },
+        release: () => handler.release(),
+    };
+}
+
+test('each handler takes the fingers and presses that TOUCH_RULES says the layer draws', () => {
+    const warn = console.warn;
+    console.warn = () => undefined;
+    try {
+        let next = 100;
+        const ids = (count) => Array.from({ length: count }, () => next++);
+        for (const platform of ['android', 'ios']) {
+            const rules = TOUCH_RULES[platform];
+
+            // Six fingers at once: the phone gets as many as it holds.
+            let input = phoneInput(platform);
+            const six = ids(6);
+            input.touch('touchstart', six);
+            assert.equal(input.fingers(), Math.min(6, rules.fingers), `${platform}: six fingers down`);
+            input.touch('touchend', six);
+            input.release();
+
+            // A finger while the mouse's button is held.
+            input = phoneInput(platform);
+            input.mouse('mousedown');
+            let before = input.record.sent;
+            const one = ids(1);
+            input.touch('touchstart', one);
+            assert.equal(input.record.sent > before, rules.fingersWithMouse, `${platform}: a finger with the button held`);
+            input.touch('touchend', one);
+            input.mouse('mouseup');
+            input.release();
+
+            // A press of the mouse while a finger is down.
+            input = phoneInput(platform);
+            const finger = ids(1);
+            input.touch('touchstart', finger);
+            before = input.record.sent;
+            input.mouse('mousedown');
+            assert.equal(input.record.sent > before, rules.fingersWithMouse, `${platform}: a press with a finger down`);
+            input.mouse('mouseup');
+            input.touch('touchend', finger);
+            input.release();
+
+            // A finger that moves on the picture while the phone has no touch of it.
+            input = phoneInput(platform);
+            const moving = ids(1);
+            input.touch('touchmove', moving);
+            assert.equal(input.fingers() > 0, rules.moveStartsTouch, `${platform}: a move without a down`);
+            input.touch('touchend', moving);
+            input.release();
+        }
+    } finally {
+        console.warn = warn;
+    }
+});
