@@ -22,7 +22,7 @@ async function tileGeometry(page) {
     return page.locator('.control-buttons-list button').evaluateAll(buttons => buttons.map(button => {
         const b = button.getBoundingClientRect(), icon = button.querySelector('svg').getBoundingClientRect(), caption = button.querySelector('.kit-icon-button-caption').getBoundingClientRect();
         const s = getComputedStyle(button);
-        return { name: button.title, x: b.x, y: b.y, width: b.width, height: b.height, iconTop: icon.top - b.top, iconWidth: icon.width, iconHeight: icon.height, captionTop: caption.top - b.top, gap: caption.top - icon.bottom, color: s.borderTopColor, background: s.backgroundColor, border: s.borderTopWidth };
+        return { name: button.getAttribute('aria-label'), x: b.x, y: b.y, width: b.width, height: b.height, iconTop: icon.top - b.top, iconWidth: icon.width, iconHeight: icon.height, captionTop: caption.top - b.top, gap: caption.top - icon.bottom, color: s.borderTopColor, background: s.backgroundColor, border: s.borderTopWidth };
     }));
 }
 async function controls(browser) {
@@ -43,7 +43,7 @@ async function controls(browser) {
                     assert.equal(b.border, '1px');
                     assert.equal(b.iconWidth, 24); assert.equal(b.iconHeight, 24);
                     assert.ok(Math.abs(b.iconTop - data[0].iconTop) < 1, `${id}: icons share their top inset`);
-                    assert.ok(Math.abs(b.captionTop - data[0].captionTop) < 1, `${id}: captions start at the same inset, including wrapped audio`);
+                    assert.ok(Math.abs(b.captionTop - data[0].captionTop) < 1, `${id}: captions start at the same inset, including the state of Listen`);
                     assert.equal(b.gap, 4);
                 }
                 const order = platform === 'android'
@@ -69,7 +69,7 @@ async function controls(browser) {
             const listen = page.locator('[data-control="audio"]');
             await listen.click();
             await page.waitForFunction(() => document.querySelector('[data-control="audio"]')?.getAttribute('aria-pressed') === 'true');
-            await page.waitForFunction(() => document.querySelector('[data-control="audio"]')?.textContent.includes('Waiting for audio'));
+            await page.waitForFunction(() => document.querySelector('[data-control="audio"]')?.textContent === 'Waiting');
             await verify('waiting');
             // Feed silent PCM through the actual audio envelope; this checks the Listening state
             // without making any claim about audible playback or phone capture.
@@ -111,7 +111,8 @@ async function controls(browser) {
     console.log('PASS outlined controls, common icon/caption starts across waiting/listening/blocked/unavailable states, narrow touch and one/two-column rails in both themes');
 }
 // Read the height of the actual tall one-column rail, then approach that measured boundary
-// from both directions. This oracle does not sum stretched two-column neighbor rectangles.
+// from both directions. This oracle does not sum stretched two-column neighbor rectangles. A
+// caption of Listen keeps one line, so a press on it does not move the boundary.
 async function railFit(browser) {
     for (const platform of ['android', 'ios']) for (const colorScheme of ['light', 'dark']) {
         const t = await startControls(browser, platform, { viewport: { width: 1280, height: 1200, mobile: false }, colorScheme, reducedMotion: 'reduce' });
@@ -140,9 +141,10 @@ async function railFit(browser) {
                 if (state !== 'normal') {
                     await page.locator('[data-control="audio"]').click();
                     await settleRail();
-                    assert.equal((await geometry()).columns, state === 'waiting' ? 2 : 1, 'caption changes reflow the rail in place at the measured boundary');
+                    // The rail's captions keep one line, and Listen's are short (polish, 2026-11-16).
+                    assert.equal((await geometry()).columns, 1, 'a caption change does not reflow the rail at the measured boundary');
                 }
-                await page.waitForFunction(waiting => document.querySelector('[data-control="audio"]')?.textContent.includes(waiting ? 'Waiting for audio' : 'Listen'), state === 'waiting');
+                await page.waitForFunction(waiting => document.querySelector('[data-control="audio"]')?.textContent === (waiting ? 'Waiting' : 'Listen'), state === 'waiting');
                 await page.setViewportSize({ width: 1280, height: 1200 }); await settleRail();
                 assert.equal((await geometry()).columns, 1, 'tall rail fits one column');
                 const tall = await geometry();
@@ -165,7 +167,7 @@ async function railFit(browser) {
             assert.equal(t.streams, 1); assert.deepEqual(t.errors, []);
         } finally { await t.context.close(); }
     }
-    console.log('PASS intrinsic rail fit at the wrapped-caption boundary in both resize directions and across 600px; mount and socket retained');
+    console.log('PASS intrinsic rail fit at the one-column boundary in both resize directions, before and after a press on Listen, and across 600px; mount and socket retained');
 }
 // Compare actual decoded one-column geometry at the same width after different resize paths.
 // At320, even reserving only the button's minimum hit width leaves too little picture height.

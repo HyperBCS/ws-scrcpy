@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { Disclosure } from '../../ui/AnimatedDetails';
 import { SelectOption } from '../../ui/Field';
-import { SegmentedControl } from '../../ui/SegmentedControl';
+import { SegmentedControl, useTouchScreen } from '../../ui/SegmentedControl';
 import { SheetMessageRow, SheetRow, SheetStatus, SheetToggleRow } from '../../ui/SheetControls';
 import { StreamClientScrcpy } from '../../googDevice/client/StreamClientScrcpy';
 import { normalized } from '../../state/streamConfig';
@@ -97,6 +97,8 @@ export function StreamSection({ changes, ...playback }: StreamSectionProps) {
     const codec = normalized(shown, 'videoCodec');
     const encoder = normalized(shown, 'videoEncoder');
     const hasChanges = Object.keys(config.patch).length > 0;
+    // The keys of the presets are for a keyboard; on a touch screen a tap applies one.
+    const touch = useTouchScreen();
     const filteredEncoders = encoders
         .filter((candidate) => candidate.videoCodec === codec)
         .slice()
@@ -149,7 +151,11 @@ export function StreamSection({ changes, ...playback }: StreamSectionProps) {
         <SettingsSection name="stream">
             <SettingsGroup
                 class="settings-quality"
-                hint="A change restarts the stream. Use arrow keys to browse; press Enter or Space to apply."
+                hint={
+                    touch
+                        ? 'A change restarts the stream.'
+                        : 'A change restarts the stream. Use arrow keys to browse; press Enter or Space to apply.'
+                }
                 status={
                     changes.status('stream') ||
                     (loaded && !configKnown && !loadError && (

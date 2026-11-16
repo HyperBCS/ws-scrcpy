@@ -258,6 +258,18 @@ async function layoutFlow(browser) {
         assert(/Show quality stats/.test(playback), label + ': playback settings are listed');
         assert(!/Fit screen/i.test(playback), label + ': no Fit screen toggle, the picture always fits');
         await geometry(page, label + ' all sections');
+        // The keys of the presets are for a keyboard: a touch screen has only the first sentence.
+        const quality = group(dialog, 'settings-quality');
+        assert.equal(
+            await quality.locator('.kit-group-hint').textContent(),
+            mobile ? 'A change restarts the stream.' : 'A change restarts the stream. Use arrow keys to browse; press Enter or Space to apply.',
+            label + ': the Quality hint',
+        );
+        assert.equal(
+            await quality.getByRole('radiogroup', { name: 'Quality presets', exact: true }).getAttribute('aria-description'),
+            mobile ? null : 'Use arrow keys to browse. Press Enter or Space to apply.',
+            label + ': the presets name their keys only to a keyboard',
+        );
         await page.screenshot({ path: path.join(OUT, label + '-quality.png') });
         await page.locator('.settings-audio').evaluate((el) => {
             const body = el.closest('.kit-sheet-body');

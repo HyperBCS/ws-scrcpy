@@ -73,11 +73,13 @@ body.sheet-open #devices {
     flex: none;
 }
 /* The cards in columns of one width: as many as fit at 340px or more, which is three at most in
-   the 1200px of the list. A row is as tall as its tallest card, and every card keeps its actions
-   at its foot, so the cards of a row line up at the top and at the bottom. */
+   the 1200px of the list. Each card is as tall as its own content and the cards of a row line
+   up at the top. Stretched to the tallest one, a card without a line under its row had a blank
+   band above its actions. */
 #devices .device-list {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+    align-items: start;
     gap: var(--space-12);
 }
 
@@ -126,11 +128,10 @@ body.sheet-open #devices {
 }
 
 /* Open screen takes the row. Files, Shell, Notifications and Settings are icon buttons beside
-   it, so the row never wraps. It is the foot of the card. */
+   it, so the row never wraps. It is the foot of the card, at the card's gap under its content. */
 #devices .device-primary-actions {
     display: flex;
     gap: var(--space-8);
-    margin-top: auto;
 }
 #devices .device-primary-actions .stream {
     flex: 1 1 0;

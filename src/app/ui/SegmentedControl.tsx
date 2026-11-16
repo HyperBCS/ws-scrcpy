@@ -1,5 +1,24 @@
-import { useId } from 'preact/hooks';
+import { useEffect, useId, useState } from 'preact/hooks';
 import '../../style/kit/SegmentedControl.css';
+
+/** A touch screen without a mouse: there the keys of a manual choice are no help. */
+const TOUCH_SCREEN = '(hover: none) and (pointer: coarse)';
+
+/**
+ * Whether the window is a touch screen without a mouse, kept up to date. A manual choice leaves
+ * its keyboard sentence out there, and so does a hint beside it (the Quality presets of Settings).
+ */
+export function useTouchScreen(): boolean {
+    const [touch, setTouch] = useState(() => window.matchMedia(TOUCH_SCREEN).matches);
+    useEffect(() => {
+        const media = window.matchMedia(TOUCH_SCREEN);
+        const update = () => setTouch(media.matches);
+        update();
+        media.addEventListener('change', update);
+        return () => media.removeEventListener('change', update);
+    }, []);
+    return touch;
+}
 
 export interface Segment<T extends string> {
     value: T;
@@ -17,7 +36,10 @@ interface SegmentedControlProps<T extends string> {
     /** Takes the width of its container, with segments of equal width. */
     full?: boolean;
     disabled?: boolean;
-    /** For costly changes: arrows move focus; Enter or Space commits the focused option. */
+    /**
+     * For costly changes: arrows move focus; Enter or Space commits the focused option. The
+     * group says so to assistive technology, except on a touch screen, where a tap commits.
+     */
     activation?: 'automatic' | 'manual';
 }
 
@@ -35,13 +57,16 @@ export function SegmentedControl<T extends string>({
     activation = 'automatic',
 }: SegmentedControlProps<T>) {
     const name = useId();
+    const touch = useTouchScreen();
     return (
         <div
             class={`kit-segmented ${full ? 'kit-segmented-full' : ''}`.trim()}
             role="radiogroup"
             aria-label={label}
             aria-description={
-                activation === 'manual' ? 'Use arrow keys to browse. Press Enter or Space to apply.' : undefined
+                activation === 'manual' && !touch
+                    ? 'Use arrow keys to browse. Press Enter or Space to apply.'
+                    : undefined
             }
         >
             {options.map((option) => (

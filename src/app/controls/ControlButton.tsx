@@ -60,11 +60,13 @@ export function ControlButton({ definition, action, held, style }: ControlButton
     const { label, icon } = definition;
     const listen = action.kind === 'listen' ? listenView(action as ListenAction) : undefined;
     const handlers = handlersOf(definition, action, held);
+    // The hover text. Listen's is its state in full words, where its tile may show a short caption.
+    const title = listen?.words || label;
     return (
         <button
             type="button"
             class={`${iconButtonClass()} control-button kit-icon-button-captioned`}
-            title={label}
+            title={title}
             aria-label={label}
             aria-description={listen ? listen.description : definition.description}
             aria-pressed={listen ? listen.pressed : undefined}

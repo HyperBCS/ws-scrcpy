@@ -1,6 +1,37 @@
 import { AudioSession, audioAvailability, listenStateLabel } from '../state/audio';
+import type { AudioPlaybackState } from '../state/audio';
 import { streamNotice } from '../state/stream';
 import type { ListenAction } from './definition';
+
+/** Every state of the sound, so that every caption of the tile is known. */
+const AUDIO_STATES: Record<AudioPlaybackState, true> = {
+    muted: true,
+    waiting: true,
+    playing: true,
+    blocked: true,
+    disabled: true,
+    error: true,
+    unsupported: true,
+    disconnected: true,
+};
+
+/**
+ * The caption of the tile for the words of a state. "Waiting for audio" is too long for one line
+ * of the rail, which is as wide as its resting captions ("Volume down"), so the tile says
+ * "Waiting". The title and the description keep the full words.
+ */
+function tileCaption(words: string): string {
+    return words === listenStateLabel('waiting', false) ? 'Waiting' : words;
+}
+
+/** Every caption the Listen tile can show. The rail is wide enough for each (`ControlRail.tsx`). */
+export const LISTEN_CAPTIONS: readonly string[] = Array.from(
+    new Set(
+        (Object.keys(AUDIO_STATES) as AudioPlaybackState[]).flatMap((state) =>
+            [false, true].map((muted) => tileCaption(listenStateLabel(state, muted))),
+        ),
+    ),
+);
 
 /**
  * Shows a playback error of the stream as the stream notice, and takes the notice away when
@@ -26,8 +57,10 @@ export function watchListenNotice(session: AudioSession | undefined): () => void
 }
 
 export interface ListenView {
-    /** The words under the icon: Listen, Listening, Waiting for audio or Blocked. None without sound. */
+    /** The words under the icon: Listen, Listening, Waiting or Blocked. None without sound. */
     caption?: string;
+    /** The state in full words, for the title: Listen, Listening, Waiting for audio or Blocked. */
+    words?: string;
     /** Whether this browser plays the sound. */
     pressed: boolean;
     description: string;
@@ -45,13 +78,14 @@ export function listenView({ session }: ListenAction): ListenView {
     }
     const status = session.status.value;
     const audible = !session.isMuted();
-    const caption = listenStateLabel(status.state, !audible);
-    // While the caption is the control's own name, the description is the message alone.
-    const plain = caption === listenStateLabel('muted', true);
+    const words = listenStateLabel(status.state, !audible);
+    // While the words are the control's own name, the description is the message alone.
+    const plain = words === listenStateLabel('muted', true);
     return {
-        caption,
+        caption: tileCaption(words),
+        words,
         pressed: audible,
-        description: plain ? status.message : `${caption}. ${status.message}`,
+        description: plain ? status.message : `${words}. ${status.message}`,
         state: status.state,
     };
 }

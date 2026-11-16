@@ -943,7 +943,7 @@ async function reconnectingSwitcher(browser, size) {
 
 async function evenGrid(browser) {
     for (const [width, height, columns] of [[1024, 768, 2], [1280, 800, 3], [1440, 900, 3], [1920, 1080, 3], [390, 844, 1]]) {
-        for (const colorScheme of width === 1280 ? ['light', 'dark'] : ['light']) {
+        for (const colorScheme of width === 1280 || width === 1440 ? ['light', 'dark'] : ['light']) {
             const label = `${width}-${colorScheme}`;
             const mobile = width < 600;
             const test = await start(browser, { width, height, mobile, colorScheme });
@@ -953,8 +953,16 @@ async function evenGrid(browser) {
                 await settleMotion(page);
                 const boxes = await page.locator('article.device').evaluateAll((items) => items.map((item) => {
                     const box = item.getBoundingClientRect();
-                    const actions = item.querySelector('.device-primary-actions').getBoundingClientRect();
-                    return { left: box.left, top: box.top, width: box.width, height: box.height, actionsBottom: box.bottom - actions.bottom };
+                    const actionRow = item.querySelector('.device-primary-actions');
+                    const actions = actionRow.getBoundingClientRect();
+                    const above = actionRow.previousElementSibling.getBoundingClientRect();
+                    const style = getComputedStyle(item);
+                    return {
+                        name: item.dataset.deviceKey, left: box.left, top: box.top, width: box.width, height: box.height,
+                        // The space above the actions and under them, and what the card's own gap and padding give.
+                        above: actions.top - above.bottom, below: box.bottom - actions.bottom,
+                        gap: parseFloat(style.rowGap), foot: parseFloat(style.paddingBottom) + parseFloat(style.borderBottomWidth),
+                    };
                 }));
                 const round = (value) => Math.round(value * 2) / 2;
                 const widths = new Set(boxes.map((box) => round(box.width)));
@@ -963,10 +971,15 @@ async function evenGrid(browser) {
                 assert.equal(lefts.length, columns, `${label}: ${columns} columns (${lefts})`);
                 const rows = new Map();
                 for (const box of boxes) rows.set(round(box.top), [...(rows.get(round(box.top)) || []), box]);
-                for (const [top, row] of rows) {
-                    assert.equal(new Set(row.map((box) => round(box.height))).size, 1, `${label}: the cards of the row at ${top} are one height`);
-                    assert.ok(row.every((box) => Math.abs(box.actionsBottom - row[0].actionsBottom) < 1), `${label}: the actions of the row at ${top} line up`);
+                // Each card is as tall as its content: its actions follow what is above them at
+                // the card's gap and end at its padding, with no blank band (polish, 2026-11-16).
+                for (const box of boxes) {
+                    assert.ok(Math.abs(box.above - box.gap) < 1, `${label} ${box.name}: the actions follow the content at the card's gap (${box.above}, ${box.gap})`);
+                    assert.ok(Math.abs(box.below - box.foot) < 1, `${label} ${box.name}: the actions end at the card's padding (${box.below}, ${box.foot})`);
                 }
+                // A row does not stretch its cards to the tallest one.
+                const uneven = [...rows.values()].filter((row) => new Set(row.map((box) => round(box.height))).size > 1);
+                if (columns > 1) assert.ok(uneven.length > 0, `${label}: cards of one row with different content have different heights`);
                 // The rows fill from the left, so every row but the last is full.
                 const sizes = [...rows.values()].map((row) => row.length);
                 assert.ok(sizes.slice(0, -1).every((size) => size === columns), `${label}: full rows (${sizes})`);
@@ -985,7 +998,7 @@ async function evenGrid(browser) {
             }
         }
     }
-    console.log('PASS the cards are an even grid at 1024, 1280, 1440 and 1920, and one column at 390');
+    console.log('PASS the cards are an even grid at 1024, 1280, 1440 and 1920, and one column at 390; each card is as tall as its content');
 }
 
 /**
