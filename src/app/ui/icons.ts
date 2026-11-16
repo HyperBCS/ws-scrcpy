@@ -99,7 +99,10 @@ export const ICONS = {
     copy:
         'M9 9h10a1 1 0 011 1v10a1 1 0 01-1 1H9a1 1 0 01-1-1V10a1 1 0 011-1z' +
         'M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1',
-    move: 'M4 12h14M13 7l5 5-5 5',
+    // Lucide's folder-input, so Move does not look like the history bar's Forward.
+    move:
+        'M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 ' +
+        '2H4a2 2 0 0 1-2-2v-1M2 13h10M9 16l3-3-3-3',
     trash: 'M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13',
 } as const;
 
@@ -130,7 +133,8 @@ export function iconSvg(name: IconName, size: IconSize = 24): string {
 
 /*!
  * The phone control icons (navBack, home, square, power, volDown, volUp, volMute, headphones, mic,
- * camera, text, sliders, bolt) use shapes from Lucide 1.72.0 (https://lucide.dev).
+ * camera, text, sliders, bolt) and the Files icon move (folder-input) use shapes from Lucide
+ * 1.72.0 (https://lucide.dev).
  *
  * ISC License. Copyright (c) 2026 Lucide Icons and Contributors.
  * Permission to use, copy, modify, and/or distribute this software for any purpose with or without
