@@ -2260,6 +2260,64 @@ async function sharedHeader(browser) {
     }
 }
 
+/**
+ * With two iPhones linked, Switch in the bar is the kit's compact button with its word, as on the
+ * header of a phone's page, and the bar stays one row from 320 px. With one iPhone there is none.
+ */
+async function switchButtonInBar(browser) {
+    for (const [width, height] of [[320, 720], [440, 956], [1440, 900]]) {
+        const f = await fixture(browser, { history: true, notifications: historyItems(), width, height });
+        const { page } = f;
+        try {
+            await article(page, 'Coffee at four?').waitFor();
+            await settleMotion(page);
+            const header = page.locator(HEADER);
+            const button = switchControl(page);
+            const look = await button.evaluate(el => ({
+                text: el.textContent.trim(), compact: el.matches('.kit-button.kit-button-compact.notification-switch'),
+                popup: el.getAttribute('aria-haspopup'),
+            }));
+            assert.deepEqual(look, { text: 'Switch', compact: true, popup: 'dialog' }, `Switch is the compact button with its word at ${width} px`);
+            const row = await header.evaluate(el => {
+                const bar = el.getBoundingClientRect();
+                return { height: Math.round(bar.height), children: [...el.children].map(child => {
+                    const box = child.getBoundingClientRect();
+                    return { name: child.getAttribute('aria-label') || child.textContent.trim(), top: Math.round(box.top), bottom: Math.round(box.bottom), left: Math.round(box.left), right: Math.round(box.right) };
+                }) };
+            });
+            assert.deepEqual(row.children.map(item => item.name), ['Phones', 'NotificationsPhone A · Connected · 2 unread', 'Switch iPhone', 'Search', 'Setup']);
+            assert.ok(row.height <= 61 && row.children.every(item => item.top >= 0 && item.bottom <= 61 && item.top < row.children[0].bottom), `one row at ${width} px: ${JSON.stringify(row)}`);
+            assert.ok(row.children.every((item, i) => !i || item.left >= row.children[i - 1].right) && row.children.at(-1).right <= width, `nothing overlaps or leaves the bar at ${width} px: ${JSON.stringify(row)}`);
+            // From the owner's phone width up, the title and the status line are whole. At 320 px both are cut short.
+            if (width >= 440) {
+                const cut = await header.evaluate(el => [...el.querySelectorAll('.kit-bar-name, .kit-bar-status')].filter(text => text.scrollWidth > text.clientWidth).map(text => text.textContent));
+                assert.deepEqual(cut, [], `nothing in the title is cut short at ${width} px`);
+            }
+            await fs.mkdir(OUT, { recursive: true });
+            for (const colorScheme of ['light', 'dark']) {
+                await page.emulateMedia({ colorScheme });
+                await page.screenshot({ path: path.join(OUT, `notifications-switch-${width}-${colorScheme}.png`), animations: 'disabled' });
+            }
+            await page.emulateMedia({ colorScheme: 'light' });
+            await button.click();
+            const sheet = page.getByRole('dialog', { name: 'Switch iPhone', exact: true });
+            await sheet.waitFor();
+            await sheet.locator('.kit-sheet-close').click();
+            await sheet.waitFor({ state: 'detached' });
+            await assertClean(f);
+        } finally { await f.context.close(); }
+    }
+    const single = await fixture(browser, { history: true, sources: phones().slice(0, 1), notifications: historyItems().slice(0, 2), width: 440, height: 956 });
+    try {
+        await article(single.page, 'Coffee at four?').waitFor();
+        const header = single.page.locator(HEADER);
+        assert.equal(await header.getByRole('button', { name: /Switch/ }).count(), 0, 'one iPhone: no Switch in the bar');
+        assert.equal(await header.locator('.notification-switch').count(), 0);
+        await assertClean(single);
+    } finally { await single.context.close(); }
+    console.log('PASS with two iPhones Switch is the compact button with its word and the bar is one row at 320, 440 and 1440 px; with one iPhone there is none');
+}
+
 /** The iPhone, the panel, the filter, the app and the search text are in the address, in one history entry. */
 async function viewStateInAddress(browser) {
     const f = await fixture(browser, {
@@ -2655,7 +2713,7 @@ async function main() {
             notificationDeepLink, deepLinkScrollsAndFades, unlinkedDeepLink, feedStatusInInbox, openScreenFromInbox, phoneActionsOutlastDefaultTimeout, bulkArchiveAndUndo, bulkDismissPhone, compactLongNotification, stickyBarsReachScrollTop, accessibleActionMenus, richNotificationMedia,
             searchAndFilters, bulkRespectsFilters, swipeAndUndo, swipeMotionAndFailure, delayedActionDoesNotCrossDevices, standaloneTouchNotifications,
             compatibilityPointerEventsDoNotDoubleAct, nativeTouchCancellationAndMultifinger, hangingRegistrationCleanup,
-            hangingNotificationCleanup, hangingWorkerDeepLink, sharedHeader, viewStateInAddress, linkingStaysOnSetup, kitControls];
+            hangingNotificationCleanup, hangingWorkerDeepLink, sharedHeader, switchButtonInBar, viewStateInAddress, linkingStaysOnSetup, kitControls];
         const selected = process.env.SCENARIO ? cases.filter(run => run.name === process.env.SCENARIO) : cases;
         assert.ok(selected.length, 'SCENARIO must name an existing fixture case');
         for (const run of selected) await run(browser);

@@ -397,15 +397,16 @@ export function NotificationsView() {
                     ) : undefined
                 }
             >
+                {/* The word, as on the header of a phone's page; the name says what it switches. */}
                 {!!status && status.sources.length > 1 && (
-                    <IconButton
-                        icon="chevDown"
-                        variant="bare"
+                    <Button
+                        size="compact"
                         class="notification-switch"
-                        label="Switch iPhone"
-                        attributes={{ 'aria-haspopup': 'dialog' }}
+                        attributes={{ 'aria-haspopup': 'dialog', 'aria-label': 'Switch iPhone' }}
                         onClick={openSwitcher}
-                    />
+                    >
+                        Switch
+                    </Button>
                 )}
                 <IconButton
                     icon="search"
