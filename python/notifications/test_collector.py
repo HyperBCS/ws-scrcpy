@@ -596,6 +596,10 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(self.statuses(), ['Authorizing notifications', 'Receiving notifications'])
         self.assertEqual(self.subscribed, ['/phone/data', '/phone/source'])
         self.assertEqual(self.scope['owned_notifications'], {'/phone/data', '/phone/source'})
+        self.notifying['source'] = False
+        self.poll()
+        self.poll()
+        self.assertNotIn('phone', self.scope['clients'], 'two polls in a row still count')
 
     def test_characteristic_missing_from_two_polls_counts_as_lost(self):
         self.connect()
