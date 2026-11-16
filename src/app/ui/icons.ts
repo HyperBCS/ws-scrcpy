@@ -34,6 +34,10 @@ export const ICONS = {
     terminal: 'M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM7 9l3 3-3 3M12 15h5',
     lock: 'M7 11V8a5 5 0 0110 0v3M6 11h12a1 1 0 011 1v7a1 1 0 01-1 1H6a1 1 0 01-1-1v-7a1 1 0 011-1z',
     moon: 'M20 13.5A8 8 0 1110.5 4a7 7 0 009.5 9.5z',
+    // Lucide's sun-moon, for the theme menu.
+    theme:
+        'M12 2v2M14.837 16.385a6 6 0 1 1-7.223-7.222c.624-.147.97.66.715 1.248a4 4 0 0 0 5.26 5.259c.589-.255 ' +
+        '1.396.09 1.248.715M16 12a4 4 0 0 0-4-4M19 5l-1.256 1.256M20 12h2',
     play: 'M8 5l11 7-11 7V5z',
     mail: 'M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1zM3.5 7l8.5 6 8.5-6',
     archive: 'M4 5h16v4H4V5zM6 9v10a1 1 0 001 1h10a1 1 0 001-1V9M10 13h4',
@@ -133,8 +137,8 @@ export function iconSvg(name: IconName, size: IconSize = 24): string {
 
 /*!
  * The phone control icons (navBack, home, square, power, volDown, volUp, volMute, headphones, mic,
- * camera, text, sliders, bolt) and the Files icon move (folder-input) use shapes from Lucide
- * 1.72.0 (https://lucide.dev).
+ * camera, text, sliders, bolt), the Files icon move (folder-input) and the theme icon theme
+ * (sun-moon) use shapes from Lucide 1.72.0 (https://lucide.dev).
  *
  * ISC License. Copyright (c) 2026 Lucide Icons and Contributors.
  * Permission to use, copy, modify, and/or distribute this software for any purpose with or without

@@ -3,7 +3,7 @@
 @layer tokens {
 /* The tokens every stylesheet takes its values from: colour roles, type, space, radius, control
    heights, stacking and motion. No other file writes a colour, a font size, a radius or a z-index.
-   The colours here are the light theme; the dark theme is the last block of the file. */
+   The colours here are the light theme; the dark theme is the last two blocks of the file. */
 :root {
     color-scheme: light;
     --surface: #f5f6f8;
@@ -113,10 +113,14 @@
     }
 }
 
-/* The dark theme. It is the one dark block and it comes after every light value: the contrast
-   test in scripts/test-sheet-ui.js reads the file as light, then dark. */
+/* The dark theme, in two blocks with the same values. The first is the system's dark theme while
+   this browser has not chosen Light; the second is Dark chosen in this browser, whatever the
+   system says (`state/theme.ts` puts `data-theme` on the root, and `public/theme.js` does it
+   before the first paint). scripts/test-theme.js fails when the two blocks differ. They come
+   after every light value: the contrast test in scripts/test-sheet-ui.js reads the file as
+   light, then dark, from the first line that names the dark scheme. */
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme='light']) {
         color-scheme: dark;
         --surface: #17191d;
         --surface-raised: #202329;
@@ -140,5 +144,30 @@
         --scrim: rgba(0, 0, 0, 0.6);
         --shadow-raised: 0 8px 30px rgba(0, 0, 0, 0.5);
     }
+}
+
+:root[data-theme='dark'] {
+    color-scheme: dark;
+    --surface: #17191d;
+    --surface-raised: #202329;
+    --surface-sunken: #2a2e36;
+    --border: #343943;
+    --border-strong: #7d8490;
+    --text: #edf0f5;
+    --text-muted: #a0a7b3;
+    --accent-text: #8fb8f5;
+    --accent-soft: #1d2a47;
+    --surface-inverse: #3a3f49;
+    --danger-text: #f29a94;
+    --success-text: #5fd08a;
+    --success-fill: #1c3326;
+    --warning-text: #f0b849;
+    --warning-fill: #3a2f18;
+    --info-text: #aab4f2;
+    --info-fill: #252a45;
+    --neutral-text: #b4bac4;
+    --neutral-fill: #2c3038;
+    --scrim: rgba(0, 0, 0, 0.6);
+    --shadow-raised: 0 8px 30px rgba(0, 0, 0, 0.5);
 }
 }

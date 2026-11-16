@@ -177,3 +177,10 @@ export const PICTURE_COLOUR = {
     space: ({ primaries, transfer, matrix }: { primaries?: string; transfer?: string; matrix?: string }): string =>
         `primaries ${primaries ?? 'not declared'}, transfer ${transfer ?? 'not declared'}, matrix ${matrix ?? 'not declared'}`,
 } as const;
+
+// appearance
+/** The theme of the app in this browser: the button in the bar of the Phones page and its menu. */
+export const THEME = {
+    button: 'Theme',
+    choices: { system: 'System', light: 'Light', dark: 'Dark' },
+} as const;

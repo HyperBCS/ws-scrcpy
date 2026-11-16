@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { devices, DeviceEntry, isDeviceAvailable, listReceived, phoneName, reportedConnected } from '../state/devices';
 import { connectionStatus, listSummary, needsAttention } from '../state/phoneStatus';
 import {
@@ -10,16 +10,19 @@ import {
     takeOpenedCard,
 } from '../state/deviceListView';
 import { hostsError, hostsStatus } from '../state/hosts';
-import { CLIENT_FOLLOWUPS } from '../copy';
+import { CLIENT_FOLLOWUPS, THEME } from '../copy';
 import { LIST_PAGE_NAME } from '../state/routes';
+import { setTheme, theme, THEME_CHOICES } from '../state/theme';
 import { DeviceCard } from './DeviceCard';
 import { DeviceIcon } from '../ui/DeviceIcon';
 import { TrackerStatusNotice } from '../ui/TrackerStatusNotice';
 import { NotificationsLink } from '../ui/NotificationsLink';
 import { AppBar, AppBarStatus } from '../ui/AppBar';
 import { Banner } from '../ui/Banner';
+import { Icon } from '../ui/Icon';
 import { IconButton } from '../ui/IconButton';
 import { InlineStatus } from '../ui/InlineStatus';
+import { Menu } from '../ui/Menu';
 import '../../style/views/DeviceList.css';
 
 interface HostGroup {
@@ -81,6 +84,48 @@ function focusCardControl(root: HTMLElement, { key, control }: CardControl): voi
 function focusLost(): boolean {
     const active = document.activeElement;
     return !active || active === document.body || (active as HTMLButtonElement).disabled === true;
+}
+
+/**
+ * Theme in the bar: the kit's menu with System, Light and Dark, the one in use checked
+ * (`state/theme.ts`). A choice applies at once and the menu stays open, as a checked item of the
+ * kit's menu does.
+ */
+function ThemeButton() {
+    const [open, setOpen] = useState(false);
+    const anchor = useRef<HTMLElement>(null);
+    const current = theme.value;
+    return (
+        <>
+            <IconButton
+                icon="theme"
+                label={THEME.button}
+                attributes={{ 'aria-haspopup': 'menu', 'aria-expanded': String(open) }}
+                onClick={(event) => {
+                    anchor.current = event.currentTarget as HTMLElement;
+                    setOpen(!open);
+                }}
+            />
+            <Menu open={open} onClose={() => setOpen(false)} anchor={anchor} label={THEME.button}>
+                {THEME_CHOICES.map((choice) => (
+                    // The kit's markup for one of a set (style/kit/Menu.css): its check is drawn
+                    // at the end and hidden while it is not the one in use.
+                    <button
+                        key={choice}
+                        type="button"
+                        class="kit-menu-item"
+                        role="menuitemradio"
+                        aria-checked={current === choice}
+                        tabIndex={-1}
+                        onClick={() => setTheme(choice)}
+                    >
+                        <Icon name="check" size={20} />
+                        {THEME.choices[choice]}
+                    </button>
+                ))}
+            </Menu>
+        </>
+    );
 }
 
 export function DeviceList() {
@@ -171,6 +216,7 @@ export function DeviceList() {
                 }
             >
                 <NotificationsLink />
+                <ThemeButton />
                 {/* An installed app has no browser reload button, and pull-to-refresh is off. */}
                 <IconButton icon="refresh" label="Reload" onClick={() => location.reload()} />
             </AppBar>

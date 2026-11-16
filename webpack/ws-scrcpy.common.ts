@@ -114,6 +114,8 @@ const front: webpack.Configuration = {
         new CopyWebpackPlugin({
             patterns: [
                 { from: path.resolve(PROJECT_ROOT, 'src/public/sw.js'), to: path.resolve(CLIENT_DIST_PATH, 'sw.js') },
+                // index.html loads it by name in its head, before the styles: no loader sees it.
+                { from: path.resolve(PROJECT_ROOT, 'src/public/theme.js'), to: path.resolve(CLIENT_DIST_PATH, 'theme.js') },
                 {
                     from: path.resolve(PROJECT_ROOT, 'src/public/manifest.json'),
                     to: path.resolve(CLIENT_DIST_PATH, 'manifest.json'),
@@ -156,6 +158,7 @@ export const frontend = (includeKit = false, outputPath = CLIENT_DIST_PATH) => {
             ? new CopyWebpackPlugin({
                   patterns: [
                       { from: path.resolve(PROJECT_ROOT, 'src/public/sw.js'), to: path.join(outputPath, 'sw.js') },
+                      { from: path.resolve(PROJECT_ROOT, 'src/public/theme.js'), to: path.join(outputPath, 'theme.js') },
                       {
                           from: path.resolve(PROJECT_ROOT, 'src/public/manifest.json'),
                           to: path.join(outputPath, 'manifest.json'),
