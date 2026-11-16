@@ -615,6 +615,27 @@ class CollectorTests(unittest.TestCase):
         self.assertNotEqual(self.client.session, old.session)
         self.assertEqual(self.disconnections, [])
 
+    def test_subscription_never_shown_notifying_does_not_start_session_after_session(self):
+        self.scope['clients'].clear()
+        self.notifying = dict(data=False, source=False)
+        self.managed = self.bluez
+        answered = 0
+        for _ in range(10):
+            # StartNotify succeeds, but BlueZ does not list the characteristic as notifying.
+            self.poll()
+            for reply, _error in self.subscriptions[answered:]: reply()
+            answered = len(self.subscriptions)
+        self.client = self.scope['clients']['phone']
+        self.assertEqual(self.sessions()[1:], [self.client.session], 'the start under setUp, then this one')
+        self.assertEqual(self.subscribed, ['/phone/data', '/phone/source'])
+        self.assertNotIn('Reconnecting to iPhone notifications', self.statuses())
+        self.notifying.update(data=True, source=True)
+        self.poll()
+        self.notifying['data'] = False
+        self.poll()
+        self.poll()
+        self.assertNotIn('phone', self.scope['clients'], 'once seen notifying, a loss still counts')
+
     def test_action_timeout_waits_on_the_same_session_and_late_ack_cannot_succeed(self):
         self.source(0, flags=16)
         self.reply(action='Clear')

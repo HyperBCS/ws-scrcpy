@@ -112,8 +112,9 @@ class Client:
         self.pending_added = {}
         self.last_probe, self.retry_at, self.authorized = 0, 0, False
         self.last_status = ''
-        # Subscribed characteristics that were not notifying at the last poll.
-        self.silent = set()
+        # Subscribed characteristics that a poll has shown notifying, and those of them that were not
+        # notifying at the last poll.
+        self.notified, self.silent = set(), set()
         emit('session', source=self.source, session=self.session)
 
     def alive(self): return clients.get(self.source) is self
@@ -266,8 +267,11 @@ class Client:
         # BlueZ can attach to the iPhone again without reporting Connected: false (2026-11-14). The
         # link stays up, but the characteristics read Notifying: false or are gone, and the iPhone's
         # replies are not passed on. Notifying can be false for a moment around StartNotify, so a
-        # characteristic counts as lost only when two polls in a row show it.
-        silent = {characteristic for characteristic in self.ready
+        # characteristic counts as lost only when a poll has shown it notifying and then two polls in
+        # a row do not. One that never showed notifying stays as it is: a new client would subscribe
+        # into the same state and end again, a new session every few seconds.
+        self.notified |= {characteristic for characteristic in self.ready if self.notifying(characteristic)}
+        silent = {characteristic for characteristic in self.notified
                   if self.chars[characteristic] in owned_notifications and not self.notifying(characteristic)}
         if silent & self.silent:
             # End this client as a disconnect does and leave the link alone. A new client subscribes
