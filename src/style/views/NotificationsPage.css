@@ -13,12 +13,17 @@
     height: 100%;
     background: var(--surface);
 }
-/* The status line and, after it on the same line, the unread count in words. The count keeps
-   its place when a long iPhone name is cut short. */
+/* The status line and, after it on the same line, the unread count in words. The unread words
+   give way first: where the line has no room for both they wrap under the status, and this box,
+   one line high, cuts them off. The status stays whole, and a long iPhone name alone is cut short
+   by its own ellipsis. The filter row of the inbox has the count too. */
 .notification-bar-status {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     min-width: 0;
+    max-height: calc(var(--font-size-12) * 1.4);
+    overflow: hidden;
 }
 .notification-unread-line {
     flex: none;

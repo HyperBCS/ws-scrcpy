@@ -2317,6 +2317,55 @@ async function switchButtonInBar(browser) {
     console.log('PASS with two iPhones Switch is the compact button with its word and the bar is one row at 320, 440 and 1440 px; with one iPhone there is none');
 }
 
+/**
+ * The unread words after the status give way first. Where the bar has no room for both, the
+ * status stays whole and the unread words are not shown; the filter row has the count. Where
+ * there is room, both show whole. Never a part of the unread words.
+ */
+async function unreadGivesWay(browser) {
+    const states = { Connected: 'Receiving notifications', Reconnecting: 'Bluetooth disconnected; waiting for iPhone', 'Action needed': 'Allow notification sharing in the iPhone Bluetooth settings' };
+    const items = sources => [...manyItems().slice(0, 25), ...(sources > 1 ? [historyItems()[2]] : [])];
+    const cases = [
+        ...Object.keys(states).map(state => ({ width: 440, height: 956, sources: 2, state, both: false })),
+        ...Object.keys(states).map(state => ({ width: 1440, height: 900, sources: 2, state, both: true })),
+        { width: 440, height: 956, sources: 1, state: 'Connected', both: true },
+        { width: 440, height: 956, sources: 1, state: 'Action needed', both: true },
+    ];
+    for (const { width, height, sources, state, both } of cases) {
+        const f = await fixture(browser, {
+            history: true, sources: phones().slice(0, sources), notifications: items(sources), width, height,
+            statuses: { 'phone-a': states[state] },
+        });
+        try {
+            await f.page.waitForFunction(text => document.querySelector('.notifications-view > .kit-bar .kit-bar-status')?.textContent === text, `Phone A · ${state}`);
+            await settleMotion(f.page);
+            assert.equal(await headerBadge(f.page).textContent(), '25', 'the count stays in the page');
+            const line = await f.page.locator(`${HEADER} .notification-bar-status`).evaluate(el => {
+                const box = el.getBoundingClientRect();
+                const status = el.querySelector('.kit-bar-status');
+                const unread = el.querySelector('.notification-unread-line').getBoundingClientRect();
+                // Shown: inside the line's box from end to end. Hidden: wholly outside it.
+                const inside = unread.top >= box.top - 0.5 && unread.bottom <= box.bottom + 0.5 && unread.left >= box.left - 0.5 && unread.right <= box.right + 0.5;
+                const outside = unread.top >= box.bottom - 0.5 || unread.left >= box.right - 0.5;
+                return { statusWhole: status.scrollWidth <= status.clientWidth, unread: inside ? 'shown' : outside ? 'hidden' : 'cut', box: [box.left, box.top, box.right, box.bottom].map(Math.round) };
+            });
+            const where = `${state} with ${sources} iPhone${sources > 1 ? 's' : ''} at ${width} px: ${JSON.stringify(line)}`;
+            assert.ok(line.statusWhole, `the status is whole, ${where}`);
+            assert.notEqual(line.unread, 'cut', `the unread words show whole or not at all, ${where}`);
+            if (both) assert.equal(line.unread, 'shown', `status and unread words both show, ${where}`);
+            if (width === 440 && sources === 2 && state === 'Reconnecting') {
+                for (const colorScheme of ['light', 'dark']) {
+                    await f.page.emulateMedia({ colorScheme });
+                    await fs.mkdir(OUT, { recursive: true });
+                    await f.page.screenshot({ path: path.join(OUT, `notifications-unread-gives-way-${width}-${colorScheme}.png`), animations: 'disabled' });
+                }
+            }
+            await assertClean(f);
+        } finally { await f.context.close(); }
+    }
+    console.log('PASS the unread words in the bar give way to the status: at 440 px with two iPhones each state shows whole; at 1440 px and with one iPhone both show');
+}
+
 /** The iPhone, the panel, the filter, the app and the search text are in the address, in one history entry. */
 async function viewStateInAddress(browser) {
     const f = await fixture(browser, {
@@ -2712,7 +2761,7 @@ async function main() {
             notificationDeepLink, deepLinkScrollsAndFades, unlinkedDeepLink, feedStatusInInbox, openScreenFromInbox, phoneActionsOutlastDefaultTimeout, bulkArchiveAndUndo, bulkDismissPhone, compactLongNotification, stickyBarsReachScrollTop, accessibleActionMenus, richNotificationMedia,
             searchAndFilters, bulkRespectsFilters, swipeAndUndo, swipeMotionAndFailure, delayedActionDoesNotCrossDevices, standaloneTouchNotifications,
             compatibilityPointerEventsDoNotDoubleAct, nativeTouchCancellationAndMultifinger, hangingRegistrationCleanup,
-            hangingNotificationCleanup, hangingWorkerDeepLink, sharedHeader, switchButtonInBar, viewStateInAddress, linkingStaysOnSetup, kitControls];
+            hangingNotificationCleanup, hangingWorkerDeepLink, sharedHeader, switchButtonInBar, unreadGivesWay, viewStateInAddress, linkingStaysOnSetup, kitControls];
         const selected = process.env.SCENARIO ? cases.filter(run => run.name === process.env.SCENARIO) : cases;
         assert.ok(selected.length, 'SCENARIO must name an existing fixture case');
         for (const run of selected) await run(browser);
