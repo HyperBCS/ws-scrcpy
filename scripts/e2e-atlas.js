@@ -488,6 +488,39 @@ async function otherStates(test) {
     await shoot(test, 'android-asleep');
 }
 
+// show-touches: a phone's screen with Show touches on and one pointer held on the picture. The
+// switch is kept in this browser, so it is set and cleared with a reload, and is off again for
+// every state after this one.
+async function showTouchesStates(test) {
+    const { page } = test;
+    const KEY = 'ws-scrcpy.screen.show-touches';
+    await page.goto(BASE + screenOf(PIXEL_2));
+    await page.evaluate((key) => localStorage.setItem(key, '1'), KEY);
+    await page.reload();
+    await connected(page);
+    await page.waitForFunction(() => document.querySelector('.stream-mount canvas.touch-layer')?.hasAttribute('width'));
+    await settleMotion(page);
+    const box = await page.locator('.stream-mount canvas.touch-layer').boundingBox();
+    const point = { x: Math.round(box.x + box.width * 0.4), y: Math.round(box.y + box.height * 0.4) };
+    const cdp = test.mobile ? await test.context.newCDPSession(page) : undefined;
+    if (cdp) await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, ...point, force: 1 }] });
+    else {
+        await page.mouse.move(point.x, point.y);
+        await page.mouse.down();
+    }
+    await page.locator('.touch-mark').waitFor();
+    await shoot(test, 'android-show-touches');
+    if (cdp) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await cdp.detach();
+    } else await page.mouse.up();
+    await page.evaluate((key) => localStorage.removeItem(key), KEY);
+    await page.reload();
+    await connected(page);
+    assert.equal(await page.locator('.touch-marks').count(), 0, `${test.label}: Show touches is off again`);
+}
+// End show-touches.
+
 // p6-inbox: notification states only.
 /** Notifications: the inbox, the sheets it opens, and Setup. */
 async function notificationStates(test) {
@@ -667,6 +700,8 @@ async function main() {
                         await iphoneStates(test);
                         await notificationStates(test);
                         await otherStates(test);
+                        // show-touches
+                        await showTouchesStates(test);
                         assert.deepEqual(test.errors, [], `${test.label}: no page error`);
                         console.log(`PASS ${test.label}: ${test.shots} states written to ${OUT}`);
                     } finally {
