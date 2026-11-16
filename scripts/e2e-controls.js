@@ -2,6 +2,9 @@
 // The controls of a phone's screen, on an Android phone and an iPhone, against socket fixtures:
 //   - the touch grid of each kind of phone (390x844): the Android cells, and four rows of its own on an iPhone;
 //     the mouse rail (1280x800) uses consecutive slots, light and dark;
+//   - the mouse rail at 1440x900 (one column) and 1366x650 (two): every caption on one line and
+//     every tile one height, the rail against the picture and as tall as it, and as wide with
+//     Listen on as before;
 //   - what each control sends or opens, found by its icon, not its name;
 //   - a key of the phone is disabled while there is no connection, and only the keys;
 //   - holding Lock sends one down and one up, and a key held when the panel closes or the
@@ -17,6 +20,7 @@
 //     where Type text docks beside the stage, the button and its panel keep to the part of the
 //     stage the sheet leaves.
 // CONTROLS_ONLY=button runs only the checks of the controls button.
+// CONTROLS_ONLY=rail runs only the check of the rail's captions.
 // CONTROLS_ONLY=sends runs only the check of what each control sends. It finds the controls by
 // their icons, so it also runs on a build from before the slot map; that is how the sends were
 // compared with the base of step 5b (5cab921).
@@ -313,6 +317,92 @@ async function slotMap(browser) {
         }
     }
     console.log('PASS touch cells without holes on both kinds of phone and consecutive mouse rail slots, light and dark');
+}
+
+/** The rail, its tiles and the picture, once the boxes have been the same for three frames. */
+async function railBoxes(page) {
+    await settleMotion(page);
+    return page.evaluate(async () => {
+        const measure = () => {
+            const panel = document.querySelector('.stream-controls-slot .floating-toolbar-panel');
+            // Before the player has sized its layer, the picture's box is the mount node's.
+            const layer = document.querySelector('.stream-mount .touch-layer[width][height]');
+            const picture = (layer || document.querySelector('.stream-mount')).getBoundingClientRect();
+            const range = document.createRange();
+            const tiles = [...panel.querySelectorAll('.control-buttons-list > button')].map((button) => {
+                const caption = button.querySelector('.kit-icon-button-caption');
+                range.selectNodeContents(caption);
+                const text = range.getBoundingClientRect();
+                const box = button.getBoundingClientRect();
+                const style = getComputedStyle(button);
+                const left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+                const right = box.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
+                return {
+                    name: button.getAttribute('aria-label'), caption: caption.textContent, height: box.height,
+                    // One line box for the words, and the words inside the tile's padding.
+                    lines: new Set([...range.getClientRects()].map((line) => Math.round(line.top))).size,
+                    inside: text.left >= left - 0.5 && text.right <= right + 0.5,
+                };
+            });
+            const rail = panel.getBoundingClientRect();
+            return {
+                tiles, columns: panel.parentElement.dataset.columns,
+                rail: { left: rail.left, top: rail.top, width: rail.width, height: rail.height },
+                picture: { right: picture.right, top: picture.top, height: picture.height },
+            };
+        };
+        let last = JSON.stringify(measure());
+        for (let frame = 0, still = 0; frame < 60 && still < 3; frame++) {
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            const now = JSON.stringify(measure());
+            still = now === last ? still + 1 : 0;
+            last = now;
+        }
+        return JSON.parse(last);
+    });
+}
+
+/**
+ * The rail with a mouse, at 1440x900 in one column and at 1366x650 in two: no caption wraps, so
+ * every tile is one height, and the rail is as wide as its longest caption needs. It stands
+ * against the picture and is as tall as it. A press on Listen, whose caption then says what the
+ * sound does, changes neither the rail's width nor a line.
+ */
+async function railCaptions(browser) {
+    const LARGE = { name: '1440x900', width: 1440, height: 900, mobile: false };
+    const SHORT = { name: '1366x650', width: 1366, height: 650, mobile: false };
+    for (const [viewport, columns, colorScheme] of [[LARGE, '1', 'light'], [LARGE, '1', 'dark'], [SHORT, '2', 'light']]) {
+        for (const platform of ['android', 'ios']) {
+            const label = `${viewport.name}-${colorScheme} ${platform}`;
+            const test = await start(browser, platform, { viewport, colorScheme });
+            const { page } = test;
+            try {
+                const check = (found, when) => {
+                    assert.equal(found.columns, columns, `${label}${when}: ${columns} column${columns === '1' ? '' : 's'}`);
+                    assert.deepEqual(found.tiles.filter((tile) => tile.lines !== 1).map((tile) => tile.caption), [], `${label}${when}: no caption wraps`);
+                    assert.deepEqual(found.tiles.filter((tile) => !tile.inside).map((tile) => tile.caption), [], `${label}${when}: every caption is inside its tile`);
+                    const heights = found.tiles.map((tile) => tile.height);
+                    assert.ok(Math.max(...heights) - Math.min(...heights) < 0.5, `${label}${when}: every tile is one height (${heights})`);
+                    const { rail, picture } = found;
+                    assert.ok(rail.left >= picture.right - 0.5 && rail.left - picture.right <= 4, `${label}${when}: the rail touches the picture (${picture.right} to ${rail.left})`);
+                    assert.ok(Math.abs(rail.top - picture.top) <= 1 && Math.abs(rail.height - picture.height) <= 1, `${label}${when}: the rail is as tall as the picture`);
+                };
+                const before = await railBoxes(page);
+                check(before, '');
+                await shot(page, `${platform}-rail-${viewport.name}-${colorScheme}`);
+                await byName(page, 'Listen').click();
+                await page.waitForFunction(() => document.querySelector('.control-buttons-list [aria-label="Listen"]').getAttribute('aria-pressed') === 'true');
+                const listening = await railBoxes(page);
+                check(listening, ' with Listen on');
+                assert.ok(Math.abs(listening.rail.width - before.rail.width) < 0.5, `${label}: Listen keeps the rail's width (${before.rail.width}, ${listening.rail.width}, "${listening.tiles.find((tile) => tile.name === 'Listen').caption}")`);
+                assert.equal(test.streams, 1, `${label}: one stream socket`);
+                assert.deepEqual(test.errors, []);
+            } finally {
+                await test.context.close();
+            }
+        }
+    }
+    console.log('PASS the mouse rail keeps every caption on one line and every tile one height, against the picture, in one column and in two');
 }
 
 /** While there is no connection the keys of the phone are disabled, and only they. */
@@ -885,6 +975,7 @@ async function main() {
                 : (async () => {
                       await slotMap(browser);
                   })(),
+            ONLY && ONLY !== 'rail' ? undefined : railCaptions(browser),
             ONLY
                 ? undefined
                 : (async () => {

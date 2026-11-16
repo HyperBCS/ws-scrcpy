@@ -1,12 +1,88 @@
 import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
+import { listenStateLabel } from '../state/audio';
+import type { AudioPlaybackState } from '../state/audio';
 import { usePresence } from '../ui/Presence';
 import { ControlButton } from './ControlButton';
 import { CONTROLS_LABEL, PhoneControls, shownControls } from './definition';
 
+/** Every state of the sound, so that every caption Listen can show is known. */
+const AUDIO_STATES: Record<AudioPlaybackState, true> = {
+    muted: true,
+    waiting: true,
+    playing: true,
+    blocked: true,
+    disabled: true,
+    error: true,
+    unsupported: true,
+    disconnected: true,
+};
+const LISTEN_CAPTIONS = Array.from(
+    new Set((Object.keys(AUDIO_STATES) as AudioPlaybackState[]).map((state) => listenStateLabel(state, false))),
+);
+
+const sides = (style: CSSStyleDeclaration, box: 'padding' | 'border') =>
+    box === 'padding'
+        ? parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+        : parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
+
+/**
+ * The width of one column of the rail that keeps the widest caption on one line: the caption,
+ * then the padding and border of its tile and of the rail. Listen's other captions count too
+ * ("Waiting for audio" is the longest), so a press on Listen does not change the rail's width
+ * and move the picture. The captions are measured in a hidden copy of a tile.
+ */
+function captionColumnWidth(panel: HTMLElement, list: HTMLElement): number | undefined {
+    const tile = list.querySelector<HTMLElement>('.kit-icon-button-captioned');
+    if (!tile) {
+        return undefined;
+    }
+    const texts = Array.from(list.querySelectorAll('.kit-icon-button-caption'), (caption) => caption.textContent || '');
+    if (list.querySelector('[data-control="audio"]')) {
+        texts.push(...LISTEN_CAPTIONS);
+    }
+    const probe = tile.cloneNode(true) as HTMLElement;
+    probe.setAttribute('aria-hidden', 'true');
+    probe.inert = true;
+    Object.assign(probe.style, {
+        position: 'fixed',
+        visibility: 'hidden',
+        pointerEvents: 'none',
+        width: 'max-content',
+    });
+    list.appendChild(probe);
+    try {
+        const caption = probe.querySelector('.kit-icon-button-caption');
+        if (!caption) {
+            return undefined;
+        }
+        const range = document.createRange();
+        let widest = 0;
+        for (const text of texts) {
+            caption.textContent = text;
+            range.selectNodeContents(caption);
+            widest = Math.max(widest, range.getBoundingClientRect().width);
+        }
+        const tileStyle = getComputedStyle(probe);
+        const panelStyle = getComputedStyle(panel);
+        const width = Math.ceil(
+            widest +
+                sides(tileStyle, 'padding') +
+                sides(tileStyle, 'border') +
+                sides(panelStyle, 'padding') +
+                sides(panelStyle, 'border'),
+        );
+        return Number.isFinite(width) && width > 0 ? width : undefined;
+    } finally {
+        probe.remove();
+    }
+}
+
 /**
  * The controls beside the picture, for a window with a mouse. Offered controls follow one
  * another without the touch grid's empty cells. One column is centred when it fits; a short
- * picture uses two columns and scrolls when needed. The stage keeps the rail attached.
+ * picture uses two columns and scrolls when needed. The stage keeps the rail attached. A column
+ * is as wide as the longest caption needs on one line: the rail writes that width on the stage
+ * as `--stream-rail-column`, which the stage's rail width is made of (`StreamView.css`).
  */
 export function ControlRail({ controls }: { controls: PhoneControls }) {
     const { ref } = usePresence<HTMLDivElement>(true, 'fade');
@@ -21,9 +97,19 @@ export function ControlRail({ controls }: { controls: PhoneControls }) {
         if (!panel) {
             return;
         }
-        const stage = panel.closest('.stream-stage');
+        const stage = panel.closest<HTMLElement>('.stream-stage');
         const mount = stage?.querySelector('.stream-mount');
         let observedVideo: Element | undefined;
+        // The column width last written on the stage. It changes only with the captions.
+        let written: number | undefined;
+        const fitCaptions = () => {
+            const list = panel.querySelector<HTMLElement>('.control-buttons-list');
+            const width = list && captionColumnWidth(panel, list);
+            if (stage && width && width !== written) {
+                written = width;
+                stage.style.setProperty('--stream-rail-column', `${width}px`);
+            }
+        };
         const wanted = () => {
             const style = getComputedStyle(panel);
             const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
@@ -99,7 +185,10 @@ export function ControlRail({ controls }: { controls: PhoneControls }) {
         // so the picture's place: it waits for the next frame, which lays that out again.
         const changed = () => {
             cancelAnimationFrame(frame);
-            frame = requestAnimationFrame(() => setColumns(wanted()));
+            frame = requestAnimationFrame(() => {
+                fitCaptions();
+                setColumns(wanted());
+            });
         };
         const resize = new ResizeObserver(changed);
         const drawn = new MutationObserver(changed);
@@ -113,6 +202,7 @@ export function ControlRail({ controls }: { controls: PhoneControls }) {
                 attributeFilter: ['width', 'height'],
             });
         }
+        fitCaptions();
         setColumns(wanted());
         resize.observe(panel);
         const list = panel.querySelector('.control-buttons-list');
@@ -125,6 +215,7 @@ export function ControlRail({ controls }: { controls: PhoneControls }) {
             cancelAnimationFrame(frame);
             resize.disconnect();
             drawn.disconnect();
+            stage?.style.removeProperty('--stream-rail-column');
         };
     }, [slots]);
 

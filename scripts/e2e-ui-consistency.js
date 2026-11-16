@@ -140,7 +140,8 @@ async function railFit(browser) {
                 if (state !== 'normal') {
                     await page.locator('[data-control="audio"]').click();
                     await settleRail();
-                    assert.equal((await geometry()).columns, state === 'waiting' ? 2 : 1, 'caption changes reflow the rail in place at the measured boundary');
+                    // The rail's captions keep one line and its width fits Waiting for audio (polish, 2026-11-16).
+                    assert.equal((await geometry()).columns, 1, 'a caption change does not reflow the rail at the measured boundary');
                 }
                 await page.waitForFunction(waiting => document.querySelector('[data-control="audio"]')?.textContent.includes(waiting ? 'Waiting for audio' : 'Listen'), state === 'waiting');
                 await page.setViewportSize({ width: 1280, height: 1200 }); await settleRail();
