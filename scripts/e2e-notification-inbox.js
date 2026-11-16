@@ -453,23 +453,69 @@ async function filterRowSpacing(browser) {
         const scrolled = await filterRowPlace(page);
         assert.ok(scrolled.scrollTop >= 900, `the inbox scrolls by 900 px (${scrolled.scrollTop})`);
         await shootBoth(page, 'filter-row-1440-scrolled');
+        await page.locator('.notifications-view > .kit-bar').getByRole('button', { name: 'Search', exact: true }).click();
+        await page.getByRole('searchbox', { name: 'Search notifications', exact: true }).waitFor();
+        await settleMotion(page);
+        const searchScrolled = await filterRowPlace(page);
+        await scroll(page, 0);
+        const search = await filterRowPlace(page);
         assert.deepEqual({
             rest: { barToRow: rest.barToRow, rowToDay: rest.rowToDay, firstCardClear: rest.firstCardClear },
             scrolled: { barToRow: scrolled.barToRow, coveredAbove: scrolled.coveredAbove, coveredBelow: scrolled.coveredBelow },
+            search: { barToSearch: search.barToSearch, searchToRow: search.searchToRow },
+            searchScrolled: { barToSearch: searchScrolled.barToSearch },
         }, {
             // 12 px at rest, as at f734c43; 8 px of it is the row's own and stays while it is stuck.
             rest: { barToRow: 12, rowToDay: 8, firstCardClear: true },
             scrolled: { barToRow: 8, coveredAbove: true, coveredBelow: true },
-        }, `the filter row at 1440x900: ${JSON.stringify({ rest, scrolled })}`);
+            search: { barToSearch: 12, searchToRow: 8 },
+            searchScrolled: { barToSearch: 8 },
+        }, `the filter row at 1440x900: ${JSON.stringify({ rest, scrolled, search, searchScrolled })}`);
         assert.deepEqual(desktop.errors, []);
     } finally { await desktop.context.close(); }
     console.log('PASS the filter row keeps 8 px under the bar at rest, while stuck and under Search, 8 px over the first day label, and 12 px at rest on a desktop');
 }
 
+/**
+ * From 600 px a banner at the top of the inbox stays 12 px under the page's bar, as at f734c43:
+ * the filter row's own 8 px do not take space from it. At f939a2f the banner sat 4 px under the
+ * bar.
+ */
+async function desktopBannerSpacing(browser) {
+    const f = await fixture(browser, {
+        history: true, notifications: longList(), width: 1440, height: 900,
+        statuses: { 'phone-a': 'Allow notification sharing on the iPhone.' },
+        storedSources: ['phone-a'], storedReceiver: '', subscriptionError: 'Subscription limit reached',
+    });
+    try {
+        const { page } = f;
+        await article(page, 'Message 25').waitFor();
+        await page.getByRole('alert').filter({ hasText: 'could not be registered' }).waitFor();
+        await settleMotion(page);
+        const rest = await page.evaluate(() => {
+            const bar = document.querySelector('.notifications-view > .kit-bar').getBoundingClientRect().bottom;
+            const banner = document.querySelector('main.notifications-page > .kit-banner').getBoundingClientRect();
+            const source = document.querySelector('.notification-history-source').getBoundingClientRect();
+            const row = document.querySelector('.notification-history-toolbar').getBoundingClientRect();
+            return { barToBanner: Math.round(banner.top - bar), bannerToSource: Math.round(source.top - banner.bottom), sourceToRow: Math.round(row.top - source.bottom) };
+        });
+        await shootBoth(page, 'banner-1440-rest');
+        await page.locator('main').evaluate(el => { el.scrollTop = 900; });
+        const scrolled = await filterRowPlace(page);
+        assert.deepEqual({ rest, scrolled: { barToRow: scrolled.barToRow, coveredAbove: scrolled.coveredAbove } }, {
+            // The page's banner, then the iPhone's, then the filter row with its own 8 px; stuck, the row alone.
+            rest: { barToBanner: 12, bannerToSource: 12, sourceToRow: 12 },
+            scrolled: { barToRow: 8, coveredAbove: true },
+        }, `banners over the inbox at 1440x900: ${JSON.stringify({ rest, scrolled })}`);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.context.close(); }
+    console.log('PASS from 600 px a banner at the top of the inbox stays 12 px under the bar');
+}
+
 (async () => {
     const browser = await chromium.launch({ headless: true });
     try {
-        const cases = [allIphones, desktopActions, groupedAndExpanded, scopedBulkArchive, expandedUnread, leavingDuringRead, latestMuteSettings, restoredCardFocus, groupedActionsAndNativeKeys, responsiveInbox, collapsedUnreadStack, filterRowSpacing];
+        const cases = [allIphones, desktopActions, groupedAndExpanded, scopedBulkArchive, expandedUnread, leavingDuringRead, latestMuteSettings, restoredCardFocus, groupedActionsAndNativeKeys, responsiveInbox, collapsedUnreadStack, filterRowSpacing, desktopBannerSpacing];
         const selected = cases.filter(run => !process.env.SCENARIO || process.env.SCENARIO === run.name);
         assert.ok(selected.length, 'SCENARIO must name an existing inbox case');
         for (const run of selected) await run(browser);

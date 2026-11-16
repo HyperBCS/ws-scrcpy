@@ -27,6 +27,14 @@
     padding: var(--space-8) 0;
     background: var(--surface);
 }
+/* From 600 px the block above the inbox gives 12 px under the page's bar. Where the filter row comes
+   first, right after the hidden heading, its own 8 px overlap that block, so it stays 12 px down
+   at rest. A banner above it keeps the whole 12 px. */
+@media (min-width: 600px) {
+    .notification-history > .visually-hidden + .notification-history-tools {
+        margin-top: calc(var(--space-8) * -1);
+    }
+}
 .notification-search,
 .notification-history-toolbar {
     display: flex;

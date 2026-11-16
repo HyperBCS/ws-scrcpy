@@ -1595,9 +1595,8 @@ async function stickyBarsReachScrollTop(browser) {
                 getComputedStyle(document.querySelector('main.notifications-page')).paddingTop,
                 getComputedStyle(document.querySelector('.notification-page-header')).paddingTop,
             ]);
-            // In the inbox the sticky bar's own padding is the space under the page's bar: all of
-            // it on a phone, and 8 of the 12 px from 600 px.
-            assert.deepEqual(padding, ['0px', width <= 420 ? '0px' : '4px'], `the block at the top of the page, not the scroller, carries the top padding at ${width} px`);
+            // In the inbox the sticky bar's own padding is the space under the page's bar on a phone.
+            assert.deepEqual(padding, ['0px', width <= 420 ? '0px' : '12px'], `the block at the top of the page, not the scroller, carries the top padding at ${width} px`);
             const tools = await measureSticky(f.page, '.notification-history-tools');
             if (width === 390) {
                 await fs.mkdir(OUT, { recursive: true });
