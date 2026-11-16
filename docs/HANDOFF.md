@@ -5856,3 +5856,375 @@ near an unlock slot. After 45 s: healthy, 0 restarts, the collector running as u
 "Receiving notifications", `Notifying: true` on both characteristics, the LE link kept, the
 named unlock fields unchanged. Until the fix is deployed the same outage can return after the
 next silent reconnect, and a restart brings notifications back.
+
+### Step 7: owner feedback of 2026-11-14 and the notifications outage (2026-11-16, fixtures only)
+
+The owner's list of 2026-11-14 (`docs/TODO.md` at f734c43) was split into six packages. Each was
+written by one agent in its own worktree and branch, then read and corrected by a second agent.
+The six reviewed branches were merged into `redesign` in the order collector, polish, notif-ui,
+files-touch, show-touches, ios-colour, with no textual conflict; then the integrator checked
+three seams between them and closed two. Only the collector changes code that runs on the server
+(`python/notifications/collector.py`); every other package is client only.
+
+Nothing of this step has run on a phone, and it is not deployed. Every check below ran on
+fixtures.
+
+#### collector: subscribe again after a silent Bluetooth reconnect
+
+What exists. `Client.tick` reads `Notifying` of both ANCS characteristics (Notification Source
+and Data Source) from each poll's object list. A characteristic counts as lost only when a poll
+has shown it notifying for this client and two polls in a row then show it not notifying or
+missing. The client then ends as on a disconnect (`Client.end`): its pending actions fail with
+"Bluetooth notifications stopped before the iPhone confirmed the action", the status reads
+"Reconnecting to iPhone notifications", its paths leave `owned_notifications`, and the next poll
+makes a new client under a new session id, which calls `StartNotify` again. The disconnect
+handler uses the same `end()`.
+
+Why it is built this way. On 2026-11-14 BlueZ attached to the iPhone again without
+`Connected: false`; the link stayed up, both characteristics read `Notifying: false`, and the
+collector went on asking for replies BlueZ did not pass on (section "Notifications outage and
+restart"). The client is replaced rather than repaired because the iPhone announces its alerts
+once per subscription and numbers them anew, so the old session's UIDs are stale. The server
+treats a `session` event the same with or without a disconnect
+(`NotificationService.handleCollector`: invalidate the sources, a new session, remember the
+replays); after a silent reconnect this happens about 2 s later than after a real one, whose
+status text already contains "disconnected". The link, `reset`, the reset hold-off, the three
+attempts, the advert refresh and pairing are unchanged.
+
+What the review changed. The worker's version ended the client every third poll when
+`StartNotify` succeeded but BlueZ never listed the characteristic as notifying: ten sessions in
+thirty polls. Now a characteristic must first be seen notifying. One worker test passed at the
+base as written and was made to prove the check; one test was added (47 Python notification
+tests).
+
+Left for later and risks. A stale BlueZ entry could answer `StartNotify` with InProgress, and the
+client would retry every 5 s under "Waiting for Bluetooth notification permission" (a
+`StopNotify` before `StartNotify` would cover it; not built). A subscription BlueZ never shows as
+notifying is not detected, as at the base. The new client does not inherit the old one's 35 s
+reset wait. The advert is registered again once in the poll after a client ends, as after a real
+disconnect. This is the one server change of the step: its deploy rebuilds the image.
+
+#### polish: five points of the inspection of 2026-11-14
+
+What exists.
+- Files and Shell: the header has one status line, the tool's connection. `ToolView.tsx` no
+  longer passes the stream service line to `PhoneHeader`; on those tabs the service is normally
+  stopped and the line made the header three lines high. Screen and the list cards keep it.
+- Phones on a desktop: each card is as tall as its content (`DeviceList.css`: the grid has
+  `align-items: start`, the actions lost `margin-top: auto`). A card without a line under its row
+  no longer has a blank band above its buttons.
+- The desktop rail: no caption wraps (`FloatingToolbar.css`), so every tile is one height.
+  `ControlRail.tsx` measures the widest caption in a hidden copy of a tile and writes
+  `--stream-rail-column` on the stage, only when the value changes, and removes it on unmount;
+  `StreamView.css` builds the rail width from it (88 px until it is written). Listen's tile says
+  "Waiting" for "Waiting for audio" (`listen.ts`, `tileCaption` and `LISTEN_CAPTIONS`), so the
+  widest caption is a resting one ("Volume down"), the rail is about 97 px per column (88 px at
+  the base) and keeps its width in every Listen state: a press on Listen does not move the
+  picture. The accessible name stays "Listen"; the hover text is the state in full words. The
+  touch panel uses the same tile and also says "Waiting".
+- Shell below 600 px: the keys are a grid of six equal columns in the same order (Esc to Down
+  arrow, then Right arrow to A+), each 44 px high, and the toast stands above both rows
+  (`ToolView.css`). From 600 px one row as before.
+- The Quality hint on a touch screen says only "A change restarts the stream."
+  `SegmentedControl.tsx` exports `useTouchScreen()`; on touch a group with manual activation also
+  leaves the keyboard sentence out of its description for assistive technology.
+
+What the review changed. The worker sized the rail for "Waiting for audio" (about 118 px per
+column); the review sized it for the resting captions and gave Listen short captions. The worker
+let each Shell key grow to fill its row; the review made two rows of six equal columns. Outside
+the package: one line in `StreamView.css` and one expectation in `e2e-ui-consistency.js`
+(`railFit`: pressing Listen at the one-column boundary stays at one column).
+
+Choices made for the owner: "Waiting" on the tile; the six-column grid.
+
+Left for later and risks. Listen's hover text changes with its state. The rail is about 9 px
+wider per column than at the base. With the keyboard open on a short phone screen the second row
+of keys takes 48 px from the terminal. An iPad with a hardware keyboard and no mouse counts as a
+touch screen and loses the arrow-key sentence. The rail builds two hidden copies per resize;
+`useTouchScreen` is the fourth copy of the same media-query hook in the client.
+
+#### notif-ui: the filter row of the inbox, and Switch in the bar
+
+What exists.
+- `.notification-history-tools` has `padding: var(--space-8) 0` (`NotificationsInbox.css`): 8 px
+  between the bar and the filter row at rest and while the row is stuck, and 8 px over the first
+  day label. Its background covers the cards under it, so the strips above and under the stuck
+  row are covered too. From 600 px `.notification-page-header-inbox` keeps its 12 px and the
+  sticky row has a margin of minus 8 px only where it directly follows the hidden heading, so the
+  desktop stays 12 px at rest and a banner at the top of the inbox keeps the whole 12 px.
+- With two or more iPhones linked the bar has the kit's compact button "Switch" (accessible name
+  "Switch iPhone", `aria-haspopup="dialog"`, class `notification-switch`) before Search and
+  Setup, as the header of a phone's page has. It opens the same sheet the chevron did.
+
+What the review changed. The worker took 8 px off the block above the inbox from 600 px, which
+moved a banner at the top of the inbox on a desktop from 12 px to 4 px under the bar. The review
+kept the block at 12 px and added the negative margin; new check `desktopBannerSpacing`, and
+`stickyBarsReachScrollTop` is back to the base expectation.
+
+Seam closed by the integrator. "Switch" is 68 px wide where the chevron was 44 px, so at 440 px
+with two iPhones the status line was cut in the states that matter most ("Phone A · Action
+nee…", "Reconnect…"). The unread words after the status (" · 25 unread") now give way first:
+`.notification-bar-status` wraps and is one line high with its overflow hidden
+(`NotificationsPage.css`), so where both do not fit the unread words go to a second line that is
+not shown, and the status stays whole. Where there is room both show, as before. The count stays
+in the page (`.notification-unread-count`) and in the filter row. A name too long for the line
+on its own is cut by the status's ellipsis and the unread words are not shown; at the base they
+kept their place and the name was cut shorter. Check `unreadGivesWay` in
+`e2e-notifications.js`, seen failing before the change.
+
+Changed expectations: "the first card within 130 px" is 146 px in `allIphones` and
+`sharedHeader`: on a phone the first card starts 16 px lower (8 px above the row and 8 px above
+the day label).
+
+Left for later and risks. The sticky row is 64 px high instead of 48, so 16 px less of the list
+shows while scrolling. The desktop rule depends on the hidden heading coming right before the
+sticky row (`NotificationHistory.tsx`, near line 807). A banner at the top of the inbox is flush
+under the bar on a phone, as at the base. At 320 px with two iPhones the title and the status
+are cut short.
+
+#### files-touch: Files on a touch screen
+
+What exists.
+- A hold selects a row and no browser menu shows. On a touch screen (`COARSE_POINTER`) the name
+  of a row is a link without an address: iOS shows its page preview and menu for a held link
+  with an address, and no style turns that off. It keeps `role="link"`, its accessible name and
+  its Tab stop, has `draggable="false"`, and Enter on it clicks it. With a mouse it keeps its
+  address. `filelisting.css` gives the row and its contents `user-select: none`,
+  `-webkit-user-select: none` and `-webkit-touch-callout: none` on touch.
+- The click that may follow a hold is dropped in a window that starts when the finger lifts
+  (`onPointerUp`), not at the 450 ms timer: Chromium sends a click when the finger lifts after a
+  long hold, and at the base a hold longer than about 600 ms toggled the row back out. A new
+  touch ends the window, so a quick tap after a hold adds its row.
+- The rows are built again when the pointer type changes (a mouse attached); the open menu
+  closes first and the list keeps its scroll position.
+- The phone layout of Files applies under `(max-width: 700px), (hover: none) and (pointer:
+  coarse) and (max-width: 1023px)`; the sidebar and the one-row desktop toolbar are under `not
+  all and` the same condition, and the menu builders' comments name it. On a touch screen held
+  sideways and at most 560 px high, history (or the selection bar), the address and the two tools
+  share one line. From 1024 px on touch the desktop layout stays, with quick access rows 44 px
+  high.
+- Move in the selection bar has Lucide's folder-input shape (`icons.ts`), so it no longer looks
+  like Forward in the history row.
+- On a coarse pointer each crumb of the address reaches to the middle of the slash on each side,
+  so "/" and short names are targets of at least 44 px without moving the text apart.
+
+What the review changed. The one-line landscape bar applied to mouse windows up to 700x560 too;
+now touch only. A quick tap within 600 ms after a hold was dropped; now a new touch ends the
+window. On a change of pointer the rebuild scrolled the list to the top and left an open row
+menu tied to a removed button. The crumbs were centred in 44 px, which moved "/" and the first
+name about 27 px apart; now each reaches to the middle of the slash. New scenario "a change of
+pointer" in `e2e-files-flows.js`.
+
+Choices made for the owner: a touch screen from 701 to 1023 px wide (an iPad in portrait) gets
+the phone layout and so loses the sidebar, the command row and the Size and Type columns; the
+one-line bar sideways.
+
+Left for later and risks. On that tablet width Ctrl+F targets the hidden filter field
+(`FileListingClient.ts`, near line 1561). Quick access rows on a mouse in a short window still
+shrink below 32 px. At exactly 700 px wide and at most 560 px high on a mouse both blocks apply,
+as at the base. `test-style-rules.js` still lists 700 and 900 for `filelisting.css`. Whether iOS
+sends a click after a hold is not known. The `files` suite takes about 155 s of its 240 s limit.
+
+#### show-touches: a circle under each finger
+
+What exists. `views/screen/TouchMarks.tsx` with `style/views/TouchMarks.css` is mounted in
+`ScreenView.tsx` as a sibling just after the mount node, only while the switch is on; the stage
+keeps its key and the mount node does not move. One circle for each finger and for the left
+mouse button while it is held; it follows the pointer and fades over 220 ms when let go, at once
+with reduced motion. Its place comes from `markPoint` (`input/touchMarks.ts`), which uses
+`clientPointToVideo`, the input's own mapping: a drag that leaves the picture keeps its circle on
+the edge, where the phone has the touch, and a press on the bands beside the picture draws
+nothing. The layer has `pointer-events: none`, `aria-hidden`, passive listeners, and never
+cancels an event. It listens for itself (touch and mousedown on the mount node; while the button
+is held, capture listeners on the window; it lets go on blur, pagehide and a hidden page) instead
+of taking positions from the handlers, because the iPhone handler sends its touches from code the
+base class does not see. The second finger of a Ctrl+drag pinch comes from
+`InteractionHandler.watchPinch`; a watcher that throws is caught. `TOUCH_RULES` says which
+pointers each kind of phone takes (an iPhone: five fingers at most, no finger while the mouse
+button is held and no mouse press while a finger is down; Android: the emulated down after the
+window lost focus), and a unit test checks it against both real handlers; `DevicePage.tsx` passes
+the kind of phone through `ScreenView.tsx` to the layer. The layer lies at z-index 3, over the
+picture's touch layer (2) and under the controls' shield (4).
+
+The switch "Show touches" is in Settings, Keyboard, a group "Touch" after the shortcuts, with the
+hint "A circle where you touch the picture. This browser only." It is off by default, kept in
+this browser (`ws-scrcpy.screen.show-touches` through `ui/storage.ts`, state in
+`state/showTouches.ts`), applies at once, and is also in the Settings of the list's card. With it
+off there is no layer and no listener. What reaches the phone is the same with it on and off.
+
+Why it is built this way: drawn in the browser it is the same on both kinds of phone, shows at
+once without waiting for the video, and is not in a screenshot. Android's own `show_touches`
+would show on the phone itself and is Android only.
+
+What the review changed. A pointer held still while the picture changed size kept its circle at
+the old place; each circle now keeps its point of the picture and is placed again when the layer
+resizes. The layer drew circles the phone never got (an iPhone's sixth finger, a finger while the
+mouse button is held, a mouse press while a finger is down) and missed one it did get (Android's
+emulated down after a lost window): hence `TOUCH_RULES`. More browser checks: layout changes with
+a pointer held, 956x440, 320x956, 1024x700, Type text docked, the shield over a circle, Files with
+a finger down, the wheel, a computer with touch and mouse, the list card.
+
+Choices made for the owner: a 44 px circle; a 3 px ring in `--accent` with a 1 px `--on-accent`
+edge inside and out and a 20% accent tint inside; circles cut off at the edge of the picture; a
+220 ms fade; the hint as a group hint; on a mouse pinch the circles drawn over the phone's own
+pinch preview.
+
+Left for later and risks. On Android a mouse and a finger at once share pointer id 0 in the input
+(an existing defect), so the layer shows two circles for one touch. After a stream disconnect, an
+iPhone rotate from Actions or an iPhone decoder error, a circle stays until the finger lifts. The
+iPhone wheel's swipe gets no circle. Another open tab picks up the switch only after a reload.
+
+#### ios-colour: the colour of an iPhone's picture
+
+What exists.
+- `player/hevcColour.ts` reads the colour fields of the SPS inside the stream's `hvcC`
+  (`video_full_range_flag`, and primaries, transfer and matrix where present). A header it cannot
+  read gives "not known"; it never throws into the player.
+- WebCodecs (`WebCodecsHevcPlayer.ts`): the decoder config carries `colorSpace`, with the range
+  the stream declares (limited where it says nothing) and BT.709 for each colour value it leaves
+  out. If the browser refuses the config with `colorSpace` (`configure()` throws or
+  `isConfigSupported` says no), the player uses the plain config and asks for a key frame. The
+  decoder is configured at once and does not wait for `isConfigSupported`.
+- MSE (`hevcFmp4.ts`, `MseHevcPlayer.ts`): the init segment has a `colr` box of type `nclx` right
+  after the `hvcC` in the sample entry.
+- Settings, About and troubleshooting, iPhone only: a group "Picture" with the row "Picture
+  colour range" (Auto, Full, Limited), after the phone's facts and before Services, kept in this
+  browser (`ws-scrcpy.iphone.colour-range`, `state/pictureColour.ts`), default Auto; and a fact
+  "Stream colour" after Decoder once the header has arrived (for the bench iPhone: "Full range,
+  colour space not declared"). The words are in `copy.ts` (`PICTURE_COLOUR`).
+- A change applies without a new session: the WebCodecs decoder is marked to be configured again
+  at the next key frame and keeps decoding until then; MSE queues a new init segment before the
+  next key frame; one key frame request (`pli`) is sent, and only while the session is connected
+  (`isConnected()`). Choosing what is already applied does nothing.
+
+Why it is built this way. The iPhone's SPS declares primaries, transfer and matrix as 2
+("unspecified") and sets the full-range flag (the 2026-10-25 sample and the record of
+2026-09-16 have the same parameter sets). A reading of Chromium's source: it drops the
+full-range flag of an HEVC stream whose colour codes are unspecified, and shows full-range
+pixels as limited range, which clips whites and crushes blacks: the owner's "too bright and too
+contrasty". So Auto now tells the browser full range and BT.709. This is a reading, not proven on
+a picture: headless Chromium cannot decode the stream. The row is there so the owner can compare
+in their own browser.
+
+What the review changed. The worker's player rebuilt the decoder at once and dropped frames
+until a key frame; a second change within a second lost its key frame request (the proxy passes
+one `pli` a second) and the picture froze until the phone sent a key frame by itself. Now the
+decoder is rebuilt at the next key frame, and a refused colour space is handled the same way.
+On a reconnect a change could send a `pli` over a new socket before the session was up; now only
+while connected. The review checked the parser against ffmpeg `trace_headers` on 1,500 random
+valid SPS, 20 libx265 encodes and the iPhone sample rewritten six ways; 186,000 calls on damaged
+input never threw or read past the buffer; ffmpeg reads the `colr` box as
+`nclx: pri 1 trc 1 matrix 1 full 1`.
+
+Seam closed by the integrator: the atlas has the state `iphone-settings-picture`, the iPhone's
+Settings with the Picture group in view (`// ios-colour` in `e2e-atlas.js`).
+
+Choices made for the owner: the names "Picture", "Picture colour range" and "Stream colour"; a
+three-way switch that applies at once; Auto on a header with no colour information uses limited
+range and BT.709; one setting for every iPhone; a colour value WebCodecs has no name for becomes
+BT.709 there while the `colr` box keeps the declared value.
+
+Left for later and risks. Safari: Auto now tells every browser BT.709, transfer included, and
+Apple draws BT.709-tagged video with a lighter curve, so dark areas may look a little lighter in
+Safari than before; no browser check covers it. The MSE path has unit tests only; its new init
+segment was not run in a browser. Another open tab picks up a change only after a reload.
+
+#### Integration
+
+Merges: `review/collector` 8bbed8e, `review/polish` 0afc82a, `review/notif-ui` 9e9bbd9,
+`review/files-touch` 1bfcc8b, `review/show-touches` 7c74a89, `review/ios-colour` df1f737, each
+`git merge --no-ff`, no conflict, the type check after each. Before the merges,
+`git diff --stat f734c43 <branch> -- src/server src/common python config Dockerfile
+docker-compose.yml` listed files only for collector (`collector.py` and `test_collector.py`).
+`scripts/test-show-touches.js` and `scripts/test-hevc-colour.js` are in the `test` script; the
+suites `show-touches` and `ios-colour` are in the default list before `atlas`.
+
+Seams: the unread words in the Notifications bar (above, under notif-ui); the atlas state for
+Picture (above, under ios-colour). Settings with both new groups was looked at on both fixtures,
+from the screen and from the list card, at 440x956 touch and 1440x900 mouse, light and dark:
+sections in the order Stream (Android only), Sound, Keyboard, Unlock, About and troubleshooting;
+"Touch" the last group of Keyboard on both; "Picture" between Phone and Services on the iPhone
+only; nothing overlapping, no row leaving its card, no sideways scroll; a change to Limited with
+Show touches on configured the decoder once, sent one `pli`, kept the layer and opened no socket.
+Nothing was added for it.
+
+Checks, all on fixtures, at the merged head with the seams: `npm run check` passes (type check;
+lint with 0 errors and 26 warnings; 842 node tests, which are the 819 of the base, 3 new in
+`test-files.js`, 9 in `test-show-touches.js` and 11 in `test-hevc-colour.js`; the Python tests:
+47 for notifications, 32 for the patches with 2 skipped, 4 for the probes; the production build).
+`node scripts/test-browser.js` passes all 41 default suites in 34 min 43 s; `files` is still the
+slowest and close to its 240 s limit.
+
+Stream sockets, counted on fixtures of an Android phone and an iPhone at 440x956 touch and
+1440x900 mouse: one socket for the open, and still one with the same mount node after Settings,
+Actions, Type text and Switch were opened and closed, Show touches on and off, Listen pressed
+(waiting) and pressed again, and on the iPhone the colour changes Limited, Full and Auto (two
+`pli` requests: Auto matched what was applied). On the Android phone Files closes the stream and
+the return to Screen opens the second socket: one per requested open. The suites that assert it: `show-touches`,
+`ios-colour`, `controls`, `device-page`, `screen-states`, `desktop-layout`, `history-walk`.
+
+Nothing a person could reach at the base is gone. The controls of the Files chrome, its menus,
+the row menu and the selection bar are the same at 1440x900 with a mouse and at 440x956 on touch.
+At 956x440 and 820x1180 on touch the desktop toolbar and the sidebar are replaced by the phone
+layout: Upload, New folder, Paste, Refresh and Select are in Actions, the View choices under
+"View options…", Download, Rename, Delete, Cut and Copy in the selection bar and its Actions menu
+and in the row menu, Filter behind Search, and quick access behind its button. The Notifications
+bar keeps Phones, Switch iPhone, Search and Setup and the same sheet; the Shell keys keep their
+eleven keys in order; the rail and the touch panel keep their controls in order.
+
+The atlas of f734c43 against this head differs only where a package meant it to: the rail of
+every desktop screen state (polish; in `iphone-actions` the pointer left on the old place of the
+Actions tile now rests on Refresh, so Refresh shows its hover colour), the cards of Phones on a
+desktop (polish), the Quality hint in Android Settings on a phone (polish), the Shell keys on a
+phone (polish), the Move icon in every Files and Shell state and the crumbs and rows of Files on a
+phone (files-touch), the filter row of every inbox state and Switch in `notifications-all`
+(notif-ui), the one-line box of the unread words (integrator), the Touch group in every Settings
+state (show-touches) and the Picture group in the iPhone's (ios-colour), and generated ids of
+Settings rows numbered later because those rows were opened earlier in the same page. Two states
+are new: `android-show-touches` and `iphone-settings-picture`. One difference is not from this
+step: in the desktop Notifications states a select of the hidden Setup panel has one option more
+or less from run to run; two runs of the base build differ the same way.
+
+#### Hardware checklist for step 7
+
+Nothing here has been tried on a phone.
+
+Chrome on the desktop:
+- The iPhone's picture: Settings, About and troubleshooting, Picture colour range, on a screen
+  with pure white and pure black areas. Auto and Full look like the phone and Limited looks as
+  before: the reading is right and Auto is the fix. All three look the same: the browser ignores
+  the colour space on this path; note the Decoder fact. Auto and Full look flat and Limited looks
+  right: the phone's full-range flag is wrong. Auto differs from Full: a bug.
+- A colour change while the screen is open: the picture changes at the next key frame, does not
+  freeze, and the screen does not reconnect.
+- Show touches with a mouse: a ring under the pointer while the button is held, following a
+  drag; two rings for a Ctrl+drag pinch; none after release; none with the switch off.
+- The rail: every caption on one line; Listen says "Waiting" while it waits, and the rail and the
+  picture do not move when Listen is pressed; the hover text says the state in full words.
+- Phones: each card as tall as its content. Files and Shell: one status line under the name.
+
+The iPhone, in Safari and in the installed app, upright and sideways:
+- Files: hold a file name for about 1 s: it is selected, the selection bar shows, and no page
+  preview, menu or text selection appears. Hold a folder: selected, not opened. Hold, then drag:
+  nothing lifts off and the row stays selected. Start a scroll on a row: the list scrolls and
+  nothing is selected. Right after a hold, tap another row quickly: it is added. Tap a file: the
+  sheet (Download, Rename, Delete, Cancel); tap a folder: it opens. Sideways: history, the
+  address, Search and Actions on one line, and a deep path readable. Tap "/" and a short crumb
+  near their edges: each opens its folder. Move in the selection bar is a folder with an arrow.
+- Show touches (Settings, Keyboard, Touch): drag a list and note how far the picture runs behind
+  the ring; pinch (two rings); swipe in from the band beside the picture (no ring on the band);
+  lift (the ring fades); hold and turn the phone (the ring stays on its spot); whether the ring
+  hides small text; switch it off (no rings).
+- Shell upright: the keys in two rows of six, all in sight, each sends what it did.
+- Notifications with two iPhones: the bar reads the status whole in every state, with the unread
+  words where there is room; Switch opens the list of iPhones; 8 px between the bar and the
+  filter row, at rest and while scrolling.
+- Settings of an Android phone: under Quality only "A change restarts the stream."
+- The iPhone's picture in Safari: compare Auto and Limited as above; note whether dark areas look
+  lighter than before.
+
+After a deploy on the live server (notifications). The deploy rebuilds the image, because
+`collector.py` runs in the container. After a silent Bluetooth reconnect the status reads
+"Reconnecting to iPhone notifications" and then "Receiving notifications" within about 10 s,
+with no restart; both characteristics read `Notifying: true`; alerts the iPhone announces again
+are not pushed twice. Until then, a restart of the container brings notifications back.
