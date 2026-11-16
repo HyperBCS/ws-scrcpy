@@ -345,7 +345,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /** When the rows were last put in order, for `RENDER_INTERVAL_MS`. */
     private renderedAt = 0;
     private longPressTimer?: ReturnType<typeof setTimeout>;
-    /** When a hold last selected a row, and again when its finger lifted. */
+    /** When a hold last selected a row, and again when its finger lifted; 0 from the next touch. */
     private longPressedAt = 0;
     /** True from the moment a hold selects a row until its finger lifts. */
     private holding = false;
@@ -1465,6 +1465,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     };
 
     private onPointerDown = (event: PointerEvent): void => {
+        // The click that may follow a hold comes before any new touch, so a new touch ends the
+        // window in which it is dropped: a quick tap after a hold adds its row.
+        this.longPressedAt = 0;
         if (event.pointerType === 'mouse' || event.button !== 0) {
             return;
         }
@@ -1488,7 +1491,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     /**
      * The finger lifts. After a hold, the click that may follow is dropped (`onClick`), however
-     * long the finger was held, so it does not toggle the row straight back out.
+     * long the finger was held, so it does not toggle the row straight back out. The window ends
+     * after 600ms or at the next touch (`onPointerDown`), whichever comes first.
      */
     private onPointerUp = (): void => {
         if (this.holding) {

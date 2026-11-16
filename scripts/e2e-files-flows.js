@@ -1248,10 +1248,17 @@ async function hold(browser) {
     assert.equal(await page.locator('.files-menu:not([hidden])').count(), 0, 'and no menu');
     assert.equal(downloads, 0, 'and started no download');
     assert.equal(await page.evaluate(() => location.hash), hash);
-    // Selection mode is on: a tap adds a row. (A tap within 600ms of the hold is dropped.)
-    await page.waitForTimeout(400);
-    await name('photo.png').click();
-    assert.deepEqual(await selected(), ['notes.txt', 'photo.png'], 'a tap after the hold adds a row');
+    // Selection mode is on: a tap adds a row, also a quick one. The click dropped after a hold is
+    // the one of the hold itself; a new touch ends that window.
+    await endSelection();
+    await touchHold(page, name('notes.txt'), 600, { click: true });
+    await page.locator('.file-explorer.fx-selecting').waitFor();
+    await name('photo.png').tap();
+    await page.waitForFunction(() => document.querySelectorAll('.fx-row.selected').length === 2, null, { timeout: 2000 }).catch(() => {});
+    assert.deepEqual(await selected(), ['notes.txt', 'photo.png'], 'a quick tap right after the hold adds a row');
+    await page.waitForTimeout(700);
+    await name('archive').tap();
+    assert.deepEqual(await selected(), ['archive', 'notes.txt', 'photo.png'], 'and so does a later tap');
     await endSelection();
 
     // A folder: held, it is selected and not opened.
