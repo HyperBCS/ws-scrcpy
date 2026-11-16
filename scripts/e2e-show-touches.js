@@ -40,7 +40,7 @@ const OUT = process.env.E2E_OUT;
 const PIXEL = 'SHOW-TOUCHES-PIXEL-0001';
 const IPHONE = 'SHOW-TOUCHES-IPHONE-0001';
 const KEY = 'ws-scrcpy.screen.show-touches';
-const HINT = 'A circle where you touch the picture. This browser only.';
+const HINT = 'A dot where you touch the picture. This browser only.';
 // Taller than the stage at both sizes, so the picture leaves a band on each side of it.
 const VIDEO = { android: { width: 720, height: 1800 }, ios: { width: 400, height: 1000 } };
 const ANDROID = {

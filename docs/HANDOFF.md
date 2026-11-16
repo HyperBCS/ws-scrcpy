@@ -6564,3 +6564,9 @@ server (hover only), Safari and Firefox, the iPhone's screen on the live server.
 
 Rollback, for a break only: `docker tag ws-scrcpy:before-step8-20261116 ws-scrcpy:latest` and
 `docker compose up -d ws-scrcpy`. Reload each browser tab and reopen the installed app once.
+
+After the deployment (2026-11-16, not live): the hint under Show touches now reads "A dot where
+you touch the picture. This browser only." (`KeyboardSection.tsx`, and the same sentence in
+`scripts/e2e-show-touches.js`). `npm run check` and the suites `show-touches` and `settings`
+pass. The live image 0bb876fcfa1f was built from 85bcb6c and still says "A circle"; the change
+goes live with the next deploy.

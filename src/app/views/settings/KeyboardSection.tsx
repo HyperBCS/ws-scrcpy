@@ -84,7 +84,7 @@ export function KeyboardSection({ platform, android, ios, opening }: KeyboardSec
                 changed from the list too, and applies at once to a screen that is open. */}
             <SettingsGroup
                 title="Touch"
-                hint="A circle where you touch the picture. This browser only."
+                hint="A dot where you touch the picture. This browser only."
                 class="settings-touches"
             >
                 <SheetToggleRow title="Show touches" checked={showTouches.value} onChange={setShowTouches} />

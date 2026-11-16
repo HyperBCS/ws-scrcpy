@@ -9,8 +9,10 @@ Nothing open.
 
 ## Built in step 8, to try on hardware
 
-Built and checked on fixtures only. What each does and what to try is in `docs/HANDOFF.md`,
-section "Step 8: a theme option, Android's touch dot and the Files address highlight".
+Built and checked on fixtures, live since 2026-11-16. What each does and what to try is in
+`docs/HANDOFF.md`, section "Step 8: a theme option, Android's touch dot and the Files address
+highlight". Not live yet: the hint under Show touches says "dot" in the code and "circle" on the
+live server until the next deploy.
 
 - Theme: a button in the bar of the Phones page with System, Light and Dark, kept in the browser.
 - Show touches: a small white dot with a dark edge, as Android draws one.
