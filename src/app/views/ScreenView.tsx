@@ -9,6 +9,7 @@ import { useSheetDock } from '../ui/Sheet';
 import { PhoneHeader } from './PhoneHeader';
 import { LockScreenNotice } from './LockScreenNotice';
 import { ScreenProblem, StateCard } from './screen/StateCard';
+import { TouchMarks } from './screen/TouchMarks';
 import '../../style/kit/Banner.css';
 import '../../style/views/StreamView.css';
 
@@ -178,9 +179,12 @@ export function ScreenView<P extends { udid: string }>({ params, useScreen, tabs
                 node is made once, keeps its place and is never moved: the card and the controls
                 are its siblings, and the sheets are outside the stage. The stage keeps its key, so
                 a banner that comes or goes cannot make Preact build it again. A docked sheet and
-                the rail change only its styles. */}
+                the rail change only its styles. Show touches is a sibling too: it listens on the
+                mount node and reads its picture, and changes neither. With the switch off it
+                draws nothing and does not listen. */}
             <div key="stage" class="stream-stage" ref={stageRef}>
                 <div class="stream-mount" ref={mountRef} />
+                <TouchMarks mount={mountRef} />
                 <aside class="stream-controls-slot" aria-label="Phone controls">
                     {screen.controls}
                 </aside>
