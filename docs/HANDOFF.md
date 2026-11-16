@@ -6316,3 +6316,138 @@ screen on the live server, Files and Shell on a real touch screen.
 
 Rollback, for a break only: `docker tag ws-scrcpy:before-step7-20261116 ws-scrcpy:latest` and
 `docker compose up -d ws-scrcpy`. Reload each browser tab and reopen the installed app once.
+
+### Step 8: a theme option, Android's touch dot and the Files address highlight (2026-11-16, fixtures only)
+
+Three requests of the owner on 2026-11-16: an option for the dark theme, a Show touches mark
+"more like Android's", and a hover highlight in the Files address that was taller than the field.
+One package (`appearance`), written by one agent on `work/appearance` and read and corrected by a
+second on `review/appearance`, merged into `redesign` with no conflict. Client only: no file
+under `src/server`, `src/common`, `python` or `config` changed. `src/public` gained `theme.js`
+and `index.html` loads it; `webpack/ws-scrcpy.common.ts` copies it in both client builds.
+
+Nothing of this step has run on a phone. Every check below ran on fixtures.
+
+#### The theme option
+
+What exists. A "Theme" icon button (Lucide `sun-moon`, icon `theme`) in the bar of the Phones
+page, after the Notifications link and before Reload. It opens the kit's menu with System, Light
+and Dark as radio items; the menu stays open after a choice, as the kit does for checked items.
+The choice is kept in this browser under `ws-scrcpy.theme` (`light` or `dark`; no value is
+System) by `src/app/state/theme.ts`. `applyTheme` writes `data-theme` on the root for Light and
+Dark and removes it for System, and sets the `color-scheme` meta and both `theme-color` metas
+(#f5f6f8 light, #17191d dark). `src/style/tokens.css` has the dark values twice with the same
+content: under `@media (prefers-color-scheme: dark)` for `:root:not([data-theme='light'])`, and
+for `:root[data-theme='dark']`. `src/public/theme.js` does what `applyTheme` does before the
+styles load: `index.html` names it in the head, after the colour metas and before the style
+sheet, with the build hash on its address. Another tab, or the installed app, takes a change at
+once through the `storage` event.
+
+Why it is built this way. System stays the default so that nothing changes for a browser that
+never opens the menu: an atlas of the base against the branch differs only in the Phones bar,
+the desktop Files address, the touch dot and the new state `list-theme-menu`. The early script
+is a file, not inline, so it survives a stricter security policy (today's policy in
+`requestOrigin.ts` sets only `frame-ancestors` and `connect-src`). `sw.js` has no fetch handler
+and no cache and `index.html` is served `no-store`, so no cache list needed the file. If the
+file does not run, the bundle applies the choice when it loads; the first frame is then in the
+system's theme. A theme change is a style change only: the signal is read by the Theme button
+alone, and the `theme` suite holds one stream socket and the same mount node through a system
+change and a choice made in another tab. The button is on the Phones page because the choice is
+for the whole app, not for one phone.
+
+What the review changed. The worker wrote the radio items as kit markup by hand in
+`DeviceList.tsx` and loosened a guard in `scripts/test-home.js` for it. The kit's `MenuItem` now
+has a `radio` form (`role="menuitemradio"`), the Theme items use it, and the guard is as it was.
+
+Tests. `scripts/test-theme.js` (8 tests): the default, the kept and read-back choice, blocked
+storage, another tab; both dark blocks hold the same tokens and values (the reviewer changed one
+value, and added one token to one block, in a scratch copy: it failed both times); `theme.js`
+gives the same page as `applyTheme` for every stored value; the two colours agree in all four
+places; the script comes before the styles. Suite `theme` (`scripts/e2e-theme.js`, 440x956 touch
+and 1440x900 mouse): the menu; Dark under a light system gives the same computed styles as
+System under a dark one on Phones, a Settings sheet, Files and the inbox, and Light the same way
+round; the first frame after a reload is in the chosen theme with the bundle held back 600 ms,
+and in the system's theme when `theme.js` is blocked; System follows the system at once and a
+choice does not; the `theme-color` in effect; no new socket and the same mount node on a phone's
+screen; blocked storage. `e2e-home.js` holds the bar's order, its 44 px targets and one row at
+320 px. Atlas state `list-theme-menu`.
+
+Left for later and risks. `src/public/manifest.json` has one fixed dark `theme_color` and
+`background_color`, so the installed app's splash is dark before the page loads, whatever the
+choice. `eslint.config.mjs` has rules for `sw.js` only under `src/public`, so `theme.js` is
+linted against none. The Shell terminal keeps xterm's default colours in both themes and the two
+canvases their fixed colours, as before. The bar's title is 44 px narrower: at 320 px the summary
+is cut sooner. A tab restored from the back-forward cache may miss a change made in another tab
+until it reloads (not tested). Checked in Chromium only.
+
+#### Show touches: Android's dot
+
+What exists. The mark of `TouchMarks.css` is a 32 px dot (`--control-height-compact`) filled
+with `--touch-mark-fill` (white at 60 %) with a 1 px edge of `--touch-mark-edge` (black at 30 %)
+drawn outside the fill. The two tokens are in `tokens.css` with one value for both themes,
+because the dot lies over the phone's picture and not over the app. It fades in `--motion-fast`
+(160 ms; `MOTION.quick` in `TouchMarks.tsx`), and goes at once with reduced motion. Where and
+when a dot shows (`TOUCH_RULES`, `markPoint`, the pinch pair, the switch in Settings, Keyboard,
+Touch) is as step 7 left it.
+
+Why. Android's "Show taps" draws a small translucent white disc. The fill shows on a dark
+picture and the edge on a white one: in the suite's pictures it is a grey disc over black and a
+thin grey ring over white. The 44 px ring in the accent of step 7 hid more of the picture and
+looked like a control.
+
+Tests. `test-show-touches.js` has "the dot is Android's". `e2e-show-touches.js` has `looks()`
+(size, fill, edge, no ring, centre within 1 px) in every run, and `fades()` holds the 160 ms.
+
+#### Files: the address highlight stays inside the field
+
+What was wrong. `.fx-crumb:hover` set `background` as a shorthand, which reset
+`background-clip`, so the fill took the full 32 px of the field and covered its border. A press
+shrank the crumb. The focus ring sat on the field's edge, and the edit button's ring 4 px
+outside it.
+
+What exists. Under a mouse (`(pointer: fine), (pointer: none)`) each crumb and the edit button
+is a fill box 4 px inside the field (`--space-4` above and below), with `--radius-sm` on a crumb;
+hover, focus and press have that one shape and nothing moves. An `::after` keeps the press area
+at the field's full height. The edit button is a 24x24 square 4 px from the field's top, bottom
+and end, with the old 32x32 press area. The path and the icon are where they were in step 7.
+The fade at the start of a long path lies in the field's own 4 px padding, so a path that fits,
+the root included, is drawn whole. The touch rules of step 7 are untouched: positions and
+targets measured the same at 440 px touch and at 1280 px with touch emulation.
+
+What the review changed. The worker's version moved the resting layout on a desktop (the path
+4 px to the right, the edit icon 7 px to the left). That was not needed for the fix; the base
+positions are back and `e2e-files-kit.js` holds them ("9px and 6px").
+
+Tests. `addressHighlight` in `e2e-files-kit.js` (1440x900 mouse, light and dark): on the base
+build it lists 33 faults, for the hovered, pressed and focused root, middle crumb, current
+folder and edit button. Its slash and press-area checks pass at the base too; they guard what
+already held.
+
+Left for later and risks. The root "/" is drawn in the text colour at rest on a desktop; at the
+base the fade dimmed it. The start fade of a long path under a mouse is 4 px, not 16 px. Under a
+mouse a press on a slash opens the path editor, as at the base (the field carries
+`data-command="edit-path"`, `FileListingClient.ts`). Touch keeps the 16 px fade over the root
+crumb. A mouse-first laptop with a touch screen gets the mouse rules with 32 px press areas; no
+test can fake that pointer pair.
+
+#### Integration
+
+Merged `review/appearance` (f7af3d0) with `--no-ff` (6d9f222). `scripts/test-theme.js` is in the
+`test` script and the suite `theme` is in the default list before `atlas` (0d2637b). On 0d2637b:
+`npm run check` passes (type check clean; lint 0 errors, 26 warnings as before; 851 node tests;
+Python 47, 32 with 2 skipped, and 4; the build with the same 3 size warnings).
+`node scripts/test-browser.js` passes: all 42 default suites (the 41 of step 7 and `theme`), 490
+PASS lines, no failure. The reviewer saw each new or changed test fail on a build of the base,
+except the atlas block, which was not run there. The two worktrees and their branches are
+removed.
+
+#### Hardware checklist for step 8
+
+- Theme, desktop Chrome: choose Dark with a light system and Light with a dark one; reload; no
+  flash of the other theme.
+- Theme, the installed app on the iPhone: the status bar colour for each choice; the first paint
+  after a cold start. An installed app on an iPhone is expected to keep its own storage, so its
+  choice is made in the app itself and not in Safari; check.
+- Show touches: the dot under a finger on a light and on a dark screen, on the iPhone and the
+  POCO; a pinch shows two.
+- Files on a desktop: hover, Tab focus and press on a crumb and on the edit button; a long path.
