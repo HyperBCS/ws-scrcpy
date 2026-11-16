@@ -1438,14 +1438,13 @@ async function pointerChange(browser) {
         });
     const mark = () => page.evaluate(() => document.querySelectorAll('.fx-row').forEach((row) => (row.__mark = true)));
 
+    // A mouse: two rows selected, focus on a name, the list scrolled to its end.
     await row(page, 'notes.txt').locator('.entry-size').click();
     await row(page, 'photo.png').locator('.entry-size').click({ modifiers: ['Control'] });
     await row(page, 'photo.png').locator('.entry-name a').focus();
     await page.locator('.fx-items').evaluate((items) => (items.scrollTop = items.scrollHeight));
-    await pressAtRest(page, row(page, 'photo.png').getByRole('button', { name: 'Actions for photo.png', exact: true }));
-    await page.locator('.files-menu').waitFor();
     await mark();
-    const before = await state();
+    let before = await state();
     assert(before.links.every(Boolean) && before.scroll > 0, JSON.stringify(before));
 
     await pointer(true);
@@ -1455,18 +1454,26 @@ async function pointerChange(browser) {
     assert.deepEqual(after.selected, ['notes.txt', 'photo.png'], 'the selection stays');
     assert.equal(after.scroll, before.scroll, 'the list keeps its place');
     assert.equal(after.focused, 'photo.png', 'focus stays on its row');
-    await page.locator('.files-menu').waitFor({ state: 'hidden', timeout: 2000 });
     // Once: nothing builds the rows again after that.
     await mark();
     await page.waitForTimeout(500);
     assert.equal((await state()).kept, before.links.length, 'the rows are built once');
 
+    // The menu of a row is open when the mouse comes back. Its button is replaced, so it closes,
+    // and focus goes back to that row.
+    await pressAtRest(page, row(page, 'photo.png').getByRole('button', { name: 'Actions for photo.png', exact: true }));
+    await page.locator('.files-menu').waitFor();
+    before = await state();
     await pointer(false);
+    await page.locator('.files-menu').waitFor({ state: 'hidden', timeout: 2000 });
     after = await state();
     assert.equal(after.kept, 0, 'a mouse again: every row is built again');
     assert(after.links.every(Boolean), 'a mouse again: each name has its address');
     assert.deepEqual(after.selected, ['notes.txt', 'photo.png']);
-    assert.equal(after.focused, 'photo.png');
+    // The rows are lower under a mouse, so the list cannot go as far down: it stays at its end.
+    const end = await page.locator('.fx-items').evaluate((items) => items.scrollHeight - items.clientHeight);
+    assert.equal(after.scroll, Math.min(before.scroll, end), 'the list keeps its place');
+    assert.equal(after.focused, 'photo.png', 'focus is back on the row whose menu closed');
     assert.equal(traffic.operations.length, 0, 'nothing was sent to the phone');
     await cdp.detach();
     await finish();
