@@ -4,7 +4,8 @@
 // light and dark, with motion reduced:
 //   - off by default: no layer, no listener on the mount node, no circle during any press;
 //   - on from Settings (Keyboard, Touch), at once, and kept in this browser;
-//   - one circle under one pointer at the pointer's place within 1 px, following it;
+//   - one circle under one pointer at the pointer's place within 1 px, following it: Android's
+//     "Show taps" dot, 32 px of white at 60% with a 1 px edge of black at 30%, in both themes;
 //   - two circles for two fingers, and for the two fingers of a Ctrl+drag pinch;
 //   - none after release, none for a press beside the picture, none for a right-click or for
 //     Ctrl held over the picture without a press;
@@ -14,12 +15,13 @@
 //   - the same messages on the stream socket with the switch on as with it off;
 //   - one stream socket and the same mount node through all of it, and off again from Settings
 //     takes the layer and its listeners away.
-// Without reduced motion a circle fades when its pointer is let go. In light only: a pointer held
-// while the window turns or gets smaller keeps its circle on its point of the picture; presses at
-// 956x440, 320x956 (bands above and below) and 1024x700 and beside Type text docked; the controls'
-// shield lies over a circle; Files takes the circles away. On a computer with a touch screen and a
-// mouse: the circles follow what each kind of phone takes (`TOUCH_RULES`), and go on a lost
-// window, a cancelled touch and a hidden page; the switch is also in the list card's Settings.
+// Without reduced motion a circle fades in --motion-fast when its pointer is let go. In light
+// only: a pointer held while the window turns or gets smaller keeps its circle on its point of the
+// picture; presses at 956x440, 320x956 (bands above and below) and 1024x700 and beside Type text
+// docked; the controls' shield lies over a circle; Files takes the circles away. On a computer
+// with a touch screen and a mouse: the circles follow what each kind of phone takes
+// (`TOUCH_RULES`), and go on a lost window, a cancelled touch and a hidden page; the switch is also
+// in the list card's Settings.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -494,7 +496,47 @@ async function checkLayer(test, circles = 0) {
     assert.ok(layer.offsets.every((offset) => Math.abs(offset) <= 1), `${test.label}: over the picture (${layer.offsets})`);
 }
 
-/** Without reduced motion, a circle fades where it was let go and is then gone. */
+// Android's "Show taps" dot: 32px across, white at 60% inside a 1px edge of black at 30%, drawn
+// over the picture; the same in both themes.
+const DOT = {
+    width: '32px', height: '32px', radius: '999px', fill: 'rgba(255, 255, 255, 0.6)', clip: 'padding-box',
+    edge: ['1px', '1px', '1px', '1px', 'solid', 'rgba(0, 0, 0, 0.3)'], shadow: 'none', opacity: '1',
+};
+
+/** The dot under one pointer: its computed size, fill and edge, and its centre on the pointer. */
+async function looks(test) {
+    const { page, cdp } = test;
+    const box = await picture(page);
+    const point = at(box, 0.45, 0.4);
+    if (test.mobile) await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ id: 1, ...point, force: 1 }] });
+    else {
+        await page.mouse.move(point.x, point.y);
+        await page.mouse.down();
+    }
+    await expectMarks(test, [point], 'the dot');
+    const dot = await page.locator('.touch-mark').evaluate((mark) => {
+        const style = getComputedStyle(mark);
+        return {
+            width: style.width, height: style.height, radius: style.borderTopLeftRadius, fill: style.backgroundColor, clip: style.backgroundClip,
+            edge: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth, style.borderTopStyle, style.borderTopColor],
+            shadow: style.boxShadow, opacity: style.opacity,
+        };
+    });
+    assert.deepEqual(dot, DOT, `${test.label}: a 32px dot of translucent white with a thin dark edge`);
+    assert.deepEqual(
+        await page.locator('.touch-mark').evaluate((mark) => {
+            const style = getComputedStyle(mark);
+            return [...new Set([style.borderRightColor, style.borderBottomColor, style.borderLeftColor])];
+        }),
+        [DOT.edge[5]],
+        `${test.label}: one edge colour all round`,
+    );
+    if (test.mobile) await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    else await page.mouse.up();
+    await expectMarks(test, [], 'the dot let go');
+}
+
+/** Without reduced motion, a circle fades where it was let go, in --motion-fast, and is then gone. */
 async function fades(test) {
     const { page, cdp } = test;
     const box = await picture(page);
@@ -515,6 +557,12 @@ async function fades(test) {
         const fading = await page.evaluate(() => [...document.querySelectorAll('.touch-mark')].map((mark) => Number(getComputedStyle(mark).opacity)));
         assert.equal(fading.length, 1, `${test.label}: the circle is still there just after it was let go`);
         assert.ok(fading[0] > 0 && fading[0] < 1, `${test.label}: and fading (${fading[0]})`);
+        const timing = await page.evaluate(() => {
+            const fast = getComputedStyle(document.documentElement).getPropertyValue('--motion-fast').trim();
+            const fade = document.querySelector('.touch-mark')?.getAnimations()[0]?.effect.getTiming().duration;
+            return { fast, fade };
+        });
+        assert.deepEqual(timing, { fast: '160ms', fade: 160 }, `${test.label}: the fade takes --motion-fast`);
         await page.waitForFunction(() => !document.querySelector('.touch-mark'), undefined, { timeout: 2000 });
     } finally {
         await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -859,6 +907,7 @@ async function run(browser, platform, viewport, theme) {
             assert.deepEqual(messages, off[index][1], `${test.label}: ${name} sends the same with the switch on as off`);
         }
         await checkLayer(test);
+        await looks(test);
         await fades(test);
         await pictures(test);
         if (theme === 'light') {

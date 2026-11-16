@@ -49,6 +49,11 @@
        keeps 3:1 against a white and a black picture in both themes, with its fill or its icon;
        at 0.45 it falls under 3:1 over white. */
     --idle-opacity: 0.5;
+    /* Show touches: the dot under a finger, as Android draws it with "Show taps". It lies over
+       the phone's picture and not over the app, so it is the same in both themes: white at 60%
+       shows on a dark picture, its edge of black at 30% on a white one. */
+    --touch-mark-fill: rgba(255, 255, 255, 0.6);
+    --touch-mark-edge: rgba(0, 0, 0, 0.3);
 
     /* Type: six sizes, with 12px the floor and only for captions, and 15px the size of body
        text. Inputs are 16px so that iOS does not zoom the page on focus. The root is 16px and

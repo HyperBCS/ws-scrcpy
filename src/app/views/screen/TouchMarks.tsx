@@ -255,7 +255,10 @@ class TouchMarkLayer {
         });
     }
 
-    /** The pointer is let go: its circle fades where it is, or goes at once with reduced motion. */
+    /**
+     * The pointer is let go: its dot fades where it is in a short time (`--motion-fast`), or goes
+     * at once with reduced motion.
+     */
     private lift(key: string): void {
         const mark = this.marks.get(key);
         if (!mark) {
@@ -263,7 +266,7 @@ class TouchMarkLayer {
         }
         this.marks.delete(key);
         const fade = animate(mark.element, [{ opacity: 1 }, { opacity: 0 }], {
-            duration: MOTION.exit,
+            duration: MOTION.quick,
             fill: 'forwards',
         });
         void finished(fade).then(() => mark.element.remove());

@@ -1,6 +1,7 @@
 // Run with: node --test scripts/test-show-touches.js
 // Show touches without a browser: the switch (src/app/state/showTouches.ts) is off until this
 // browser turns it on, is kept and read back, and blocked storage leaves it off without a fault;
+// the dot looks like Android's "Show taps" dot in both themes and fades in --motion-fast;
 // a pointer's circle (src/app/input/touchMarks.ts) lies where the phone receives the touch, also
 // with bands beside the picture and beside it; and the pinch code of both kinds of phone tells the
 // layer both fingers of a Ctrl+drag while sending exactly what it sends without it. No browser or
@@ -132,6 +133,35 @@ test('with storage blocked it starts off, still turns on for this page, and noth
     state.setShowTouches(false);
     assert.equal(state.showTouches.value, false);
     storage();
+});
+
+// ---------------------------------------------------------------- the look of a dot
+
+test("the dot is Android's: 32px of translucent white with a thin dark edge, the same in both themes, and a short fade", () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const source = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = /\.touch-mark\s*\{([^}]*)\}/.exec(source('src/style/views/TouchMarks.css'))[1];
+    const declared = Object.fromEntries(Array.from(rule.matchAll(/([\w-]+):\s*([^;]+);/g), (match) => [match[1], match[2].replace(/\s+/g, ' ').trim()]));
+    assert.equal(declared.width, 'var(--control-height-compact)');
+    assert.equal(declared.height, 'var(--control-height-compact)');
+    assert.equal(declared.margin, 'calc(var(--control-height-compact) / -2) 0 0 calc(var(--control-height-compact) / -2)', 'centred on its point');
+    assert.equal(declared['border-radius'], 'var(--radius-full)', 'round');
+    assert.equal(declared['background-color'], 'var(--touch-mark-fill)');
+    assert.equal(declared.border, '1px solid var(--touch-mark-edge)');
+    assert.equal(declared['background-clip'], 'padding-box', 'the edge lies over the picture');
+    assert.equal('box-shadow' in declared, false, 'no ring');
+    assert.doesNotMatch(rule, /accent/, 'no accent colour');
+    // Defined once, among the light values, so a dark system and Dark chosen have the same dot.
+    const tokens = source('src/style/tokens.css');
+    for (const [name, value] of [['--touch-mark-fill', 'rgba(255, 255, 255, 0.6)'], ['--touch-mark-edge', 'rgba(0, 0, 0, 0.3)']]) {
+        assert.deepEqual(Array.from(tokens.matchAll(new RegExp(`${name}:\\s*([^;]+);`, 'g')), (match) => match[1].trim()), [value], name);
+        assert.ok(tokens.indexOf(name) < tokens.indexOf('@media (prefers-color-scheme: dark)'), `${name} is a value of both themes`);
+    }
+    // Let go, it fades in --motion-fast.
+    assert.match(source('src/app/views/screen/TouchMarks.tsx'), /animate\(mark\.element, \[\{ opacity: 1 \}, \{ opacity: 0 \}\], \{\s*duration: MOTION\.quick,/);
+    assert.equal(require('../src/app/ui/motion').MOTION.quick, 160);
+    assert.match(tokens, /--motion-fast: 160ms;/);
 });
 
 // ---------------------------------------------------------------- a pointer on the layer
