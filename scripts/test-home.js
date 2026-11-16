@@ -577,7 +577,8 @@ test('the list, its cards, the switcher and the notices take their controls, ico
     for (const file of [...views, ...parts]) {
         const source = read(file);
         assert.equal(/<svg\b/.test(source), false, `${file} draws no icon of its own`);
-        assert.equal(/<button\b[^>]*class=/.test(source.replace(/class=\{`device-switcher-item[^`]*`\}/, '')), false, `${file} has no button look of its own`);
+        // A radio item of the Theme menu is written in the kit's menu markup: `ui/Menu` has no radio item.
+        assert.equal(/<button\b[^>]*class=/.test(source.replace(/class=\{`device-switcher-item[^`]*`\}/, '').replace(/class="kit-menu-item"/g, '')), false, `${file} has no button look of its own`);
         assert.equal(/[☾⚠✕▶●▣◐○→←]/.test(source.replace(/\/\/.*|\/\*[\s\S]*?\*\//g, '')), false, `${file} has no text glyph`);
         assert.equal(/ui-button|action-button|wake-button|device-problem-action|screen-failed-button|control-button/.test(source), false, `${file} uses no older button class`);
     }
