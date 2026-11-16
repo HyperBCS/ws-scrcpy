@@ -24,6 +24,7 @@ class CollectorTests(unittest.TestCase):
         self.unregistered = []
         self.registered = []
         self.subscriptions = []
+        self.subscribed = []
         self.managed = dict
         self.quits = []
         self.stdin = []
@@ -40,6 +41,9 @@ class CollectorTests(unittest.TestCase):
                 method = staticmethod(lambda *args, **kwargs: lambda function: function)
 
         class Interface:
+            def __init__(self, path):
+                self.path = path
+
             def WriteValue(self, payload, options, reply_handler, error_handler):
                 test.writes.append(payload)
                 test.write_errors.append(error_handler)
@@ -50,6 +54,7 @@ class CollectorTests(unittest.TestCase):
 
             def StartNotify(self, reply_handler, error_handler):
                 test.subscriptions.append((reply_handler, error_handler))
+                test.subscribed.append(self.path)
 
             def Disconnect(self, **kwargs):
                 test.disconnections.append(True)
@@ -89,7 +94,7 @@ class CollectorTests(unittest.TestCase):
             'MAX_UIDS': 512, 'MAX_QUEUED_ACTIONS': 32, 'pair_attempts': {}, 'advert_pending': False,
             'loop': Loop, 'os': Os, 'sys': Sys, 'traceback': traceback, 'input_buffer': bytearray(),
             'emit': lambda kind, **fields: self.events.append(dict(kind=kind, **fields)),
-            'iface': lambda *args: Interface(),
+            'iface': lambda path, name: Interface(path),
         }
         exec(compile(ast.Module(body=declarations, type_ignores=[]), 'collector.Client', 'exec'), self.scope)
         self.client = self.scope['Client']('/phone', 'phone', {DATA: '/data', SOURCE: '/source', CONTROL: '/control'})
@@ -97,7 +102,7 @@ class CollectorTests(unittest.TestCase):
         self.client.apps['example.app'] = 'Example'
 
     def source(self, event, uid=42, flags=0):
-        self.client.data('/source', struct.pack('<BBBBI', event, flags, 0, 1, uid))
+        self.client.data(self.client.chars[SOURCE], struct.pack('<BBBBI', event, flags, 0, 1, uid))
 
     def reply(self, uid=42, title='Alert', app='example.app', action=None):
         _, prefix, attributes = notification_request(uid, negative_action=action is not None)
@@ -112,7 +117,7 @@ class CollectorTests(unittest.TestCase):
             struct.pack('<BH', attribute, len(values[attribute].encode())) + values[attribute].encode()
             for attribute in attributes
         )
-        self.client.data('/data', response)
+        self.client.data(self.client.chars[DATA], response)
 
     def notifications(self):
         return [event for event in self.events if event['kind'] == 'notification']
@@ -492,6 +497,123 @@ class CollectorTests(unittest.TestCase):
         self.write_replies[-1]()
         self.assertEqual(len(self.action_results()), 2)
         self.assertEqual(sum(payload[0] == 2 for payload in self.writes), 1)
+
+    def bluez(self):
+        """BlueZ's object list: the paired iPhone, connected. A characteristic whose entry in
+        self.notifying is None is left out."""
+        objects = {'/phone': {'org.bluez.Device1': dict(Address='AA:BB:CC:DD:EE:FF', UUIDs=[ANCS], Paired=True,
+                                                         Connected=True)}}
+        for name, characteristic in (('data', DATA), ('source', SOURCE), ('control', CONTROL)):
+            notifying = self.notifying.get(name, False)
+            if notifying is not None:
+                objects['/phone/' + name] = {'org.bluez.GattCharacteristic1': dict(UUID=characteristic,
+                                                                                    Notifying=notifying)}
+        return objects
+
+    def poll(self):
+        self.assertIs(self.scope['tick'](), True)
+
+    def subscribe(self):
+        """Polls until a client made by the poll subscribes to both characteristics and receives."""
+        subscriptions = len(self.subscriptions)
+        self.poll()  # The poll makes a client, which subscribes to the Data Source.
+        self.client = self.scope['clients']['phone']
+        self.client.apps['example.app'] = 'Example'
+        self.notifying['data'] = True
+        self.subscriptions[-1][0]()
+        self.poll()  # Then to the Notification Source.
+        self.notifying['source'] = True
+        self.subscriptions[-1][0]()
+        self.poll()  # Both are ready: the probe.
+        self.assertEqual(self.subscribed[subscriptions:], ['/phone/data', '/phone/source'])
+        self.assertEqual(self.writes[-1], app_request('com.apple.Preferences')[0])
+        self.app_reply('com.apple.Preferences', 'Settings')
+        self.assertEqual(self.statuses()[-1], 'Receiving notifications')
+
+    def connect(self):
+        self.scope['clients'].clear()
+        self.notifying = dict(data=False, source=False)
+        self.managed = self.bluez
+        self.subscribe()
+
+    def sessions(self):
+        return [event['session'] for event in self.events if event['kind'] == 'session']
+
+    def test_lost_subscription_without_a_disconnect_subscribes_again_under_a_new_session(self):
+        self.connect()
+        old = self.client
+        self.source(0, flags=16)
+        self.reply(action='Clear')
+        self.dismiss()
+        action_reply = self.write_replies[-1]
+        self.events.clear()
+        # BlueZ attached to the iPhone again: Connected stayed true, Notifying turned false.
+        self.notifying.update(data=False, source=False)
+        self.poll()
+        self.assertIs(self.scope['clients'].get('phone'), old, 'one poll is not enough')
+        self.assertEqual(self.action_results(), [])
+        self.poll()
+        self.assertNotIn('phone', self.scope['clients'])
+        self.assertEqual([(result['requestId'], result['ok'], result['error']) for result in self.action_results()],
+                         [('request-1', False, 'Bluetooth notifications stopped before the iPhone confirmed the action')])
+        self.assertEqual(self.statuses(), ['Reconnecting to iPhone notifications'])
+        self.assertEqual(self.scope['owned_notifications'], set())
+        self.assertEqual(self.disconnections, [], 'the link is left alone')
+        action_reply()  # A late ACK of the old session cannot succeed.
+        self.assertEqual(len(self.action_results()), 1)
+        self.subscribe()
+        self.assertIsNot(self.client, old)
+        self.assertEqual(self.sessions(), [self.client.session])
+        self.assertNotEqual(self.client.session, old.session)
+        self.assertEqual(self.statuses(), ['Reconnecting to iPhone notifications', 'Authorizing notifications',
+                                           'Receiving notifications'])
+        self.source(0, uid=7)
+        self.reply(uid=7)
+        self.assertEqual([(n['uid'], n['session']) for n in self.notifications()], [(7, self.client.session)])
+
+    def test_one_poll_without_notifying_changes_nothing(self):
+        self.scope['clients'].clear()
+        self.notifying = dict(data=False, source=False)
+        self.managed = self.bluez
+        self.poll()
+        self.client = self.scope['clients']['phone']
+        self.subscriptions[-1][0]()  # StartNotify answered; the next list still reads false.
+        self.poll()
+        self.notifying['data'] = True
+        self.subscriptions[-1][0]()
+        self.poll()
+        self.notifying['source'] = True
+        self.poll()
+        self.app_reply('com.apple.Preferences', 'Settings')
+        self.assertEqual(self.subscribed, ['/phone/data', '/phone/source'])
+        for name in ('data', 'source', 'data'):
+            self.notifying[name] = False
+            self.poll()
+            self.notifying[name] = True
+            self.poll()
+        self.assertIs(self.scope['clients'].get('phone'), self.client)
+        self.assertEqual(self.sessions()[1:], [self.client.session], 'the start under setUp, then this one')
+        self.assertEqual(self.statuses(), ['Authorizing notifications', 'Receiving notifications'])
+        self.assertEqual(self.subscribed, ['/phone/data', '/phone/source'])
+        self.assertEqual(self.scope['owned_notifications'], {'/phone/data', '/phone/source'})
+
+    def test_characteristic_missing_from_two_polls_counts_as_lost(self):
+        self.connect()
+        old = self.client
+        self.events.clear()
+        self.notifying['source'] = None  # Gone from the list while BlueZ discovers the services again.
+        self.poll()
+        self.assertIs(self.scope['clients'].get('phone'), old)
+        self.poll()
+        self.assertNotIn('phone', self.scope['clients'])
+        self.assertEqual(self.statuses(), ['Reconnecting to iPhone notifications'])
+        self.poll()
+        self.assertNotIn('phone', self.scope['clients'], 'no client while a characteristic is missing')
+        self.notifying['source'] = False
+        self.subscribe()  # Subscribes to the Data Source again although BlueZ shows it notifying.
+        self.assertEqual(self.sessions(), [self.client.session])
+        self.assertNotEqual(self.client.session, old.session)
+        self.assertEqual(self.disconnections, [])
 
     def test_action_timeout_waits_on_the_same_session_and_late_ack_cannot_succeed(self):
         self.source(0, flags=16)

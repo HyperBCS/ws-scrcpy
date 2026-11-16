@@ -112,9 +112,17 @@ class Client:
         self.pending_added = {}
         self.last_probe, self.retry_at, self.authorized = 0, 0, False
         self.last_status = ''
+        # Subscribed characteristics that were not notifying at the last poll.
+        self.silent = set()
         emit('session', source=self.source, session=self.session)
 
     def alive(self): return clients.get(self.source) is self
+
+    def end(self, reason, status):
+        # The next poll makes a new client for an iPhone that is still connected.
+        self.fail_actions(reason)
+        self.status(status)
+        if self.alive(): clients.pop(self.source)
 
     def status(self, status):
         if status != self.last_status:
@@ -249,8 +257,27 @@ class Client:
         except dbus.DBusException as error:
             failed(error)
 
+    def notifying(self, characteristic):
+        # As the last poll's object list shows it. A characteristic missing from it is not notifying.
+        return objects.get(self.chars[characteristic], {}).get('org.bluez.GattCharacteristic1', {}).get('Notifying')
+
     def tick(self):
         if not self.alive(): return
+        # BlueZ can attach to the iPhone again without reporting Connected: false (2026-11-14). The
+        # link stays up, but the characteristics read Notifying: false or are gone, and the iPhone's
+        # replies are not passed on. Notifying can be false for a moment around StartNotify, so a
+        # characteristic counts as lost only when two polls in a row show it.
+        silent = {characteristic for characteristic in self.ready
+                  if self.chars[characteristic] in owned_notifications and not self.notifying(characteristic)}
+        if silent & self.silent:
+            # End this client as a disconnect does and leave the link alone. A new client subscribes
+            # again under a new session: the iPhone announces its alerts once per subscription and
+            # numbers them anew, so this session's UIDs are stale.
+            owned_notifications.difference_update(self.chars.values())
+            self.end('Bluetooth notifications stopped before the iPhone confirmed the action',
+                     'Reconnecting to iPhone notifications')
+            return
+        self.silent = silent
         now = time.monotonic()
         for key, job in list(self.queue.items()):
             if job['action_failed'] and now > job['expires']:
@@ -261,8 +288,7 @@ class Client:
         if now < self.retry_at: return
         for characteristic in [DATA, SOURCE]:
             if characteristic == SOURCE and DATA not in self.ready: break
-            if (self.chars[characteristic] in owned_notifications and
-                    objects.get(self.chars[characteristic], {}).get('org.bluez.GattCharacteristic1', {}).get('Notifying')):
+            if self.chars[characteristic] in owned_notifications and self.notifying(characteristic):
                 self.ready.add(characteristic)
             if characteristic not in self.ready and characteristic not in self.pending:
                 self.pending.add(characteristic)
@@ -350,11 +376,10 @@ def property_changed(interface, changes, invalidated, path=None):
         for client in list(clients.values()):
             if str(path).startswith(client.path + '/'): client.data(str(path), bytes(changes['Value']))
     elif interface == 'org.bluez.Device1' and changes.get('Connected') is not None and not changes['Connected']:
-        for source, client in list(clients.items()):
+        for client in list(clients.values()):
             if client.path == str(path):
-                client.fail_actions('Bluetooth disconnected before the iPhone confirmed the action')
-                client.status('Bluetooth disconnected; waiting for iPhone')
-                clients.pop(source, None)
+                client.end('Bluetooth disconnected before the iPhone confirmed the action',
+                           'Bluetooth disconnected; waiting for iPhone')
 
 
 def refresh_advert():
