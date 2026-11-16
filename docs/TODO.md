@@ -7,6 +7,14 @@ it is done and recorded in a dated section of `docs/HANDOFF.md`.
 
 Nothing open.
 
+## Built in step 9
+
+What each does is in `docs/HANDOFF.md`, section "Step 9: the browser suites side by side, and
+the Theme menu closes".
+
+- The browser suites run sixteen at once: about 3 minutes in place of 35.
+- The Theme menu closes after a choice.
+
 ## Built in step 8, to try on hardware
 
 Built and checked on fixtures, live since 2026-11-16. What each does and what to try is in
@@ -64,3 +72,10 @@ the notifications outage".
   it, or make a slash do nothing.
 - Files on a desktop: the start of a long path fades over 4 px, not 16 px, since the path kept
   its place. Keep it, or move the path 4 px to the right for a longer fade.
+- Tests: the browser run is now as long as its slowest suite (`files`, 157 s). Keep it, or split
+  the slowest suites to get near 2 minutes.
+- For a small change, one agent and one full run on the merged head, in place of a worker, a
+  reviewer and an integrator who each run everything. Step 9 was done that way.
+- A deploy takes about 23 minutes, most of it the one iPhone session on the test server and
+  the waits around it. Keep it for every deploy, or leave the iPhone session out when a step
+  changes nothing a phone's screen page uses.

@@ -6570,3 +6570,64 @@ you touch the picture. This browser only." (`KeyboardSection.tsx`, and the same 
 `scripts/e2e-show-touches.js`). `npm run check` and the suites `show-touches` and `settings`
 pass. The live image 0bb876fcfa1f was built from 85bcb6c and still says "A circle"; the change
 goes live with the next deploy.
+
+### Step 9: the browser suites side by side, and the Theme menu closes (2026-11-16, fixtures only)
+
+Two requests of the owner on 2026-11-16: "35 min for verify/testing is too much", and the Theme
+menu "should go away once clicked". Done in the main checkout, without worker and reviewer
+agents: the first is the test runner alone, the second is four lines of the kit.
+
+#### The browser suites run side by side
+
+What exists. `scripts/test-browser.js` starts up to sixteen suites at once, one for each
+processor by default; `--jobs=N` or `TEST_BROWSER_JOBS=N` sets how many, and `--jobs=1` runs
+them one after another with their output as it comes. Beside others, a suite's output is
+printed in one piece when it ends, after the line "Running <suite> browser checks" and before
+"<suite> passed in 12.3 s" or "<suite> FAILED (1) after 12.3 s". Every suite runs even when one
+fails; the last lines give the count, the five slowest and "Failed: a, b", and the exit code is
+1. The time each suite took is kept in the system's temporary folder
+(`ws-scrcpy-browser-times.json`) and the longest starts first next time. SIGINT or SIGTERM to
+the runner stops its suites, each closing its own browser. The 240 s limit of one suite is as
+it was.
+
+Why it is safe. Each suite was already its own process with its own browser and its own mocked
+phones (`page.route` and fixture sockets inside the page), against one static server on a free
+port; no suite binds a fixed port or shares a folder. The suites wait more than they compute:
+with sixteen at once the load average of this 16-processor machine stayed between 6 and 9, and
+no suite took longer than it does alone (`files` 157 s both ways).
+
+What was measured. All 42 default suites, one after another: 35 min. Eight at once: 5 min 32 s.
+Sixteen at once: 2 min 46 s, which is the kit build and the slowest suite. Five full runs
+with sixteen at once passed, each with 42 suites and no failure.
+`npm run check` takes 1 min 28 s. A missing suite and a failing assertion each ended the run
+with exit code 1 and their names, while the other suite still ran. SIGTERM to the runner in the
+middle of three suites left no suite and no browser behind.
+
+Left for later and risks. The run is now as long as `files` (157 s), then `notifications`
+(138 s), `atlas` (117 s), `about-ui` (112 s) and `home` (111 s). `files` runs five window sizes
+one after another in one browser; run side by side they would take about 35 s, and the whole
+run about 2 min 20 s. Two agents that test at the same time would start 32 browsers: give each
+`TEST_BROWSER_JOBS` so the total stays near the number of processors. The brief
+(`CODEX-HANDOFF.md`) says so now. The node tests still bind fixed ports and still must not run
+twice at once.
+
+#### The Theme menu closes after a choice
+
+What exists. In the kit's `Menu`, a press on a `menuitemradio` item closes the menu, as a press
+on a plain item does, and the focus returns to the menu's button. An item that is on or off
+(`menuitemcheckbox`) still leaves the menu open. Theme is the only menu with radio items made of
+`MenuItem`; the Files View menu builds its own markup and is unchanged.
+
+Why. A radio item is one choice of a set: once it is made there is nothing more to do in the
+menu, and the owner found the open menu in the way. The checked item shows when the menu opens
+again.
+
+Tests. `e2e-theme.js`: after each of Dark, Light and System the menu is hidden, Theme is not
+expanded and has the focus, and the item is checked when the menu opens again. On the build
+before the change it fails with "the menu closes after Dark".
+
+Also in this step: the hint under Show touches reads "A dot where you touch the picture. This
+browser only." (7047f3b, recorded above).
+
+Checks on the head: `npm run check` passes (type check clean; lint 0 errors, 26 warnings; 851
+node tests; Python 47, 32 with 2 skipped, and 4; the build) and all 42 browser suites pass.
