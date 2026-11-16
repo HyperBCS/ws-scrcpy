@@ -110,14 +110,13 @@ function audit({ mobile, tokens }) {
     if (coarse !== mobile) faults.push(`(pointer: coarse) is ${coarse} in a ${mobile ? 'touch' : 'mouse'} context`);
     const height = (element) => Math.round(element.getBoundingClientRect().height * 100) / 100;
     const dense = mobile ? 44 : 32;
-    // Under a mouse the edit button of the address is drawn inside the field, 4px from its top
-    // and bottom, as a crumb is (see `addressHighlight`).
+    // Under a mouse the edit button of the address is a square drawn 4px inside the field, as a
+    // crumb is (see `addressHighlight`).
     const inField = (element) => !mobile && element.matches('.fx-address-toggle, .fx-crumb');
     for (const element of all('.kit-button, .kit-icon-button')) {
         const expected = inField(element) ? dense - 8 : element.matches('.kit-button-compact, .kit-icon-button-compact') ? dense : 44;
         if (height(element) !== expected) faults.push(`${height(element)}px high, not ${expected}px: ${name(element)}`);
-        const wide = inField(element) ? dense - 4 : expected;
-        if (element.matches('.kit-icon-button') && element.getBoundingClientRect().width !== wide) faults.push(`not ${wide}px wide: ${name(element)}`);
+        if (element.matches('.kit-icon-button') && element.getBoundingClientRect().width !== expected) faults.push(`not square: ${name(element)}`);
     }
     for (const element of all('.kit-menu-item, .fx-address, .fx-filter-input, .fx-sort')) {
         if (height(element) !== dense) faults.push(`${height(element)}px high, not ${dense}px: ${name(element)}`);
@@ -675,8 +674,9 @@ function addressShape(selector) {
  * The address under a mouse at 1440x900. The root, a middle crumb, the folder you are in and the
  * edit button, hovered, focused and pressed: the fill or the focus ring is a rounded rectangle
  * (--radius-sm) inside the field, 4px from its top and bottom edge, and the name or the icon and
- * the control's size are what they are at rest. A press anywhere over the height of the field
- * lands on the crumb, and a slash is part of no crumb and shows no fill. Every fault is listed.
+ * the control's size are what they are at rest. At rest the path and the icon are where they are
+ * without the mouse rules. A press anywhere over the height of the field lands on the crumb, and
+ * a slash is part of no crumb and shows no fill. Every fault is listed.
  */
 async function addressHighlight(browser, theme) {
     const label = `address 1440x900 mouse ${theme}`;
@@ -724,6 +724,17 @@ async function addressHighlight(browser, theme) {
         const box = await page.locator(selector).boundingBox();
         return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
     };
+    // At rest the path and the icon are where step 7 has them: the root's "/" 9px from the
+    // field's left edge (its border, its padding and the crumb's own), and the icon 6px from the
+    // right edge, in the middle of the field's last 32px.
+    const resting = await page.evaluate(() => {
+        const field = document.querySelector('.fx-address').getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(document.querySelector('.fx-crumb-root'));
+        const icon = document.querySelector('.fx-address-toggle svg').getBoundingClientRect();
+        return { root: Math.round((range.getBoundingClientRect().left - field.left) * 100) / 100, icon: Math.round((field.right - icon.right) * 100) / 100 };
+    });
+    if (resting.root !== 9 || resting.icon !== 6) faults.push(`at rest: the root's name ${resting.root}px from the field's left edge and the icon ${resting.icon}px from its right, not 9px and 6px`);
     for (const [name, selector] of Object.entries(targets)) {
         const element = page.locator(selector);
         const rest = await page.evaluate(addressShape, selector);

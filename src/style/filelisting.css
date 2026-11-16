@@ -471,14 +471,16 @@
    control is that rectangle, and its ::after reaches the field's edges, so a press anywhere over
    the height of the field still lands on it. The focus ring is drawn inside the same shape, and a
    press fills it without shrinking it, so nothing moves. The slashes between the crumbs are not
-   part of any crumb. A finger, `(pointer: coarse)`, keeps the wide targets above. */
+   part of any crumb. The names and the icon stay where they are at rest without these rules. A
+   finger, `(pointer: coarse)`, keeps the wide targets above. */
 @media (pointer: fine), (pointer: none) {
-    /* The start of a long path fades where it is scrolled into the first 8px of the field. That
-       strip is the path's own padding, so a path that fits, the root among it, is drawn whole. */
+    /* The start of a long path fades where it is scrolled under the field's own padding, its first
+       4px. The path starts after that strip, where it always did, so a path that fits, the root
+       and its fill among it, is drawn whole. */
     .fx-breadcrumb {
         margin-left: calc(-1 * var(--space-4));
-        padding-left: var(--space-8);
-        mask-image: linear-gradient(to right, transparent 0, var(--text) var(--space-8));
+        padding-left: var(--space-4);
+        mask-image: linear-gradient(to right, transparent 0, var(--text) var(--space-4));
     }
     /* No border, so the ::after is placed from the control's own edge. */
     .fx-crumb,
@@ -497,14 +499,16 @@
     .fx-crumb::after {
         inset: calc(-1 * var(--space-4)) 0;
     }
-    /* The icon has the padding a name has, and the end of the field has the room its start has.
-       Its press reaches the field's edge on the right too. */
+    /* The edit button is a square 4px inside the field's top, bottom and end, so its corners
+       follow the field's, and its icon is where it is at rest without these rules. Its ::after is
+       the square the button covered before, up to the field's edges, so a press lands where it
+       did. */
     .fx-address-toggle {
-        width: calc(var(--fx-control) - var(--space-4));
-        margin: 0 var(--space-8) 0 0;
+        width: calc(var(--fx-control) - 2 * var(--space-4));
+        margin: 0 calc(var(--space-4) - 1px) 0 var(--space-4);
     }
     .fx-address-toggle::after {
-        inset: calc(-1 * var(--space-4)) calc(-1 * var(--space-8) - 1px) calc(-1 * var(--space-4)) 0;
+        inset: calc(-1 * var(--space-4));
     }
     .fx-address-toggle:focus-visible {
         outline-offset: calc(-1 * var(--focus-ring-offset));
