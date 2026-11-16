@@ -2,7 +2,6 @@ import { ComponentChildren } from 'preact';
 import { Presence } from '../ui/Presence';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { ACTION } from '../../common/Action';
-import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import { BaseClient } from '../client/BaseClient';
 import { DeviceEntry, isDeviceAvailable, phoneName, supportsDeviceTools } from '../state/devices';
 import { toolConnection } from '../state/phoneStatus';
@@ -12,7 +11,6 @@ import { deviceHref, followLink } from '../state/links';
 import type { DeviceView } from '../state/routes';
 import { closeAllSheets } from '../state/stream';
 import { Banner } from '../ui/Banner';
-import { StreamServiceStatus } from '../ui/StreamServiceStatus';
 import { PhoneHeader } from './PhoneHeader';
 import { DeviceSwitcherSheet } from './DeviceSwitcherSheet';
 import { StateCardBody } from './screen/StateCard';
@@ -110,7 +108,6 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
     const udid = params.get('udid') || '';
     const tool = deviceTools.find((candidate) => candidate.action === action);
     const entry = findDeviceForTool({ ...BaseClient.parseParameters(params), udid });
-    const descriptor = entry?.descriptor as GoogDeviceDescriptor | undefined;
     const viewRef = useRef<HTMLElement>(null);
     const workspaceRef = useRef<HTMLElement>(null);
     // A hidden tool keeps its workspace where the header and the tabs left it. Grown into their
@@ -338,15 +335,13 @@ export function ToolView({ params, active, tabs }: ToolViewProps) {
             }
         >
             {active && (
+                // The tool's own connection is the one status line. The stream service line is
+                // Screen's: on Files and Shell the service is normally stopped, and the line
+                // only made the header three lines high.
                 <PhoneHeader
                     name={phoneName(udid, entry)}
                     connection={connection}
                     connectionClass={`tool-connection ${connected ? 'connected' : ''}`.trim()}
-                    service={
-                        descriptor && (
-                            <StreamServiceStatus descriptor={descriptor} deviceKey={entry?.key} unlessRunning />
-                        )
-                    }
                 />
             )}
             {active && tabs}

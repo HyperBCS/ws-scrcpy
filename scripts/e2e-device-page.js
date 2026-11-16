@@ -553,6 +553,41 @@ async function androidTabs(browser, viewport, colorScheme) {
     }
 }
 
+/**
+ * The header of Files and Shell has one status line, the tool's connection, also when the stream
+ * service is stopped, as it normally is behind those tabs. Screen still names a stopped service.
+ */
+async function toolHeaderOneLine(browser, viewport) {
+    const test = await start(browser, { viewport, hash: `action=device&udid=${PIXEL}&view=screen` });
+    const { page } = test;
+    const label = `${viewport.name} tool header`;
+    // Every line under the phone's name, with its class and its words.
+    const lines = () => page.locator('header.kit-bar .kit-bar-title > :not(.kit-bar-name)').evaluateAll((list) =>
+        list.map((line) => [line.classList.contains('tool-connection') ? 'tool' : line.classList.contains('stream-service-status') ? 'service' : line.className, line.textContent]),
+    );
+    const service = page.locator('header.kit-bar .stream-service-status[data-stream-service="stopped"]');
+    try {
+        await page.getByText('Connected', { exact: true }).first().waitFor();
+        test.trackers.android(ANDROIDS.map((phone) => (phone.udid === PIXEL ? { ...phone, pid: -1 } : phone)));
+        await service.waitFor();
+        assert.deepEqual(await lines(), [['kit-bar-status', 'Connected'], ['service', 'Stream service: Stopped']], `${label}: Screen names the stopped service under its connection`);
+        for (const name of ['Files', 'Shell']) {
+            await tab(page, name).click();
+            await page.locator('.tool-view:not([hidden]) .tool-connection.connected').waitFor();
+            assert.deepEqual(await lines(), [['tool', 'Connected']], `${label}: ${name} has one status line, its connection`);
+            assert.equal(await page.locator('header.kit-bar .stream-service-status').count(), 0, `${label}: ${name} has no stream service line`);
+        }
+        await tab(page, 'Screen').click();
+        await page.locator('.stream-view').waitFor();
+        await service.waitFor();
+        assert.equal(await page.locator('header.kit-bar .stream-service-status').count(), 1, `${label}: Screen names the service again`);
+        assert.deepEqual(test.errors, []);
+        console.log(`PASS ${label}: Files and Shell show only their connection under the name; Screen keeps the stream service line`);
+    } finally {
+        await test.context.close();
+    }
+}
+
 /** From each tab, one press of the browser's Back shows the list, and the next leaves the app. */
 async function oneBackFromAnyTab(browser, viewport) {
     for (const name of TABS) {
@@ -910,6 +945,7 @@ async function main() {
                 await iphonePage(browser, viewport, colorScheme);
             }
             await screenControls(browser, viewport);
+            await toolHeaderOneLine(browser, viewport);
             await oneBackFromAnyTab(browser, viewport);
             await switchReplaces(browser, viewport);
         }
