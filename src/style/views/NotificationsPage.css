@@ -51,8 +51,9 @@
 .notification-page-header {
     padding-top: var(--space-20);
 }
-/* The inbox's own bar carries the space under the page's bar, so on a phone the first
-   notification starts high on the screen. */
+/* From 600 px 12 px under the page's bar, for a banner at the top of the inbox as for its filter
+   row, which keeps 8 px of its own and overlaps this block by that much (NotificationsInbox.css).
+   None on a phone, so the first notification starts high on the screen. */
 .notification-page-header-inbox {
     padding-top: var(--space-12);
 }

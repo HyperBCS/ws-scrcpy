@@ -24,7 +24,8 @@ async function allIphones(browser) {
             const top = await article(page, 'Coffee at four?').evaluate(el => el.getBoundingClientRect().top);
             if (width === 1440) assert.ok((await article(page, 'Coffee at four?').boundingBox()).width >= 900, 'desktop inbox uses the available width');
             if (width === 390) console.log(`First card at ${top}px on 390x844`);
-            if (width === 390) assert.ok(top <= 130, `the first actual card starts within 130px (${top})`);
+            // The bar, 8 px, the filter row, 8 px and the day label: 16 px lower than at f734c43.
+            if (width === 390) assert.ok(top <= 146, `the first actual card starts within 146px (${top})`);
             const out = '/tmp/ws-scrcpy-redesign/inbox-screens';
             await fs.mkdir(out, { recursive: true });
             for (const colorScheme of ['light', 'dark']) {
@@ -363,10 +364,158 @@ async function collapsedUnreadStack(browser) {
     console.log('PASS collapsing a stack releases its hidden read members from Unread');
 }
 
+/** Enough notifications for the inbox to scroll by 900 px on a phone. */
+const longList = () => Array.from({ length: 25 }, (_, i) => ({
+    key: `a-long-${i}`, source: 'phone-a', app: 'com.example.chat', appName: 'Messages', title: `Message ${i + 1}`,
+    body: 'A notification in a long list.', received: Date.now() - i * 60000, read: false, dismissed: false, active: true,
+}));
+/** Where the filter row sits under the page's bar, in CSS px, and what covers the strips above and under it. */
+async function filterRowPlace(page) {
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    return page.evaluate(() => {
+        const bar = document.querySelector('.notifications-view > .kit-bar').getBoundingClientRect();
+        const row = document.querySelector('.notification-history-toolbar').getBoundingClientRect();
+        const tools = document.querySelector('.notification-history-tools');
+        const search = document.querySelector('.notification-search')?.getBoundingClientRect();
+        const day = document.querySelector('.notification-day').getBoundingClientRect();
+        const card = document.querySelector('.notification-history-item').getBoundingClientRect();
+        const main = document.querySelector('main.notifications-page');
+        const x = main.getBoundingClientRect().left + main.clientWidth / 2;
+        const covered = y => tools.contains(document.elementFromPoint(x, y));
+        return {
+            scrollTop: main.scrollTop,
+            barToRow: Math.round(row.top - bar.bottom),
+            ...(search ? { barToSearch: Math.round(search.top - bar.bottom), searchToRow: Math.round(row.top - search.bottom) } : {}),
+            rowToDay: Math.round(day.top - row.bottom),
+            // At rest: nothing of the sticky row lies over the first card.
+            firstCardClear: card.top >= tools.getBoundingClientRect().bottom && !tools.contains(document.elementFromPoint(x, card.top + 2)),
+            // While stuck: the row's background hides the cards that pass behind its space.
+            coveredAbove: covered(bar.bottom + 4), coveredBelow: covered(row.bottom + 4),
+        };
+    });
+}
+const SCREENS = '/tmp/ws-scrcpy-redesign/inbox-screens';
+async function shootBoth(page, name) {
+    await fs.mkdir(SCREENS, { recursive: true });
+    for (const colorScheme of ['light', 'dark']) {
+        await page.emulateMedia({ colorScheme });
+        await page.screenshot({ path: path.join(SCREENS, `${name}-${colorScheme}.png`), animations: 'disabled' });
+    }
+    await page.emulateMedia({ colorScheme: 'light' });
+}
+/**
+ * The filter row keeps 8 px under the page's bar at every width, at rest and while it is stuck to
+ * the top, and 8 px over the first day label. On a desktop the space at rest stays 12 px, as at
+ * f734c43. Search opens above the row inside the same sticky block.
+ */
+async function filterRowSpacing(browser) {
+    const scroll = (page, top) => page.locator('main').evaluate((el, top) => { el.scrollTop = top; }, top);
+    const phone = await fixture(browser, { history: true, notifications: longList(), width: 440, height: 956 });
+    try {
+        const { page } = phone;
+        await article(page, 'Message 25').waitFor();
+        await settleMotion(page);
+        const rest = await filterRowPlace(page);
+        await shootBoth(page, 'filter-row-440-rest');
+        await scroll(page, 900);
+        const scrolled = await filterRowPlace(page);
+        assert.ok(scrolled.scrollTop >= 900, `the inbox scrolls by 900 px (${scrolled.scrollTop})`);
+        await shootBoth(page, 'filter-row-440-scrolled');
+        await page.locator('.notifications-view > .kit-bar').getByRole('button', { name: 'Search', exact: true }).click();
+        await page.getByRole('searchbox', { name: 'Search notifications', exact: true }).waitFor();
+        await settleMotion(page);
+        const searchScrolled = await filterRowPlace(page);
+        await scroll(page, 0);
+        const search = await filterRowPlace(page);
+        await shootBoth(page, 'filter-row-440-search');
+        assert.deepEqual({
+            rest: { barToRow: rest.barToRow, rowToDay: rest.rowToDay, firstCardClear: rest.firstCardClear },
+            scrolled: { barToRow: scrolled.barToRow, coveredAbove: scrolled.coveredAbove, coveredBelow: scrolled.coveredBelow },
+            search: { barToSearch: search.barToSearch, searchToRow: search.searchToRow, rowToDay: search.rowToDay },
+            searchScrolled: { barToSearch: searchScrolled.barToSearch, barToRow: searchScrolled.barToRow, coveredAbove: searchScrolled.coveredAbove },
+        }, {
+            rest: { barToRow: 8, rowToDay: 8, firstCardClear: true },
+            scrolled: { barToRow: 8, coveredAbove: true, coveredBelow: true },
+            search: { barToSearch: 8, searchToRow: 8, rowToDay: 8 },
+            // With Search open the row stands where it stands at rest, under the field.
+            searchScrolled: { barToSearch: 8, barToRow: search.barToRow, coveredAbove: true },
+        }, `the filter row at 440x956: ${JSON.stringify({ rest, scrolled, search, searchScrolled })}`);
+        assert.deepEqual(phone.errors, []);
+    } finally { await phone.context.close(); }
+    const desktop = await fixture(browser, { history: true, notifications: longList(), width: 1440, height: 900 });
+    try {
+        const { page } = desktop;
+        await article(page, 'Message 25').waitFor();
+        await settleMotion(page);
+        const rest = await filterRowPlace(page);
+        await shootBoth(page, 'filter-row-1440-rest');
+        await scroll(page, 900);
+        const scrolled = await filterRowPlace(page);
+        assert.ok(scrolled.scrollTop >= 900, `the inbox scrolls by 900 px (${scrolled.scrollTop})`);
+        await shootBoth(page, 'filter-row-1440-scrolled');
+        await page.locator('.notifications-view > .kit-bar').getByRole('button', { name: 'Search', exact: true }).click();
+        await page.getByRole('searchbox', { name: 'Search notifications', exact: true }).waitFor();
+        await settleMotion(page);
+        const searchScrolled = await filterRowPlace(page);
+        await scroll(page, 0);
+        const search = await filterRowPlace(page);
+        assert.deepEqual({
+            rest: { barToRow: rest.barToRow, rowToDay: rest.rowToDay, firstCardClear: rest.firstCardClear },
+            scrolled: { barToRow: scrolled.barToRow, coveredAbove: scrolled.coveredAbove, coveredBelow: scrolled.coveredBelow },
+            search: { barToSearch: search.barToSearch, searchToRow: search.searchToRow },
+            searchScrolled: { barToSearch: searchScrolled.barToSearch },
+        }, {
+            // 12 px at rest, as at f734c43; 8 px of it is the row's own and stays while it is stuck.
+            rest: { barToRow: 12, rowToDay: 8, firstCardClear: true },
+            scrolled: { barToRow: 8, coveredAbove: true, coveredBelow: true },
+            search: { barToSearch: 12, searchToRow: 8 },
+            searchScrolled: { barToSearch: 8 },
+        }, `the filter row at 1440x900: ${JSON.stringify({ rest, scrolled, search, searchScrolled })}`);
+        assert.deepEqual(desktop.errors, []);
+    } finally { await desktop.context.close(); }
+    console.log('PASS the filter row keeps 8 px under the bar at rest, while stuck and under Search, 8 px over the first day label, and 12 px at rest on a desktop');
+}
+
+/**
+ * From 600 px a banner at the top of the inbox stays 12 px under the page's bar, as at f734c43:
+ * the filter row's own 8 px do not take space from it. At f939a2f the banner sat 4 px under the
+ * bar.
+ */
+async function desktopBannerSpacing(browser) {
+    const f = await fixture(browser, {
+        history: true, notifications: longList(), width: 1440, height: 900,
+        statuses: { 'phone-a': 'Allow notification sharing on the iPhone.' },
+        storedSources: ['phone-a'], storedReceiver: '', subscriptionError: 'Subscription limit reached',
+    });
+    try {
+        const { page } = f;
+        await article(page, 'Message 25').waitFor();
+        await page.getByRole('alert').filter({ hasText: 'could not be registered' }).waitFor();
+        await settleMotion(page);
+        const rest = await page.evaluate(() => {
+            const bar = document.querySelector('.notifications-view > .kit-bar').getBoundingClientRect().bottom;
+            const banner = document.querySelector('main.notifications-page > .kit-banner').getBoundingClientRect();
+            const source = document.querySelector('.notification-history-source').getBoundingClientRect();
+            const row = document.querySelector('.notification-history-toolbar').getBoundingClientRect();
+            return { barToBanner: Math.round(banner.top - bar), bannerToSource: Math.round(source.top - banner.bottom), sourceToRow: Math.round(row.top - source.bottom) };
+        });
+        await shootBoth(page, 'banner-1440-rest');
+        await page.locator('main').evaluate(el => { el.scrollTop = 900; });
+        const scrolled = await filterRowPlace(page);
+        assert.deepEqual({ rest, scrolled: { barToRow: scrolled.barToRow, coveredAbove: scrolled.coveredAbove } }, {
+            // The page's banner, then the iPhone's, then the filter row with its own 8 px; stuck, the row alone.
+            rest: { barToBanner: 12, bannerToSource: 12, sourceToRow: 12 },
+            scrolled: { barToRow: 8, coveredAbove: true },
+        }, `banners over the inbox at 1440x900: ${JSON.stringify({ rest, scrolled })}`);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.context.close(); }
+    console.log('PASS from 600 px a banner at the top of the inbox stays 12 px under the bar');
+}
+
 (async () => {
     const browser = await chromium.launch({ headless: true });
     try {
-        const cases = [allIphones, desktopActions, groupedAndExpanded, scopedBulkArchive, expandedUnread, leavingDuringRead, latestMuteSettings, restoredCardFocus, groupedActionsAndNativeKeys, responsiveInbox, collapsedUnreadStack];
+        const cases = [allIphones, desktopActions, groupedAndExpanded, scopedBulkArchive, expandedUnread, leavingDuringRead, latestMuteSettings, restoredCardFocus, groupedActionsAndNativeKeys, responsiveInbox, collapsedUnreadStack, filterRowSpacing, desktopBannerSpacing];
         const selected = cases.filter(run => !process.env.SCENARIO || process.env.SCENARIO === run.name);
         assert.ok(selected.length, 'SCENARIO must name an existing inbox case');
         for (const run of selected) await run(browser);
