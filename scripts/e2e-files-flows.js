@@ -1158,6 +1158,133 @@ async function largeFolder(browser, layout, name) {
     await finish();
 }
 
+/**
+ * A finger on `target` for `ms`, sent as touch events so the page sees a touch pointer. `move`
+ * drags it up that far first, as a scroll does. `click` makes sure one click follows when the
+ * finger lifts, as it may on a phone: Chromium sends one after a long hold, and if it sends
+ * none, this does.
+ */
+async function touchHold(page, target, ms, { move = 0, click = false } = {}) {
+    const box = await target.boundingBox();
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await page.evaluate(() => {
+        if (window.__holdClicks === undefined) document.addEventListener('click', () => window.__holdClicks++, { capture: true });
+        window.__holdClicks = 0;
+    });
+    const cdp = await page.context().newCDPSession(page);
+    try {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        for (let step = 1; move && step <= 6; step++) {
+            await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - (move * step) / 6 }] });
+        }
+        await page.waitForTimeout(ms);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await page.waitForTimeout(50);
+        if (click && !(await page.evaluate(() => window.__holdClicks))) {
+            await target.evaluate((element) => element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 })));
+        }
+    } finally {
+        await cdp.detach();
+    }
+}
+
+// Holding a row on a touch screen selects it and turns selection mode on. No menu shows, ours or
+// the browser's: on touch the name is a link without an address that cannot be dragged, and the
+// row takes no text selection and no callout. The iOS menu itself needs a phone to see.
+async function hold(browser) {
+    const { page, finish, traffic } = await start(browser, PHONE, ROOT, 'light');
+    const name = (item) => row(page, item).locator('.entry-name a');
+    const bar = page.locator('.fx-selection-bar');
+    const selected = () => page.locator('.fx-row.selected').evaluateAll((rows) => rows.map((item) => item.dataset.name));
+    const endSelection = async () => {
+        await bar.getByRole('button', { name: 'Close selection', exact: true }).click();
+        await page.locator('.file-explorer:not(.fx-selecting)').waitFor();
+    };
+    let downloads = 0;
+    page.on('download', () => downloads++);
+
+    // The name: still a link with its name for assistive technology, with no address and no drag.
+    assert.equal(await page.getByRole('link', { name: 'Download notes.txt', exact: true }).count(), 1, 'the name keeps its role and name');
+    assert.equal(await name('notes.txt').getAttribute('href'), null, 'on touch a file name has no address');
+    assert.equal(await name('archive').getAttribute('href'), null, 'on touch a folder name has no address');
+    assert.equal(await name('notes.txt').evaluate((link) => link.draggable), false, 'the name cannot be dragged');
+    const styles = await row(page, 'notes.txt').evaluate((item) =>
+        [item, item.querySelector('.entry-name a'), item.querySelector('.fx-name'), item.querySelector('.entry-size')].map((element) => {
+            const style = getComputedStyle(element);
+            return { select: style.userSelect || style.webkitUserSelect, callout: style.webkitTouchCallout || null };
+        }),
+    );
+    for (const style of styles) {
+        assert.equal(style.select, 'none', 'the row and what is in it take no text selection');
+        // Chromium does not report the callout; WebKit does. The stylesheet itself is read in test-files.js.
+        if (style.callout) assert.equal(style.callout, 'none', 'and bring up no callout');
+    }
+
+    // A hold of 600ms on a file selects it. Letting go opens no sheet, menu or download.
+    const hash = await page.evaluate(() => location.hash);
+    await page.evaluate(() => {
+        window.__cancels = 0;
+        document.addEventListener('pointercancel', () => window.__cancels++, true);
+    });
+    await touchHold(page, name('notes.txt'), 600, { click: true });
+    await page.locator('.file-explorer.fx-selecting').waitFor();
+    assert.equal(await page.evaluate(() => window.__cancels), 0, 'nothing cancelled the finger held still');
+    await page.waitForTimeout(300);
+    assert.deepEqual(await selected(), ['notes.txt'], 'the hold selected the file');
+    assert.equal(await bar.isVisible(), true, 'and turned selection mode on');
+    assert.equal(await page.locator('.fx-dialog[open]').count(), 0, 'letting go opened no sheet');
+    assert.equal(await page.locator('.files-menu:not([hidden])').count(), 0, 'and no menu');
+    assert.equal(downloads, 0, 'and started no download');
+    assert.equal(await page.evaluate(() => location.hash), hash);
+    // Selection mode is on: a tap adds a row. (A tap within 600ms of the hold is dropped.)
+    await page.waitForTimeout(400);
+    await name('photo.png').click();
+    assert.deepEqual(await selected(), ['notes.txt', 'photo.png'], 'a tap after the hold adds a row');
+    await endSelection();
+
+    // A folder: held, it is selected and not opened.
+    await touchHold(page, name('archive'), 600, { click: true });
+    await page.locator('.file-explorer.fx-selecting').waitFor();
+    await page.waitForTimeout(300);
+    assert.deepEqual(await selected(), ['archive'], 'the hold selected the folder');
+    assert.equal(await page.locator('.fx-crumb[aria-current="page"]').innerText(), 'tmp', 'and did not open it');
+    assert.equal(await page.evaluate(() => location.hash), hash);
+    await endSelection();
+
+    // A long hold, then the click that may follow when the finger lifts: the click is dropped,
+    // so the row stays selected and nothing opens.
+    await touchHold(page, name('notes.txt'), 1200, { click: true });
+    await page.locator('.file-explorer.fx-selecting').waitFor();
+    await page.waitForTimeout(300);
+    assert.deepEqual(await selected(), ['notes.txt'], 'the click after a long hold does not undo it');
+    assert.equal(await page.locator('.fx-dialog[open]').count(), 0, 'and opens no sheet');
+    await endSelection();
+
+    // A finger that scrolls the list is no hold.
+    await touchHold(page, name('notes.txt'), 600, { move: 120 });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await selected(), [], 'a scroll selects nothing');
+    assert.equal(await page.locator('.file-explorer.fx-selecting').count(), 0);
+
+    // A keyboard or assistive technology still opens the name: Enter on a folder opens it.
+    await name('archive').focus();
+    await page.keyboard.press('Enter');
+    await crumb(page, 'archive');
+    await ready(page);
+    assert.equal(downloads, 0);
+    assert.equal(traffic.operations.length, 0, 'nothing was sent to the phone');
+    await page.screenshot({ path: path.join(OUT, 'flows-hold-phone.png') });
+    await finish();
+
+    // A mouse keeps the links as they were: an address, and a drag of its own.
+    const desktop = await start(browser, DESKTOP, ROOT, 'dark');
+    const link = row(desktop.page, 'archive').locator('.entry-name a');
+    assert.equal(await link.getAttribute('href'), new URL(address(ROOT + '/archive'), BASE).toString(), 'a mouse keeps the address');
+    assert.equal(await link.evaluate((element) => element.draggable), true, 'and the drag');
+    await desktop.finish();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -1176,6 +1303,7 @@ async function main() {
         ['errors desktop', () => errors(browser, DESKTOP, 'desktop')],
         ['selection on a phone', () => phoneSelection(browser, PHONE, 'phone', 'light')],
         ['selection on a small phone', () => phoneSelection(browser, { width: 320, height: 640, touch: true }, 'phone320', 'dark')],
+        ['hold on a phone', () => hold(browser)],
         ['uploads phone', () => uploads(browser, PHONE, 'phone', 'light')],
         ['uploads desktop', () => uploads(browser, DESKTOP, 'desktop', 'dark')],
         ['large folder phone', () => largeFolder(browser, PHONE, 'phone')],

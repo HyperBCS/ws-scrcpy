@@ -634,9 +634,10 @@ async function main() {
             // Navigation: folders, errors, Up, the browser's own Back and the history buttons.
             const channelsBefore = traffic.fsChannels;
             const entriesBefore = await page.evaluate(() => history.state.nav.index);
+            // On a touch screen the name has no address, so a held finger brings up no preview.
             assert.equal(
                 await row(page, 'empty').locator('.entry-name a').getAttribute('href'),
-                new URL(address(ROOT + '/empty'), BASE).toString(),
+                touch ? null : new URL(address(ROOT + '/empty'), BASE).toString(),
                 'a folder row links to its folder on the phone page',
             );
             await open(page, 'empty');

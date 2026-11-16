@@ -436,6 +436,16 @@ test('Move in the selection bar has a shape of its own, not the arrow of Forward
     assert.match(notice, /move \(folder-input\)/, 'the notice at the end of icons.ts names Move');
 });
 
+test('on touch a row of Files takes no text selection and brings up no callout', () => {
+    // Chromium does not report -webkit-touch-callout, so the browser checks cannot see it.
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'style', 'filelisting.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const block = /@media \(hover: none\) and \(pointer: coarse\) \{\s*\.fx-row,\s*\.fx-row \* \{([^}]*)\}/.exec(source);
+    assert.ok(block, 'a rule for the row and everything in it, on a touch screen');
+    for (const declaration of ['-webkit-touch-callout: none', '-webkit-user-select: none', 'user-select: none']) {
+        assert.ok(block[1].includes(`${declaration};`), declaration);
+    }
+});
+
 // ------------------------------------------------------------------ FileService
 //
 // The service against a Files channel answered by hand: each request opens a channel, and the

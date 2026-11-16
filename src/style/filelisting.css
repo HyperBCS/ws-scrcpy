@@ -495,6 +495,19 @@
     opacity: var(--disabled-opacity);
 }
 
+/* A finger held on a row selects it (`onPointerDown`). Nothing in the row may start the
+   browser's text selection or its callout meanwhile. On touch the name is also no link with an
+   address and cannot be dragged (`rowMarkup`): iOS shows its page preview and menu for such a
+   link whatever this file says. */
+@media (hover: none) and (pointer: coarse) {
+    .fx-row,
+    .fx-row * {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+    }
+}
+
 /* A cell that holds one control has no padding of its own. `.fx-table td` weighs one class and
    one element, so these are written with two classes. */
 .fx-table .entry-name {
