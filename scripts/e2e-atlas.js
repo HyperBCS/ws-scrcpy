@@ -521,6 +521,21 @@ async function showTouchesStates(test) {
 }
 // End show-touches.
 
+// ios-colour: the iPhone's Settings with the Picture group of About in view. The state
+// iphone-settings shows the top of the sheet, where it is not.
+async function iosColourStates(test) {
+    const { page } = test;
+    await page.goto(BASE + screenOf(IPHONE));
+    await connected(page);
+    await control(test, 'Settings');
+    await sheetTitled(page, /^Settings$/).waitFor();
+    const picture = sheet(page).locator('[data-section="about"] section.kit-group.settings-picture');
+    await picture.scrollIntoViewIfNeeded();
+    await shoot(test, 'iphone-settings-picture');
+    await dismiss(test, sheet(page));
+}
+// End ios-colour.
+
 // p6-inbox: notification states only.
 /** Notifications: the inbox, the sheets it opens, and Setup. */
 async function notificationStates(test) {
@@ -702,6 +717,8 @@ async function main() {
                         await otherStates(test);
                         // show-touches
                         await showTouchesStates(test);
+                        // ios-colour
+                        await iosColourStates(test);
                         assert.deepEqual(test.errors, [], `${test.label}: no page error`);
                         console.log(`PASS ${test.label}: ${test.shots} states written to ${OUT}`);
                     } finally {
