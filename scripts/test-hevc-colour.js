@@ -63,6 +63,7 @@ const IPHONE_HVCC = hvcc(IPHONE_VPS, IPHONE_SPS, IPHONE_PPS);
 const CODEC = 'hev1.1.6.L150.B0';
 
 const colour = () => require('../src/app/player/hevcColour');
+const state = () => require('../src/app/state/pictureColour');
 
 test('the iPhone header reads as full range, with primaries, transfer and matrix unspecified', () => {
     const { parseHevcColour } = colour();
@@ -76,10 +77,12 @@ test('the iPhone header reads as full range, with primaries, transfer and matrix
         transfer: 2,
         matrix: 2,
     });
+    assert.equal(state().streamColourFact(parseHevcColour(IPHONE_HVCC)), 'Full range, colour space not declared');
 });
 
 test('headers with a colour description, without one and without a VUI read as ffmpeg reads them', () => {
     const { parseHevcColour } = colour();
+    const { streamColourFact } = state();
     const read = (sps) => parseHevcColour(hvcc(IPHONE_VPS, sps, IPHONE_PPS));
     const cases = [
         [SPS.x265Pq, { vui: true, signalType: true, fullRange: false, description: true, primaries: 9, transfer: 16, matrix: 9 },
@@ -95,7 +98,9 @@ test('headers with a colour description, without one and without a VUI read as f
     ];
     for (const [sps, expected, words] of cases) {
         assert.deepEqual(read(sps), expected, words);
+        assert.equal(streamColourFact(read(sps)), words);
     }
+    assert.equal(streamColourFact(undefined), 'Not readable');
 });
 
 test('a cut-off or broken header is not known, and the parser never throws', () => {
@@ -545,4 +550,81 @@ test('Full and Limited override the MSE colr box before the next key frame, Auto
     other.player.pushFrame(key);
     assert.deepEqual(sampleEntry(other.buffers[0].appended.at(-1)).colr,
         { size: 19, kind: 'nclx', primaries: 1, transfer: 1, matrix: 1, rangeByte: 0x80 });
+});
+
+// ---------------------------------------------------------------- the client and Settings
+
+test('a change of the colour range asks for one key frame and opens no socket, session or player', async (t) => {
+    storage.clear();
+    const { colourRange, declaredColour, setColourRange } = state();
+    setColourRange('auto');
+    const { StreamClientCoreDevice } = require('../src/app/applDevice/client/StreamClientCoreDevice');
+    const { CoreDeviceReceiver } = require('../src/app/applDevice/client/CoreDeviceReceiver');
+    const connections = t.mock.method(CoreDeviceReceiver.prototype, 'openNewConnection', () => undefined);
+    const sent = [];
+    t.mock.method(CoreDeviceReceiver.prototype, 'send', (message) => sent.push(message));
+    MockDecoder.instances.length = 0;
+    MockDecoder.isConfigSupported = async () => ({ supported: true });
+    MockDecoder.throwOnColour = false;
+    const container = element();
+    const client = StreamClientCoreDevice.start({ action: 'stream-coredevice', udid: 'iphone-colour', captureKeyboard: false }, container);
+    let stopped = false;
+    t.after(() => !stopped && client.stop());
+    await client.onCodec({ codec: CODEC, description: IPHONE_HVCC });
+    const player = client.getPlayer();
+    assert.equal(client.getDecoderKind(), 'hevc');
+    assert.equal(MockDecoder.instances[0].configs[0].colorSpace.fullRange, true);
+    assert.equal(declaredColour.value.client, client, 'the fact in Settings is this stream');
+    assert.equal(state().streamColourFact(declaredColour.value.colour), 'Full range, colour space not declared');
+    const before = { connections: connections.mock.callCount(), children: client.videoWrapper.children.length };
+    assert.ok(before.children > 0, 'the player is mounted');
+
+    setColourRange('limited');
+    assert.equal(colourRange.value, 'limited');
+    assert.equal(storage.get('ws-scrcpy.iphone.colour-range'), 'limited', 'kept in this browser');
+    assert.deepEqual(sent, [{ type: 'pli' }], 'one key frame request, and nothing else');
+    assert.equal(MockDecoder.instances.at(-1).configs[0].colorSpace.fullRange, false);
+    assert.equal(client.getPlayer(), player, 'the same player');
+    assert.equal(connections.mock.callCount(), before.connections, 'no new socket');
+    assert.equal(client.videoWrapper.children.length, before.children, 'nothing mounted again');
+    assert.equal(container.children.length, 1, 'one phone view');
+    setColourRange('auto');
+    assert.deepEqual(sent, [{ type: 'pli' }, { type: 'pli' }]);
+    assert.equal(MockDecoder.instances.at(-1).configs[0].colorSpace.fullRange, true);
+
+    client.stop();
+    stopped = true;
+    assert.equal(declaredColour.value, undefined, 'the fact goes with the stream');
+    const decoders = MockDecoder.instances.length;
+    setColourRange('limited');
+    assert.equal(sent.length, 2, 'a stopped client sends nothing');
+    assert.equal(MockDecoder.instances.length, decoders);
+    setColourRange('auto');
+});
+
+test('the choice is kept in this browser, Auto when nothing or something unknown is stored', () => {
+    const modulePath = require.resolve('../src/app/state/pictureColour');
+    const load = (stored) => {
+        storage.clear();
+        if (stored !== undefined) storage.set('ws-scrcpy.iphone.colour-range', stored);
+        delete require.cache[modulePath];
+        return require(modulePath).colourRange.value;
+    };
+    try {
+        assert.equal(load(undefined), 'auto');
+        assert.equal(load('full'), 'full');
+        assert.equal(load('limited'), 'limited');
+        assert.equal(load('bright'), 'auto');
+        const blocked = global.localStorage;
+        global.localStorage = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
+        try {
+            assert.equal(load(undefined), 'auto', 'blocked site storage is Auto');
+            assert.doesNotThrow(() => require(modulePath).setColourRange('full'));
+        } finally {
+            global.localStorage = blocked;
+        }
+    } finally {
+        storage.clear();
+        delete require.cache[modulePath];
+    }
 });
