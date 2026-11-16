@@ -446,6 +446,21 @@ test('on touch a row of Files takes no text selection and brings up no callout',
     }
 });
 
+test('Files chooses its phone or desktop layout by one condition, with the pointer query of the client', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'style', 'filelisting.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const client = fs.readFileSync(path.join(__dirname, '..', 'src', 'app', 'googDevice', 'client', 'FileListingClient.ts'), 'utf8');
+    const coarse = /const COARSE_POINTER = '([^']+)';/.exec(client)[1];
+    const phone = /@media \(max-width: 700px\), ([^{]+?) \{/.exec(source);
+    const desktop = /@media not all and ([^{]+?) \{/.exec(source);
+    assert.ok(phone && desktop, 'the phone layout and the desktop layout each have their condition');
+    assert.equal(phone[1], `${coarse} and (max-width: 1023px)`, 'the phone layout: a touch screen below 1024px');
+    assert.equal(desktop[1], phone[1], 'the desktop layout leaves out exactly what the phone layout takes');
+    // The sidebar and the one-row toolbar of a short window belong to the desktop layout only.
+    const desktopBlock = source.slice(desktop.index, source.indexOf('@media (max-width: 700px),'));
+    assert.match(desktopBlock, /@media \(min-width: 900px\) \{\s*\.fx-body/);
+    assert.match(desktopBlock, /@media \(min-width: 700px\) and \(max-height: 560px\) \{\s*\.fx-chrome \{\s*flex-wrap: nowrap;/);
+});
+
 // ------------------------------------------------------------------ FileService
 //
 // The service against a Files channel answered by hand: each request opens a channel, and the

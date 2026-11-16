@@ -277,6 +277,14 @@
     color: var(--accent-text);
 }
 
+/* A short window would squeeze the places to the height of their text; under a finger they
+   keep the kit's 44px and the column scrolls. */
+@media (pointer: coarse) {
+    .fx-place {
+        flex: none;
+    }
+}
+
 .fx-main {
     display: flex;
     flex: 1 1 0;
@@ -876,47 +884,55 @@
 
 /* ------------------------------------------------------------------ wide layout */
 
-@media (min-width: 900px) {
-    .fx-body {
-        flex-direction: row;
+/* Files has two layouts. The phone layout (the narrow layout below) is for a window up to 700px
+   wide, and for a touch screen up to 1023px wide at any height: there the desktop's command row
+   ran off the edge with no hint, and quick access was squeezed. The desktop layout is the rest:
+   the rules in this block, and none of the narrow ones. The two conditions are one choice; a
+   change to one is a change to the other. */
+@media not all and (hover: none) and (pointer: coarse) and (max-width: 1023px) {
+    @media (min-width: 900px) {
+        .fx-body {
+            flex-direction: row;
+        }
+        .fx-places {
+            display: flex;
+            flex: 0 0 184px;
+            flex-direction: column;
+            overflow-y: auto;
+            border-right: 1px solid var(--border);
+        }
+        .fx-places-toggle {
+            display: none;
+        }
     }
-    .fx-places {
-        display: flex;
-        flex: 0 0 184px;
-        flex-direction: column;
-        overflow-y: auto;
-        border-right: 1px solid var(--border);
-    }
-    .fx-places-toggle {
-        display: none;
-    }
-}
 
-/* A short landscape phone has width to spare and no height: put the whole chrome on one row.
-   The address bar keeps a floor wide enough for its own controls; the command bar takes what is
-   left and scrolls. */
-@media (min-width: 700px) and (max-height: 560px) {
-    .fx-chrome {
-        flex-wrap: nowrap;
-    }
-    .fx-address {
-        min-width: 140px;
-        max-width: 42%;
-    }
-    .fx-commands {
-        flex: 1 1 0;
-    }
-    .fx-bar-spacer {
-        display: none;
-    }
-    .fx-filter {
-        flex: 0 1 120px;
+    /* A short landscape window has width to spare and no height: put the whole chrome on one
+       row. The address bar keeps a floor wide enough for its own controls; the command bar takes
+       what is left and scrolls. */
+    @media (min-width: 700px) and (max-height: 560px) {
+        .fx-chrome {
+            flex-wrap: nowrap;
+        }
+        .fx-address {
+            min-width: 140px;
+            max-width: 42%;
+        }
+        .fx-commands {
+            flex: 1 1 0;
+        }
+        .fx-bar-spacer {
+            display: none;
+        }
+        .fx-filter {
+            flex: 0 1 120px;
+        }
     }
 }
 
 /* ------------------------------------------------------------------ narrow layout */
 
-@media (max-width: 700px) {
+/* The phone layout. Its condition is the one the desktop block above leaves out. */
+@media (max-width: 700px), (hover: none) and (pointer: coarse) and (max-width: 1023px) {
     /* Line 1: the address bar alone. Line 2: history on the left, filter/actions on the right.
        Line 3 exists only while filtering. Every toolbar command lives in the Actions menu. */
     .fx-address {
@@ -970,6 +986,17 @@
     }
     .fx-filter {
         flex: 1 1 100%;
+    }
+    /* A phone in landscape has width to spare and no height: history (or the selection bar),
+       the address bar and the two tools share one line. The filter field keeps its own line. */
+    @media (orientation: landscape) and (max-height: 560px) {
+        .fx-address {
+            order: 2;
+            flex: 1 1 0;
+        }
+        .file-explorer.fx-selecting .fx-selection-bar {
+            flex: 0 1 auto;
+        }
     }
     /* Rows: the whole row is the tap target, so the name and its caption pack tightly. */
     .file-explorer[data-view='details'] .entry-name a {

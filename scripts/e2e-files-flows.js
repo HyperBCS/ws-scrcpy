@@ -274,8 +274,10 @@ async function menus(browser) {
     await page.screenshot({ path: path.join(OUT, 'flows-menu-landscape-row.png') });
     await page.keyboard.press('Escape');
     await page.locator('.files-menu').waitFor({ state: 'hidden' });
-    await pressAtRest(page, page.locator('.fx-commands').getByRole('button', { name: 'View', exact: true }));
-    await page.locator('.files-menu').waitFor();
+    // A touch screen below 1024px has the phone layout: View is in the Actions menu.
+    await pressAtRest(page, page.getByRole('button', { name: 'Actions', exact: true }));
+    await page.getByRole('menuitem', { name: 'View options…', exact: true }).click();
+    await page.locator('.files-menu [data-menu="view"]').first().waitFor();
     await menuFits(page, 'the View menu');
     assert(
         await page.locator('.files-menu').evaluate((menu) => menu.scrollHeight > menu.clientHeight),
@@ -1285,6 +1287,89 @@ async function hold(browser) {
     await desktop.finish();
 }
 
+// A touch screen below 1024px has the phone layout at every width. A phone in landscape has the
+// history row with Search and Actions and quick access behind its button, and no command row or
+// sidebar. Every command of the desktop's row is in the Actions menu.
+async function landscapeLayout(browser) {
+    const width = 956;
+    const { page, finish } = await start(browser, { width, height: 440, touch: true }, ROOT, 'dark');
+    assert.equal(await page.locator('.fx-commands').isVisible(), false, 'landscape: no command row');
+    assert.equal(await page.locator('.fx-places').isVisible(), false, 'landscape: no sidebar');
+    for (const label of ['Back', 'Forward', 'Up one folder', 'Phone root', 'Quick access', 'Filter this folder', 'Actions']) {
+        const button = page.locator('.fx-history, .fx-mobile-tools').getByRole('button', { name: label, exact: true });
+        assert.equal(await button.isVisible(), true, `landscape: ${label} is shown`);
+        const box = await button.boundingBox();
+        assert(box && box.width >= 44 && box.height >= 44 && box.x >= 0 && box.x + box.width <= width, `landscape: ${label} is a whole target on screen`);
+    }
+    // The command row of the desktop layout scrolled sideways inside itself, with no hint.
+    const overflow = await page.evaluate(() =>
+        [document.documentElement, ...document.querySelectorAll('.file-explorer, .fx-chrome, .fx-commands, .fx-items')].map(
+            (element) => element.scrollWidth - element.clientWidth,
+        ),
+    );
+    assert(overflow.every((extra) => extra <= 1), `landscape: nothing overflows sideways (${overflow})`);
+    // Width to spare and no height: history, the address and the tools share one line.
+    const middle = async (selector) => {
+        const box = await page.locator(selector).boundingBox();
+        return box && Math.round(box.y + box.height / 2);
+    };
+    assert.equal(await middle('.fx-address'), await middle('.fx-history'), 'landscape: the address shares the line of history');
+    assert.equal(await middle('.fx-mobile-tools'), await middle('.fx-history'), 'landscape: and of the tools');
+    await page.screenshot({ path: path.join(OUT, 'flows-touch-landscape.png') });
+
+    // Quick access is a menu of 44px rows.
+    await pressAtRest(page, page.getByRole('button', { name: 'Quick access', exact: true }));
+    await page.locator('.files-menu [data-menu="place"]').first().waitFor();
+    await settleMotion(page);
+    const places = await page.locator('.files-menu [data-menu="place"]').evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height));
+    assert(places.length >= 9 && places.every((height) => height >= 44), `landscape: quick access rows are 44px (${places})`);
+    await page.keyboard.press('Escape');
+    await page.locator('.files-menu').waitFor({ state: 'hidden' });
+
+    // Every command of the desktop's command row is in the Actions menu, here with a file selected.
+    const desktopRow = await page.locator('.fx-commands [data-command]').evaluateAll((buttons) => buttons.map((button) => button.dataset.command));
+    assert.deepEqual(desktopRow, ['upload', 'new-folder', 'download', 'rename', 'delete', 'cut', 'copy', 'paste', 'selection-mode', 'view-menu']);
+    await pressAtRest(page, page.getByRole('button', { name: 'Actions', exact: true }));
+    await page.getByRole('menuitemcheckbox', { name: 'Select items', exact: true }).click();
+    await row(page, 'notes.txt').locator('.entry-name a').click();
+    await page.locator('.fx-row.selected').waitFor();
+    await pressAtRest(page, page.getByRole('button', { name: 'Actions', exact: true }));
+    await page.locator('.files-menu').waitFor();
+    const items = await page.locator('.files-menu [data-menu]').evaluateAll((list) =>
+        list.map((item) => [item.dataset.value, item.textContent.trim(), item.disabled]),
+    );
+    // The menu's name for each command: one file selected is downloaded by Download (`open`).
+    const inMenu = { upload: 'upload', 'new-folder': 'new-folder', download: 'open', rename: 'rename', delete: 'delete', cut: 'cut', copy: 'copy', paste: 'paste', 'selection-mode': 'selection-mode', 'view-menu': 'view' };
+    for (const command of desktopRow) {
+        assert(items.some(([value]) => value === inMenu[command]), `landscape: ${command} is in the Actions menu (${JSON.stringify(items)})`);
+    }
+    assert.deepEqual(items.find(([value]) => value === 'open'), ['open', 'Download', false]);
+    await page.keyboard.press('Escape');
+    await page.locator('.files-menu').waitFor({ state: 'hidden' });
+    await page.locator('.fx-selection-bar').getByRole('button', { name: 'Close selection', exact: true }).click();
+    await finish();
+}
+
+// A touch screen from 1024px keeps the desktop layout, with quick access rows of 44px also when
+// the window is short.
+async function tabletLayout(browser) {
+    const { page, finish } = await start(browser, { width: 1180, height: 820, touch: true }, ROOT, 'light');
+    assert.equal(await page.locator('.fx-commands').isVisible(), true, 'tablet: the command row');
+    assert.equal(await page.getByRole('button', { name: 'Actions', exact: true }).isVisible(), false, 'tablet: no Actions menu');
+    assert.equal(await page.locator('.fx-places').isVisible(), true, 'tablet: the quick access sidebar');
+    const sidebar = () => page.locator('.fx-place').evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height));
+    let heights = await sidebar();
+    assert(heights.length >= 9 && heights.every((height) => height >= 44), `tablet: quick access rows are 44px (${heights})`);
+    await page.screenshot({ path: path.join(OUT, 'flows-touch-tablet.png') });
+    // A short window: the sidebar scrolls, and its rows stay 44px.
+    await page.setViewportSize({ width: 1180, height: 600 });
+    await page.waitForTimeout(100);
+    assert.equal(await page.locator('.fx-places').isVisible(), true, 'a short tablet: the quick access sidebar');
+    heights = await sidebar();
+    assert(heights.every((height) => height >= 44), `a short tablet: quick access rows are 44px (${heights})`);
+    await finish();
+}
+
 async function main() {
     fs.mkdirSync(OUT, { recursive: true });
     const browser = await chromium.launch({ headless: true });
@@ -1304,6 +1389,8 @@ async function main() {
         ['selection on a phone', () => phoneSelection(browser, PHONE, 'phone', 'light')],
         ['selection on a small phone', () => phoneSelection(browser, { width: 320, height: 640, touch: true }, 'phone320', 'dark')],
         ['hold on a phone', () => hold(browser)],
+        ['touch layout in landscape', () => landscapeLayout(browser)],
+        ['touch layout on a tablet', () => tabletLayout(browser)],
         ['uploads phone', () => uploads(browser, PHONE, 'phone', 'light')],
         ['uploads desktop', () => uploads(browser, DESKTOP, 'desktop', 'dark')],
         ['large folder phone', () => largeFolder(browser, PHONE, 'phone')],

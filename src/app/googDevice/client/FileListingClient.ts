@@ -1751,6 +1751,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     /**
      * The phone command bar: every toolbar command in one menu, so the address bar can have a
      * whole line to itself. Selection commands come first, exactly as the row menu lists them.
+     * The phone layout is used up to 700px, and on a touch screen up to 1023px
+     * (`filelisting.css`); it has no command row, so nothing may be left out of this menu.
      */
     private actionsMenuItems(): string[] {
         const ready = this.canModify();
@@ -1781,7 +1783,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         ];
     }
 
-    /** Quick access as a menu, for every width where the sidebar would crowd out the listing. */
+    /**
+     * Quick access as a menu, wherever there is no sidebar: below 900px, and in the phone layout
+     * on a touch screen up to 1023px (`filelisting.css`).
+     */
     private placesMenuItems(): string[] {
         return [
             '<div class="kit-menu-title" role="presentation">Quick access</div>',
