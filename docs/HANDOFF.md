@@ -6228,3 +6228,91 @@ After a deploy on the live server (notifications). The deploy rebuilds the image
 "Reconnecting to iPhone notifications" and then "Receiving notifications" within about 10 s,
 with no restart; both characteristics read `Notifying: true`; alerts the iPhone announces again
 are not pushed twice. Until then, a restart of the container brings notifications back.
+
+### Step 7 deployment (2026-11-16)
+
+Head `d9b0f3d` plus this section. One server file changed:
+`git diff --stat f29246b d9b0f3d -- src/server src/common src/public python config Dockerfile docker-compose.yml`
+lists only `python/notifications/collector.py` and `python/notifications/test_collector.py`.
+
+Before (16:40 UTC): image `f0382167242d`, started 2026-11-14T07:28:38Z, healthy, 0 restarts.
+Named unlock fields: enabled, time 03:00, lastRun unlocked ("Locked again") at
+2026-11-16T15:00:00Z, lastTypedUnlockAt and lastUnlockedAt 15:00:10Z, lastSlotAt 15:00Z, a
+passcode stored. No screen session ran in the live container, and none was seen in a check every
+20 s from 16:42:46 to 16:48:46.
+
+Phone health (host venv, one-shot commands, 16:40 UTC): iOS 27.2.1 (24B156) as at the last run,
+the developer image mounted at /System/Developer, `list-processes` answered, `sessions: []`.
+
+Test server (port 8010, built with `{"INCLUDE_GOOG": false}`, data in `data/test`,
+`WS_SCRCPY_DEBUG=1`): 200 locally, 403 for `evil.example`, no serve-web at start. One iPhone
+screen session at 1280x800 in headless Chromium:
+
+- Opened from the card at 16:48:51. serve-web (PID 28046) started the same second, the only one.
+  Bytes on the one `proxy-coredevice` socket: 1.1 MB after 5 s, 74.5 MB at the end. The header
+  said "No picture" and the stage "This browser cannot show the stream" (no HEVC decoder); the
+  banner "Phone locked" with Unlock, which was not pressed.
+- Rail: Home, Siri, Lock, Volume down, Mute phone, Volume up, Listen, Take screenshot, Type text,
+  Actions, Settings. Each caption on one line, every tile 56 px high.
+- Settings from the rail: Sound, Keyboard, Unlock, About and troubleshooting. Keyboard has the
+  groups "Keyboard shortcuts" and "Touch"; Show touches was off. On: one `.touch-marks`, still one
+  stream socket, the same mount node. Off: no `.touch-marks`. The picture was not pressed.
+- About and troubleshooting: groups Phone, Picture, Services. "Stream colour" read "Full range,
+  colour space not declared"; "Decoder" read "Unknown" (no HEVC decoder in headless Chromium).
+  "Picture colour range" was Auto. Limited, 5 s, Auto, 5 s: still one socket, bytes kept
+  arriving (2.9 MB, 6.0 MB, 8.9 MB), no new serve-web, no page error. The server log has no line
+  for those 10 s: the server does not log a key frame request and serve-web does not log `/pli`,
+  so whether one was sent is not seen.
+- Actions (Clipboard, Screen, Lock, Power) and Switch phone opened and closed.
+- Two idle minutes: one socket, 10.2 MB to 74.5 MB.
+- Left by the header at 16:51:12. The card showed "In use" until 16:51:27 (15 s), then not.
+  serve-web logged `shutdown complete` at 16:51:27; no SIGKILL. Back once, then 20 s: no phone
+  screen, no new socket. No page or console error. One serve-web start in the log.
+
+`sessions: []` at 16:52:04 and 16:52:35. The test server was stopped with SIGTERM by PID at
+16:52:36 and exited in about 2 s; `build.config.override.json` restored to `{}`, the normal dist
+rebuilt, nothing listening on 8010.
+
+Deploy: `docker tag ws-scrcpy:latest ws-scrcpy:before-step7-20261116` (image `f0382167242d`),
+`docker compose build ws-scrcpy` (new image `6c090b25102d`), `docker compose up -d ws-scrcpy` at
+16:54:15 UTC with no screen session in the container, not near an unlock slot.
+
+After: container started 16:54:18, healthy, 0 restarts, `node index.js` as uid 1000, no error
+line in the log; 200 on 127.0.0.1:8000, on 10.10.10.5:8000 and for Host
+`mini-nuc.tailea1801.ts.net`, 403 for `evil.example`; no serve-web; the named unlock fields the
+same as before, straight after and at 17:00:33.
+
+Notifications (read only, 99 s after the restart): "Receiving notifications", Bluetooth
+connected, no error, no collector error, 0 collector restarts. The image's `collector.py` has the
+new code (`self.notified` on 3 lines). BlueZ shows `Notifying: true` on Notification Source and
+Data Source; `hcitool con` shows the LE link. The new code has not met a silent reconnect yet.
+
+Look-only pass on the live server (Android, fresh browser contexts, nothing typed or saved, no
+press on the picture):
+- Mouse, 1280x800: both phones listed; each card as tall as its content (164 and 171 px). Settings
+  from the POCO card: Stream, Sound, Keyboard, Unlock, About and troubleshooting; "Touch" in
+  Keyboard; no "Picture" group. Screen: Connected, tabs Screen, Files, Shell; the stage "Screen is
+  asleep" with Wake (not pressed); the rail in the Android order, each caption on one line, every
+  tile 56 px. Files: one status line ("Connected"), the listing loaded, "Item check boxes" in the
+  View menu. Shell connected. Screen after Files and Shell opened one new stream socket.
+  Notifications: "iPhone · Connected · 99+ unread", no badge in the bar, cards listed; the filter
+  row 8 px under the bar while stuck. At rest it is 58 px under the bar, because the test
+  browser's own banner "Could not check notifications on this device" (service workers blocked
+  in the test context) is above it. Back to the list, then Back once: no stream socket.
+- Touch, 440x956: Files opens at /data/local/tmp, which holds only a folder, so the first touch
+  pass found no file (it opened the folder `dalvik-cache`, which has none either) and its hold and
+  tap steps timed out. A second pass opened Downloads from Quick access. Names have no `href` and
+  cannot be dragged. A 700 ms hold on a file selected it and showed the selection bar, with no
+  sheet, menu or download; Close selection cleared it. A tap on the file opened the sheet with
+  Download, Rename, Delete and Cancel; Cancel closed it. Shell: 11 keys in two rows, 44 px high,
+  no sideways scroll. Nothing was downloaded, renamed or deleted.
+- The log shows "No viewers left. Stopping the stream service" at 16:56:51 and 17:01:27, about
+  30 s after the last viewer each time. No page or console error.
+
+Not checked: the iPhone's picture and its colour (headless Chromium cannot decode it; see the
+hardware checklist above), whether a colour change sends a key frame request to the phone, Show
+touches with a real pointer, the collector after a real silent Bluetooth reconnect, the iPhone's
+screen on the live server, Files and Shell on a real touch screen.
+
+Rollback, for a break only: `docker tag ws-scrcpy:before-step7-20261116 ws-scrcpy:latest` and
+`docker compose up -d ws-scrcpy`. Reload each browser tab and reopen the installed app once.
