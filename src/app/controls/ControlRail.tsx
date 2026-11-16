@@ -1,24 +1,8 @@
 import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
-import { listenStateLabel } from '../state/audio';
-import type { AudioPlaybackState } from '../state/audio';
 import { usePresence } from '../ui/Presence';
 import { ControlButton } from './ControlButton';
 import { CONTROLS_LABEL, PhoneControls, shownControls } from './definition';
-
-/** Every state of the sound, so that every caption Listen can show is known. */
-const AUDIO_STATES: Record<AudioPlaybackState, true> = {
-    muted: true,
-    waiting: true,
-    playing: true,
-    blocked: true,
-    disabled: true,
-    error: true,
-    unsupported: true,
-    disconnected: true,
-};
-const LISTEN_CAPTIONS = Array.from(
-    new Set((Object.keys(AUDIO_STATES) as AudioPlaybackState[]).map((state) => listenStateLabel(state, false))),
-);
+import { LISTEN_CAPTIONS } from './listen';
 
 const sides = (style: CSSStyleDeclaration, box: 'padding' | 'border') =>
     box === 'padding'
@@ -27,9 +11,11 @@ const sides = (style: CSSStyleDeclaration, box: 'padding' | 'border') =>
 
 /**
  * The width of one column of the rail that keeps the widest caption on one line: the caption,
- * then the padding and border of its tile and of the rail. Listen's other captions count too
- * ("Waiting for audio" is the longest), so a press on Listen does not change the rail's width
- * and move the picture. The captions are measured in a hidden copy of a tile.
+ * then the padding and border of its tile and the padding of the rail. The rail's border is
+ * added by the stage (`StreamView.css`). Listen's other captions count too; they are short
+ * (`listen.ts`), so the widest is a resting one ("Volume down") and a press on Listen does not
+ * change the rail's width and move the picture. The captions are measured in a hidden copy of a
+ * tile, whose width does not depend on the rail's, so writing the width cannot start a loop.
  */
 function captionColumnWidth(panel: HTMLElement, list: HTMLElement): number | undefined {
     const tile = list.querySelector<HTMLElement>('.kit-icon-button-captioned');
@@ -65,11 +51,7 @@ function captionColumnWidth(panel: HTMLElement, list: HTMLElement): number | und
         const tileStyle = getComputedStyle(probe);
         const panelStyle = getComputedStyle(panel);
         const width = Math.ceil(
-            widest +
-                sides(tileStyle, 'padding') +
-                sides(tileStyle, 'border') +
-                sides(panelStyle, 'padding') +
-                sides(panelStyle, 'border'),
+            widest + sides(tileStyle, 'padding') + sides(tileStyle, 'border') + sides(panelStyle, 'padding'),
         );
         return Number.isFinite(width) && width > 0 ? width : undefined;
     } finally {

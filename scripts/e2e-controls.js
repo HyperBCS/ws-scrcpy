@@ -2,9 +2,9 @@
 // The controls of a phone's screen, on an Android phone and an iPhone, against socket fixtures:
 //   - the touch grid of each kind of phone (390x844): the Android cells, and four rows of its own on an iPhone;
 //     the mouse rail (1280x800) uses consecutive slots, light and dark;
-//   - the mouse rail at 1440x900 (one column) and 1366x650 (two): every caption on one line and
-//     every tile one height, the rail against the picture and as tall as it, and as wide with
-//     Listen on as before;
+//   - the mouse rail at 1440x900 (one column) and 1366x650 (two), light and dark: every caption
+//     on one line and every tile one height, the rail as wide as its resting captions need and
+//     as wide in every state of Listen, against the picture and as tall as it;
 //   - what each control sends or opens, found by its icon, not its name;
 //   - a key of the phone is disabled while there is no connection, and only the keys;
 //   - holding Lock sends one down and one up, and a key held when the panel closes or the
@@ -244,7 +244,7 @@ async function sends(browser, platform) {
     console.log(`PASS ${platform}: each control sends and opens what it did before`);
 }
 
-/** Read actual grid tracks: wrapped captions can grow a row, and rail gaps can require two columns. */
+/** Read actual grid tracks: a wrapped caption can grow a row of the touch grid, and a short picture can give the rail two columns. */
 async function cells(page) {
     return page.locator('.control-buttons-list').evaluate((list) => {
         const box = list.getBoundingClientRect();
@@ -319,7 +319,10 @@ async function slotMap(browser) {
     console.log('PASS touch cells without holes on both kinds of phone and consecutive mouse rail slots, light and dark');
 }
 
-/** The rail, its tiles and the picture, once the boxes have been the same for three frames. */
+/**
+ * The rail, its tiles and the picture, once the boxes have been the same for three frames, and
+ * how often the stage's style was written in the twenty frames after that.
+ */
 async function railBoxes(page) {
     await settleMotion(page);
     return page.evaluate(async () => {
@@ -338,10 +341,12 @@ async function railBoxes(page) {
                 const left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
                 const right = box.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
                 return {
-                    name: button.getAttribute('aria-label'), caption: caption.textContent, height: box.height,
+                    name: button.getAttribute('aria-label'), title: button.title, caption: caption.textContent, height: box.height,
                     // One line box for the words, and the words inside the tile's padding.
                     lines: new Set([...range.getClientRects()].map((line) => Math.round(line.top))).size,
                     inside: text.left >= left - 0.5 && text.right <= right + 0.5,
+                    // The room for words in the tile, and what the words take.
+                    room: right - left, text: text.width,
                 };
             });
             const rail = panel.getBoundingClientRect();
@@ -351,33 +356,49 @@ async function railBoxes(page) {
                 picture: { right: picture.right, top: picture.top, height: picture.height },
             };
         };
-        let last = JSON.stringify(measure());
-        for (let frame = 0, still = 0; frame < 60 && still < 3; frame++) {
+        let last = JSON.stringify(measure()), still = 0;
+        for (let frame = 0; frame < 60 && still < 3; frame++) {
             await new Promise((resolve) => requestAnimationFrame(resolve));
             const now = JSON.stringify(measure());
             still = now === last ? still + 1 : 0;
             last = now;
         }
-        return JSON.parse(last);
+        // A measure that wrote a width which asked for another measure would keep writing.
+        const stage = document.querySelector('.stream-stage');
+        let writes = 0;
+        const watch = new MutationObserver((records) => (writes += records.length));
+        watch.observe(stage, { attributes: true, attributeFilter: ['style'] });
+        for (let frame = 0; frame < 20; frame++) await new Promise((resolve) => requestAnimationFrame(resolve));
+        watch.disconnect();
+        return { ...JSON.parse(last), settled: still >= 3, writes, column: stage.style.getPropertyValue('--stream-rail-column') };
     });
 }
 
 /**
- * The rail with a mouse, at 1440x900 in one column and at 1366x650 in two: no caption wraps, so
- * every tile is one height, and the rail is as wide as its longest caption needs. It stands
- * against the picture and is as tall as it. A press on Listen, whose caption then says what the
- * sound does, changes neither the rail's width nor a line.
+ * The rail with a mouse, at 1440x900 in one column and at 1366x650 in two, light and dark: no
+ * caption wraps, so every tile is one height, and the rail is as wide as its resting captions
+ * need ("Volume down" is the widest), with no more than a few pixels to spare. It stands against
+ * the picture and is as tall as it. Listen shows a short caption in each state, so the rail
+ * keeps its width while the sound waits, plays, is blocked and is unavailable; the hover text
+ * keeps the state's full words. The stage, the mount node and the stream socket stay the same.
  */
 async function railCaptions(browser) {
     const LARGE = { name: '1440x900', width: 1440, height: 900, mobile: false };
     const SHORT = { name: '1366x650', width: 1366, height: 650, mobile: false };
-    for (const [viewport, columns, colorScheme] of [[LARGE, '1', 'light'], [LARGE, '1', 'dark'], [SHORT, '2', 'light']]) {
+    const runs = [[LARGE, '1', 'light'], [LARGE, '1', 'dark'], [SHORT, '2', 'light'], [SHORT, '2', 'dark']];
+    for (const [viewport, columns, colorScheme] of runs) {
         for (const platform of ['android', 'ios']) {
             const label = `${viewport.name}-${colorScheme} ${platform}`;
             const test = await start(browser, platform, { viewport, colorScheme });
             const { page } = test;
             try {
+                await page.evaluate(() => {
+                    window.__railStage = document.querySelector('.stream-stage');
+                    window.__railMount = document.querySelector('.stream-mount');
+                });
                 const check = (found, when) => {
+                    assert.equal(found.settled, true, `${label}${when}: the rail settles`);
+                    assert.equal(found.writes, 0, `${label}${when}: the stage is not written again once the rail has settled`);
                     assert.equal(found.columns, columns, `${label}${when}: ${columns} column${columns === '1' ? '' : 's'}`);
                     assert.deepEqual(found.tiles.filter((tile) => tile.lines !== 1).map((tile) => tile.caption), [], `${label}${when}: no caption wraps`);
                     assert.deepEqual(found.tiles.filter((tile) => !tile.inside).map((tile) => tile.caption), [], `${label}${when}: every caption is inside its tile`);
@@ -387,14 +408,57 @@ async function railCaptions(browser) {
                     assert.ok(rail.left >= picture.right - 0.5 && rail.left - picture.right <= 4, `${label}${when}: the rail touches the picture (${picture.right} to ${rail.left})`);
                     assert.ok(Math.abs(rail.top - picture.top) <= 1 && Math.abs(rail.height - picture.height) <= 1, `${label}${when}: the rail is as tall as the picture`);
                 };
-                const before = await railBoxes(page);
-                check(before, '');
+                const listen = (found) => found.tiles.find((tile) => tile.name === 'Listen');
+                const resting = await railBoxes(page);
+                check(resting, '');
+                // The widest resting caption takes the tile's room, to a few pixels.
+                const widest = resting.tiles.reduce((wide, tile) => (tile.text > wide.text ? tile : wide));
+                const spare = widest.room - widest.text;
+                assert.ok(spare >= -0.5 && spare < 4, `${label}: the rail is as wide as "${widest.caption}" needs (${spare.toFixed(1)}px spare, column ${resting.column})`);
+                assert.ok(['Volume down', 'Screenshot'].includes(widest.caption), `${label}: the widest caption is a resting one (${widest.caption})`);
                 await shot(page, `${platform}-rail-${viewport.name}-${colorScheme}`);
-                await byName(page, 'Listen').click();
-                await page.waitForFunction(() => document.querySelector('.control-buttons-list [aria-label="Listen"]').getAttribute('aria-pressed') === 'true');
-                const listening = await railBoxes(page);
-                check(listening, ' with Listen on');
-                assert.ok(Math.abs(listening.rail.width - before.rail.width) < 0.5, `${label}: Listen keeps the rail's width (${before.rail.width}, ${listening.rail.width}, "${listening.tiles.find((tile) => tile.name === 'Listen').caption}")`);
+
+                const sendAudio = (kind, payload) => {
+                    const packet = Buffer.alloc(23 + payload.length);
+                    packet.write('scrcpy_audio_2');
+                    packet[14] = kind;
+                    payload.copy(packet, 23);
+                    test.socket.send(platform === 'ios' ? Buffer.concat([Buffer.from([3]), packet]) : packet);
+                };
+                const audioState = (state) => page.waitForFunction((wanted) => document.querySelector('[data-control="audio"]')?.getAttribute('data-audio-state') === wanted, state);
+                const states = [
+                    ['waiting', 'Waiting', 'Waiting for audio', () => byName(page, 'Listen').click()],
+                    ['playing', 'Listening', 'Listening', async () => {
+                        // Silent PCM through the audio envelope: the state, not a claim about sound.
+                        sendAudio(2, Buffer.from(JSON.stringify({ status: 'ready', codec: 'raw', sampleRate: 48000, channels: 2 })));
+                        sendAudio(0, Buffer.alloc(4800 * 4));
+                    }],
+                    ['blocked', 'Blocked', 'Blocked', async () => {
+                        await byName(page, 'Listen').click();
+                        await page.evaluate(() => {
+                            window.__railResume = window.AudioContext.prototype.resume;
+                            window.AudioContext.prototype.resume = () => Promise.reject(new Error('Fixture playback denied'));
+                        });
+                        await byName(page, 'Listen').click();
+                    }],
+                    ['disabled', 'Listen', 'Listen', async () => {
+                        await page.evaluate(() => {
+                            window.AudioContext.prototype.resume = window.__railResume;
+                            delete window.__railResume;
+                        });
+                        sendAudio(2, Buffer.from(JSON.stringify({ status: 'disabled', sampleRate: 48000, channels: 2 })));
+                    }],
+                ];
+                for (const [state, caption, title, enter] of states) {
+                    await enter();
+                    await audioState(state);
+                    const found = await railBoxes(page);
+                    check(found, ` while ${state}`);
+                    assert.deepEqual([listen(found).caption, listen(found).title], [caption, title], `${label}: Listen's caption and hover text while ${state}`);
+                    assert.ok(Math.abs(found.rail.width - resting.rail.width) < 0.5, `${label}: the rail keeps its width while ${state} (${resting.rail.width}, ${found.rail.width})`);
+                    if (state === 'waiting') await shot(page, `${platform}-rail-${viewport.name}-${colorScheme}-waiting`);
+                }
+                assert.equal(await page.evaluate(() => window.__railStage === document.querySelector('.stream-stage') && window.__railMount === document.querySelector('.stream-mount')), true, `${label}: the stage and the mount node are the ones of the start`);
                 assert.equal(test.streams, 1, `${label}: one stream socket`);
                 assert.deepEqual(test.errors, []);
             } finally {
@@ -402,7 +466,7 @@ async function railCaptions(browser) {
             }
         }
     }
-    console.log('PASS the mouse rail keeps every caption on one line and every tile one height, against the picture, in one column and in two');
+    console.log('PASS the mouse rail is as wide as its resting captions and keeps every caption on one line and every tile one height in every state of Listen, against the picture, in one column and in two');
 }
 
 /** While there is no connection the keys of the phone are disabled, and only they. */
