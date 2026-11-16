@@ -536,6 +536,20 @@ async function iosColourStates(test) {
 }
 // End ios-colour.
 
+// appearance: the Phones page with the Theme menu open, System checked.
+async function appearanceStates(test) {
+    const { page } = test;
+    await page.goto(BASE);
+    await card(page, `android:${PIXEL}`).waitFor();
+    await card(page, `ios:${IPHONE}`).waitFor();
+    await press(test, page.locator('header.kit-bar-root').getByRole('button', { name: 'Theme', exact: true }));
+    const menu = page.getByRole('menu', { name: 'Theme', exact: true });
+    await menu.getByRole('menuitemradio', { name: 'System', checked: true }).waitFor();
+    await shoot(test, 'list-theme-menu');
+    await dismiss(test, menu);
+}
+// End appearance.
+
 // p6-inbox: notification states only.
 /** Notifications: the inbox, the sheets it opens, and Setup. */
 async function notificationStates(test) {
@@ -719,6 +733,8 @@ async function main() {
                         await showTouchesStates(test);
                         // ios-colour
                         await iosColourStates(test);
+                        // appearance
+                        await appearanceStates(test);
                         assert.deepEqual(test.errors, [], `${test.label}: no page error`);
                         console.log(`PASS ${test.label}: ${test.shots} states written to ${OUT}`);
                     } finally {

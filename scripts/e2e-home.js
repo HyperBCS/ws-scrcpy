@@ -198,13 +198,17 @@ async function devicesPage(browser, { width, height, mobile, colorScheme }) {
         await settleMotion(page);
         assert.equal(await page.title(), 'Phones · ws-scrcpy');
 
-        // Header: a Notifications entry with the total unread count, and a reload control.
+        // Header: a Notifications entry with the total unread count, Theme, and a reload control.
         const header = page.locator(HEADER);
         const inbox = header.getByRole('link', { name: 'Notifications, 5 unread', exact: true });
         assert.equal(await inbox.getAttribute('href'), '#!action=notifications');
         assert.equal(await inbox.locator('.kit-badge').textContent(), '5');
+        const theme = header.getByRole('button', { name: 'Theme', exact: true });
+        assert.equal(await theme.getAttribute('aria-haspopup'), 'menu');
         const reload = header.getByRole('button', { name: 'Reload', exact: true });
-        for (const control of [inbox, reload]) {
+        const order = await header.evaluate((bar) => [...bar.children].filter((child) => child.matches('a, button')).map((child) => child.getAttribute('aria-label')));
+        assert.deepEqual(order, ['Notifications, 5 unread', 'Theme', 'Reload'], `${label}: the bar's controls in order`);
+        for (const control of [inbox, theme, reload]) {
             const box = await control.boundingBox();
             assert.ok(box.width >= 44 && box.height >= 44, `${label}: header controls keep a 44px target`);
         }
@@ -539,7 +543,7 @@ async function notchedList(browser) {
             const box = (element) => { const r = element.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
             const bar = document.querySelector(HEADER);
             return {
-                bar: box(bar), title: box(bar.querySelector('h1')), reload: box(bar.querySelector('button')),
+                bar: box(bar), title: box(bar.querySelector('h1')), reload: box(bar.querySelector('button[aria-label="Reload"]')),
                 list: box(document.querySelector('#devices')), card: box(document.querySelector('article.device')),
             };
         }, HEADER);
@@ -1058,6 +1062,16 @@ async function narrowRow(browser) {
         const heading = await header.getByRole('heading', { name: 'Phones', exact: true }).boundingBox();
         const inbox = await header.locator('.notifications-link').boundingBox();
         assert.ok(inbox.y < heading.y + heading.height, 'the header actions stay on the first row at 320px');
+        // The bell, Theme and Reload: one row of whole 44px targets inside the bar.
+        const actions = await header.evaluate((bar) => {
+            const edge = bar.getBoundingClientRect();
+            return [...bar.children].filter((child) => child.matches('a, button')).map((child) => {
+                const box = child.getBoundingClientRect();
+                return { name: child.getAttribute('aria-label'), top: box.top, width: box.width, height: box.height, inside: box.left >= edge.left && box.right <= edge.right };
+            });
+        });
+        assert.deepEqual(actions.map((action) => action.name.replace(/,.*/, '')), ['Notifications', 'Theme', 'Reload']);
+        assert.ok(actions.every((action) => action.top === actions[0].top && action.width === 44 && action.height === 44 && action.inside), `the bar's controls are one row at 320px ${JSON.stringify(actions)}`);
         await page.screenshot({ path: path.join(OUT, 'devices-320.png') });
         assert.deepEqual(test.errors, []);
         console.log('PASS 320px: action row and header fit');

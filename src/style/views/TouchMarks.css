@@ -20,24 +20,23 @@
     transition: none;
 }
 
-/* One circle, centred on its point and the size of a touch target. A ring in the accent with an
-   edge in the colour drawn on the accent, outside and inside it, so it shows on a light picture,
-   on a dark one and on one in the accent's own colour. The middle is only tinted, so what lies
-   under it stays in sight. It moves by its transform alone. */
+/* One dot, centred on its point, as Android draws one with "Show taps": round, 32px across,
+   translucent white with a thin dark edge, so it shows on a dark picture by its fill and on a
+   white one by its edge. It lies over the phone's picture and not over the app, so its colours are
+   the same in both themes. The edge is drawn over the picture, not over the fill. It moves by its
+   transform alone. */
 .touch-mark {
     position: absolute;
     top: 0;
     left: 0;
     box-sizing: border-box;
-    width: var(--control-height);
-    height: var(--control-height);
-    margin: calc(var(--control-height) / -2) 0 0 calc(var(--control-height) / -2);
-    border: 3px solid var(--accent);
+    width: var(--control-height-compact);
+    height: var(--control-height-compact);
+    margin: calc(var(--control-height-compact) / -2) 0 0 calc(var(--control-height-compact) / -2);
+    border: 1px solid var(--touch-mark-edge);
     border-radius: var(--radius-full);
-    background-color: color-mix(in srgb, var(--accent) 20%, transparent);
-    box-shadow:
-        0 0 0 1px var(--on-accent),
-        inset 0 0 0 1px var(--on-accent);
+    background-color: var(--touch-mark-fill);
+    background-clip: padding-box;
     transition: none;
     will-change: transform;
 }
