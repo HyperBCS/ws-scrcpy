@@ -10,6 +10,7 @@ import {
     COREDEVICE_FRAME_RESET_KEY,
 } from '../../common/CoreDeviceProtocol';
 import { buildHevcInitSegment, buildHevcMediaSegment, concat, hevcMimeCandidates, parseHevcSpsSize } from './hevcFmp4';
+import { ColourRange, HevcColour, parseHevcColour, pictureColour } from './hevcColour';
 
 /**
  * Media Source Extensions fallback for the iOS HEVC stream: the same access units WebCodecs
@@ -90,6 +91,9 @@ export class MseHevcPlayer extends BasePlayer {
     private frameSize?: Size;
     private chaseTimer?: ReturnType<typeof setInterval>;
     private decodedFrames = 0;
+    private description?: Uint8Array;
+    private streamColour?: HevcColour;
+    private colourRange: ColourRange = 'auto';
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = MseHevcPlayer.playerFullName) {
         super(udid, displayInfo, name, MseHevcPlayer.createElement());
@@ -117,14 +121,47 @@ export class MseHevcPlayer extends BasePlayer {
             throw new Error(`MediaSource cannot play ${codec}`);
         }
         this.mime = mime;
-        const size = parseHevcSpsSize(description);
-        this.initSegment = buildHevcInitSegment({
-            sampleEntry: mime.sampleEntry,
-            hvcC: description,
+        this.description = description;
+        this.streamColour = parseHevcColour(description);
+        this.initSegment = this.buildInitSegment();
+        this.resetSource();
+    }
+
+    /** The init segment, with a `colr` box for the picture's colour where it is known. */
+    private buildInitSegment(): Uint8Array | undefined {
+        if (!this.mime || !this.description) {
+            return undefined;
+        }
+        const size = parseHevcSpsSize(this.description);
+        return buildHevcInitSegment({
+            sampleEntry: this.mime.sampleEntry,
+            hvcC: this.description,
             width: size?.width ?? 0,
             height: size?.height ?? 0,
+            colour: pictureColour(this.streamColour, this.colourRange),
         });
-        this.resetSource();
+    }
+
+    /**
+     * Auto follows the range the stream declares; Full and Limited override it. The new `colr`
+     * reaches the browser in a fresh init segment just before the next key frame, the way a
+     * reset key re-initialises, and `keyframe-request` asks the client for that key frame.
+     */
+    public setColourRange(range: ColourRange): void {
+        if (range === this.colourRange) {
+            return;
+        }
+        this.colourRange = range;
+        const next = this.buildInitSegment();
+        if (!next || !this.initSegment || !this.mediaSource) {
+            return; // applied at the next configure
+        }
+        if (next.length === this.initSegment.length && next.every((byte, i) => byte === this.initSegment?.[i])) {
+            return;
+        }
+        this.initSegment = next;
+        this.needsResync = true;
+        this.emit('keyframe-request', undefined);
     }
 
     private resetSource(): void {

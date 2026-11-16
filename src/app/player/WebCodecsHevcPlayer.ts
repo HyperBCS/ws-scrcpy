@@ -9,6 +9,7 @@ import {
     COREDEVICE_FRAME_KEY,
     COREDEVICE_FRAME_RESET_KEY,
 } from '../../common/CoreDeviceProtocol';
+import { ColourRange, HevcColour, parseHevcColour, pictureColour, webCodecsColour } from './hevcColour';
 
 /**
  * HEVC decoder for the iOS CoreDevice screen stream. Frames arrive pre-framed as
@@ -56,6 +57,12 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
     private needsResync = false;
     private timestamp = 0;
     private frameSize?: Size;
+    private codec?: string;
+    private description?: Uint8Array;
+    private streamColour?: HevcColour;
+    private colourRange: ColourRange = 'auto';
+    /** Colour spaces this browser refused, by codec and value. Those are configured without one. */
+    private readonly refusedColour = new Set<string>();
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = WebCodecsHevcPlayer.playerFullName) {
         super(udid, displayInfo, name);
@@ -76,8 +83,108 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
     }
 
     public configure(codec: string, description: Uint8Array): void {
-        this.config = { codec, description, optimizeForLatency: true };
+        this.codec = codec;
+        this.description = description;
+        this.streamColour = parseHevcColour(description);
+        this.applyConfig();
+    }
+
+    /**
+     * Auto follows the range the stream declares; Full and Limited override it. A different
+     * colour space needs a new decoder, which starts at a key frame: `keyframe-request` asks the
+     * client for one. Nothing else reaches the phone, and the canvas keeps the last picture.
+     */
+    public setColourRange(range: ColourRange): void {
+        if (range === this.colourRange) {
+            return;
+        }
+        this.colourRange = range;
+        if (!this.codec || !this.description || !this.decoder) {
+            return; // applied at the next configure
+        }
+        const before = this.config;
+        this.applyConfig(true);
+        if (this.config !== before) {
+            this.emit('keyframe-request', undefined);
+        }
+    }
+
+    /**
+     * The decoder config with the picture's colour space (`hevcColour.ts`), or without one where
+     * the colour is not known or this browser refused it. `onlyIfChanged` keeps the decoder when
+     * the colour space comes out the same.
+     */
+    private applyConfig(onlyIfChanged = false): void {
+        if (!this.codec || !this.description) {
+            return;
+        }
+        const plain: VideoDecoderConfig = {
+            codec: this.codec,
+            description: this.description,
+            optimizeForLatency: true,
+        };
+        const colour = pictureColour(this.streamColour, this.colourRange);
+        const colorSpace = colour && (webCodecsColour(colour) as VideoColorSpaceInit);
+        const config =
+            colorSpace && !this.refusedColour.has(this.colourKey({ ...plain, colorSpace }))
+                ? { ...plain, colorSpace }
+                : plain;
+        if (
+            onlyIfChanged &&
+            this.config &&
+            JSON.stringify(this.config.colorSpace) === JSON.stringify(config.colorSpace)
+        ) {
+            return;
+        }
+        this.config = config;
         this.rebuildDecoder();
+        if (this.config.colorSpace) {
+            this.checkColourSupport(this.config);
+        }
+    }
+
+    private colourKey(config: VideoDecoderConfig): string {
+        return `${config.codec} ${JSON.stringify(config.colorSpace)}`;
+    }
+
+    /** Leaves the colour space out of the config from now on, as before it existed. */
+    private refuseColour(config: VideoDecoderConfig): void {
+        this.refusedColour.add(this.colourKey(config));
+        console.warn(`[${this.name}] This browser refused the colour space; using the stream's own.`);
+        if (this.config === config) {
+            const plain = { ...config };
+            delete plain.colorSpace;
+            this.config = plain;
+        }
+    }
+
+    /**
+     * The decoder is configured with the colour space at once, so the first key frame is not
+     * lost to a wait. If the browser then says it does not support that config, the decoder is
+     * built again without it and the client asks for a key frame.
+     */
+    private checkColourSupport(config: VideoDecoderConfig): void {
+        let check: Promise<VideoDecoderSupport>;
+        try {
+            check = VideoDecoder.isConfigSupported(config);
+        } catch (error) {
+            check = Promise.reject(error);
+        }
+        check
+            .then(
+                (result) => !!result.supported,
+                () => false,
+            )
+            .then((supported) => {
+                if (supported || this.config !== config) {
+                    return; // a later configure or colour change owns the decoder now
+                }
+                this.refuseColour(config);
+                if (this.decoder) {
+                    this.rebuildDecoder();
+                    this.emit('keyframe-request', undefined);
+                }
+            });
     }
 
     private createDecoder(): VideoDecoder {
@@ -103,7 +210,17 @@ export class WebCodecsHevcPlayer extends BaseCanvasBasedPlayer {
         }
         this.decoder = this.createDecoder();
         if (this.config) {
-            this.decoder.configure(this.config);
+            try {
+                this.decoder.configure(this.config);
+            } catch (error) {
+                // A browser that does not know a colour space value throws before it changes
+                // the decoder; it is configured as before the colour space existed.
+                if (!this.config.colorSpace) {
+                    throw error;
+                }
+                this.refuseColour(this.config);
+                this.decoder.configure(this.config);
+            }
         }
         this.gotKey = false;
         this.needsResync = false;
