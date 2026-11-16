@@ -356,8 +356,9 @@ async function main() {
         await missingCode(browser);
     } finally { await browser.close(); }
 }
-// The key row of a touch screen (views/shell/ShellKeys.tsx): one row that scrolls sideways, the
-// arrows in the mode the terminal is in, Paste and Copy, and the text size.
+// The key row of a touch screen (views/shell/ShellKeys.tsx): two rows below 600px and one row
+// that scrolls sideways from 600px, the arrows in the mode the terminal is in, Paste and Copy,
+// and the text size.
 async function keyRow(page, state, name) {
     const row = page.locator('.shell-keys');
     const key = label => row.getByRole('button',{name:label,exact:true});
@@ -371,16 +372,32 @@ async function keyRow(page, state, name) {
     };
     const quietly = async () => page.waitForTimeout(150);
 
+    // Below 600px the keys wrap to a second row in their order, every one in the window; from
+    // 600px they are one row, which scrolls sideways if it must (polish, 2026-11-16).
     const scroll = await row.evaluate(el=>{
+        const keys = Array.from(el.children).map(key=>{
+            const r = key.getBoundingClientRect();
+            return { name:key.getAttribute('aria-label') || key.textContent, top:Math.round(r.top), left:r.left, right:r.right, height:r.height };
+        });
         const fits = el.scrollWidth<=el.clientWidth+1;
         el.scrollLeft = el.scrollWidth;
         const last = el.lastElementChild.getBoundingClientRect(), box = el.getBoundingClientRect();
-        const result = { fits, moved:el.scrollLeft>0, lastShown:last.left>=box.left-1 && last.right<=box.right+1, page:document.scrollingElement.scrollWidth<=innerWidth };
+        const result = { keys, width:innerWidth, fits, moved:el.scrollLeft>0, lastShown:last.left>=box.left-1 && last.right<=box.right+1, page:document.scrollingElement.scrollWidth<=innerWidth };
         el.scrollLeft = 0;
         return result;
     });
-    if (name==='phone320' || name==='iphone17pm') assert.equal(scroll.fits,false,`${name}: the row is wider than a phone held upright`);
-    if (!scroll.fits) assert(scroll.moved && scroll.lastShown,`${name}: the row scrolls sideways to its last key`);
+    const lines = new Set(scroll.keys.map(entry=>entry.top)).size;
+    const reading = [...scroll.keys].sort((a,b)=>a.top-b.top || a.left-b.left).map(entry=>entry.name);
+    assert.deepEqual(reading,scroll.keys.map(entry=>entry.name),`${name}: the keys read in their order`);
+    if (scroll.width<600) {
+        assert.equal(scroll.fits,true,`${name}: no key is out of sight sideways`);
+        assert.deepEqual(scroll.keys.filter(entry=>entry.left<0 || entry.right>scroll.width+0.5).map(entry=>entry.name),[],`${name}: every key is inside the window`);
+        assert.equal(lines,2,`${name}: the keys take two rows`);
+        assert.deepEqual(scroll.keys.filter(entry=>entry.height<44).map(entry=>entry.name),[],`${name}: every key is at least 44px high`);
+    } else {
+        assert.equal(lines,1,`${name}: the keys are one row`);
+        if (!scroll.fits) assert(scroll.moved && scroll.lastShown,`${name}: the row scrolls sideways to its last key`);
+    }
     assert(scroll.page,`${name}: the page itself does not scroll sideways`);
 
     await sent(async()=>{ for (const label of ['Left arrow','Up arrow','Down arrow','Right arrow']) await key(label).click(); },

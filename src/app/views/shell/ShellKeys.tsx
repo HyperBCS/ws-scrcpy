@@ -55,9 +55,10 @@ interface ShellKeysProps {
 }
 
 /**
- * The keys a phone keyboard lacks, in one row under the terminal that scrolls sideways: Esc,
- * Tab, Ctrl for the next character, the four arrows, Paste, Copy, and the text size. Only a touch
- * screen has the row. With a mouse and a keyboard the terminal takes its height.
+ * The keys a phone keyboard lacks, under the terminal: Esc, Tab, Ctrl for the next character,
+ * the four arrows, Paste, Copy, and the text size. One row that scrolls sideways, or two rows in
+ * the same order below 600px (`ToolView.css`). Only a touch screen has the keys. With a mouse and
+ * a keyboard the terminal takes its height.
  */
 export function ShellKeys({ connected, control, onControl, terminal }: ShellKeysProps) {
     const coarse = useCoarsePointer();
