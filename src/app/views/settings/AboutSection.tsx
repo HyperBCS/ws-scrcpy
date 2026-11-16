@@ -1,5 +1,6 @@
 import { useRef } from 'preact/hooks';
 import { Button } from '../../ui/Button';
+import { SegmentedControl } from '../../ui/SegmentedControl';
 import { SheetRow } from '../../ui/SheetControls';
 import { DeviceEntry, isDeviceAvailable } from '../../state/devices';
 import type { Platform } from '../../state/routes';
@@ -22,7 +23,9 @@ import { streamConnected } from '../../state/stream';
 import { closeSettingsSheet } from '../../state/settingsSheet';
 import { deviceHref, followLink, isLocalLink } from '../../state/links';
 import { observeTrackerCommandErrors, replyText, sendServiceCommand } from '../../client/trackerCommand';
-import { FACT, STREAM_SERVICE } from '../../copy';
+import { FACT, PICTURE_COLOUR, STREAM_SERVICE } from '../../copy';
+import { colourRange, declaredColour, setColourRange, streamColourFact } from '../../state/pictureColour';
+import { COLOUR_RANGES } from '../../player/hevcColour';
 import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
 import { StreamClientScrcpy } from '../../googDevice/client/StreamClientScrcpy';
 import type { StreamClientCoreDevice, DecoderKind } from '../../applDevice/client/StreamClientCoreDevice';
@@ -268,6 +271,33 @@ function OtherPlayers({ entry, connected }: { entry: DeviceEntry; connected: boo
     );
 }
 
+/**
+ * The colour range of an iPhone's picture, kept in this browser. Auto follows what the stream
+ * declares (the Stream colour fact above); Full and Limited override it in both players, so the
+ * owner can compare. A change applies to the open screen at its next key frame, with no new
+ * session.
+ */
+function PictureColour() {
+    return (
+        <SettingsGroup title={PICTURE_COLOUR.group} class="settings-picture">
+            <SheetRow
+                title={PICTURE_COLOUR.title}
+                description={PICTURE_COLOUR.description}
+                layout="stack"
+                attributes={{ 'data-setting': 'colour-range' }}
+            >
+                <SegmentedControl
+                    label={PICTURE_COLOUR.title}
+                    full
+                    value={colourRange.value}
+                    options={COLOUR_RANGES.map((value) => ({ value, label: PICTURE_COLOUR.choices[value] }))}
+                    onChange={setColourRange}
+                />
+            </SheetRow>
+        </SettingsGroup>
+    );
+}
+
 interface AboutSectionProps {
     platform?: Platform;
     udid: string;
@@ -323,6 +353,8 @@ export function AboutSection({ platform, udid, entry, name, opening, screenOpen,
         last.current.entry = entry;
     }
     const known = entry ?? last.current.entry;
+    // What the stream of this iPhone's open screen declares, once its header has arrived.
+    const declared = iosClient && declaredColour.value?.client === iosClient ? declaredColour.value : undefined;
     const rows = !known
         ? []
         : known.params.type === 'android'
@@ -357,7 +389,11 @@ export function AboutSection({ platform, udid, entry, name, opening, screenOpen,
                         }
                     />
                 )}
+                {declared && (
+                    <Fact name="colour" title={PICTURE_COLOUR.factTitle} value={streamColourFact(declared.colour)} />
+                )}
             </SettingsGroup>
+            {platform === 'ios' && <PictureColour />}
             {rows.length > 0 && (
                 <ServiceRows rows={rows} opening={opening} unavailable={connected ? undefined : NOT_CONNECTED} />
             )}

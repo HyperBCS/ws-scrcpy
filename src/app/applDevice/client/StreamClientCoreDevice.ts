@@ -16,6 +16,8 @@ import { isLocalKeyboardTarget } from '../../googDevice/localKeyboardTarget';
 import { getVideoBounds } from '../../ControlBarLayout';
 import { deviceClipboard, deviceClipboardError, streamConnected, streamNotice } from '../../state/stream';
 import { AudioSession, createAudioSession } from '../../state/audio';
+import { colourRange, declaredColour } from '../../state/pictureColour';
+import { ColourRange, parseHevcColour } from '../../player/hevcColour';
 import Size from '../../Size';
 import Util from '../../Util';
 
@@ -39,6 +41,8 @@ export type DecoderKind = 'hevc' | 'mse';
 export interface CoreDevicePlayer extends BasePlayer {
     configure(codec: string, description: Uint8Array): void;
     pushFrame(frame: Uint8Array): void;
+    /** Auto, Full or Limited (Settings, About). Emits `keyframe-request` when the picture changes. */
+    setColourRange(range: ColourRange): void;
 }
 
 /**
@@ -95,6 +99,7 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
     private typingGeneration = 0;
     private resizeTimer?: ReturnType<typeof setTimeout>;
     private stopObservingViewport?: () => void;
+    private stopFollowingColourRange?: () => void;
 
     protected constructor(params: ParamsStreamCoreDevice, container: HTMLElement = document.body) {
         super(params);
@@ -138,6 +143,9 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.receiver.on('clipboard', this.onClipboard);
         this.receiver.on('result', (result) => this.emit('result', result));
         this.stopObservingViewport = observeViewport(this.videoWrapper, this.onWindowResize);
+        // The picture colour range from Settings goes to the player in place: the same socket and
+        // session, and a key frame request when the decoder had to start again.
+        this.stopFollowingColourRange = colourRange.subscribe((range) => this.player?.setColourRange(range));
         window.addEventListener('blur', this.onKeyboardBlur);
         window.addEventListener('pagehide', this.onKeyboardBlur);
         document.addEventListener('visibilitychange', this.onVisibilityChange);
@@ -473,6 +481,8 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         if (this.stopped) {
             return;
         }
+        // What the stream declares, for the fact in Settings (About).
+        declaredColour.value = { client: this, colour: parseHevcColour(description) };
         const kind = await StreamClientCoreDevice.chooseDecoder(codec, description, this.forcedDecoder);
         if (this.stopped) {
             return;
@@ -539,6 +549,15 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         // or the picture stays frozen until the phone happens to send it. The proxy passes on
         // at most one request a second.
         player.on('decoder-error', () => this.requestKeyframe());
+        // A change of the picture colour range starts the decoder again in the same way. Not while
+        // the session is starting or the socket is down: the next session starts with a key frame
+        // and a codec message of its own, and nothing is sent to a session that is not up.
+        player.on('keyframe-request', () => {
+            if (this.isConnected()) {
+                this.requestKeyframe();
+            }
+        });
+        player.setColourRange(colourRange.peek());
         this.player = player;
         this.decoderKind = kind;
         this.touchHandler = new CoreDeviceInteractionHandler(player, this);
@@ -604,6 +623,11 @@ export class StreamClientCoreDevice extends BaseClient<ParamsStreamCoreDevice, C
         this.touchHandler = undefined;
         this.stopObservingViewport?.();
         this.stopObservingViewport = undefined;
+        this.stopFollowingColourRange?.();
+        this.stopFollowingColourRange = undefined;
+        if (declaredColour.peek()?.client === this) {
+            declaredColour.value = undefined;
+        }
         window.removeEventListener('blur', this.onKeyboardBlur);
         window.removeEventListener('pagehide', this.onKeyboardBlur);
         document.removeEventListener('visibilitychange', this.onVisibilityChange);

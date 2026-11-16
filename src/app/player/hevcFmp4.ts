@@ -70,6 +70,14 @@ const UNITY_MATRIX = concat([
     u32(0x40000000),
 ]);
 
+/** The colour of the picture as H.273 code points, for a `colr` box of type `nclx`. */
+export interface NclxColour {
+    primaries: number;
+    transfer: number;
+    matrix: number;
+    fullRange: boolean;
+}
+
 export interface HevcInitOptions {
     /** `hev1` (parameter sets may also appear in-band, which this stream does) or `hvc1`. */
     sampleEntry: 'hev1' | 'hvc1';
@@ -77,10 +85,17 @@ export interface HevcInitOptions {
     hvcC: Uint8Array;
     width: number;
     height: number;
+    /** Written as a `colr` box after the hvcC; without it the sample entry has none. */
+    colour?: NclxColour;
+}
+
+/** ISO/IEC 14496-12 ColourInformationBox, `nclx`: three code points and the full-range bit. */
+export function buildColrBox({ primaries, transfer, matrix, fullRange }: NclxColour): Uint8Array {
+    return box('colr', fourcc('nclx'), u16(primaries), u16(transfer), u16(matrix), u8(fullRange ? 0x80 : 0));
 }
 
 /** `ftyp` + `moov` for a single video track whose samples are appended one AU at a time. */
-export function buildHevcInitSegment({ sampleEntry, hvcC, width, height }: HevcInitOptions): Uint8Array {
+export function buildHevcInitSegment({ sampleEntry, hvcC, width, height, colour }: HevcInitOptions): Uint8Array {
     const ftyp = box(
         'ftyp',
         fourcc('isom'),
@@ -159,6 +174,7 @@ export function buildHevcInitSegment({ sampleEntry, hvcC, width, height }: HevcI
         u16(0x0018), // depth
         u16(0xffff), // pre_defined = -1
         box('hvcC', hvcC),
+        ...(colour ? [buildColrBox(colour)] : []),
     );
     const stsd = fullBox('stsd', 0, 0, u32(1), visualSampleEntry);
     const stbl = box(
@@ -283,7 +299,7 @@ class BitReader {
     }
 }
 
-function stripEmulationPrevention(nalu: Uint8Array): Uint8Array {
+export function stripEmulationPrevention(nalu: Uint8Array): Uint8Array {
     const out: number[] = [];
     let zeros = 0;
     for (let i = 0; i < nalu.length; i++) {

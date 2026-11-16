@@ -157,3 +157,23 @@ export const CLIENT_FOLLOWUPS = {
     stalePhones: 'The phones are shown as last reported.',
     staleSomePhones: 'The dimmed phones are shown as last reported.',
 } as const;
+
+// ios-colour
+/**
+ * The colour range of an iPhone's picture in this browser (About and troubleshooting): the row
+ * that chooses it, and the fact that says what the stream declares.
+ */
+export const PICTURE_COLOUR = {
+    group: 'Picture',
+    title: 'Picture colour range',
+    description: 'Auto uses what the stream declares. Full and Limited override it in this browser.',
+    choices: { auto: 'Auto', full: 'Full', limited: 'Limited' },
+    factTitle: 'Stream colour',
+    fullRange: 'Full range',
+    limitedRange: 'Limited range',
+    rangeNotDeclared: 'Range not declared',
+    spaceNotDeclared: 'colour space not declared',
+    notReadable: 'Not readable',
+    space: ({ primaries, transfer, matrix }: { primaries?: string; transfer?: string; matrix?: string }): string =>
+        `primaries ${primaries ?? 'not declared'}, transfer ${transfer ?? 'not declared'}, matrix ${matrix ?? 'not declared'}`,
+} as const;
