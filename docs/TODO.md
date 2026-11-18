@@ -76,6 +76,3 @@ the notifications outage".
   the slowest suites to get near 2 minutes.
 - For a small change, one agent and one full run on the merged head, in place of a worker, a
   reviewer and an integrator who each run everything. Step 9 was done that way.
-- A deploy takes about 23 minutes, most of it the one iPhone session on the test server and
-  the waits around it. Keep it for every deploy, or leave the iPhone session out when a step
-  changes nothing a phone's screen page uses.

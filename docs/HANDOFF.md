@@ -6750,3 +6750,37 @@ server.
 Rollback, for a break only: `docker tag ws-scrcpy:before-step9-20261116 ws-scrcpy:latest` and
 `docker compose up -d ws-scrcpy`. Reload each browser tab and reopen the installed app once.
 The scripts and the brief are in `/home/brandon/ws-scrcpy-handoff/last-deploy/2026-11-16-step9/`.
+
+### The deploy without the iPhone session, and the branch on the fork (2026-11-18)
+
+No code changed and nothing was deployed. The live server is as step 9 left it.
+
+The owner's words on 2026-11-18: "please push and you may leave out the iphone session".
+
+The deploy check:
+- A deploy no longer has to open the iPhone's screen on a test server. That was point 2 of the
+  deploy list in the brief and steps A3 to A5 of the saved deploy briefs: the build without
+  Android, the test server on port 8010, the one `serve-web` start and the six-minute wait
+  before it. It took most of a deploy's 20 to 23 minutes.
+- What stays: the phone health commands from the host venv, the clock check against 03:00 and
+  15:00 UTC, no restart while a `serve-web` runs in the container, the rollback tag, the build,
+  the checks of the live server, the unlock fields unchanged, and the look-only pass over the
+  Android phone's pages.
+- The rule in `AGENTS.md` stands: no iPhone screen session unless a brief's deploy procedure
+  says so. A brief that leaves the session out starts none.
+- Not the owner's words, the writer's reading: a step that changes how the iPhone's screen is
+  started or streamed (the server's iOS code, the pymobiledevice3 patch, the stream view) should
+  say in its brief whether it keeps the session. Without it, the first proof of such a change is
+  the owner opening the iPhone's screen on the live server.
+
+The push:
+- `redesign` went to `origin` (the owner's fork on GitHub, which is public) as a new branch,
+  with `origin/redesign` as its upstream. Nothing else was pushed: not `master`, not
+  `new_scrcpy`, no tag.
+- Checked before it, by file name and by pattern, printing no content: the history that went up
+  holds no key file, no settings file and no token. The phone's serial, the host names and the
+  LAN address in the docs were already on `origin/new_scrcpy`.
+- `AGENTS.md` is untracked and stayed on this machine.
+- The owner asked for this one push. The rule "No `git push`" in `AGENTS.md` is unchanged.
+
+Still open in `docs/TODO.md`: one agent and one full run for a small change.
